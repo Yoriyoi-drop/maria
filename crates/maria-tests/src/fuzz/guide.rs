@@ -41,7 +41,11 @@ impl CoverageGuide {
         let mut tags = Vec::new();
         input.expr.features(&mut tags);
         tags.push(format!("W:{}", input.w));
-        tags.push(if ok { "out:ok".to_string() } else { "out:fail".to_string() });
+        tags.push(if ok {
+            "out:ok".to_string()
+        } else {
+            "out:fail".to_string()
+        });
         tags
     }
 
@@ -76,6 +80,16 @@ impl CoverageGuide {
 
     pub fn corpus_get(&self, idx: usize) -> Option<GenInput> {
         self.corpus.get(idx).map(|c| c.input.clone())
+    }
+
+    pub fn corpus_seeds(&self) -> Vec<u64> {
+        self.corpus.iter().map(|c| c.input.seed).collect()
+    }
+
+    /// Snapshot seluruh tag fitur — dipakai agregasi paralel untuk UNION
+    /// antar worker (bukan max yang menyesatkan).
+    pub fn features_snapshot(&self) -> HashSet<String> {
+        self.features.clone()
     }
 
     /// Pilih input berikutnya: dari corpus (mutasi) bila ada & beruntung,

@@ -42,9 +42,7 @@ impl Elaborator {
     ///
     /// Field & method parent di-merge recursively (parent duluan).
     /// Method override: child mengganti parent jika nama sama.
-    pub(super) fn elaborate_classes(
-        &self,
-    ) -> Result<HashMap<Symbol, IrClassDef>, SimError> {
+    pub(super) fn elaborate_classes(&self) -> Result<HashMap<Symbol, IrClassDef>, SimError> {
         let mut classes = HashMap::new();
         for cd in &self.design.classes {
             let mut fields = Vec::new();
@@ -108,7 +106,8 @@ impl Elaborator {
                     .last()
                     .unwrap_or_else(|| parent_name.as_str());
                 let mut merged_methods = Vec::new();
-                let mut seen_methods: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+                let mut seen_methods: std::collections::HashSet<Symbol> =
+                    std::collections::HashSet::new();
                 if let Some(parent_cd) = classes.get(&Symbol::intern(parent_key)) {
                     let mut ancestors: Vec<&IrClassDef> = vec![parent_cd];
                     loop {
@@ -136,7 +135,8 @@ impl Elaborator {
                     let method_name: Symbol = m.name;
                     if seen_methods.insert(method_name) {
                         merged_methods.push(m.clone());
-                    } else if let Some(pos) = merged_methods.iter().position(|pm| pm.name == m.name) {
+                    } else if let Some(pos) = merged_methods.iter().position(|pm| pm.name == m.name)
+                    {
                         merged_methods[pos] = m.clone();
                     }
                 }
@@ -146,7 +146,12 @@ impl Elaborator {
                 .members
                 .iter()
                 .filter_map(|m| {
-                    if let ClassMember::Constraint { name, body, is_static } = m {
+                    if let ClassMember::Constraint {
+                        name,
+                        body,
+                        is_static,
+                    } = m
+                    {
                         Some((*name, *is_static, body.clone()))
                     } else {
                         None

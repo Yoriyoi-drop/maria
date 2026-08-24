@@ -71,7 +71,11 @@ pub enum Expr {
     /// F37: `++x` / `x++` / `--x` / `x--` di level EKSPRESI (RHS).
     /// inc = true utk `++`, false utk `--`; pre = true utk prefix `++x`,
     /// false utk postfix `x++`.
-    IncDec { inc: bool, pre: bool, expr: Box<Expr> },
+    IncDec {
+        inc: bool,
+        pre: bool,
+        expr: Box<Expr>,
+    },
     /// Binary `a + b`, `a && b`, `a == b`, `a <= b` ...
     Binary(String, Box<Expr>, Box<Expr>),
     /// Ternary `c ? a : b`
@@ -97,9 +101,15 @@ pub enum Expr {
     /// Paren `(a + b)`
     Paren(Box<Expr>),
     /// `x inside {a, b, [lo:hi]}` — constraint membership, urutan item dijaga (F12).
-    Inside { expr: Box<Expr>, items: Vec<InsideItem> },
+    Inside {
+        expr: Box<Expr>,
+        items: Vec<InsideItem>,
+    },
     /// `x dist { 0 := 10, [1:5] :/ 20 }` — constraint distribusi (F12).
-    Dist { expr: Box<Expr>, items: Vec<DistItem> },
+    Dist {
+        expr: Box<Expr>,
+        items: Vec<DistItem>,
+    },
 }
 
 /// Satu anggota himpunan `inside`: nilai tunggal atau rentang `[lo:hi]` (F12).
@@ -453,7 +463,10 @@ pub enum MItem {
         col: usize,
     },
     /// `use pkg::*` / `use pkg::item`
-    Use { pkg: String, item: String },
+    Use {
+        pkg: String,
+        item: String,
+    },
     /// `seq(clk, rst_n) { ... }` → always_ff
     Seq(SeqSpec, Stmt),
     /// `comb { ... }` → always_comb

@@ -117,11 +117,8 @@ mod tests {
     use super::*;
 
     fn test_root(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "maria_micd_lock_{}_{}",
-            std::process::id(),
-            name
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("maria_micd_lock_{}_{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         dir
@@ -136,7 +133,13 @@ mod tests {
         let root = test_root("basic");
         let path = lockfile(&root);
         {
-            let lock = acquire_write_lock(&path, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
+            let lock = acquire_write_lock(
+                &path,
+                Duration::from_millis(100),
+                Duration::from_millis(5),
+                Duration::from_secs(1),
+            )
+            .unwrap();
             assert!(is_writer_locked(&path));
             drop(lock);
         }
@@ -148,13 +151,30 @@ mod tests {
     fn test_exclusive_between_writers() {
         let root = test_root("excl");
         let path = lockfile(&root);
-        let _lock1 = acquire_write_lock(&path, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
+        let _lock1 = acquire_write_lock(
+            &path,
+            Duration::from_millis(100),
+            Duration::from_millis(5),
+            Duration::from_secs(1),
+        )
+        .unwrap();
         // Writer kedua tidak bisa masuk selagi yang pertama aktif.
-        let err = acquire_write_lock(&path, Duration::from_millis(50), Duration::from_millis(5), Duration::from_secs(1));
+        let err = acquire_write_lock(
+            &path,
+            Duration::from_millis(50),
+            Duration::from_millis(5),
+            Duration::from_secs(1),
+        );
         assert!(matches!(err, Err(LockError::Timeout(_))));
         // Setelah lock1 drop, writer berikutnya berhasil.
         drop(_lock1);
-        let lock2 = acquire_write_lock(&path, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
+        let lock2 = acquire_write_lock(
+            &path,
+            Duration::from_millis(100),
+            Duration::from_millis(5),
+            Duration::from_secs(1),
+        )
+        .unwrap();
         drop(lock2);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -167,7 +187,13 @@ mod tests {
         let path = lockfile(&root);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"stale").unwrap();
-        let lock = acquire_write_lock(&path, Duration::from_millis(200), Duration::from_millis(5), Duration::from_millis(1)).unwrap();
+        let lock = acquire_write_lock(
+            &path,
+            Duration::from_millis(200),
+            Duration::from_millis(5),
+            Duration::from_millis(1),
+        )
+        .unwrap();
         assert!(is_writer_locked(&path));
         drop(lock);
         let _ = std::fs::remove_dir_all(&root);

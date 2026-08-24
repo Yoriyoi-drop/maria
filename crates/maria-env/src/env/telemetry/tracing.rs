@@ -8,13 +8,17 @@ pub struct TraceHandle {
 
 impl std::fmt::Debug for TraceHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TraceHandle").field("events", &self.len()).finish()
+        f.debug_struct("TraceHandle")
+            .field("events", &self.len())
+            .finish()
     }
 }
 
 impl TraceHandle {
     pub fn new() -> Self {
-        TraceHandle { inner: Tracer::new() }
+        TraceHandle {
+            inner: Tracer::new(),
+        }
     }
 
     pub fn trace(&self, phase: &str, message: &str) {

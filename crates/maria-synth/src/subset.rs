@@ -5,7 +5,7 @@
 //! daftar issue + skor sintesizability per modul (estimasi persentase).
 
 use maria_core::intern::Symbol;
-use maria_ir::{IrDesign, IrExpr, IrModule, IrStmt, IrLValue, Process, SignalInfo};
+use maria_ir::{IrDesign, IrExpr, IrLValue, IrModule, IrStmt, Process, SignalInfo};
 
 /// Severity issue SYN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +127,10 @@ impl Ctx {
                 module,
                 "SYN-6",
                 SynSeverity::Error,
-                format!("signal '{}' bertipe `real` — tidak bisa disintesis", s.name.as_str()),
+                format!(
+                    "signal '{}' bertipe `real` — tidak bisa disintesis",
+                    s.name.as_str()
+                ),
             );
             *err += 1;
         }
@@ -191,7 +194,10 @@ impl Ctx {
                         module,
                         "SYN-1",
                         SynSeverity::Warning,
-                        format!("proses {:?} diabaikan synthesis (testbench)", process_kind_name(p)),
+                        format!(
+                            "proses {:?} diabaikan synthesis (testbench)",
+                            process_kind_name(p)
+                        ),
                     );
                     *warn += 1;
                 }
@@ -206,7 +212,10 @@ impl Ctx {
                         module,
                         "SYN-9",
                         SynSeverity::Warning,
-                        format!("potensi LATCH pada '{}' — if tanpa else di proses combinational", sig),
+                        format!(
+                            "potensi LATCH pada '{}' — if tanpa else di proses combinational",
+                            sig
+                        ),
                     );
                     *warn += 1;
                 }
@@ -235,7 +244,10 @@ impl Ctx {
                     module,
                     "SYN-2",
                     SynSeverity::Error,
-                    format!("timing control ({:?}) tidak bisa disintesis", stmt_kind_name(st)),
+                    format!(
+                        "timing control ({:?}) tidak bisa disintesis",
+                        stmt_kind_name(st)
+                    ),
                 );
                 *err += 1;
             }
@@ -257,7 +269,10 @@ impl Ctx {
                     module,
                     "SYN-4",
                     SynSeverity::Warning,
-                    format!("system task {} dibuang saat synthesis (testbench)", name.as_str()),
+                    format!(
+                        "system task {} dibuang saat synthesis (testbench)",
+                        name.as_str()
+                    ),
                 );
                 *warn += 1;
             }
@@ -287,7 +302,10 @@ impl Ctx {
                     module,
                     "SYN-8",
                     SynSeverity::Error,
-                    format!("loop {:?} non-unrollable — synthesis butuh loop compile-time", stmt_kind_name(st)),
+                    format!(
+                        "loop {:?} non-unrollable — synthesis butuh loop compile-time",
+                        stmt_kind_name(st)
+                    ),
                 );
                 *err += 1;
             }
@@ -324,14 +342,23 @@ impl Ctx {
     }
 
     /// Deteksi objek class / method call / new di dalam ekspresi (SYN-5).
-    fn check_expr_for_class(&mut self, e: &IrExpr, module: Symbol, err: &mut usize, _warn: &mut usize) {
+    fn check_expr_for_class(
+        &mut self,
+        e: &IrExpr,
+        module: Symbol,
+        err: &mut usize,
+        _warn: &mut usize,
+    ) {
         walk_expr(e, &mut |x| match x {
             IrExpr::NewCall { .. } | IrExpr::This | IrExpr::MethodCall { .. } => {
                 self.push(
                     module,
                     "SYN-5",
                     SynSeverity::Error,
-                    format!("penggunaan class/method ({:?}) di datapath — tidak bisa disintesis", expr_kind_name(x)),
+                    format!(
+                        "penggunaan class/method ({:?}) di datapath — tidak bisa disintesis",
+                        expr_kind_name(x)
+                    ),
                 );
                 *err += 1;
                 true
@@ -465,9 +492,7 @@ where
                     walk_stmts(p, f);
                 }
             }
-            IrStmt::WaitOrder {
-                failure_stmts, ..
-            } => walk_stmts(failure_stmts, f),
+            IrStmt::WaitOrder { failure_stmts, .. } => walk_stmts(failure_stmts, f),
             IrStmt::Assert {
                 pass_stmt,
                 fail_stmt,
@@ -516,9 +541,9 @@ where
     }
     match e {
         // RangeSelect/BitSelect membawa SignalId (usize), bukan ekspresi.
-        IrExpr::Signed(inner) | IrExpr::ExprRangeSelect(inner, _, _) | IrExpr::ExprBitSelect(inner, _) => {
-            walk_expr(inner, f)
-        }
+        IrExpr::Signed(inner)
+        | IrExpr::ExprRangeSelect(inner, _, _)
+        | IrExpr::ExprBitSelect(inner, _) => walk_expr(inner, f),
         IrExpr::RangeSelect(_, _, _) | IrExpr::BitSelect(_, _) => {}
         IrExpr::ExprPartSelect(base, idx, width) => {
             walk_expr(base, f);
@@ -542,7 +567,9 @@ where
             walk_expr(a, f);
             walk_expr(b, f);
         }
-        IrExpr::SysFunc { args, .. } | IrExpr::DpiCall { args, .. } | IrExpr::FuncCall { args, .. } => {
+        IrExpr::SysFunc { args, .. }
+        | IrExpr::DpiCall { args, .. }
+        | IrExpr::FuncCall { args, .. } => {
             for a in args {
                 walk_expr(a, f);
             }
@@ -758,7 +785,10 @@ mod tests {
             iff: None,
         });
         let r = check(&ir);
-        assert!(r.issues.iter().any(|i| i.code == "SYN-2" && i.severity == SynSeverity::Error));
+        assert!(r
+            .issues
+            .iter()
+            .any(|i| i.code == "SYN-2" && i.severity == SynSeverity::Error));
     }
 
     #[test]

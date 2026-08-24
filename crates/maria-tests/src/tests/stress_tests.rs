@@ -23,7 +23,9 @@ fn generate_n_modules(count: usize) -> String {
             count <= count + 8'h01;
     end
 endmodule
-"#, i));
+"#,
+            i
+        ));
     }
     // Top tunggal yang meng-instansiasi semua counter → tepat satu top candidate
     // (StrictSimulation menolak design dengan banyak candidate tops).
@@ -60,9 +62,13 @@ fn generate_dep_modules(count: usize) -> String {
     hier_{} u2 (.clk(clk), .rst_n(rst_n), .out(w2));
     always_comb out = w1 + w2;
 endmodule
-"#, m, c1, c2));
+"#,
+            m, c1, c2
+        ));
         m += 1;
-        if m >= count { break; }
+        if m >= count {
+            break;
+        }
     }
     source
 }
@@ -76,9 +82,18 @@ fn test_stress_100_modules() {
     // Note: top module is stored in IrDesign.top, not in IrDesign.modules
     // So total = modules.len() + 1
     let total = design.modules.len() + 1;
-    eprintln!("Stress 100 modules: {:?} ({} modules + 1 top = {})", elapsed, design.modules.len(), total);
+    eprintln!(
+        "Stress 100 modules: {:?} ({} modules + 1 top = {})",
+        elapsed,
+        design.modules.len(),
+        total
+    );
     assert_eq!(total, 101, "100 modules + 1 top = 101 total");
-    assert!(elapsed.as_secs() < 5, "100 modules took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 5,
+        "100 modules took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -89,9 +104,18 @@ fn test_stress_1000_modules() {
     let elapsed = start.elapsed();
     // Note: top module is stored in IrDesign.top, not in IrDesign.modules
     let total = design.modules.len() + 1;
-    eprintln!("Stress 1000 modules: {:?} ({} modules + 1 top = {})", elapsed, design.modules.len(), total);
+    eprintln!(
+        "Stress 1000 modules: {:?} ({} modules + 1 top = {})",
+        elapsed,
+        design.modules.len(),
+        total
+    );
     assert_eq!(total, 1001, "1000 modules + 1 top = 1001 total");
-    assert!(elapsed.as_secs() < 30, "1000 modules took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 30,
+        "1000 modules took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -121,7 +145,9 @@ fn test_stress_parallel_compile_session() {
         let content = format!(
             "module mod_{}(input clk, output reg [3:0] q);\n\
              always_ff @(posedge clk) q <= q + 4'h1;\n\
-             endmodule\n", i);
+             endmodule\n",
+            i
+        );
         std::fs::write(&path, &content).unwrap();
         sources.push(path);
     }
@@ -135,9 +161,18 @@ fn test_stress_parallel_compile_session() {
     let start = Instant::now();
     let (design, index) = session.compile().unwrap();
     let elapsed = start.elapsed();
-    eprintln!("CompileSession 50 files: {:?} ({} modules, {} idx)", elapsed, design.modules.len(), index.len());
+    eprintln!(
+        "CompileSession 50 files: {:?} ({} modules, {} idx)",
+        elapsed,
+        design.modules.len(),
+        index.len()
+    );
     assert!(design.modules.len() >= 50);
-    assert!(elapsed.as_secs() < 30, "50 files took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 30,
+        "50 files took too long: {:?}",
+        elapsed
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -152,7 +187,10 @@ fn test_stress_mmap_io() {
     let path = dir.join("large.sv");
     let mut content = String::with_capacity(100_000);
     for i in 0..500 {
-        content.push_str(&format!("// line {} - this is a long comment to fill up space for mmap testing\n", i));
+        content.push_str(&format!(
+            "// line {} - this is a long comment to fill up space for mmap testing\n",
+            i
+        ));
     }
     std::fs::write(&path, &content).unwrap();
 
@@ -171,8 +209,8 @@ fn test_stress_mmap_io() {
 
 #[test]
 fn test_stress_incremental_tracker() {
-    use maria_compiler::scheduler::incremental::IncrementalTracker;
     use maria_compiler::scheduler::dag::DependencyGraph;
+    use maria_compiler::scheduler::incremental::IncrementalTracker;
     use maria_compiler::scheduler::work_stealing::Task;
     use std::path::Path;
 
@@ -198,5 +236,9 @@ fn test_stress_incremental_tracker() {
     tracker.mark_changed(Path::new("/tmp/mod_0.sv"));
     let elapsed = start.elapsed();
     eprintln!("Incremental mark 1 of 1000 nodes: {:?}", elapsed);
-    assert!(elapsed.as_nanos() < 1_000_000_000, "mark_changed too slow: {:?}", elapsed);
+    assert!(
+        elapsed.as_nanos() < 1_000_000_000,
+        "mark_changed too slow: {:?}",
+        elapsed
+    );
 }

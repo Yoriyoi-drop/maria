@@ -20,10 +20,10 @@ pub mod wave;
 use std::path::{Path, PathBuf};
 
 use maria_ast::types::Design;
-use maria_core::diagnostics::DiagCode;
-use maria_elaboration::elaborator::ElaborateMode;
-use maria_core::error::SimError;
 use maria_compiler::frontend::compile_session::{CompileSession, SessionConfig};
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
+use maria_elaboration::elaborator::ElaborateMode;
 
 fn diag_io(msg: impl Into<String>) -> SimError {
     SimError::with_diag(DiagCode::IoError, msg)
@@ -137,8 +137,8 @@ pub fn transpile_mv_to_inline(
             .and_then(|s| s.to_str())
             .unwrap_or("design")
             .to_string();
-        let src = std::fs::read_to_string(p)
-            .map_err(|e| diag_io(format!("{}: {}", p.display(), e)))?;
+        let src =
+            std::fs::read_to_string(p).map_err(|e| diag_io(format!("{}: {}", p.display(), e)))?;
         items.push((src, base));
     }
     let results = maria_mv::transpile_many(&items)
@@ -219,9 +219,9 @@ pub fn open_cache_layer(
         .collect();
     let pid = MicdDatabase::project_id(&proot, &files, &inc, &defs);
     let db = MicdDatabase::open_project_with_context(&root, &pid, &proot, &files);
-    let layer = db
-        .cache_layer
-        .ok_or_else(|| diag_io("lapisan cache pipeline tidak tersedia (database root tak bisa ditulis)"))?;
+    let layer = db.cache_layer.ok_or_else(|| {
+        diag_io("lapisan cache pipeline tidak tersedia (database root tak bisa ditulis)")
+    })?;
     Ok((layer, pid))
 }
 
@@ -253,10 +253,7 @@ pub fn kv(label: &str, value: impl std::fmt::Display) {
 
 /// Cetak footer dengan pesan sukses/error count.
 pub fn footer(ok: usize, warn: usize) {
-    println!(
-        "\n── selesai: {} ok, {} warning ──",
-        ok, warn
-    );
+    println!("\n── selesai: {} ok, {} warning ──", ok, warn);
 }
 
 /// Render ekspresi AST menjadi string ringkas (untuk output tool).
@@ -270,25 +267,40 @@ pub fn expr_to_string(e: &maria_ast::expr::Expr) -> String {
             Value::Decimal(d) => d.to_string(),
             Value::Real(r) => r.to_string(),
         },
-        Expr::FillLit(v) => format!("'{}", match v {
-            maria_ir::LogicVal::Zero => "0",
-            maria_ir::LogicVal::One => "1",
-            maria_ir::LogicVal::X => "x",
-            maria_ir::LogicVal::Z => "z",
-        }),
+        Expr::FillLit(v) => format!(
+            "'{}",
+            match v {
+                maria_ir::LogicVal::Zero => "0",
+                maria_ir::LogicVal::One => "1",
+                maria_ir::LogicVal::X => "x",
+                maria_ir::LogicVal::Z => "z",
+            }
+        ),
         Expr::Ident { name, .. } => name.as_str().to_string(),
         Expr::FuncCall { name, args, .. } => {
             let a: Vec<String> = args.iter().map(expr_to_string).collect();
             format!("{}({})", name.as_str(), a.join(", "))
         }
         Expr::RangeSelect { expr, msb, lsb, .. } => {
-            format!("{}[{}:{}]", expr_to_string(expr), expr_to_string(msb), expr_to_string(lsb))
+            format!(
+                "{}[{}:{}]",
+                expr_to_string(expr),
+                expr_to_string(msb),
+                expr_to_string(lsb)
+            )
         }
         Expr::BitSelect { expr, index, .. } => {
             format!("{}[{}]", expr_to_string(expr), expr_to_string(index))
         }
-        Expr::PartSelect { expr, base, width, .. } => {
-            format!("{}[{} +: {}]", expr_to_string(expr), expr_to_string(base), expr_to_string(width))
+        Expr::PartSelect {
+            expr, base, width, ..
+        } => {
+            format!(
+                "{}[{} +: {}]",
+                expr_to_string(expr),
+                expr_to_string(base),
+                expr_to_string(width)
+            )
         }
         Expr::Concat(parts) => {
             let p: Vec<String> = parts.iter().map(expr_to_string).collect();
@@ -299,9 +311,18 @@ pub fn expr_to_string(e: &maria_ast::expr::Expr) -> String {
         }
         Expr::UnaryOp { op, expr } => format!("{}{}", unary_op_str(op), expr_to_string(expr)),
         Expr::BinaryOp { op, lhs, rhs } => {
-            format!("{} {} {}", expr_to_string(lhs), bin_op_str(op), expr_to_string(rhs))
+            format!(
+                "{} {} {}",
+                expr_to_string(lhs),
+                bin_op_str(op),
+                expr_to_string(rhs)
+            )
         }
-        Expr::TernaryOp { cond, true_expr, false_expr } => format!(
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => format!(
             "{} ? {} : {}",
             expr_to_string(cond),
             expr_to_string(true_expr),
@@ -312,21 +333,34 @@ pub fn expr_to_string(e: &maria_ast::expr::Expr) -> String {
         Expr::MemberAccess { obj, field } => {
             format!("{}.{}", expr_to_string(obj), field.as_str())
         }
-        Expr::MethodCall { obj, method, args, .. } => {
+        Expr::MethodCall {
+            obj, method, args, ..
+        } => {
             let a: Vec<String> = args.iter().map(expr_to_string).collect();
-            format!("{}.{}({})", expr_to_string(obj), method.as_str(), a.join(", "))
+            format!(
+                "{}.{}({})",
+                expr_to_string(obj),
+                method.as_str(),
+                a.join(", ")
+            )
         }
         Expr::ScopedIdent { package, item, .. } => {
             format!("{}::{}", package.as_str(), item.as_str())
         }
         Expr::Cast { dtype, expr } => format!("{}({})", dtype.as_str(), expr_to_string(expr)),
-        Expr::CastWidth { width, expr } => format!("{}'({})", expr_to_string(width), expr_to_string(expr)),
+        Expr::CastWidth { width, expr } => {
+            format!("{}'({})", expr_to_string(width), expr_to_string(expr))
+        }
         Expr::Null => "null".to_string(),
         Expr::Inside { expr, range_list } => {
             let r: Vec<String> = range_list.iter().map(expr_to_string).collect();
             format!("{} inside {{ {} }}", expr_to_string(expr), r.join(", "))
         }
-        Expr::StreamingConcat { op, slice_size, slices } => {
+        Expr::StreamingConcat {
+            op,
+            slice_size,
+            slices,
+        } => {
             let s: Vec<String> = slices.iter().map(expr_to_string).collect();
             let w = slice_size
                 .as_ref()
@@ -367,9 +401,15 @@ pub fn expr_to_string(e: &maria_ast::expr::Expr) -> String {
 fn base_prefix(v: &maria_ast::expr::Value) -> String {
     use maria_ast::expr::Value;
     match v {
-        Value::Binary { width, .. } => width.map(|w| format!("{}'b", w)).unwrap_or_else(|| "'b".into()),
-        Value::Hex { width, .. } => width.map(|w| format!("{}'h", w)).unwrap_or_else(|| "'h".into()),
-        Value::Octal { width, .. } => width.map(|w| format!("{}'o", w)).unwrap_or_else(|| "'o".into()),
+        Value::Binary { width, .. } => width
+            .map(|w| format!("{}'b", w))
+            .unwrap_or_else(|| "'b".into()),
+        Value::Hex { width, .. } => width
+            .map(|w| format!("{}'h", w))
+            .unwrap_or_else(|| "'h".into()),
+        Value::Octal { width, .. } => width
+            .map(|w| format!("{}'o", w))
+            .unwrap_or_else(|| "'o".into()),
         _ => "".into(),
     }
 }

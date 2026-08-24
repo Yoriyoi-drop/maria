@@ -88,10 +88,7 @@ mod tests {
         let mut s = SymbolIndex::new();
         s.add("uart".into(), "module".into(), PathBuf::from("uart.sv"));
         s.add("pkg_a".into(), "package".into(), PathBuf::from("pkg_a.sv"));
-        assert_eq!(
-            s.locate("uart", "module"),
-            Some(&PathBuf::from("uart.sv"))
-        );
+        assert_eq!(s.locate("uart", "module"), Some(&PathBuf::from("uart.sv")));
         assert!(s.locate("uart", "package").is_none());
         assert_eq!(s.len(), 2);
     }
@@ -116,10 +113,10 @@ mod tests {
         let bytes = bincode::serialize(&s).unwrap();
         let mut s2: SymbolIndex = bincode::deserialize(&bytes).unwrap();
         s2.prepare();
+        assert_eq!(s2.locate("uart", "module"), Some(&PathBuf::from("uart.sv")));
         assert_eq!(
-            s2.locate("uart", "module"),
-            Some(&PathBuf::from("uart.sv"))
+            s2.locate("crc", "function").map(|f| f.to_str().unwrap()),
+            Some("pkg_a.sv")
         );
-        assert_eq!(s2.locate("crc", "function").map(|f| f.to_str().unwrap()), Some("pkg_a.sv"));
     }
 }

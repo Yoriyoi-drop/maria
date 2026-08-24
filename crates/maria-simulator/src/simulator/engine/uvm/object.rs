@@ -6,12 +6,12 @@
 //! sequence, dan register model tinggal di component.rs / reg.rs.
 
 use super::super::SimulationEngine;
+use crate::simulator::types::*;
+use crate::simulator::util::*;
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
 use maria_core::Symbol;
 use maria_ir::*;
-use crate::simulator::types::*;
-use crate::simulator::util::*;
 
 /// VERIF-11: konstanta verbosity UVM (IEEE 1800 / UVM 1.2) — dipakai
 /// `uvm_report_info(id, msg, verbosity)` filtering dan
@@ -36,9 +36,8 @@ impl SimulationEngine {
                 } else {
                     String::new()
                 };
-                self.uvm_object_data.insert(obj_id, UvmObjectData {
-                    name: name.clone(),
-                });
+                self.uvm_object_data
+                    .insert(obj_id, UvmObjectData { name: name.clone() });
                 Ok(LogicVec::from_u64(1, 1))
             }
             _ => self.execute_uvm_object_method(obj_id, method, args),
@@ -130,7 +129,9 @@ impl SimulationEngine {
             visited.insert(ct.clone());
 
             // Check all callback queue entries for this component type
-            let keys: Vec<(String, String)> = self.callback_queues.keys()
+            let keys: Vec<(String, String)> = self
+                .callback_queues
+                .keys()
                 .filter(|(ct_key, _)| ct_key == &ct)
                 .cloned()
                 .collect();
@@ -143,14 +144,18 @@ impl SimulationEngine {
                     // Invoke callback_method on each registered callback object
                     let cbs = data.callbacks.clone();
                     for (cb_id, _) in &cbs {
-                        if self.find_method_quiet(
-                            &{
-                                self.state.get_object(*cb_id)
-                                    .map(|o| o.class_name.to_string())
-                                    .unwrap_or_default()
-                            },
-                            callback_method,
-                        ).is_some() {
+                        if self
+                            .find_method_quiet(
+                                &{
+                                    self.state
+                                        .get_object(*cb_id)
+                                        .map(|o| o.class_name.to_string())
+                                        .unwrap_or_default()
+                                },
+                                callback_method,
+                            )
+                            .is_some()
+                        {
                             self.execute_method(*cb_id, callback_method, args)?;
                         }
                     }
@@ -158,7 +163,10 @@ impl SimulationEngine {
             }
 
             // Walk up component hierarchy for inherited callback registrations
-            current = self.design.classes.get(&Symbol::intern(&ct))
+            current = self
+                .design
+                .classes
+                .get(&Symbol::intern(&ct))
                 .and_then(|c| c.extends)
                 .map(|s| s.to_string());
         }
@@ -182,10 +190,9 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_name" => {
-                let data = self
-                    .uvm_object_data
-                    .get(&obj_id)
-                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "uvm_object not initialized"))?;
+                let data = self.uvm_object_data.get(&obj_id).ok_or_else(|| {
+                    SimError::with_diag(DiagCode::NullHandle, "uvm_object not initialized")
+                })?;
                 Ok(string_to_logicvec(&data.name))
             }
             "set_name" => {
@@ -213,20 +220,22 @@ impl SimulationEngine {
                 // (nama + class) seperti sebelumnya.
                 if let Some(printer_arg) = args.first() {
                     let printer_id = printer_arg.to_u64() as ObjId;
-                    if printer_id > 0 && self.is_uvm_printer_hierarchy(
-                        self.state.get_object(printer_id)
-                            .map(|o| o.class_name.as_str())
-                            .unwrap_or_default(),
-                    ) {
+                    if printer_id > 0
+                        && self.is_uvm_printer_hierarchy(
+                            self.state
+                                .get_object(printer_id)
+                                .map(|o| o.class_name.as_str())
+                                .unwrap_or_default(),
+                        )
+                    {
                         let s = self.format_uvm_object_table(obj_id);
                         println!("{}", s);
                         return Ok(LogicVec::from_u64(1, 1));
                     }
                 }
-                let data = self
-                    .uvm_object_data
-                    .get(&obj_id)
-                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "uvm_object not initialized"))?;
+                let data = self.uvm_object_data.get(&obj_id).ok_or_else(|| {
+                    SimError::with_diag(DiagCode::NullHandle, "uvm_object not initialized")
+                })?;
                 let class_name = self
                     .state
                     .get_object(obj_id)
@@ -246,10 +255,7 @@ impl SimulationEngine {
                 // per objek = raise langsung + propagasi dari descendants;
                 // get_objection_count(obj) membacanya (semantik UVM).
                 *self.uvm_objection_data.entry(obj_id).or_insert(0) += 1;
-                let mut cur = self
-                    .uvm_component_data
-                    .get(&obj_id)
-                    .and_then(|d| d.parent);
+                let mut cur = self.uvm_component_data.get(&obj_id).and_then(|d| d.parent);
                 while let Some(anc) = cur {
                     *self.uvm_objection_data.entry(anc).or_insert(0) += 1;
                     cur = self.uvm_component_data.get(&anc).and_then(|d| d.parent);
@@ -279,10 +285,7 @@ impl SimulationEngine {
                 if let Some(c) = self.uvm_objection_data.get_mut(&obj_id) {
                     *c = c.saturating_sub(1);
                 }
-                let mut cur = self
-                    .uvm_component_data
-                    .get(&obj_id)
-                    .and_then(|d| d.parent);
+                let mut cur = self.uvm_component_data.get(&obj_id).and_then(|d| d.parent);
                 while let Some(anc) = cur {
                     if let Some(c) = self.uvm_objection_data.get_mut(&anc) {
                         *c = c.saturating_sub(1);
@@ -314,10 +317,10 @@ impl SimulationEngine {
             // error RT9003 "uvm_object::end_of_elaboration_phase not
             // implemented" dan sim mati (core_ibex_base_test.sv:233).
             m if m.ends_with("_phase") => Ok(LogicVec::from_u64(1, 1)),
-            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
-                "uvm_object::{} not implemented",
-                method
-            ))),
+            _ => Err(self.diag_error(
+                DiagCode::NotImplemented,
+                format!("uvm_object::{} not implemented", method),
+            )),
         }
     }
 
@@ -333,14 +336,8 @@ impl SimulationEngine {
         // (hentikan sim seketika + exit code CLI non-zero).
         match method {
             "uvm_report_info" => {
-                let id = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
-                let msg = args
-                    .get(1)
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let id = args.first().map(logicvec_to_string).unwrap_or_default();
+                let msg = args.get(1).map(logicvec_to_string).unwrap_or_default();
                 // VERIF-11: verbosity filtering — arg ke-3 = level verbosity
                 // (UVM_LOW=100/MEDIUM=200/HIGH=300/FULL=400/NONE=0). Pesan
                 // dicetak HANYA bila verbosity <= verbosity komponen saat ini
@@ -356,50 +353,47 @@ impl SimulationEngine {
                     // Ditekan — tidak dicetak, tidak increment counter.
                     return Ok(LogicVec::from_u64(1, 1));
                 }
-                self.emit_severity("info", &format!("@ {}: {} [{}]", self.current_time, msg, id));
+                self.emit_severity(
+                    "info",
+                    &format!("@ {}: {} [{}]", self.current_time, msg, id),
+                );
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_warning" => {
-                let id = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
-                let msg = args
-                    .get(1)
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
-                self.emit_severity("warning", &format!("@ {}: {} [{}]", self.current_time, msg, id));
+                let id = args.first().map(logicvec_to_string).unwrap_or_default();
+                let msg = args.get(1).map(logicvec_to_string).unwrap_or_default();
+                self.emit_severity(
+                    "warning",
+                    &format!("@ {}: {} [{}]", self.current_time, msg, id),
+                );
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_error" => {
-                let id = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
-                let msg = args
-                    .get(1)
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
-                self.emit_severity("error", &format!("@ {}: {} [{}]", self.current_time, msg, id));
+                let id = args.first().map(logicvec_to_string).unwrap_or_default();
+                let msg = args.get(1).map(logicvec_to_string).unwrap_or_default();
+                self.emit_severity(
+                    "error",
+                    &format!("@ {}: {} [{}]", self.current_time, msg, id),
+                );
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_fatal" => {
-                let id = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
-                let msg = args
-                    .get(1)
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
-                self.emit_severity("fatal", &format!("@ {}: {} [{}]", self.current_time, msg, id));
+                let id = args.first().map(logicvec_to_string).unwrap_or_default();
+                let msg = args.get(1).map(logicvec_to_string).unwrap_or_default();
+                self.emit_severity(
+                    "fatal",
+                    &format!("@ {}: {} [{}]", self.current_time, msg, id),
+                );
                 Ok(LogicVec::from_u64(1, 1))
             }
             // VERIF-11: set/get_report_verbosity_level — level verbosity
             // objek (report_object level). Sama dgn set/get_report_verbosity
             // komponen; diterapkan ke uvm_component_data bila objek komponen.
             "set_report_verbosity_level" | "set_report_verbosity" => {
-                let level = args.first().map(|a| a.to_u64() as u32).unwrap_or(UVM_MEDIUM);
+                let level = args
+                    .first()
+                    .map(|a| a.to_u64() as u32)
+                    .unwrap_or(UVM_MEDIUM);
                 if let Some(d) = self.uvm_component_data.get_mut(&obj_id) {
                     d.report_verbosity = level;
                 }

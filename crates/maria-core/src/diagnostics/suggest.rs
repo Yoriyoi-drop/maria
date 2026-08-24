@@ -7,8 +7,12 @@
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let a_len = a.len();
     let b_len = b.len();
-    if a_len == 0 { return b_len; }
-    if b_len == 0 { return a_len; }
+    if a_len == 0 {
+        return b_len;
+    }
+    if b_len == 0 {
+        return a_len;
+    }
 
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
@@ -24,7 +28,11 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     for i in 1..=a_len {
         curr[0] = i;
         for j in 1..=b_len {
-            let cost = if a_bytes[i - 1] == b_bytes[j - 1] { 0 } else { 1 };
+            let cost = if a_bytes[i - 1] == b_bytes[j - 1] {
+                0
+            } else {
+                1
+            };
             let del = prev[j] + 1;
             let ins = curr[j - 1] + 1;
             let sub = prev[j - 1] + cost;
@@ -43,7 +51,10 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
 /// - Nama ≤ 4 char: max distance 1
 /// - Nama 5-8 char: max distance 2
 /// - Nama > 8 char: max distance 3
-pub fn suggest_name<'a>(target: &str, candidates: impl Iterator<Item = &'a str>) -> Option<(&'a str, usize)> {
+pub fn suggest_name<'a>(
+    target: &str,
+    candidates: impl Iterator<Item = &'a str>,
+) -> Option<(&'a str, usize)> {
     let max_dist = match target.len() {
         0..=4 => 1,
         5..=8 => 2,
@@ -95,9 +106,9 @@ mod tests {
 
     #[test]
     fn test_levenshtein_one_edit() {
-        assert_eq!(levenshtein("hello", "helo"), 1);    // deletion
-        assert_eq!(levenshtein("hello", "helllo"), 1);   // insertion
-        assert_eq!(levenshtein("hello", "hallo"), 1);    // substitution
+        assert_eq!(levenshtein("hello", "helo"), 1); // deletion
+        assert_eq!(levenshtein("hello", "helllo"), 1); // insertion
+        assert_eq!(levenshtein("hello", "hallo"), 1); // substitution
     }
 
     #[test]
@@ -148,7 +159,8 @@ mod tests {
     #[test]
     fn test_format_suggestion_no_match() {
         let candidates = vec!["abc".to_string()];
-        let result = format_suggestion("xyz_completely_different_very_long", candidates.into_iter());
+        let result =
+            format_suggestion("xyz_completely_different_very_long", candidates.into_iter());
         assert!(result.is_empty());
     }
 }

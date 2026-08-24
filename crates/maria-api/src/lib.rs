@@ -14,7 +14,6 @@
 #[cfg(feature = "lsp")]
 pub use maria_env::lsp;
 
-
 // ── Formal Verification Engine — pindah ke maria-formal (crates/) ──
 // BMC + Z3 SMT + assertion checking. `maria::formal::*` di main.rs tetap valid.
 #[cfg(feature = "formal")]
@@ -64,22 +63,21 @@ pub use maria_tools as tools;
 #[cfg(feature = "gui")]
 pub use maria_gui as gui;
 
-pub use maria_core::arena::{BumpArena, TypedArena};
-pub use maria_core::error::SimError;
-pub use maria_core::diagnostics::{DiagCode, DiagLevel, Diagnostic, DiagSink, RuntimeContext, SourceSnippet};
-pub use maria_core::intern::{init_string_table, Span, Symbol};
 pub use maria_compiler::frontend::compile_session::{CompileSession, SessionConfig};
 pub use maria_compiler::frontend::discovery::FileDiscovery;
+pub use maria_core::arena::{BumpArena, TypedArena};
+pub use maria_core::diagnostics::{
+    DiagCode, DiagLevel, DiagSink, Diagnostic, RuntimeContext, SourceSnippet,
+};
+pub use maria_core::error::SimError;
+pub use maria_core::intern::{init_string_table, Span, Symbol};
 use maria_elaboration::ElaborateMode;
-
 
 use maria_parser::lexer::Lexer;
 use maria_parser::preprocessor::Preprocessor;
 use maria_parser::Parser;
 use std::fs;
 use std::path::Path;
-
-
 
 /// Compare two ASTs for regression testing. Returns list of structural differences.
 pub fn compare_asts(design_a: &maria_ir::IrDesign, design_b: &maria_ir::IrDesign) -> Vec<String> {
@@ -113,12 +111,24 @@ pub fn compare_asts(design_a: &maria_ir::IrDesign, design_b: &maria_ir::IrDesign
     }
 
     // Compare each signal info
-    for (i, (sa, sb)) in design_a.top.signals.iter().zip(design_b.top.signals.iter()).enumerate() {
+    for (i, (sa, sb)) in design_a
+        .top
+        .signals
+        .iter()
+        .zip(design_b.top.signals.iter())
+        .enumerate()
+    {
         if sa.width != sb.width {
-            diffs.push(format!("signal[{}] '{}' width: {} vs {}", i, sa.name, sa.width, sb.width));
+            diffs.push(format!(
+                "signal[{}] '{}' width: {} vs {}",
+                i, sa.name, sa.width, sb.width
+            ));
         }
         if sa.is_signed != sb.is_signed {
-            diffs.push(format!("signal[{}] '{}' signed: {} vs {}", i, sa.name, sa.is_signed, sb.is_signed));
+            diffs.push(format!(
+                "signal[{}] '{}' signed: {} vs {}",
+                i, sa.name, sa.is_signed, sb.is_signed
+            ));
         }
     }
 
@@ -146,8 +156,12 @@ pub fn compare_asts(design_a: &maria_ir::IrDesign, design_b: &maria_ir::IrDesign
 /// Read a .maria project file and return list of .sv file paths
 /// Paths in .maria are resolved relative to the .maria file's directory
 pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("cannot read '{}': {}", path, e)))?;
+    let content = fs::read_to_string(path).map_err(|e| {
+        SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            format!("cannot read '{}': {}", path, e),
+        )
+    })?;
     let base = Path::new(path).parent().unwrap_or(Path::new("."));
     // Section `[...]` di project file .maria ([foreign] untuk library
     // VHPI/PLI/DPI, dan header lain) — header DAN isi section (baris
@@ -226,7 +240,10 @@ pub struct ProjectFile {
 /// berisi list library per interface (format TOML-like `key = ["a.so", ...]`).
 pub fn read_project_with_foreign(path: &str) -> Result<ProjectFile, SimError> {
     let content = fs::read_to_string(path).map_err(|e| {
-        SimError::with_diag(DiagCode::InvalidSyntax, format!("cannot read '{}': {}", path, e))
+        SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            format!("cannot read '{}': {}", path, e),
+        )
     })?;
     let base = Path::new(path).parent().unwrap_or(Path::new("."));
     let mut proj = ProjectFile::default();
@@ -305,8 +322,12 @@ pub fn compile_files(paths: &[String]) -> Result<maria_ir::IrDesign, SimError> {
 
 /// Compile a SystemVerilog source file and run simulation
 pub fn simulate_file(path: &str, max_time: u64) -> Result<(), SimError> {
-    let source = fs::read_to_string(path)
-        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("cannot read '{}': {}", path, e)))?;
+    let source = fs::read_to_string(path).map_err(|e| {
+        SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            format!("cannot read '{}': {}", path, e),
+        )
+    })?;
     simulate_str(&source, max_time)
 }
 
@@ -319,9 +340,9 @@ pub fn simulate_str(source: &str, max_time: u64) -> Result<(), SimError> {
 /// Compile SystemVerilog source string into IR
 pub fn compile_str(source: &str) -> Result<maria_ir::IrDesign, SimError> {
     let mut pp = Preprocessor::new();
-    let preprocessed = pp
-        .preprocess(source, None)
-        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor: {}", e)))?;
+    let preprocessed = pp.preprocess(source, None).map_err(|e| {
+        SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor: {}", e))
+    })?;
     let timescale = pp.timescale.clone();
     let mut lexer = Lexer::new(&preprocessed);
     let mut tokens = Vec::new();
@@ -347,7 +368,8 @@ pub fn compile_str(source: &str) -> Result<maria_ir::IrDesign, SimError> {
         Err(e) => {
             // Parse function returned fatal error — emit collected errors too
             if !parser.errors.is_empty() {
-                let mut emitter = maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
+                let mut emitter =
+                    maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
                 for diag in &parser.errors {
                     let _ = emitter.emit(diag);
                 }
@@ -370,7 +392,8 @@ pub fn compile_str(source: &str) -> Result<maria_ir::IrDesign, SimError> {
     design.timescale = timescale;
 
     let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
-    let mut elaborator = maria_elaboration::Elaborator::with_source(design, source_lines, first_source);
+    let mut elaborator =
+        maria_elaboration::Elaborator::with_source(design, source_lines, first_source);
     let ir_design = elaborator.elaborate(None, ElaborateMode::StrictSimulation)?;
 
     // SIM-29: bawa exclusion ranges dari `` `coverage_off ``/`` `coverage_on ``
@@ -401,8 +424,12 @@ pub fn run_simulation(ir_design: maria_ir::IrDesign, max_time: u64) -> Result<()
     let unique_id = SIMULATION_COUNTER.fetch_add(1, Ordering::Relaxed);
     let unique_prefix = format!("{}_{}", design_name, unique_id);
     let vcd_path = format!("{}.vcd", unique_prefix);
-    let vcd = waveform::VcdWriter::new(&vcd_path, &engine.design)
-        .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("VCD creation failed: {}", e)))?;
+    let vcd = waveform::VcdWriter::new(&vcd_path, &engine.design).map_err(|e| {
+        SimError::with_diag(
+            DiagCode::WaveformError,
+            format!("VCD creation failed: {}", e),
+        )
+    })?;
     engine.set_vcd(vcd);
 
     // Also create FST waveform
@@ -414,7 +441,8 @@ pub fn run_simulation(ir_design: maria_ir::IrDesign, max_time: u64) -> Result<()
                 maria_core::diagnostics::DiagCode::WaveformError,
                 format!("FST: cannot create '{}': {}", fst_path, e),
             );
-            let mut emitter = maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
+            let mut emitter =
+                maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
             let _ = emitter.emit(&diag);
         }
     }
@@ -492,7 +520,9 @@ mod project_file_tests {
 
     #[test]
     fn test_read_project_with_foreign_parses_libs() {
-        let p = write_temp("foreign", r#"
+        let p = write_temp(
+            "foreign",
+            r#"
 rtl/top.sv
 rtl/counter.sv
 
@@ -500,12 +530,16 @@ rtl/counter.sv
 vhpi = ["libvhpi_a.so", "libvhpi_b.so"]
 pli = ["libpli.so"]
 dpi = ["libdpi.so"]
-"#);
+"#,
+        );
         let proj = read_project_with_foreign(p.to_str().unwrap()).expect("parse");
         // File .sv ter-resolve relatif ke direktori project.
         assert_eq!(proj.files.len(), 2);
         let base = p.parent().unwrap();
-        assert!(proj.files[0].starts_with(base.to_str().unwrap()), "path relatif ke .maria");
+        assert!(
+            proj.files[0].starts_with(base.to_str().unwrap()),
+            "path relatif ke .maria"
+        );
         // Library ter-resolve + terpisah per interface.
         assert_eq!(proj.vhpi_libs.len(), 2);
         assert!(proj.vhpi_libs[0].contains("libvhpi_a.so"));
@@ -521,12 +555,15 @@ dpi = ["libdpi.so"]
 
     #[test]
     fn test_read_project_file_skips_foreign_section() {
-        let p = write_temp("skip", r#"
+        let p = write_temp(
+            "skip",
+            r#"
 rtl/top.sv
 
 [foreign]
 vhpi = ["libvhpi.so"]
-"#);
+"#,
+        );
         let files = read_project_file(p.to_str().unwrap()).expect("parse");
         assert_eq!(files.len(), 1, "bagian [foreign] TIDAK boleh jadi file .sv");
         assert!(files[0].contains("rtl/top.sv"));
@@ -535,13 +572,16 @@ vhpi = ["libvhpi.so"]
 
     #[test]
     fn test_read_project_with_foreign_unknown_key_warns() {
-        let p = write_temp("unknown", r#"
+        let p = write_temp(
+            "unknown",
+            r#"
 rtl/top.sv
 
 [foreign]
 vhpi = ["libvhpi.so"]
 foo = ["libfoo.so"]
-"#);
+"#,
+        );
         let proj = read_project_with_foreign(p.to_str().unwrap()).expect("parse");
         assert_eq!(proj.vhpi_libs.len(), 1);
         assert!(proj.dpi_libs.is_empty(), "kunci tak dikenal diabaikan");

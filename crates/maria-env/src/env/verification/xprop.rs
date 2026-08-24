@@ -57,7 +57,10 @@ mod tests {
 
     #[test]
     fn test_xprop_roundtrip() {
-        assert_eq!(XPropMode::from_str("pessimistic"), Some(XPropMode::Pessimistic));
+        assert_eq!(
+            XPropMode::from_str("pessimistic"),
+            Some(XPropMode::Pessimistic)
+        );
         assert_eq!(XPropMode::from_str("nope"), None);
         assert_eq!(XPropMode::Pessimistic.as_str(), "pessimistic");
     }

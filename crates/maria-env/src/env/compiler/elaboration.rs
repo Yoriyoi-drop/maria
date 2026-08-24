@@ -1,7 +1,7 @@
 use maria_ast::Design;
 use maria_core::diagnostics::Diagnostic;
-use maria_elaboration::elaborator::{ElaborateMode, Elaborator};
 use maria_core::error::SimError;
+use maria_elaboration::elaborator::{ElaborateMode, Elaborator};
 use maria_ir::IrDesign;
 
 /// Elaborasi AST → IR. Mengembalikan IR + diagnostics yang ter-flush.

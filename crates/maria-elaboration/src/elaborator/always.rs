@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use super::super::util::const_eval_params;
+use super::super::util::{detect_sync_reset, infer_comb_sensitivity, resolve_expr_signal};
 use super::Elaborator;
 use maria_ast::*;
-use super::super::util::const_eval_params;
 use maria_core::diagnostics::diagnostic::DiagCode;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 use maria_ir::*;
-use super::super::util::{infer_comb_sensitivity, resolve_expr_signal, detect_sync_reset};
+use std::collections::HashMap;
 
 impl Elaborator {
     pub(crate) fn elaborate_always(
@@ -83,12 +83,8 @@ impl Elaborator {
                         if let Ok((clock, reset, iff)) =
                             self.extract_clock_reset(&always.sensitivity, signal_map, signals)
                         {
-                            let body = self.elaborate_stmt_block(
-                                &always.stmts,
-                                signal_map,
-                                &[],
-                                signals,
-                            )?;
+                            let body =
+                                self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;
                             let reset = reset.or_else(|| detect_sync_reset(&body));
                             return Ok(Process::Sequential {
                                 name,
@@ -152,7 +148,12 @@ impl Elaborator {
     ) -> Result<(ClockEdge, Option<ResetInfo>, Option<IrExpr>), SimError> {
         let events = match sensitivity {
             Some(sl) => &sl.events,
-            None => return Err(self.elab_diag(DiagCode::ModuleNotFound, "always_ff requires sensitivity list")),
+            None => {
+                return Err(self.elab_diag(
+                    DiagCode::ModuleNotFound,
+                    "always_ff requires sensitivity list",
+                ))
+            }
         };
 
         let mut clock_edge = None;
@@ -237,8 +238,12 @@ impl Elaborator {
             }
         }
 
-        let ce = clock_edge
-            .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "always_ff must have at least one clock edge"))?;
+        let ce = clock_edge.ok_or_else(|| {
+            self.elab_diag(
+                DiagCode::ModuleNotFound,
+                "always_ff must have at least one clock edge",
+            )
+        })?;
         Ok((ce, reset, iff))
     }
 }

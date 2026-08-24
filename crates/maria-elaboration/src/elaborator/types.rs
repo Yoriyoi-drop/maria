@@ -4,16 +4,16 @@
 
 use std::collections::HashMap;
 
-use maria_ast::*;
 use maria_ast::types::const_eval_with_params;
+use maria_ast::*;
 use maria_core::diagnostics::diagnostic::DiagCode;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 use maria_ir::*;
 
+use super::super::util::width;
 use super::Elaborator;
 use super::BUILTIN_UVM_CLASSES;
-use super::super::util::width;
 
 impl Elaborator {
     pub(crate) fn store_typedef_fields(&mut self, name: Symbol, dtype: &DataType) {
@@ -39,8 +39,10 @@ impl Elaborator {
         if let Some((pkg, t)) = type_name.split_once("::") {
             if let Some(items) = self.package_symbols.get(&Symbol::intern(pkg)) {
                 if let Some(PackageItem::Typedef(td)) = items.get(&Symbol::intern(t)) {
-                    if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. })
-                    {
+                    if matches!(
+                        &td.dtype,
+                        DataType::StructType { .. } | DataType::UnionType { .. }
+                    ) {
                         let fields = self.compute_struct_fields(&td.dtype);
                         if !fields.is_empty() {
                             return Some(fields);
@@ -60,7 +62,10 @@ impl Elaborator {
         //    `reg2hw_t` tanpa import eksplisit).
         for items in self.package_symbols.values() {
             if let Some(PackageItem::Typedef(td)) = items.get(&type_sym) {
-                if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                if matches!(
+                    &td.dtype,
+                    DataType::StructType { .. } | DataType::UnionType { .. }
+                ) {
                     let fields = self.compute_struct_fields(&td.dtype);
                     if !fields.is_empty() {
                         return Some(fields);
@@ -285,8 +290,8 @@ impl Elaborator {
     /// `resolve_cast_name_width` (typedef/param package tanpa warning).
     pub(crate) fn port_base_type_width(&self, name: &str) -> Option<usize> {
         Some(match name {
-            "logic" | "wire" | "reg" | "tri" | "tri0" | "tri1" | "wand" | "wor"
-            | "triand" | "trior" | "supply0" | "supply1" | "bit" => 1,
+            "logic" | "wire" | "reg" | "tri" | "tri0" | "tri1" | "wand" | "wor" | "triand"
+            | "trior" | "supply0" | "supply1" | "bit" => 1,
             "byte" => 8,
             "shortint" => 16,
             "int" | "integer" => 32,

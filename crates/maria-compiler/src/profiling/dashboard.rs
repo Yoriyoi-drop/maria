@@ -91,7 +91,11 @@ impl PerfDashboard {
 impl std::fmt::Display for PerfDashboard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "═══ Simulation Performance Dashboard ═══")?;
-        writeln!(f, "Wall-clock:        {:>8.2} s", self.elapsed().as_secs_f64())?;
+        writeln!(
+            f,
+            "Wall-clock:        {:>8.2} s",
+            self.elapsed().as_secs_f64()
+        )?;
         writeln!(
             f,
             "Simulated time:    {:>8} time units",
@@ -113,11 +117,7 @@ impl std::fmt::Display for PerfDashboard {
             self.counters.events_processed,
             self.events_per_delta()
         )?;
-        writeln!(
-            f,
-            "NBA commits:       {:>8}",
-            self.counters.nba_commits
-        )?;
+        writeln!(f, "NBA commits:       {:>8}", self.counters.nba_commits)?;
         writeln!(
             f,
             "Sensitive triggers:{:>8}",

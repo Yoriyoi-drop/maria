@@ -157,8 +157,7 @@ impl MariaConfig {
     /// Muat config dari path file TOML. Error = file tidak terbaca ATAU
     /// TOML tidak valid (agar pengguna sadar config-nya salah sejak awal).
     pub fn load(path: &str) -> Result<MariaConfig, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("config '{}': {}", path, e))?;
+        let content = fs::read_to_string(path).map_err(|e| format!("config '{}': {}", path, e))?;
         toml::from_str(&content).map_err(|e| format!("config '{}' invalid TOML: {}", path, e))
     }
 

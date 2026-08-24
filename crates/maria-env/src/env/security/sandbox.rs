@@ -10,11 +10,17 @@ pub struct FileAccessPolicy {
 
 impl FileAccessPolicy {
     pub fn new() -> Self {
-        FileAccessPolicy { allowed_roots: Vec::new(), allow_any: false }
+        FileAccessPolicy {
+            allowed_roots: Vec::new(),
+            allow_any: false,
+        }
     }
 
     pub fn permissive() -> Self {
-        FileAccessPolicy { allowed_roots: Vec::new(), allow_any: true }
+        FileAccessPolicy {
+            allowed_roots: Vec::new(),
+            allow_any: true,
+        }
     }
 
     pub fn allow_root(&mut self, root: impl Into<PathBuf>) {

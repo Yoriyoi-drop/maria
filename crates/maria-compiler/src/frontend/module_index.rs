@@ -1,7 +1,7 @@
 //! Global Module Index — DashMap-based registry untuk module lookup O(1).
 
-use maria_core::intern::Symbol;
 use dashmap::DashMap;
+use maria_core::intern::Symbol;
 use std::path::PathBuf;
 
 /// Metadata sebuah module dalam index.
@@ -157,7 +157,11 @@ impl ModuleIndex {
         use std::collections::HashMap;
 
         #[derive(Clone, Copy, PartialEq)]
-        enum Color { White, Gray, Black }
+        enum Color {
+            White,
+            Gray,
+            Black,
+        }
 
         let all: Vec<_> = self.module_names();
         let mut adj: HashMap<Symbol, Vec<Symbol>> = HashMap::new();
@@ -167,7 +171,9 @@ impl ModuleIndex {
             name_map.insert(*name, name.as_str().to_string());
             if let Some(entries) = self.modules.get(name) {
                 for (_, meta) in entries.iter() {
-                    adj.entry(*name).or_default().extend(meta.instances.iter().copied());
+                    adj.entry(*name)
+                        .or_default()
+                        .extend(meta.instances.iter().copied());
                 }
             }
         }

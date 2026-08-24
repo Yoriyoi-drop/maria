@@ -2,29 +2,29 @@
 #![allow(clippy::result_large_err)]
 
 mod cli;
-use cli::Cli;
 use clap::Parser as ClapParser;
+use cli::Cli;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use maria_core::animasi::{Phase, PipelineAnimator};
-use maria_compiler::frontend::CompileSession;
-use maria_api::SessionConfig;
 use maria_api::debugger::Debugger;
-use maria_elaboration::elaborator::{ElaborateMode, Elaborator};
-use maria_core::diagnostics::DiagCode;
-use maria_core::diagnostics::DiagLevel;
-use maria_core::error::SimError;
-use maria_ir::LogicVec;
-use maria_parser::lexer::Lexer;
-use maria_parser::Parser;
-use maria_parser::preprocessor::Preprocessor;
 use maria_api::read_project_file;
 use maria_api::simulator::Breakpoint;
 use maria_api::simulator::DebugMode;
 use maria_api::simulator::SimulationEngine;
 use maria_api::simulator::Watchpoint;
 use maria_api::waveform::VcdWriter;
+use maria_api::SessionConfig;
+use maria_compiler::frontend::CompileSession;
+use maria_core::animasi::{Phase, PipelineAnimator};
+use maria_core::diagnostics::DiagCode;
+use maria_core::diagnostics::DiagLevel;
+use maria_core::error::SimError;
+use maria_elaboration::elaborator::{ElaborateMode, Elaborator};
+use maria_ir::LogicVec;
+use maria_parser::lexer::Lexer;
+use maria_parser::preprocessor::Preprocessor;
+use maria_parser::Parser;
 use rayon::prelude::*;
 
 /// Emit a list of diagnostics through TerminalEmitter.
@@ -57,8 +57,8 @@ fn elab_abort_diag(
         Some(l) => format!("{} (first error at {})", message.into(), l),
         None => message.into(),
     };
-    let mut diag = Diagnostic::new(DiagLevel::Error, DiagCode::ModuleNotFound, msg)
-        .with_code_context();
+    let mut diag =
+        Diagnostic::new(DiagLevel::Error, DiagCode::ModuleNotFound, msg).with_code_context();
     if let Some(e) = first_err {
         if let Some(snippet) = &e.source_snippet {
             diag = diag.with_source_snippet(snippet.clone());
@@ -172,7 +172,10 @@ fn check_coverage_threshold(
         eprintln!("warning: {}", msg);
         return Err(SimError::with_diag(DiagCode::SimulationError, msg));
     } else if !quiet {
-        println!("Coverage threshold: {:.1}% >= {:.1}% ✅", branch_pct, threshold);
+        println!(
+            "Coverage threshold: {:.1}% >= {:.1}% ✅",
+            branch_pct, threshold
+        );
     }
     Ok(())
 }
@@ -315,14 +318,22 @@ fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool) -> Result
         println!("\n── Formal Verification Results (BMC bound={}) ──", bound);
     }
 
-    let has_fail = results.iter().any(|(_, r)| matches!(r, FormalResult::Counterexample(_)));
-    let has_error = results.iter().any(|(_, r)| matches!(r, FormalResult::Error(_)));
+    let has_fail = results
+        .iter()
+        .any(|(_, r)| matches!(r, FormalResult::Counterexample(_)));
+    let has_error = results
+        .iter()
+        .any(|(_, r)| matches!(r, FormalResult::Error(_)));
 
     for (name, result) in &results {
-        if quiet { continue; }
+        if quiet {
+            continue;
+        }
         match result {
             FormalResult::Pass => println!("  ✓ PASS: {}", name),
-            FormalResult::Counterexample(d) => println!("  ✗ FAIL: {} — counterexample at depth {}", name, d),
+            FormalResult::Counterexample(d) => {
+                println!("  ✗ FAIL: {} — counterexample at depth {}", name, d)
+            }
             FormalResult::Unknown => println!("  ? UNKNOWN: {}", name),
             FormalResult::Error(e) => println!("  ! ERROR: {} — {}", name, e),
             FormalResult::InductiveProof => println!("  ✓ INDUCTIVE PROOF: {}", name),
@@ -333,16 +344,27 @@ fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool) -> Result
         if results.is_empty() {
             println!("  (no assertions found)");
         }
-        println!("── End of Formal Results ({}/{} passed) ──\n",
-            results.iter().filter(|(_, r)| matches!(r, FormalResult::Pass)).count(),
-            results.len());
+        println!(
+            "── End of Formal Results ({}/{} passed) ──\n",
+            results
+                .iter()
+                .filter(|(_, r)| matches!(r, FormalResult::Pass))
+                .count(),
+            results.len()
+        );
     }
 
     if has_error {
-        return Err(SimError::with_diag(DiagCode::InternalError, "formal verification encountered errors"));
+        return Err(SimError::with_diag(
+            DiagCode::InternalError,
+            "formal verification encountered errors",
+        ));
     }
     if has_fail {
-        return Err(SimError::with_diag(DiagCode::AssertionFailed, "formal verification FAILED — counterexample(s) found"));
+        return Err(SimError::with_diag(
+            DiagCode::AssertionFailed,
+            "formal verification FAILED — counterexample(s) found",
+        ));
     }
     Ok(())
 }
@@ -476,9 +498,8 @@ fn real_main() {
         // [foreign] di-load di run()/run_fast() (pipeline aktual) — bukan di
         // sini (workspace setup hanya seed sources; menghindari load ganda).
     }
-    let mut ws = maria_api::env::WorkspaceContext::open_in(
-        &std::env::current_dir().unwrap_or_default(),
-    );
+    let mut ws =
+        maria_api::env::WorkspaceContext::open_in(&std::env::current_dir().unwrap_or_default());
     ws.set_explicit_sources(cli_sources);
     for d in &cli.incdirs {
         ws.add_incdir(d);
@@ -507,7 +528,10 @@ fn real_main() {
 
     let result = run(cli.clone(), &mut env);
     if cli.gdiag {
-        eprintln!("{}", maria_core::diagnostics::diag_global().coverage_report());
+        eprintln!(
+            "{}",
+            maria_core::diagnostics::diag_global().coverage_report()
+        );
     }
 
     // ── Lifecycle shutdown + ringkasan telemetry ──
@@ -536,26 +560,40 @@ fn load_project_foreign_libs(proj: &maria_api::ProjectFile, cli: &Cli) {
         match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
             Ok(vhpi) => {
                 if !cli.quiet {
-                    println!("  [foreign] VHPI library loaded: {} (abi {:?})", vhpi.path.display(), vhpi.abi);
+                    println!(
+                        "  [foreign] VHPI library loaded: {} (abi {:?})",
+                        vhpi.path.display(),
+                        vhpi.abi
+                    );
                 }
                 if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
                     eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
                 }
             }
-            Err(e) => eprintln!("warning: [foreign] failed to load VHPI library '{}': {}", lib_path, e),
+            Err(e) => eprintln!(
+                "warning: [foreign] failed to load VHPI library '{}': {}",
+                lib_path, e
+            ),
         }
     }
     for lib_path in &proj.pli_libs {
         match maria_api::pli::loader::load_pli_library(lib_path) {
             Ok(pli) => {
                 if !cli.quiet {
-                    println!("  [foreign] PLI library loaded: {} (abi {:?})", pli.path.display(), pli.abi);
+                    println!(
+                        "  [foreign] PLI library loaded: {} (abi {:?})",
+                        pli.path.display(),
+                        pli.abi
+                    );
                 }
                 if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
                     eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
                 }
             }
-            Err(e) => eprintln!("warning: [foreign] failed to load PLI library '{}': {}", lib_path, e),
+            Err(e) => eprintln!(
+                "warning: [foreign] failed to load PLI library '{}': {}",
+                lib_path, e
+            ),
         }
     }
     #[cfg(feature = "dpi")]
@@ -568,12 +606,18 @@ fn load_project_foreign_libs(proj: &maria_api::ProjectFile, cli: &Cli) {
                     println!("  [foreign] DPI library loaded: {}", lib_path);
                 }
             }
-            Err(e) => eprintln!("warning: [foreign] failed to load DPI library '{}': {}", lib_path, e),
+            Err(e) => eprintln!(
+                "warning: [foreign] failed to load DPI library '{}': {}",
+                lib_path, e
+            ),
         }
     }
 }
 
-fn read_source_bytes(path: &Path, inline: &std::collections::HashMap<PathBuf, Vec<u8>>) -> std::io::Result<Vec<u8>> {
+fn read_source_bytes(
+    path: &Path,
+    inline: &std::collections::HashMap<PathBuf, Vec<u8>>,
+) -> std::io::Result<Vec<u8>> {
     if let Some(bytes) = inline.get(path) {
         return Ok(bytes.clone());
     }
@@ -598,7 +642,8 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // File `.mv` di-transpile (lex → parse → check → codegen) menjadi satu
     // buffer SV (svh + sv, baris `` `include `` di-strip) lalu disuntikkan
     // sebagai sumber inline; pipeline normal berjalan tanpa menyentuh disk.
-    let mut inline_src: std::collections::HashMap<PathBuf, Vec<u8>> = std::collections::HashMap::new();
+    let mut inline_src: std::collections::HashMap<PathBuf, Vec<u8>> =
+        std::collections::HashMap::new();
     let mv_files: Vec<String> = sources
         .iter()
         .filter(|s| Path::new(s).extension().map(|e| e == "mv").unwrap_or(false))
@@ -615,9 +660,8 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("design")
                 .to_string();
-            let src = std::fs::read_to_string(p).map_err(|e| {
-                SimError::with_diag(DiagCode::IoError, format!("{}: {}", p, e))
-            })?;
+            let src = std::fs::read_to_string(p)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", p, e)))?;
             items.push((src, base));
         }
         let results = maria_api::mv::transpile_many(&items).map_err(|(i, e)| {
@@ -652,7 +696,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         }
     }
     if !mv_files.is_empty() && !cli.quiet {
-        eprintln!("[MV] transpiled {} .mv file(s) on-the-fly (F9)", mv_files.len());
+        eprintln!(
+            "[MV] transpiled {} .mv file(s) on-the-fly (F9)",
+            mv_files.len()
+        );
     }
 
     if sources.is_empty() && !cli.gui {
@@ -752,8 +799,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // project (ProjectID) agar tidak tercampur antar project. ──
     let micd_root = maria_compiler::micd::MicdDatabase::default_root();
     let proot = std::env::current_dir().unwrap_or_default();
-    let src_paths: Vec<std::path::PathBuf> =
-        sources.iter().map(std::path::PathBuf::from).collect();
+    let src_paths: Vec<std::path::PathBuf> = sources.iter().map(std::path::PathBuf::from).collect();
     let pid = maria_compiler::micd::MicdDatabase::project_id(
         &proot,
         &src_paths,
@@ -765,10 +811,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             .collect::<Vec<_>>(),
     );
     let mut micd = maria_compiler::micd::MicdDatabase::open_project_with_context(
-        &micd_root,
-        &pid,
-        &proot,
-        &src_paths,
+        &micd_root, &pid, &proot, &src_paths,
     );
     // `--cache-clear`: hapus MICD SEBELUM reuse, agar run ini benar-benar
     // full-rebuild (lihat juga blok attach_micd untuk jalur run).
@@ -788,7 +831,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         if let Ok(content) = read_source_bytes(Path::new(path), &inline_src) {
             let h = maria_compiler::cache::compute_checksum(&content);
             // Koreksi correctness: jangan reuse bila header include berubah.
-            let deps_ok = micd.deps_unchanged(std::path::Path::new(path), h).unwrap_or(false);
+            let deps_ok = micd
+                .deps_unchanged(std::path::Path::new(path), h)
+                .unwrap_or(false);
             if deps_ok {
                 if let Some(entry) = micd.get_preprocessed(std::path::Path::new(path), h) {
                     pp_combined[idx] = Some(Ok((entry.combined, entry.timescale)));
@@ -813,9 +858,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     }
     let pp_start = std::time::Instant::now();
     let pp_for_parallel = &base_pp;
-    let fresh_results: Vec<Result<(usize, String, Option<(String, String)>, Vec<PathBuf>), String>> =
-        need_preprocess
-            .par_iter()
+    let fresh_results: Vec<
+        Result<(usize, String, Option<(String, String)>, Vec<PathBuf>), String>,
+    > = need_preprocess
+        .par_iter()
         .map(|(idx, path)| {
             let mut pp = pp_for_parallel.clone();
             // Sumber inline (.mv hasil transpile F8) — preprocess dari buffer
@@ -833,14 +879,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             match pp.preprocess_file(path) {
                 Ok(processed) => {
                     let combined_str = format!("`line 1 \"{}\"\n{}\n", path, processed);
-                    let includes: Vec<PathBuf> =
-                        pp.resolved_includes.iter().cloned().collect();
+                    let includes: Vec<PathBuf> = pp.resolved_includes.iter().cloned().collect();
                     Ok((*idx, combined_str, pp.timescale.clone(), includes))
                 }
                 Err(e) => Err(format!("preprocessor '{}': {}", path, e)),
             }
         })
-            .collect();
+        .collect();
     if !anim_active(&anim) {
         eprintln!("[TIMING] Preprocessing done in {:?}", pp_start.elapsed());
     }
@@ -954,12 +999,15 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     }
 
     if !anim_active(&anim) {
-        eprintln!("[TIMING] Starting lexer (combined size: {} bytes)...", combined.len());
+        eprintln!(
+            "[TIMING] Starting lexer (combined size: {} bytes)...",
+            combined.len()
+        );
     }
     let lex_start = std::time::Instant::now();
     let mut lexer = Lexer::new(&combined);
     let mut tokens = Vec::new();
-    
+
     loop {
         let (tok, line, col) = lexer.next_token();
         if cli.print_tokens {
@@ -971,7 +1019,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         tokens.push((tok, line, col));
     }
     if !anim_active(&anim) {
-        eprintln!("[TIMING] Lexer done: {} tokens in {:?}", tokens.len(), lex_start.elapsed());
+        eprintln!(
+            "[TIMING] Lexer done: {} tokens in {:?}",
+            tokens.len(),
+            lex_start.elapsed()
+        );
     }
     if anim_active(&anim) {
         anim_phase_done(&anim, Phase::Lex);
@@ -979,7 +1031,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     }
 
     if tokens.is_empty() {
-        return Err(SimError::with_diag(DiagCode::InvalidSyntax, "no tokens found (empty source?)"));
+        return Err(SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            "no tokens found (empty source?)",
+        ));
     }
 
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
@@ -1003,7 +1058,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 eprintln!("[TIMING] Parser done in {:?}", parse_start.elapsed());
             }
             d
-        },
+        }
         Err(e) => {
             if !parser.errors.is_empty() {
                 let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
@@ -1023,7 +1078,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             let _ = emitter.emit(diag);
         }
         if has_real_errors && !cli.compile_only {
-            return Err(maria_core::error::SimError::from_parse_diagnostic(parser.errors[0].clone()));
+            return Err(maria_core::error::SimError::from_parse_diagnostic(
+                parser.errors[0].clone(),
+            ));
         }
     }
     let ts_for_ir = design_timescale.clone();
@@ -1143,7 +1200,8 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         for c in &design.classes {
             syms.push((c.name.to_string(), "class".to_string()));
         }
-        let mut def_file: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
+        let mut def_file: std::collections::HashMap<String, PathBuf> =
+            std::collections::HashMap::new();
         let mut all_src: Vec<PathBuf> = sources.iter().map(PathBuf::from).collect();
         all_src.extend(cli.libfiles.iter().map(PathBuf::from));
         for src in &all_src {
@@ -1169,16 +1227,22 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             let mut sig = 0u64;
             sig = sig
                 .wrapping_mul(31)
-                .wrapping_add(maria_compiler::cache::compute_checksum(m.name.as_str().as_bytes()));
+                .wrapping_add(maria_compiler::cache::compute_checksum(
+                    m.name.as_str().as_bytes(),
+                ));
             for p in &m.ports {
                 sig = sig
                     .wrapping_mul(31)
-                    .wrapping_add(maria_compiler::cache::compute_checksum(p.name.as_str().as_bytes()));
+                    .wrapping_add(maria_compiler::cache::compute_checksum(
+                        p.name.as_str().as_bytes(),
+                    ));
             }
             for pr in &m.params {
                 sig = sig
                     .wrapping_mul(31)
-                    .wrapping_add(maria_compiler::cache::compute_checksum(pr.name.as_str().as_bytes()));
+                    .wrapping_add(maria_compiler::cache::compute_checksum(
+                        pr.name.as_str().as_bytes(),
+                    ));
             }
             micd.set_module_type(m.name.to_string(), sig);
             let file = def_file
@@ -1255,8 +1319,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             let mut combined_map = std::collections::HashMap::new();
             for (i, src) in sources.iter().enumerate() {
                 if let Some(Ok((combined_str, _))) = &pp_combined[i] {
-                    combined_map
-                        .insert(std::path::PathBuf::from(src), combined_str.clone());
+                    combined_map.insert(std::path::PathBuf::from(src), combined_str.clone());
                 }
             }
             let include_deps = micd
@@ -1327,7 +1390,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             }
             return Ok(());
         }
-        return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no modules found in design"));
+        return Err(SimError::with_diag(
+            DiagCode::ModuleNotFound,
+            "no modules found in design",
+        ));
     }
 
     let top_name = cli.top.as_deref();
@@ -1359,7 +1425,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         Some(ir) => {
             _from_legacy_cache = true;
             if !cli.quiet && !anim_active(&anim) {
-                eprintln!("[MICD] IR cache hit — elaborator di-skip (top '{}')", ir.top.name);
+                eprintln!(
+                    "[MICD] IR cache hit — elaborator di-skip (top '{}')",
+                    ir.top.name
+                );
             }
             ir
         }
@@ -1377,7 +1446,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 Err(e) => {
                     let diags = elaborator.flush_diagnostics();
                     if anim_active(&anim) {
-                        let w = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+                        let w = diags
+                            .iter()
+                            .filter(|d| d.level == DiagLevel::Warning)
+                            .count();
                         anim_abort(&mut anim, 1, w);
                     }
                     emit_diags(&diags);
@@ -1389,7 +1461,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 anim_phase_done(&anim, Phase::Ela);
                 anim_phase_done(&anim, Phase::Opt);
                 anim_phase_done(&anim, Phase::Ver);
-                let w = elab_diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+                let w = elab_diags
+                    .iter()
+                    .filter(|d| d.level == DiagLevel::Warning)
+                    .count();
                 let e = elab_diags.iter().filter(|d| d.is_error()).count();
                 anim_finish(&mut anim, e == 0, e, w);
             }
@@ -1414,11 +1489,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     let _hierarchy_ok = true; // Checked during elaboration
     let _top_resolution_ok = true; // Checked during elaboration
     let _dpi_linking_ok = true; // Will be checked later
-    
+
     // Check for elaboration errors
     let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
     let has_elab_errors = elab_errs > 0;
-    
+
     // Print readiness check
     if !cli.quiet {
         println!("\nSimulation Readiness");
@@ -1432,14 +1507,17 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         }
         println!("✓ DPI Linking");
         println!();
-        
+
         if has_elab_errors {
             println!("Simulation: NOT READY");
             println!("Simulation aborted.");
             return Err(SimError::Diagnostic(elab_abort_diag(
                 elab_errs,
                 &elab_diags,
-                format!("simulation aborted: {} elaboration error(s) — design not ready", elab_errs),
+                format!(
+                    "simulation aborted: {} elaboration error(s) — design not ready",
+                    elab_errs
+                ),
             )));
         } else if recovered {
             println!("Simulation: NOT READY (analysis mode)");
@@ -1448,7 +1526,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             println!("Simulation: READY");
         }
     }
-    
+
     // ── Gate: jangan simulasikan bila masih ada error elaborasi / module di-skip ──
     // Maria hanya boleh menjalankan simulasi & menulis VCD jika design elaborasi
     // 100% bersih. Error E3001 (module tidak ditemukan / di-skip) termasuk blokir.
@@ -1466,7 +1544,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         return Err(SimError::Diagnostic(elab_abort_diag(
             elab_errs,
             &elab_diags,
-            format!("simulasi dibatalkan: {} error elaborasi — design belum 100% bersih", elab_errs),
+            format!(
+                "simulasi dibatalkan: {} error elaborasi — design belum 100% bersih",
+                elab_errs
+            ),
         )));
     }
 
@@ -1496,9 +1577,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             std::collections::HashMap::new();
         let fb = sources.first().map(PathBuf::from).unwrap_or_default();
         let (elab_designs, elab_design, opt_snapshot) = match elaborator_opt.as_ref() {
-            Some(elab) => {
-                (vec![(&fb, &elab.design)], Some(&elab.design), Some(elab.opt_stats.snapshot()))
-            }
+            Some(elab) => (
+                vec![(&fb, &elab.design)],
+                Some(&elab.design),
+                Some(elab.opt_stats.snapshot()),
+            ),
             // Jalur cache hit: IR di-restore, elaborator tidak hidup —
             // kategori elaborate/generate sudah terisi dari run sebelumnya.
             None => (Vec::new(), None, None),
@@ -1553,7 +1636,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     #[cfg(not(feature = "formal"))]
     if cli.formal {
         eprintln!("Formal verification not available: compile with --features formal");
-        return Err(SimError::with_diag(DiagCode::NotImplemented, "formal feature not enabled"));
+        return Err(SimError::with_diag(
+            DiagCode::NotImplemented,
+            "formal feature not enabled",
+        ));
     }
 
     // ── Compile-only mode: skip simulation & VCD ──
@@ -1586,7 +1672,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             println!("X-propagation mode: {}", mode.as_str());
         }
     } else {
-        return Err(SimError::with_diag(DiagCode::InvalidSyntax, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
+        return Err(SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            format!(
+                "invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere",
+                cli.xprop
+            ),
+        ));
     }
 
     // ── Distributed simulation mode ──
@@ -1636,13 +1728,20 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             println!("SDF timing mode: {}", mode.as_str());
         }
     } else {
-        return Err(SimError::with_diag(DiagCode::InvalidSyntax, format!("invalid --timing-mode '{}': use min, typ, or max", cli.timing_mode)));
+        return Err(SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            format!(
+                "invalid --timing-mode '{}': use min, typ, or max",
+                cli.timing_mode
+            ),
+        ));
     }
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
-        let sdf_data = maria_api::simulator::sdf::SdfData::parse_file(sdf_path)
-            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e)))?;
+        let sdf_data = maria_api::simulator::sdf::SdfData::parse_file(sdf_path).map_err(|e| {
+            SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e))
+        })?;
         engine.annotate_sdf(&sdf_data)?;
         if !cli.quiet {
             println!("SDF annotation loaded from '{}'", sdf_path);
@@ -1657,7 +1756,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     engine.use_timing_wheel = cli.use_timing_wheel;
     engine.glitch_window = cli.glitch_window;
     if cli.glitch_window > 0 && !cli.quiet {
-        println!("Glitch detection enabled (window = {} time units)", cli.glitch_window);
+        println!(
+            "Glitch detection enabled (window = {} time units)",
+            cli.glitch_window
+        );
     }
     if cli.use_timing_wheel && !cli.quiet {
         println!("Timing wheel enabled (O(1) event scheduling)");
@@ -1678,28 +1780,46 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // ── Co-simulation (VHDL/SystemVerilog bridge) ──
     if let Some(cosim_port) = cli.cosim_port {
         // Build signal mapping from --cosim-signals or auto-detect
-        let signal_mapping: Vec<(usize, String, bool)> = if let Some(ref sig_names) = cli.cosim_signals {
-            sig_names.split(',')
-                .filter_map(|name| {
-                    let trimmed = name.trim();
-                    let is_output = trimmed.starts_with('+');
-                    let clean_name = trimmed.trim_start_matches('+');
-                    engine.design.top.signals.iter().position(|s| s.name.as_str() == clean_name)
-                        .map(|id| (id, clean_name.to_string(), is_output))
-                })
-                .collect()
-        } else {
-            // Auto-detect: all output ports are outputs, all input ports are inputs
-            engine.design.top.signals.iter().enumerate()
-                .filter_map(|(id, s)| {
-                    let is_output = matches!(s.kind, maria_ir::SignalKind::Output | maria_ir::SignalKind::Inout);
-                    Some((id, s.name.to_string(), is_output))
-                })
-                .collect()
-        };
+        let signal_mapping: Vec<(usize, String, bool)> =
+            if let Some(ref sig_names) = cli.cosim_signals {
+                sig_names
+                    .split(',')
+                    .filter_map(|name| {
+                        let trimmed = name.trim();
+                        let is_output = trimmed.starts_with('+');
+                        let clean_name = trimmed.trim_start_matches('+');
+                        engine
+                            .design
+                            .top
+                            .signals
+                            .iter()
+                            .position(|s| s.name.as_str() == clean_name)
+                            .map(|id| (id, clean_name.to_string(), is_output))
+                    })
+                    .collect()
+            } else {
+                // Auto-detect: all output ports are outputs, all input ports are inputs
+                engine
+                    .design
+                    .top
+                    .signals
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, s)| {
+                        let is_output = matches!(
+                            s.kind,
+                            maria_ir::SignalKind::Output | maria_ir::SignalKind::Inout
+                        );
+                        Some((id, s.name.to_string(), is_output))
+                    })
+                    .collect()
+            };
 
         if signal_mapping.is_empty() && !cli.quiet {
-            eprintln!("warning: no signals mapped for co-simulation on port {}", cosim_port);
+            eprintln!(
+                "warning: no signals mapped for co-simulation on port {}",
+                cosim_port
+            );
         }
 
         let n_sigs = signal_mapping.len();
@@ -1708,13 +1828,19 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         engine.cosim_signals = signal_mapping.clone();
 
         if !cli.quiet {
-            println!("Co-simulation bridge active on port {} ({} signals)", cosim_port, signal_mapping.len());
+            println!(
+                "Co-simulation bridge active on port {} ({} signals)",
+                cosim_port,
+                signal_mapping.len()
+            );
         }
     }
 
     // Configure signal history disk spill
     if let Some(ref spill_path) = cli.signal_history_spill {
-        engine.signal_history.enable_spill(std::path::PathBuf::from(spill_path));
+        engine
+            .signal_history
+            .enable_spill(std::path::PathBuf::from(spill_path));
         if !cli.quiet {
             println!("Signal history spill to '{}'", spill_path);
         }
@@ -1726,8 +1852,12 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             Ok(mut power_intent) => {
                 power_intent.build_signal_mapping(&engine.design.top.signals);
                 if !cli.quiet {
-                    println!("UPF power intent loaded from '{}' ({} domains, {} supply nets)",
-                        upf_path, power_intent.domains.len(), power_intent.supply_nets.len());
+                    println!(
+                        "UPF power intent loaded from '{}' ({} domains, {} supply nets)",
+                        upf_path,
+                        power_intent.domains.len(),
+                        power_intent.supply_nets.len()
+                    );
                 }
                 engine.power_intent = Some(power_intent);
             }
@@ -1774,7 +1904,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
                 Ok(vhpi) => {
                     if !cli.quiet {
-                        println!("  VHPI library loaded: {} (abi {:?})", vhpi.path.display(), vhpi.abi);
+                        println!(
+                            "  VHPI library loaded: {} (abi {:?})",
+                            vhpi.path.display(),
+                            vhpi.abi
+                        );
                     }
                     if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
                         eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
@@ -1793,7 +1927,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             match maria_api::pli::loader::load_pli_library(lib_path) {
                 Ok(pli) => {
                     if !cli.quiet {
-                        println!("  PLI library loaded: {} (abi {:?})", pli.path.display(), pli.abi);
+                        println!(
+                            "  PLI library loaded: {} (abi {:?})",
+                            pli.path.display(),
+                            pli.abi
+                        );
                     }
                     if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
                         eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
@@ -1866,8 +2004,12 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     let vcd_path = cli
         .output
         .unwrap_or_else(|| format!("{}.vcd", engine.design.top.name));
-    let mut vcd = VcdWriter::new(&vcd_path, &engine.design)
-        .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("VCD creation failed: {}", e)))?;
+    let mut vcd = VcdWriter::new(&vcd_path, &engine.design).map_err(|e| {
+        SimError::with_diag(
+            DiagCode::WaveformError,
+            format!("VCD creation failed: {}", e),
+        )
+    })?;
     if cli.waveform_stream {
         vcd.stream_flush_interval = 1;
         if !cli.quiet {
@@ -1878,8 +2020,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // CSV waveform setup
     if let Some(ref csv_path) = cli.waveform_csv {
-        let csv = maria_api::waveform::CsvWaveWriter::new(csv_path, &engine.design)
-            .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("CSV creation failed: {}", e)))?;
+        let csv =
+            maria_api::waveform::CsvWaveWriter::new(csv_path, &engine.design).map_err(|e| {
+                SimError::with_diag(
+                    DiagCode::WaveformError,
+                    format!("CSV creation failed: {}", e),
+                )
+            })?;
         engine.set_csv(csv);
         if !cli.quiet {
             println!("CSV waveform: {}", csv_path);
@@ -1900,15 +2047,12 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // --restore didefinisikan di cli.rs tapi tidak pernah di-wire.
     if let Some(restore_path) = &cli.restore {
         let path = std::path::Path::new(restore_path);
-        debugger
-            .engine
-            .load_checkpoint(path)
-            .map_err(|e| {
-                SimError::with_diag(
-                    DiagCode::IoError,
-                    format!("checkpoint restore failed: {}", e),
-                )
-            })?;
+        debugger.engine.load_checkpoint(path).map_err(|e| {
+            SimError::with_diag(
+                DiagCode::IoError,
+                format!("checkpoint restore failed: {}", e),
+            )
+        })?;
         if !cli.quiet {
             println!("Checkpoint restored from '{}'", restore_path);
         }
@@ -1933,7 +2077,8 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         if !cli.quiet {
             println!(
                 "\nStarting simulation (max time={}, vcd={})",
-                sim_limit.display(), vcd_path
+                sim_limit.display(),
+                vcd_path
             );
         }
         debugger.run()?;
@@ -2065,8 +2210,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // Signal history stats
     if !cli.quiet && cli.signal_history_spill.is_some() {
         let stats = debugger.engine.signal_history.stats();
-        println!("Signal history: {} mem entries, {} spilled to disk",
-            stats.total_memory_entries, stats.total_spilled_entries);
+        println!(
+            "Signal history: {} mem entries, {} spilled to disk",
+            stats.total_memory_entries, stats.total_spilled_entries
+        );
     }
 
     // Save coverage database if requested
@@ -2078,7 +2225,6 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         } else if !cli.quiet {
             println!("Coverage database saved to '{}'", covdb_path);
         }
-
     }
 
     // Coverage threshold check (CI gate) — berlaku walau tanpa --coverage-ucdb,
@@ -2108,8 +2254,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     if let Some(save_path) = &cli.save {
         let _ = debugger.engine.signal_history.flush();
         let path = std::path::Path::new(save_path);
-        debugger.engine.save_checkpoint(path)
-            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("checkpoint save failed: {}", e)))?;
+        debugger.engine.save_checkpoint(path).map_err(|e| {
+            SimError::with_diag(DiagCode::IoError, format!("checkpoint save failed: {}", e))
+        })?;
         if !cli.quiet {
             println!("Checkpoint saved to '{}'", save_path);
         }
@@ -2141,7 +2288,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
         // Write detailed report
         let path = if cdc_path.is_empty() {
-            format!("{}_cdc_report.txt", debugger.engine.design.top.name.as_str())
+            format!(
+                "{}_cdc_report.txt",
+                debugger.engine.design.top.name.as_str()
+            )
         } else {
             cdc_path.clone()
         };
@@ -2159,7 +2309,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     if debugger.engine.sev_fatal_count > 0 {
         return Err(SimError::with_diag(
             DiagCode::AssertionFailed,
-            format!("$fatal: simulasi dihentikan ({})", debugger.engine.sev_fatal_count),
+            format!(
+                "$fatal: simulasi dihentikan ({})",
+                debugger.engine.sev_fatal_count
+            ),
         ));
     }
 
@@ -2167,8 +2320,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 }
 
 /// Run compilation + simulation using the new parallel pipeline (CompileSession + FastLexer).
-fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
-    env.telemetry().trace("run_fast", "pipeline paralel dimulai");
+fn run_fast(
+    cli: Cli,
+    _timescale: Option<(String, String)>,
+    env: &mut maria_api::env::GlobalEnv,
+) -> Result<(), SimError> {
+    env.telemetry()
+        .trace("run_fast", "pipeline paralel dimulai");
     let mut sources: Vec<PathBuf> = cli.files.iter().map(PathBuf::from).collect();
     if let Some(ref fpath) = cli.filelist {
         let flist = read_project_file(fpath)?;
@@ -2289,7 +2447,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         let (_design, _ir_design, index_len) = session.compile_and_elaborate(top_name)?;
         if !cli.quiet {
             session.print_timing();
-            println!("Modules indexed: {}, lazy HIR modules: {}", index_len, session.lazy_elaborated_count());
+            println!(
+                "Modules indexed: {}, lazy HIR modules: {}",
+                index_len,
+                session.lazy_elaborated_count()
+            );
         }
         micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
         return Ok(());
@@ -2302,16 +2464,22 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         anim_set_files(&anim, session.config.sources.len() as u64, 0);
     }
     let (design, index_len) = if cli.recompile {
-        if !cli.quiet && !anim_active(&anim) { eprintln!("Forcing full recompile..."); }
+        if !cli.quiet && !anim_active(&anim) {
+            eprintln!("Forcing full recompile...");
+        }
         let all_sources: Vec<PathBuf> = session.config.sources.clone();
         let (design, module_index) = session.compile_incremental(&all_sources)?;
         let index_len = module_index.len();
-        if !cli.quiet && !anim_active(&anim) { session.print_timing(); }
+        if !cli.quiet && !anim_active(&anim) {
+            session.print_timing();
+        }
         (design, index_len)
     } else {
         let (design, module_index) = session.compile()?;
         let index_len = module_index.len();
-        if !cli.quiet && !anim_active(&anim) { session.print_timing(); }
+        if !cli.quiet && !anim_active(&anim) {
+            session.print_timing();
+        }
         (design, index_len)
     };
 
@@ -2324,7 +2492,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         anim_phase_done(&anim, Phase::Lex);
         anim_phase_done(&anim, Phase::Par);
         anim_set_modules(&anim, design.modules.len() as u64);
-        anim_set_files(&anim, session.config.sources.len() as u64, session.config.sources.len() as u64);
+        anim_set_files(
+            &anim,
+            session.config.sources.len() as u64,
+            session.config.sources.len() as u64,
+        );
     }
 
     // ── MICD: simpan hasil parse SEGERA (sebelum elaborate) agar cache
@@ -2348,7 +2520,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
             return Ok(());
         }
-        return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no modules found in design"));
+        return Err(SimError::with_diag(
+            DiagCode::ModuleNotFound,
+            "no modules found in design",
+        ));
     }
     if cli.print_ast {
         println!("{:#?}", design);
@@ -2393,7 +2568,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             anim_finish(&mut anim, true, e, 0);
         }
         if !cli.quiet && !anim_active(&anim) {
-            eprintln!("[MICD] IR cache hit — elaborator di-skip (top '{}')", ir_design.top.name);
+            eprintln!(
+                "[MICD] IR cache hit — elaborator di-skip (top '{}')",
+                ir_design.top.name
+            );
         }
     } else {
         let (source_lines, source_file) = session.source_info().unwrap_or_default();
@@ -2412,7 +2590,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             Err(e) => {
                 let diags = elab.flush_diagnostics();
                 if anim_active(&anim) {
-                    let w = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+                    let w = diags
+                        .iter()
+                        .filter(|d| d.level == DiagLevel::Warning)
+                        .count();
                     anim_abort(&mut anim, 1, w);
                 }
                 emit_diags(&diags);
@@ -2424,7 +2605,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             anim_phase_done(&anim, Phase::Ela);
             anim_phase_done(&anim, Phase::Opt);
             anim_phase_done(&anim, Phase::Ver);
-            let w = elab_diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+            let w = elab_diags
+                .iter()
+                .filter(|d| d.level == DiagLevel::Warning)
+                .count();
             let e = elab_diags.iter().filter(|d| d.is_error()).count();
             anim_finish(&mut anim, e == 0, e, w);
         }
@@ -2441,7 +2625,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     // ── Simulation Readiness Check (Rule 6) ──
     let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
     let has_elab_errors = elab_errs > 0;
-    
+
     if !cli.quiet {
         println!("\nSimulation Readiness");
         println!("✓ Parse");
@@ -2454,14 +2638,17 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         }
         println!("✓ DPI Linking");
         println!();
-        
+
         if has_elab_errors {
             println!("Simulation: NOT READY");
             println!("Simulation aborted.");
             return Err(SimError::Diagnostic(elab_abort_diag(
                 elab_errs,
                 &elab_diags,
-                format!("simulation aborted: {} elaboration error(s) — design not ready", elab_errs),
+                format!(
+                    "simulation aborted: {} elaboration error(s) — design not ready",
+                    elab_errs
+                ),
             )));
         } else if recovered {
             println!("Simulation: NOT READY (analysis mode)");
@@ -2470,7 +2657,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             println!("Simulation: READY");
         }
     }
-    
+
     // ── Gate: jangan simulasikan bila masih ada error elaborasi / module di-skip ──
     if elab_errs > 0 && !cli.force_sim {
         if !cli.quiet {
@@ -2485,7 +2672,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         return Err(SimError::Diagnostic(elab_abort_diag(
             elab_errs,
             &elab_diags,
-            format!("simulasi dibatalkan: {} error elaborasi — design belum 100% bersih", elab_errs),
+            format!(
+                "simulasi dibatalkan: {} error elaborasi — design belum 100% bersih",
+                elab_errs
+            ),
         )));
     }
 
@@ -2509,10 +2699,15 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     // ikut disimpan (db.md "6. optimize/", "10. expression/"). Jalur cache
     // hit melewati blok ini — IR sudah tersimpan dari run sebelumnya.
     if !from_cache {
-        let elab = elab_opt.as_ref().expect("elaborator pada jalur elaborasi penuh");
-        session.save_elaborate_cache(&ir_design, Some(&elab.design), Some(elab.opt_stats.snapshot()));
+        let elab = elab_opt
+            .as_ref()
+            .expect("elaborator pada jalur elaborasi penuh");
+        session.save_elaborate_cache(
+            &ir_design,
+            Some(&elab.design),
+            Some(elab.opt_stats.snapshot()),
+        );
     }
-
 
     if !cli.quiet {
         println!("Modules indexed: {}", index_len);
@@ -2520,14 +2715,19 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
 
     // Configure remote cache backend
     if let Some(ref remote_dir) = cli.cache_remote_dir {
-        let sync_mode = maria_compiler::cache::cache_manager::RemoteSyncMode::from_str(&cli.cache_remote_sync);
+        let sync_mode =
+            maria_compiler::cache::cache_manager::RemoteSyncMode::from_str(&cli.cache_remote_sync);
         match maria_compiler::cache::FilesystemCache::new(remote_dir) {
             Ok(backend) => {
                 let remote: std::sync::Arc<dyn maria_compiler::cache::RemoteCacheBackend> =
                     std::sync::Arc::new(backend);
                 session.set_remote_cache(remote, sync_mode);
                 if !cli.quiet {
-                    eprintln!("Remote cache enabled: {} (sync: {})", remote_dir, sync_mode.as_str());
+                    eprintln!(
+                        "Remote cache enabled: {} (sync: {})",
+                        remote_dir,
+                        sync_mode.as_str()
+                    );
                 }
             }
             Err(e) => {
@@ -2588,7 +2788,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     #[cfg(not(feature = "formal"))]
     if cli.formal {
         eprintln!("Formal verification not available: compile with --features formal");
-        return Err(SimError::with_diag(DiagCode::NotImplemented, "formal feature not enabled"));
+        return Err(SimError::with_diag(
+            DiagCode::NotImplemented,
+            "formal feature not enabled",
+        ));
     }
 
     if cli.compile_only {
@@ -2620,7 +2823,13 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             println!("X-propagation mode: {}", mode.as_str());
         }
     } else {
-        return Err(SimError::with_diag(DiagCode::InvalidSyntax, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
+        return Err(SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            format!(
+                "invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere",
+                cli.xprop
+            ),
+        ));
     }
 
     // Default: unlimited — berhenti saat $finish/$fatal; user bisa membatasi
@@ -2634,8 +2843,9 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
-        let sdf_data = maria_api::simulator::sdf::SdfData::parse_file(sdf_path)
-            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e)))?;
+        let sdf_data = maria_api::simulator::sdf::SdfData::parse_file(sdf_path).map_err(|e| {
+            SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e))
+        })?;
         engine.annotate_sdf(&sdf_data)?;
         if !cli.quiet {
             println!("SDF annotation loaded from '{}'", sdf_path);
@@ -2650,7 +2860,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     engine.use_timing_wheel = cli.use_timing_wheel;
     engine.glitch_window = cli.glitch_window;
     if cli.glitch_window > 0 && !cli.quiet {
-        println!("Glitch detection enabled (window = {} time units)", cli.glitch_window);
+        println!(
+            "Glitch detection enabled (window = {} time units)",
+            cli.glitch_window
+        );
     }
 
     // ── SIM-18: auto-checkpoint berkala (crash recovery) ──
@@ -2664,7 +2877,9 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
 
     // Configure signal history disk spill
     if let Some(ref spill_path) = cli.signal_history_spill {
-        engine.signal_history.enable_spill(std::path::PathBuf::from(spill_path));
+        engine
+            .signal_history
+            .enable_spill(std::path::PathBuf::from(spill_path));
         if !cli.quiet {
             println!("Signal history spill to '{}'", spill_path);
         }
@@ -2676,8 +2891,12 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             Ok(mut power_intent) => {
                 power_intent.build_signal_mapping(&engine.design.top.signals);
                 if !cli.quiet {
-                    println!("UPF power intent loaded from '{}' ({} domains, {} supply nets)",
-                        upf_path, power_intent.domains.len(), power_intent.supply_nets.len());
+                    println!(
+                        "UPF power intent loaded from '{}' ({} domains, {} supply nets)",
+                        upf_path,
+                        power_intent.domains.len(),
+                        power_intent.supply_nets.len()
+                    );
                 }
                 engine.power_intent = Some(power_intent);
             }
@@ -2722,7 +2941,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
                 Ok(vhpi) => {
                     if !cli.quiet {
-                        println!("  VHPI library loaded: {} (abi {:?})", vhpi.path.display(), vhpi.abi);
+                        println!(
+                            "  VHPI library loaded: {} (abi {:?})",
+                            vhpi.path.display(),
+                            vhpi.abi
+                        );
                     }
                     if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
                         eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
@@ -2741,7 +2964,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             match maria_api::pli::loader::load_pli_library(lib_path) {
                 Ok(pli) => {
                     if !cli.quiet {
-                        println!("  PLI library loaded: {} (abi {:?})", pli.path.display(), pli.abi);
+                        println!(
+                            "  PLI library loaded: {} (abi {:?})",
+                            pli.path.display(),
+                            pli.abi
+                        );
                     }
                     if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
                         eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
@@ -2810,8 +3037,12 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     let vcd_path = cli
         .output
         .unwrap_or_else(|| format!("{}.vcd", &engine.design.top.name.to_string()));
-    let mut vcd = VcdWriter::new(&vcd_path, &engine.design)
-        .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("VCD creation failed: {}", e)))?;
+    let mut vcd = VcdWriter::new(&vcd_path, &engine.design).map_err(|e| {
+        SimError::with_diag(
+            DiagCode::WaveformError,
+            format!("VCD creation failed: {}", e),
+        )
+    })?;
     if cli.waveform_stream {
         vcd.stream_flush_interval = 1;
         if !cli.quiet {
@@ -2822,8 +3053,13 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
 
     // CSV waveform setup (fast path)
     if let Some(ref csv_path) = cli.waveform_csv {
-        let csv = maria_api::waveform::CsvWaveWriter::new(csv_path, &engine.design)
-            .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("CSV creation failed: {}", e)))?;
+        let csv =
+            maria_api::waveform::CsvWaveWriter::new(csv_path, &engine.design).map_err(|e| {
+                SimError::with_diag(
+                    DiagCode::WaveformError,
+                    format!("CSV creation failed: {}", e),
+                )
+            })?;
         engine.set_csv(csv);
         if !cli.quiet {
             println!("CSV waveform: {}", csv_path);
@@ -2843,15 +3079,12 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     // --restore didefinisikan di cli.rs tapi tidak pernah di-wire.
     if let Some(restore_path) = &cli.restore {
         let path = std::path::Path::new(restore_path);
-        debugger
-            .engine
-            .load_checkpoint(path)
-            .map_err(|e| {
-                SimError::with_diag(
-                    DiagCode::IoError,
-                    format!("checkpoint restore failed: {}", e),
-                )
-            })?;
+        debugger.engine.load_checkpoint(path).map_err(|e| {
+            SimError::with_diag(
+                DiagCode::IoError,
+                format!("checkpoint restore failed: {}", e),
+            )
+        })?;
         if !cli.quiet {
             println!("Checkpoint restored from '{}'", restore_path);
         }
@@ -2884,7 +3117,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     }
 
     if !cli.quiet {
-        println!("\nSimulation completed at time {}", debugger.engine.state.time);
+        println!(
+            "\nSimulation completed at time {}",
+            debugger.engine.state.time
+        );
     }
 
     // Flush runtime diagnostics (warnings, etc.)
@@ -2975,8 +3211,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     // Signal history stats
     if !cli.quiet && cli.signal_history_spill.is_some() {
         let stats = debugger.engine.signal_history.stats();
-        println!("Signal history: {} mem entries, {} spilled to disk",
-            stats.total_memory_entries, stats.total_spilled_entries);
+        println!(
+            "Signal history: {} mem entries, {} spilled to disk",
+            stats.total_memory_entries, stats.total_spilled_entries
+        );
     }
 
     // Save coverage database if requested
@@ -2988,7 +3226,6 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         } else if !cli.quiet {
             println!("Coverage database saved to '{}'", covdb_path);
         }
-
     }
 
     // Coverage threshold check (CI gate) — berlaku walau tanpa --coverage-ucdb,
@@ -3018,8 +3255,9 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     if let Some(save_path) = &cli.save {
         let _ = debugger.engine.signal_history.flush();
         let path = std::path::Path::new(save_path);
-        debugger.engine.save_checkpoint(path)
-            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("checkpoint save failed: {}", e)))?;
+        debugger.engine.save_checkpoint(path).map_err(|e| {
+            SimError::with_diag(DiagCode::IoError, format!("checkpoint save failed: {}", e))
+        })?;
         if !cli.quiet {
             println!("Checkpoint saved to '{}'", save_path);
         }
@@ -3029,7 +3267,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     if debugger.engine.sev_fatal_count > 0 {
         return Err(SimError::with_diag(
             DiagCode::AssertionFailed,
-            format!("$fatal: simulasi dihentikan ({})", debugger.engine.sev_fatal_count),
+            format!(
+                "$fatal: simulasi dihentikan ({})",
+                debugger.engine.sev_fatal_count
+            ),
         ));
     }
 
@@ -3043,22 +3284,32 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
 fn dispatch_inspect(a: &crate::cli::MinspectArgs) -> ! {
     // Subcommand output bisa di posisi pertama (tools.md: `minspect stats`)
     const CMDS: [&str; 9] = [
-        "stats", "modules", "hierarchy", "packages", "classes", "interfaces", "parameters", "deps", "cache",
+        "stats",
+        "modules",
+        "hierarchy",
+        "packages",
+        "classes",
+        "interfaces",
+        "parameters",
+        "deps",
+        "cache",
     ];
-    let (command, targets): (Option<String>, Vec<String>) =
-        match (a.targets.first().map(|s| s.as_str()), a.targets.last().map(|s| s.as_str())) {
-            // Command di posisi pertama: `minspect stats rtl/`
-            (Some(first), _) if CMDS.contains(&first) => {
-                (Some(first.to_string()), a.targets[1..].to_vec())
-            }
-            // Command di posisi terakhir: `minspect rtl/ stats`
-            (_, Some(last)) if CMDS.contains(&last) && a.targets.len() > 1 => {
-                let mut t = a.targets.clone();
-                t.pop();
-                (Some(last.to_string()), t)
-            }
-            _ => (None, a.targets.clone()),
-        };
+    let (command, targets): (Option<String>, Vec<String>) = match (
+        a.targets.first().map(|s| s.as_str()),
+        a.targets.last().map(|s| s.as_str()),
+    ) {
+        // Command di posisi pertama: `minspect stats rtl/`
+        (Some(first), _) if CMDS.contains(&first) => {
+            (Some(first.to_string()), a.targets[1..].to_vec())
+        }
+        // Command di posisi terakhir: `minspect rtl/ stats`
+        (_, Some(last)) if CMDS.contains(&last) && a.targets.len() > 1 => {
+            let mut t = a.targets.clone();
+            t.pop();
+            (Some(last.to_string()), t)
+        }
+        _ => (None, a.targets.clone()),
+    };
     let args = maria_api::tools::inspect::InspectArgs {
         targets: &targets,
         command,
@@ -3137,20 +3388,24 @@ fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
             inputs: inputs.clone(),
             output: output.clone(),
         },
-        crate::cli::MwaveCmd::Export { input, format, output } => {
-            maria_api::tools::wave::WaveArgs::Export {
-                input: input.clone(),
-                format: format.clone(),
-                output: output.clone(),
-            }
-        }
-        crate::cli::MwaveCmd::Filter { input, signals, output } => {
-            maria_api::tools::wave::WaveArgs::Filter {
-                input: input.clone(),
-                signals: signals.clone(),
-                output: output.clone(),
-            }
-        }
+        crate::cli::MwaveCmd::Export {
+            input,
+            format,
+            output,
+        } => maria_api::tools::wave::WaveArgs::Export {
+            input: input.clone(),
+            format: format.clone(),
+            output: output.clone(),
+        },
+        crate::cli::MwaveCmd::Filter {
+            input,
+            signals,
+            output,
+        } => maria_api::tools::wave::WaveArgs::Filter {
+            input: input.clone(),
+            signals: signals.clone(),
+            output: output.clone(),
+        },
         crate::cli::MwaveCmd::Compare { a, b } => maria_api::tools::wave::WaveArgs::Compare {
             a: a.clone(),
             b: b.clone(),
@@ -3166,6 +3421,10 @@ fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
         },
         crate::cli::MwaveCmd::Stats { input } => maria_api::tools::wave::WaveArgs::Stats {
             input: input.clone(),
+        },
+        crate::cli::MwaveCmd::Decode { input, proto } => maria_api::tools::wave::WaveArgs::Decode {
+            input: input.clone(),
+            proto: proto.clone(),
         },
     };
     exit_tool(maria_api::tools::wave::run(&args));
@@ -3269,9 +3528,8 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
         // BUKAN section di project .maria — ekstensi .maria dipakai MICD
         // dan file list; konfigurasi emulator hidup di file sendiri.
         let cfg: EmuConfig = match &a.config {
-            Some(path) => EmuConfig::load_file(std::path::Path::new(path)).map_err(|e| {
-                SimError::with_diag(DiagCode::InvalidSyntax, e)
-            })?,
+            Some(path) => EmuConfig::load_file(std::path::Path::new(path))
+                .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?,
             None => EmuConfig::default(),
         };
 
@@ -3280,14 +3538,8 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
         let mut memmap = MemoryMap::new();
         if let Some(ram) = cfg.ram {
             let (base, size) = (ram.base, ram.size);
-            let region = RamRegion::new(
-                Symbol::intern("ram"),
-                base,
-                size,
-                RegionKind::Ram,
-                true,
-            )
-            .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+            let region = RamRegion::new(Symbol::intern("ram"), base, size, RegionKind::Ram, true)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
             memmap
                 .add(region)
                 .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
@@ -3303,15 +3555,21 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                     "--boot-iso butuh region RAM — definisikan ram = { base, size } di config .meu (mis. 0x0:0x100000)",
                 ));
             }
-            let bytes = std::fs::read(iso_path)
-                .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e)))?;
+            let bytes = std::fs::read(iso_path).map_err(|e| {
+                SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e))
+            })?;
             if bytes.len() < 512 {
-                return Err(SimError::with_diag(DiagCode::InvalidSyntax, "ISO terlalu kecil (min 512 byte)"));
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "ISO terlalu kecil (min 512 byte)",
+                ));
             }
             // MBR (sektor 0) ke 0x7c00 — konvensi boot BIOS
             let mut cpu = maria_api::emu::cpu::x86::X86Cpu::new();
-            cpu.disk = Some(Box::new(maria_api::emu::cpu::x86::FileDisk::open(iso_path)
-                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?));
+            cpu.disk = Some(Box::new(
+                maria_api::emu::cpu::x86::FileDisk::open(iso_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?,
+            ));
             cpu.load_boot_sector(&mut memmap, &bytes[..512])
                 .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e.reason))?;
             let max_steps = a.max_steps.unwrap_or(50_000);
@@ -3337,7 +3595,11 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
 
         // Top untuk open_elaborated (targets): --top > config > --rtl-cpu-top
         // (saat mesin dijalankan dari RTL, top SoC sudah jelas dari flag CPU).
-        let top = a.top.as_deref().or(cfg.top.as_deref()).or(a.rtl_cpu_top.as_deref());
+        let top = a
+            .top
+            .as_deref()
+            .or(cfg.top.as_deref())
+            .or(a.rtl_cpu_top.as_deref());
         let (_session, _design, ir) = maria_api::tools::open_elaborated(
             &a.targets,
             &a.incdirs,
@@ -3410,8 +3672,9 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             }
             let bytes = std::fs::read(path)
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", path, e)))?;
-            let entry = maria_api::emu::elf::load_elf(&bytes, &mut memmap)
-                .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("ELF '{}': {}", path, e)))?;
+            let entry = maria_api::emu::elf::load_elf(&bytes, &mut memmap).map_err(|e| {
+                SimError::with_diag(DiagCode::InvalidSyntax, format!("ELF '{}': {}", path, e))
+            })?;
             out.push_str(&format!(
                 "\nELF loaded: '{}' entry=0x{:x} ({} region(s))\n",
                 path,
@@ -3525,4 +3788,3 @@ fn exit_tool(result: Result<(), SimError>) -> ! {
     }
     process::exit(0);
 }
-

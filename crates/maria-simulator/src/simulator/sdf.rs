@@ -60,7 +60,11 @@ impl MinTypMax {
     }
 
     pub fn single(val: f64) -> Self {
-        MinTypMax { min: val, typ: val, max: val }
+        MinTypMax {
+            min: val,
+            typ: val,
+            max: val,
+        }
     }
 
     /// Get the value for the given timing mode.
@@ -249,11 +253,19 @@ impl SdfData {
                                 // Skip to matching )
                                 let mut depth = 0;
                                 while pos < tokens.len() {
-                                    if tokens[pos] == "(" { depth += 1; }
-                                    if tokens[pos] == ")" { depth -= 1; }
-                                    if depth < 0 { break; }
+                                    if tokens[pos] == "(" {
+                                        depth += 1;
+                                    }
+                                    if tokens[pos] == ")" {
+                                        depth -= 1;
+                                    }
+                                    if depth < 0 {
+                                        break;
+                                    }
                                     pos += 1;
-                                    if depth == 0 { break; }
+                                    if depth == 0 {
+                                        break;
+                                    }
                                 }
                                 pos
                             }
@@ -271,11 +283,19 @@ impl SdfData {
                             Err(_) => {
                                 let mut depth = 0;
                                 while pos < tokens.len() {
-                                    if tokens[pos] == "(" { depth += 1; }
-                                    if tokens[pos] == ")" { depth -= 1; }
-                                    if depth < 0 { break; }
+                                    if tokens[pos] == "(" {
+                                        depth += 1;
+                                    }
+                                    if tokens[pos] == ")" {
+                                        depth -= 1;
+                                    }
+                                    if depth < 0 {
+                                        break;
+                                    }
                                     pos += 1;
-                                    if depth == 0 { break; }
+                                    if depth == 0 {
+                                        break;
+                                    }
                                 }
                                 pos
                             }
@@ -290,11 +310,19 @@ impl SdfData {
                             Err(_) => {
                                 let mut depth = 0;
                                 while pos < tokens.len() {
-                                    if tokens[pos] == "(" { depth += 1; }
-                                    if tokens[pos] == ")" { depth -= 1; }
-                                    if depth < 0 { break; }
+                                    if tokens[pos] == "(" {
+                                        depth += 1;
+                                    }
+                                    if tokens[pos] == ")" {
+                                        depth -= 1;
+                                    }
+                                    if depth < 0 {
+                                        break;
+                                    }
                                     pos += 1;
-                                    if depth == 0 { break; }
+                                    if depth == 0 {
+                                        break;
+                                    }
                                 }
                                 pos
                             }
@@ -304,11 +332,19 @@ impl SdfData {
                         // Skip INTERCONNECT statements (not yet supported)
                         let mut inner = 0;
                         while pos < tokens.len() {
-                            if tokens[pos] == "(" { inner += 1; }
-                            if tokens[pos] == ")" { inner -= 1; }
-                            if inner < 0 { break; }
+                            if tokens[pos] == "(" {
+                                inner += 1;
+                            }
+                            if tokens[pos] == ")" {
+                                inner -= 1;
+                            }
+                            if inner < 0 {
+                                break;
+                            }
                             pos += 1;
-                            if inner == 0 { break; }
+                            if inner == 0 {
+                                break;
+                            }
                         }
                     }
                     _ => {
@@ -378,34 +414,51 @@ fn tokenize(content: &str) -> Vec<String> {
         }
         match c {
             '/' if chars.peek() == Some(&'*') => {
-                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
                 chars.next();
                 in_block_comment = true;
             }
             '/' if chars.peek() == Some(&'/') => {
-                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
                 in_line_comment = true;
             }
             '(' | ')' => {
-                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
                 tokens.push(c.to_string());
             }
             '"' => {
-                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
                 in_string = true;
             }
             ':' | '\\' => {
                 current.push(c);
             }
             ' ' | '\t' | '\r' | '\n' => {
-                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
             }
             _ => {
                 current.push(c);
             }
         }
     }
-    if !current.is_empty() { tokens.push(current); }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
     tokens
 }
 
@@ -432,15 +485,25 @@ fn parse_min_typ_max(tokens: &[String], pos: &mut usize) -> Result<MinTypMax, St
         return Ok(MinTypMax::single(val));
     }
 
-    Err(format!("expected numeric value at token {}: '{}'", start, token))
+    Err(format!(
+        "expected numeric value at token {}: '{}'",
+        start, token
+    ))
 }
 
 /// Parse a "min:typ:max" triple from a single token (after backslash continuation).
 fn parse_triple_token(token: &str) -> Option<MinTypMax> {
     let parts: Vec<String> = if token.contains('\\') {
         // Handle continuation lines
-        let cleaned: String = token.chars().filter(|&c| c != '\\' && c != '\n' && c != '\r').collect();
-        cleaned.split(':').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        let cleaned: String = token
+            .chars()
+            .filter(|&c| c != '\\' && c != '\n' && c != '\r')
+            .collect();
+        cleaned
+            .split(':')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
     } else {
         token.split(':').map(|s| s.trim().to_string()).collect()
     };
@@ -496,7 +559,9 @@ fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) 
         // Only decrement depth for ) — child ( are tracked + consumed by inner skip
         if tokens[pos] == ")" {
             depth -= 1;
-            if depth == 0 { break; }
+            if depth == 0 {
+                break;
+            }
             pos += 1;
             continue;
         }
@@ -505,13 +570,34 @@ fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) 
             let keyword = &tokens[pos + 1];
             let label = &tokens[pos + 2];
             let known = match keyword.as_str() {
-                "SDFVERSION" => { sdf.sdf_version = Some(label.trim_matches('"').to_string()); true }
-                "DESIGN" => { sdf.design_name = Some(label.trim_matches('"').to_string()); true }
-                "DATE" => { sdf.date = Some(label.trim_matches('"').to_string()); true }
-                "VENDOR" => { sdf.vendor = Some(label.trim_matches('"').to_string()); true }
-                "PROGRAM" => { sdf.program_name = Some(label.trim_matches('"').to_string()); true }
-                "VERSION" => { sdf.program_version = Some(label.trim_matches('"').to_string()); true }
-                "DIVIDER" => { sdf.hier_divider = Some(label.trim_matches('"').to_string()); true }
+                "SDFVERSION" => {
+                    sdf.sdf_version = Some(label.trim_matches('"').to_string());
+                    true
+                }
+                "DESIGN" => {
+                    sdf.design_name = Some(label.trim_matches('"').to_string());
+                    true
+                }
+                "DATE" => {
+                    sdf.date = Some(label.trim_matches('"').to_string());
+                    true
+                }
+                "VENDOR" => {
+                    sdf.vendor = Some(label.trim_matches('"').to_string());
+                    true
+                }
+                "PROGRAM" => {
+                    sdf.program_name = Some(label.trim_matches('"').to_string());
+                    true
+                }
+                "VERSION" => {
+                    sdf.program_version = Some(label.trim_matches('"').to_string());
+                    true
+                }
+                "DIVIDER" => {
+                    sdf.hier_divider = Some(label.trim_matches('"').to_string());
+                    true
+                }
                 "VOLTAGE" => {
                     let val = label.trim_matches('"').parse::<f64>().ok();
                     sdf.voltage = val;
@@ -527,25 +613,38 @@ fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) 
                     sdf.temperature = val;
                     true
                 }
-                "TIMESCALE" => { sdf.timescale = Some(label.trim_matches('"').to_string()); true }
+                "TIMESCALE" => {
+                    sdf.timescale = Some(label.trim_matches('"').to_string());
+                    true
+                }
                 _ => false,
             };
             if known {
                 // Skip to matching ) — consume the (keyword value) construct
                 let mut inner = 0;
                 while pos < tokens.len() {
-                    if tokens[pos] == "(" { inner += 1; }
-                    if tokens[pos] == ")" { inner -= 1; }
-                    if inner < 0 { break; }
+                    if tokens[pos] == "(" {
+                        inner += 1;
+                    }
+                    if tokens[pos] == ")" {
+                        inner -= 1;
+                    }
+                    if inner < 0 {
+                        break;
+                    }
                     pos += 1;
-                    if inner == 0 { break; }
+                    if inner == 0 {
+                        break;
+                    }
                 }
                 continue;
             }
         }
         pos += 1;
     }
-    if pos < tokens.len() { pos += 1; }
+    if pos < tokens.len() {
+        pos += 1;
+    }
     pos
 }
 
@@ -554,7 +653,11 @@ fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) 
 /// Parse `(PULSE (PULSE_WIDTH (PORT "x") (1.0:2.0:3.0)))` — SIM-09.
 /// Port bisa dikutip (`"x"`) atau bare; delay skalar/triple. Satu PULSE
 /// construct bisa berisi banyak PULSE_WIDTH (per-port).
-fn parse_pulse_construct(tokens: &[String], mut pos: usize, out: &mut HashMap<String, PulseControl>) -> usize {
+fn parse_pulse_construct(
+    tokens: &[String],
+    mut pos: usize,
+    out: &mut HashMap<String, PulseControl>,
+) -> usize {
     // Struktur: `( PULSE ( PULSE_WIDTH ( PORT "q" ) ( 1.0:2.0:3.0 ) ) )`.
     // Scan semua PULSE_WIDTH child; kembalikan pos SETELAH `)` penutup PULSE
     // (depth balance eksplisit — hindari menelan construct berikutnya).
@@ -571,9 +674,15 @@ fn parse_pulse_construct(tokens: &[String], mut pos: usize, out: &mut HashMap<St
                 let mut signal = String::new();
                 let mut width = MinTypMax::single(0.0);
                 while p < tokens.len() && inner > 0 {
-                    if tokens[p] == "(" { inner += 1; }
-                    if tokens[p] == ")" { inner -= 1; }
-                    if inner == 0 { break; }
+                    if tokens[p] == "(" {
+                        inner += 1;
+                    }
+                    if tokens[p] == ")" {
+                        inner -= 1;
+                    }
+                    if inner == 0 {
+                        break;
+                    }
                     let trimmed = tokens[p].trim_matches('"');
                     if trimmed == "PORT" {
                         // Struktur `( PORT q )` — nama signal ada di p+1.
@@ -582,7 +691,10 @@ fn parse_pulse_construct(tokens: &[String], mut pos: usize, out: &mut HashMap<St
                         }
                     } else if let Some(mtm) = parse_triple_token(&tokens[p]) {
                         width = mtm;
-                    } else if tokens[p].parse::<f64>().is_ok() && width.min == 0.0 && width.typ == 0.0 {
+                    } else if tokens[p].parse::<f64>().is_ok()
+                        && width.min == 0.0
+                        && width.typ == 0.0
+                    {
                         width = MinTypMax::single(tokens[p].parse::<f64>().unwrap_or(0.0));
                     }
                     p += 1;
@@ -609,7 +721,9 @@ fn parse_pulse_construct(tokens: &[String], mut pos: usize, out: &mut HashMap<St
         }
         pos += 1;
     }
-    if pos < tokens.len() { pos += 1; }
+    if pos < tokens.len() {
+        pos += 1;
+    }
     pos
 }
 
@@ -629,9 +743,15 @@ fn parse_cell(
 
     let mut depth = 1;
     while pos < tokens.len() && depth > 0 {
-        if tokens[pos] == "(" { depth += 1; }
-        if tokens[pos] == ")" { depth -= 1; }
-        if depth == 0 { break; }
+        if tokens[pos] == "(" {
+            depth += 1;
+        }
+        if tokens[pos] == ")" {
+            depth -= 1;
+        }
+        if depth == 0 {
+            break;
+        }
 
         if tokens[pos] == "(" && pos + 1 < tokens.len() {
             match tokens[pos + 1].as_str() {
@@ -657,14 +777,20 @@ fn parse_cell(
                         let s = tokens[pos].trim_matches('"').to_string();
                         pos += 1;
                         s
-                    } else { "*".to_string() };
+                    } else {
+                        "*".to_string()
+                    };
                     let to = if pos < tokens.len() && tokens[pos] != "(" {
                         let s = tokens[pos].trim_matches('"').to_string();
                         pos += 1;
                         s
-                    } else { "*".to_string() };
+                    } else {
+                        "*".to_string()
+                    };
                     let (rise, fall) = parse_rise_fall(tokens, &mut pos)?;
-                    delay.io_paths.insert(format!("{}->{}", from, to), IoPathDelay { rise, fall });
+                    delay
+                        .io_paths
+                        .insert(format!("{}->{}", from, to), IoPathDelay { rise, fall });
                     continue;
                 }
                 "TIMINGCHECK" => {
@@ -677,11 +803,19 @@ fn parse_cell(
                             // Skip to matching )
                             let mut skip = 0;
                             while pos < tokens.len() {
-                                if tokens[pos] == "(" { skip += 1; }
-                                if tokens[pos] == ")" { skip -= 1; }
-                                if skip < 0 { break; }
+                                if tokens[pos] == "(" {
+                                    skip += 1;
+                                }
+                                if tokens[pos] == ")" {
+                                    skip -= 1;
+                                }
+                                if skip < 0 {
+                                    break;
+                                }
                                 pos += 1;
-                                if skip == 0 { break; }
+                                if skip == 0 {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -694,28 +828,45 @@ fn parse_cell(
                     let mut cond_depth = 0;
                     // Read until we find the IOPATH (skip condition expression)
                     while pos < tokens.len() {
-                        if tokens[pos] == "(" { cond_depth += 1; }
-                        if tokens[pos] == ")" { cond_depth -= 1; }
+                        if tokens[pos] == "(" {
+                            cond_depth += 1;
+                        }
+                        if tokens[pos] == ")" {
+                            cond_depth -= 1;
+                        }
                         pos += 1;
                         if cond_depth < 0 {
                             // Found closing of whole COND block, back up
                             break;
                         }
-                        if cond_depth == 1 && pos < tokens.len() && tokens[pos] == "(" && pos + 1 < tokens.len() && tokens[pos + 1] == "IOPATH" {
+                        if cond_depth == 1
+                            && pos < tokens.len()
+                            && tokens[pos] == "("
+                            && pos + 1 < tokens.len()
+                            && tokens[pos + 1] == "IOPATH"
+                        {
                             // Found IOPATH inside COND — parse it
                             pos += 2; // skip (IOPATH
                             let from = if pos < tokens.len() && tokens[pos] != "(" {
                                 let s = tokens[pos].trim_matches('"').to_string();
                                 pos += 1;
                                 s
-                            } else { "*".to_string() };
+                            } else {
+                                "*".to_string()
+                            };
                             let to = if pos < tokens.len() && tokens[pos] != "(" {
                                 let s = tokens[pos].trim_matches('"').to_string();
                                 pos += 1;
                                 s
-                            } else { "*".to_string() };
+                            } else {
+                                "*".to_string()
+                            };
                             let (rise, fall) = parse_rise_fall(tokens, &mut pos)?;
-                            delay.cond_paths.push((String::new(), format!("{}->{}", from, to), IoPathDelay { rise, fall }));
+                            delay.cond_paths.push((
+                                String::new(),
+                                format!("{}->{}", from, to),
+                                IoPathDelay { rise, fall },
+                            ));
                             // Continue to find closing of COND
                             continue;
                         }
@@ -730,7 +881,9 @@ fn parse_cell(
         }
         pos += 1;
     }
-    if pos < tokens.len() { pos += 1; } // skip closing )
+    if pos < tokens.len() {
+        pos += 1;
+    } // skip closing )
 
     Ok((name, delay, timing_checks, pos))
 }
@@ -753,9 +906,15 @@ fn parse_net(tokens: &[String], mut pos: usize) -> Result<(String, NetDelay, usi
 
     let mut depth = 1;
     while pos < tokens.len() && depth > 0 {
-        if tokens[pos] == "(" { depth += 1; }
-        if tokens[pos] == ")" { depth -= 1; }
-        if depth == 0 { break; }
+        if tokens[pos] == "(" {
+            depth += 1;
+        }
+        if tokens[pos] == ")" {
+            depth -= 1;
+        }
+        if depth == 0 {
+            break;
+        }
 
         if tokens[pos] == "(" && pos + 1 < tokens.len() {
             match tokens[pos + 1].as_str() {
@@ -773,41 +932,82 @@ fn parse_net(tokens: &[String], mut pos: usize) -> Result<(String, NetDelay, usi
         }
         pos += 1;
     }
-    if pos < tokens.len() { pos += 1; }
+    if pos < tokens.len() {
+        pos += 1;
+    }
 
     Ok((name, net_delay, pos))
 }
 
 /// Parse TIMINGCHECK construct.
-fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingCheck>, usize), String> {
+fn parse_timing_checks(
+    tokens: &[String],
+    mut pos: usize,
+) -> Result<(Vec<TimingCheck>, usize), String> {
     pos += 2; // skip (TIMINGCHECK
     let mut checks = Vec::new();
     let mut depth = 1;
 
     while pos < tokens.len() && depth > 0 {
-        if tokens[pos] == "(" { depth += 1; }
-        if tokens[pos] == ")" { depth -= 1; }
-        if depth == 0 { break; }
+        if tokens[pos] == "(" {
+            depth += 1;
+        }
+        if tokens[pos] == ")" {
+            depth -= 1;
+        }
+        if depth == 0 {
+            break;
+        }
 
         if tokens[pos] == "(" && pos + 1 < tokens.len() {
             match tokens[pos + 1].as_str() {
                 "SETUP" => {
-                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Setup {
-                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
-                    }) {
-                        if let TimingCheck::Setup { signal, ref_signal, delay } = check {
-                            checks.push(TimingCheck::Setup { signal, ref_signal, delay });
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(
+                        tokens,
+                        pos,
+                        TimingCheck::Setup {
+                            signal: String::new(),
+                            ref_signal: String::new(),
+                            delay: MinTypMax::single(0.0),
+                        },
+                    ) {
+                        if let TimingCheck::Setup {
+                            signal,
+                            ref_signal,
+                            delay,
+                        } = check
+                        {
+                            checks.push(TimingCheck::Setup {
+                                signal,
+                                ref_signal,
+                                delay,
+                            });
                         }
                         pos = new_pos;
                         continue;
                     }
                 }
                 "HOLD" => {
-                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Hold {
-                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
-                    }) {
-                        if let TimingCheck::Hold { signal, ref_signal, delay } = check {
-                            checks.push(TimingCheck::Hold { signal, ref_signal, delay });
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(
+                        tokens,
+                        pos,
+                        TimingCheck::Hold {
+                            signal: String::new(),
+                            ref_signal: String::new(),
+                            delay: MinTypMax::single(0.0),
+                        },
+                    ) {
+                        if let TimingCheck::Hold {
+                            signal,
+                            ref_signal,
+                            delay,
+                        } = check
+                        {
+                            checks.push(TimingCheck::Hold {
+                                signal,
+                                ref_signal,
+                                delay,
+                            });
                         }
                         pos = new_pos;
                         continue;
@@ -821,20 +1021,35 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
                     }
                 }
                 "WIDTH" => {
-                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Width {
-                        signal: String::new(), delay: MinTypMax::single(0.0), threshold: None,
-                    }) {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(
+                        tokens,
+                        pos,
+                        TimingCheck::Width {
+                            signal: String::new(),
+                            delay: MinTypMax::single(0.0),
+                            threshold: None,
+                        },
+                    ) {
                         if let TimingCheck::Width { signal, delay, .. } = check {
-                            checks.push(TimingCheck::Width { signal, delay, threshold: None });
+                            checks.push(TimingCheck::Width {
+                                signal,
+                                delay,
+                                threshold: None,
+                            });
                         }
                         pos = new_pos;
                         continue;
                     }
                 }
                 "PERIOD" => {
-                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Period {
-                        signal: String::new(), delay: MinTypMax::single(0.0),
-                    }) {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(
+                        tokens,
+                        pos,
+                        TimingCheck::Period {
+                            signal: String::new(),
+                            delay: MinTypMax::single(0.0),
+                        },
+                    ) {
                         if let TimingCheck::Period { signal, delay } = check {
                             checks.push(TimingCheck::Period { signal, delay });
                         }
@@ -843,33 +1058,78 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
                     }
                 }
                 "RECOVERY" => {
-                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Recovery {
-                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
-                    }) {
-                        if let TimingCheck::Recovery { signal, ref_signal, delay } = check {
-                            checks.push(TimingCheck::Recovery { signal, ref_signal, delay });
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(
+                        tokens,
+                        pos,
+                        TimingCheck::Recovery {
+                            signal: String::new(),
+                            ref_signal: String::new(),
+                            delay: MinTypMax::single(0.0),
+                        },
+                    ) {
+                        if let TimingCheck::Recovery {
+                            signal,
+                            ref_signal,
+                            delay,
+                        } = check
+                        {
+                            checks.push(TimingCheck::Recovery {
+                                signal,
+                                ref_signal,
+                                delay,
+                            });
                         }
                         pos = new_pos;
                         continue;
                     }
                 }
                 "REMOVAL" => {
-                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Removal {
-                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
-                    }) {
-                        if let TimingCheck::Removal { signal, ref_signal, delay } = check {
-                            checks.push(TimingCheck::Removal { signal, ref_signal, delay });
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(
+                        tokens,
+                        pos,
+                        TimingCheck::Removal {
+                            signal: String::new(),
+                            ref_signal: String::new(),
+                            delay: MinTypMax::single(0.0),
+                        },
+                    ) {
+                        if let TimingCheck::Removal {
+                            signal,
+                            ref_signal,
+                            delay,
+                        } = check
+                        {
+                            checks.push(TimingCheck::Removal {
+                                signal,
+                                ref_signal,
+                                delay,
+                            });
                         }
                         pos = new_pos;
                         continue;
                     }
                 }
                 "SKEW" => {
-                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Skew {
-                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
-                    }) {
-                        if let TimingCheck::Skew { signal, ref_signal, delay } = check {
-                            checks.push(TimingCheck::Skew { signal, ref_signal, delay });
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(
+                        tokens,
+                        pos,
+                        TimingCheck::Skew {
+                            signal: String::new(),
+                            ref_signal: String::new(),
+                            delay: MinTypMax::single(0.0),
+                        },
+                    ) {
+                        if let TimingCheck::Skew {
+                            signal,
+                            ref_signal,
+                            delay,
+                        } = check
+                        {
+                            checks.push(TimingCheck::Skew {
+                                signal,
+                                ref_signal,
+                                delay,
+                            });
                         }
                         pos = new_pos;
                         continue;
@@ -880,7 +1140,9 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
         }
         pos += 1;
     }
-    if pos < tokens.len() { pos += 1; }
+    if pos < tokens.len() {
+        pos += 1;
+    }
 
     Ok((checks, pos))
 }
@@ -889,7 +1151,10 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
 /// (setup, hold) dalam satu construct `(SETUPHOLD (posedge clk) (data)
 /// (setup_delay hold_delay))`. SIM-06/10: versi lama menyimpan signal/ref_signal
 /// kosong dan kedua delay 0 sehingga check tidak pernah bisa dievaluasi.
-fn parse_setuphold_check(tokens: &[String], mut pos: usize) -> Result<(TimingCheck, usize), String> {
+fn parse_setuphold_check(
+    tokens: &[String],
+    mut pos: usize,
+) -> Result<(TimingCheck, usize), String> {
     pos += 2; // skip (SETUPHOLD
     let mut signal = String::new();
     let mut ref_signal = String::new();
@@ -898,9 +1163,15 @@ fn parse_setuphold_check(tokens: &[String], mut pos: usize) -> Result<(TimingChe
 
     let mut depth = 1;
     while pos < tokens.len() && depth > 0 {
-        if tokens[pos] == "(" { depth += 1; }
-        if tokens[pos] == ")" { depth -= 1; }
-        if depth == 0 { break; }
+        if tokens[pos] == "(" {
+            depth += 1;
+        }
+        if tokens[pos] == ")" {
+            depth -= 1;
+        }
+        if depth == 0 {
+            break;
+        }
 
         // Delay construct `(1.5:2.0:2.5 0.5:1.0:1.5)` — isi sampai tutup paren.
         if tokens[pos] == "(" && pos + 1 < tokens.len() {
@@ -910,10 +1181,14 @@ fn parse_setuphold_check(tokens: &[String], mut pos: usize) -> Result<(TimingChe
                 let mut inner = 1;
                 let mut p = pos + 1;
                 while p < tokens.len() {
-                    if tokens[p] == "(" { inner += 1; }
+                    if tokens[p] == "(" {
+                        inner += 1;
+                    }
                     if tokens[p] == ")" {
                         inner -= 1;
-                        if inner == 0 { break; }
+                        if inner == 0 {
+                            break;
+                        }
                     }
                     if let Some(mtm) = parse_triple_token(&tokens[p]) {
                         delays.push(mtm);
@@ -931,9 +1206,15 @@ fn parse_setuphold_check(tokens: &[String], mut pos: usize) -> Result<(TimingChe
                 let mut p = pos + 2;
                 let mut inner = 1;
                 while p < tokens.len() && inner > 0 {
-                    if tokens[p] == "(" { inner += 1; }
-                    if tokens[p] == ")" { inner -= 1; }
-                    if inner == 0 { break; }
+                    if tokens[p] == "(" {
+                        inner += 1;
+                    }
+                    if tokens[p] == ")" {
+                        inner -= 1;
+                    }
+                    if inner == 0 {
+                        break;
+                    }
                     let trimmed = tokens[p].trim_matches('"');
                     if !trimmed.is_empty()
                         && trimmed.parse::<f64>().is_err()
@@ -958,11 +1239,21 @@ fn parse_setuphold_check(tokens: &[String], mut pos: usize) -> Result<(TimingChe
         }
         pos += 1;
     }
-    if pos < tokens.len() { pos += 1; }
+    if pos < tokens.len() {
+        pos += 1;
+    }
 
     let setup = delays.first().copied().unwrap_or(MinTypMax::single(0.0));
     let hold = delays.get(1).copied().unwrap_or(setup);
-    Ok((TimingCheck::Setuphold { signal, ref_signal, setup, hold }, pos))
+    Ok((
+        TimingCheck::Setuphold {
+            signal,
+            ref_signal,
+            setup,
+            hold,
+        },
+        pos,
+    ))
 }
 
 /// Parse a simple timing check (SETUP, HOLD, WIDTH, PERIOD, etc.)
@@ -987,9 +1278,8 @@ fn parse_simple_timing_check(
     let is_reserved = |s: &str| RESERVED.contains(&s.to_lowercase().as_str());
     // Construct nilai: `(POSEDGE clk)`, `(DATA d)`, `(PORT x)` — ambil nama
     // signal pertama di dalamnya.
-    let is_value_construct = |k: &str| {
-        matches!(k, "PORT" | "DATA" | "POSEDGE" | "NEGEDGE" | "EDGE")
-    };
+    let is_value_construct =
+        |k: &str| matches!(k, "PORT" | "DATA" | "POSEDGE" | "NEGEDGE" | "EDGE");
 
     let mut depth = 1;
     while pos < tokens.len() && depth > 0 {
@@ -1005,8 +1295,12 @@ fn parse_simple_timing_check(
                     let mut p = pos + 2;
                     let mut inner = 1;
                     while p < tokens.len() && inner > 0 {
-                        if tokens[p] == "(" { inner += 1; }
-                        if tokens[p] == ")" { inner -= 1; }
+                        if tokens[p] == "(" {
+                            inner += 1;
+                        }
+                        if tokens[p] == ")" {
+                            inner -= 1;
+                        }
                         p += 1;
                     }
                     // Paren penutup COND sudah dikonsumsi — balance depth.
@@ -1020,10 +1314,14 @@ fn parse_simple_timing_check(
                     let mut p = pos + 2;
                     let mut inner = 1;
                     while p < tokens.len() && inner > 0 {
-                        if tokens[p] == "(" { inner += 1; }
+                        if tokens[p] == "(" {
+                            inner += 1;
+                        }
                         if tokens[p] == ")" {
                             inner -= 1;
-                            if inner == 0 { break; }
+                            if inner == 0 {
+                                break;
+                            }
                         }
                         let trimmed = tokens[p].trim_matches('"');
                         if !trimmed.is_empty()
@@ -1076,10 +1374,7 @@ fn parse_simple_timing_check(
         }
         // Nama signal bare (SDF tanpa kutip): `clk`, `d`, `top.sig`
         let trimmed = tok.trim_matches('"');
-        if !trimmed.is_empty()
-            && trimmed.parse::<f64>().is_err()
-            && !is_reserved(trimmed)
-        {
+        if !trimmed.is_empty() && trimmed.parse::<f64>().is_err() && !is_reserved(trimmed) {
             if signal.is_empty() {
                 signal = trimmed.to_string();
             } else if ref_signal.is_empty() {
@@ -1088,7 +1383,9 @@ fn parse_simple_timing_check(
         }
         pos += 1;
     }
-    if pos < tokens.len() { pos += 1; }
+    if pos < tokens.len() {
+        pos += 1;
+    }
 
     // Reconstruct the check based on template type.
     // Catatan SDF (IEEE 1497): SETUP/HOLD/RECOVERY/REMOVAL menulis port REF
@@ -1099,14 +1396,43 @@ fn parse_simple_timing_check(
     // sebagai data dan d sebagai ref → tidak pernah fire).
     use TimingCheck::*;
     let check = match template {
-        Setup { .. } => Setup { signal: ref_signal, ref_signal: signal, delay },
-        Hold { .. } => Hold { signal: ref_signal, ref_signal: signal, delay },
-        Width { .. } => Width { signal, delay, threshold: None },
+        Setup { .. } => Setup {
+            signal: ref_signal,
+            ref_signal: signal,
+            delay,
+        },
+        Hold { .. } => Hold {
+            signal: ref_signal,
+            ref_signal: signal,
+            delay,
+        },
+        Width { .. } => Width {
+            signal,
+            delay,
+            threshold: None,
+        },
         Period { .. } => Period { signal, delay },
-        Recovery { .. } => Recovery { signal: ref_signal, ref_signal: signal, delay },
-        Removal { .. } => Removal { signal: ref_signal, ref_signal: signal, delay },
-        Skew { .. } => Skew { signal: ref_signal, ref_signal: signal, delay },
-        Setuphold { .. } => Setuphold { signal: ref_signal, ref_signal: signal, setup: delay, hold: delay },
+        Recovery { .. } => Recovery {
+            signal: ref_signal,
+            ref_signal: signal,
+            delay,
+        },
+        Removal { .. } => Removal {
+            signal: ref_signal,
+            ref_signal: signal,
+            delay,
+        },
+        Skew { .. } => Skew {
+            signal: ref_signal,
+            ref_signal: signal,
+            delay,
+        },
+        Setuphold { .. } => Setuphold {
+            signal: ref_signal,
+            ref_signal: signal,
+            setup: delay,
+            hold: delay,
+        },
     };
 
     Ok((check, pos))
@@ -1260,7 +1586,10 @@ mod tests {
         )
         "#;
         let sdf = SdfData::parse(sdf_source).unwrap();
-        assert!(!sdf.timing_checks.is_empty(), "timing checks should be parsed");
+        assert!(
+            !sdf.timing_checks.is_empty(),
+            "timing checks should be parsed"
+        );
         // 4 inside CELL + 2 at top level = 6
         assert_eq!(
             sdf.timing_checks.len(),
@@ -1364,13 +1693,32 @@ mod tests {
         let sdf = SdfData::parse(sdf_source).unwrap();
         assert_eq!(sdf.timing_checks.len(), 1, "satu SETUPHOLD ter-parse");
         match &sdf.timing_checks[0] {
-            TimingCheck::Setuphold { signal, ref_signal, setup, hold } => {
-                assert_eq!(signal, "d", "signal data harus ter-ekstrak: got '{:?}'", signal);
-                assert_eq!(ref_signal, "clk", "ref signal harus ter-ekstrak: got '{:?}'", ref_signal);
+            TimingCheck::Setuphold {
+                signal,
+                ref_signal,
+                setup,
+                hold,
+            } => {
+                assert_eq!(
+                    signal, "d",
+                    "signal data harus ter-ekstrak: got '{:?}'",
+                    signal
+                );
+                assert_eq!(
+                    ref_signal, "clk",
+                    "ref signal harus ter-ekstrak: got '{:?}'",
+                    ref_signal
+                );
                 assert!((setup.get(TimingMode::Typ) - 2.0).abs() < 1e-9, "setup=2.0");
-                assert!((setup.get(TimingMode::Min) - 1.5).abs() < 1e-9, "setup min=1.5");
+                assert!(
+                    (setup.get(TimingMode::Min) - 1.5).abs() < 1e-9,
+                    "setup min=1.5"
+                );
                 assert!((hold.get(TimingMode::Typ) - 1.0).abs() < 1e-9, "hold=1.0");
-                assert!((hold.get(TimingMode::Max) - 1.5).abs() < 1e-9, "hold max=1.5");
+                assert!(
+                    (hold.get(TimingMode::Max) - 1.5).abs() < 1e-9,
+                    "hold max=1.5"
+                );
             }
             other => panic!("bukan Setuphold: {}", other.type_name()),
         }
@@ -1390,10 +1738,19 @@ mod tests {
         "#;
         let sdf = SdfData::parse(sdf_source).unwrap();
         match &sdf.timing_checks[0] {
-            TimingCheck::Setuphold { signal, ref_signal, setup, hold } => {
+            TimingCheck::Setuphold {
+                signal,
+                ref_signal,
+                setup,
+                hold,
+            } => {
                 assert_eq!(signal, "d");
                 assert_eq!(ref_signal, "clk");
-                assert!(setup.get(TimingMode::Typ) < 0.0, "setup negatif: {}", setup.get(TimingMode::Typ));
+                assert!(
+                    setup.get(TimingMode::Typ) < 0.0,
+                    "setup negatif: {}",
+                    setup.get(TimingMode::Typ)
+                );
                 assert!(hold.get(TimingMode::Typ) > 0.0);
             }
             other => panic!("bukan Setuphold: {}", other.type_name()),
@@ -1419,7 +1776,10 @@ mod tests {
         assert!((q.width.get(TimingMode::Typ) - 2.0).abs() < 1e-9, "typ=2.0");
         assert!((q.width.get(TimingMode::Max) - 3.0).abs() < 1e-9, "max=3.0");
         let clk = sdf.pulse_controls.get("clk").expect("port clk");
-        assert!((clk.width.get(TimingMode::Typ) - 2.0).abs() < 1e-9, "scalar 2.0");
+        assert!(
+            (clk.width.get(TimingMode::Typ) - 2.0).abs() < 1e-9,
+            "scalar 2.0"
+        );
     }
 
     #[test]

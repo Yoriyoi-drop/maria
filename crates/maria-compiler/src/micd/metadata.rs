@@ -57,8 +57,12 @@ pub fn path_hash(path: &Path) -> u64 {
 pub fn flags_hash(defines: &[(String, String)], incdirs: &[PathBuf]) -> u64 {
     let mut h = 0u64;
     for (k, v) in defines {
-        h = h.wrapping_mul(31).wrapping_add(compute_checksum(k.as_bytes()));
-        h = h.wrapping_mul(31).wrapping_add(compute_checksum(v.as_bytes()));
+        h = h
+            .wrapping_mul(31)
+            .wrapping_add(compute_checksum(k.as_bytes()));
+        h = h
+            .wrapping_mul(31)
+            .wrapping_add(compute_checksum(v.as_bytes()));
     }
     for d in incdirs {
         h = h.wrapping_mul(31).wrapping_add(path_hash(d));
@@ -91,7 +95,10 @@ mod tests {
     fn test_path_hash_stable() {
         let p = Path::new("/home/user/project/uart.sv");
         assert_eq!(path_hash(p), path_hash(p));
-        assert_ne!(path_hash(p), path_hash(Path::new("/home/user/project/uart2.sv")));
+        assert_ne!(
+            path_hash(p),
+            path_hash(Path::new("/home/user/project/uart2.sv"))
+        );
     }
 
     #[test]

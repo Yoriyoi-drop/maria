@@ -12,11 +12,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use cranelift::codegen::ir::UserFuncName;
 use cranelift::prelude::*;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
-use cranelift::codegen::ir::UserFuncName;
 
 /// Hasil kompilasi Cranelift: function pointer + metadata.
 #[derive(Clone)]
@@ -176,9 +176,9 @@ impl CraneliftEngine {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(types::I64));
-        sig.returns.push(AbiParam::new(types::I64));        let name = UserFuncName::user(0, 0);
-        let mut func
-            = cranelift::codegen::ir::Function::with_name_signature(name, sig);
+        sig.returns.push(AbiParam::new(types::I64));
+        let name = UserFuncName::user(0, 0);
+        let mut func = cranelift::codegen::ir::Function::with_name_signature(name, sig);
 
         {
             let mut builder = FunctionBuilder::new(&mut func, &mut self.ctx);
@@ -232,7 +232,10 @@ impl CraneliftEngine {
                 JitOp::Shl => {
                     // Shift left: if shift >= width, result is 0
                     let width_val = builder.ins().iconst(types::I64, width as i64);
-                    let shift_ge_width = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, b, width_val);
+                    let shift_ge_width =
+                        builder
+                            .ins()
+                            .icmp(IntCC::UnsignedGreaterThanOrEqual, b, width_val);
                     let shifted = builder.ins().ishl(a, b);
                     let zero = builder.ins().iconst(types::I64, 0);
                     builder.ins().select(shift_ge_width, zero, shifted)
@@ -240,7 +243,10 @@ impl CraneliftEngine {
                 JitOp::Shr => {
                     // Shift right: if shift >= width, result is 0
                     let width_val = builder.ins().iconst(types::I64, width as i64);
-                    let shift_ge_width = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, b, width_val);
+                    let shift_ge_width =
+                        builder
+                            .ins()
+                            .icmp(IntCC::UnsignedGreaterThanOrEqual, b, width_val);
                     let shifted = builder.ins().ushr(a, b);
                     let zero = builder.ins().iconst(types::I64, 0);
                     builder.ins().select(shift_ge_width, zero, shifted)
@@ -270,9 +276,9 @@ impl CraneliftEngine {
     ) -> Option<cranelift::codegen::ir::Function> {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(types::I64));
-        sig.returns.push(AbiParam::new(types::I64));        let name = UserFuncName::user(0, 0);
-        let mut func
-            = cranelift::codegen::ir::Function::with_name_signature(name, sig);
+        sig.returns.push(AbiParam::new(types::I64));
+        let name = UserFuncName::user(0, 0);
+        let mut func = cranelift::codegen::ir::Function::with_name_signature(name, sig);
 
         {
             let mut builder = FunctionBuilder::new(&mut func, &mut self.ctx);
@@ -399,14 +405,16 @@ impl CraneliftEngine {
     /// Compute a structural hash for an IrExpr tree (for expression-level caching).
     fn hash_ir_expr(expr: &maria_ir::IrExpr) -> u64 {
         use std::hash::Hasher;
-        
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         Self::hash_ir_expr_recursive(expr, &mut hasher);
         hasher.finish()
     }
 
-    fn hash_ir_expr_recursive(expr: &maria_ir::IrExpr, hasher: &mut std::collections::hash_map::DefaultHasher) {
+    fn hash_ir_expr_recursive(
+        expr: &maria_ir::IrExpr,
+        hasher: &mut std::collections::hash_map::DefaultHasher,
+    ) {
         use std::hash::Hash;
 
         match expr {
@@ -444,9 +452,12 @@ impl CraneliftEngine {
     }
 
     /// Hash a BinaryIrOp by its discriminant (manual since it doesn't derive Hash).
-    fn hash_binary_op(op: &maria_ir::BinaryIrOp, hasher: &mut std::collections::hash_map::DefaultHasher) {
-        use std::hash::Hash;
+    fn hash_binary_op(
+        op: &maria_ir::BinaryIrOp,
+        hasher: &mut std::collections::hash_map::DefaultHasher,
+    ) {
         use maria_ir::BinaryIrOp;
+        use std::hash::Hash;
         let disc: u64 = match op {
             BinaryIrOp::Add => 0,
             BinaryIrOp::Sub => 1,
@@ -479,9 +490,12 @@ impl CraneliftEngine {
     }
 
     /// Hash a UnaryIrOp by its discriminant (manual since it doesn't derive Hash).
-    fn hash_unary_op(op: &maria_ir::UnaryIrOp, hasher: &mut std::collections::hash_map::DefaultHasher) {
-        use std::hash::Hash;
+    fn hash_unary_op(
+        op: &maria_ir::UnaryIrOp,
+        hasher: &mut std::collections::hash_map::DefaultHasher,
+    ) {
         use maria_ir::UnaryIrOp;
+        use std::hash::Hash;
         let disc: u64 = match op {
             UnaryIrOp::Plus => 0,
             UnaryIrOp::Minus => 1,
@@ -677,23 +691,60 @@ impl CraneliftEngine {
             }
             4 => {
                 let func: fn(u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
-                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3])
+                func(
+                    signal_values[0],
+                    signal_values[1],
+                    signal_values[2],
+                    signal_values[3],
+                )
             }
             5 => {
                 let func: fn(u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
-                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3], signal_values[4])
+                func(
+                    signal_values[0],
+                    signal_values[1],
+                    signal_values[2],
+                    signal_values[3],
+                    signal_values[4],
+                )
             }
             6 => {
                 let func: fn(u64, u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
-                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3], signal_values[4], signal_values[5])
+                func(
+                    signal_values[0],
+                    signal_values[1],
+                    signal_values[2],
+                    signal_values[3],
+                    signal_values[4],
+                    signal_values[5],
+                )
             }
             7 => {
-                let func: fn(u64, u64, u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
-                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3], signal_values[4], signal_values[5], signal_values[6])
+                let func: fn(u64, u64, u64, u64, u64, u64, u64) -> u64 =
+                    std::mem::transmute(code_ptr);
+                func(
+                    signal_values[0],
+                    signal_values[1],
+                    signal_values[2],
+                    signal_values[3],
+                    signal_values[4],
+                    signal_values[5],
+                    signal_values[6],
+                )
             }
             8 => {
-                let func: fn(u64, u64, u64, u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
-                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3], signal_values[4], signal_values[5], signal_values[6], signal_values[7])
+                let func: fn(u64, u64, u64, u64, u64, u64, u64, u64) -> u64 =
+                    std::mem::transmute(code_ptr);
+                func(
+                    signal_values[0],
+                    signal_values[1],
+                    signal_values[2],
+                    signal_values[3],
+                    signal_values[4],
+                    signal_values[5],
+                    signal_values[6],
+                    signal_values[7],
+                )
             }
             _ => 0u64,
         }
@@ -721,13 +772,20 @@ impl CraneliftEngine {
         let cache = self.cache.lock().unwrap();
         let mut output = String::new();
         for (hash, entry) in cache.iter() {
-            output.push_str(&format!("{}|{}|{}|{}\n", hash, entry.name, entry.arg_count, entry.width));
+            output.push_str(&format!(
+                "{}|{}|{}|{}\n",
+                hash, entry.name, entry.arg_count, entry.width
+            ));
         }
         drop(cache);
 
         match std::fs::write(path, &output) {
             Ok(_) => {
-                eprintln!("JIT cache saved: {} entries to {}", output.lines().count(), path.display());
+                eprintln!(
+                    "JIT cache saved: {} entries to {}",
+                    output.lines().count(),
+                    path.display()
+                );
                 true
             }
             Err(e) => {
@@ -789,7 +847,11 @@ impl CraneliftEngine {
         drop(cache);
 
         if loaded_count > 0 {
-            eprintln!("JIT cache loaded: {} entries from {}", loaded_count, path.display());
+            eprintln!(
+                "JIT cache loaded: {} entries from {}",
+                loaded_count,
+                path.display()
+            );
         }
         true
     }
@@ -826,7 +888,10 @@ mod tests {
     #[test]
     fn test_cranelift_engine_create() {
         let engine = CraneliftEngine::new();
-        assert!(engine.is_some(), "CraneliftEngine should initialize on x86_64");
+        assert!(
+            engine.is_some(),
+            "CraneliftEngine should initialize on x86_64"
+        );
     }
 
     #[test]

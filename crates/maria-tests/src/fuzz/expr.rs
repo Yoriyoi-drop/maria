@@ -177,6 +177,15 @@ fn mask_of(w: u32) -> u64 {
     }
 }
 
+/// Mask lebar hingga 128 bit untuk aritmetika internal u128.
+fn mask_of128(w: u32) -> u128 {
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
+}
+
 fn lit_sv(v: u64, w: u32) -> String {
     if w == 0 {
         return "0".to_string();
@@ -185,11 +194,7 @@ fn lit_sv(v: u64, w: u32) -> String {
     let val = v & m;
     let mut bits = String::with_capacity(w as usize);
     for i in (0..w).rev() {
-        let bit = if i >= 64 {
-            0
-        } else {
-            (val >> i) & 1
-        };
+        let bit = if i >= 64 { 0 } else { (val >> i) & 1 };
         bits.push(if bit == 1 { '1' } else { '0' });
     }
     format!("{}'b{}", w, bits)
@@ -198,102 +203,137 @@ fn lit_sv(v: u64, w: u32) -> String {
 impl Expr {
     /// Evaluasi referensi width-aware (model emas). Mengembalikan
     /// `(nilai, lebar_sv)`. Aturan lebar SV (self-determined):
-    /// perbandingan/relasional/logical → 1 bit; shift → lebar operand kiri;
-    /// lainnya → max(lebar operan). Inilah yang membedakan fuzzer ini dari
-    /// fuzzing buta: model emas memahami semantik lebar intermediate SV.
+    /// perbandingan/relasional/logical → 1 bit; shift → lebar operand kiri
+    /// (dinaikkan ke konteks — LRM §11.8.1: operand kiri shift bersifat
+    /// *context-determined*, divalidasi differential vs Icarus);
+    /// lainnya → max(lebar operan). Aritmetika internal u128 agar
+    /// concat/intermediate hingga 128 bit tetap eksak.
     /// Returns (value, width, has_x) where has_x indicates X-state propagation
     /// (e.g. div/mod by zero). When has_x=true, oracle should skip comparison.
     fn eval_w(&self, w: u32, a: u64, b: u64) -> (u64, u32, bool) {
+        let (v, ow, hx) = self.eval_w128(w, w, a as u128, b as u128);
+        (v as u64, ow, hx)
+    }
+
+    /// Inti evaluasi u128 dengan model sizing LRM §11.8.1 (divalidasi
+    /// differential vs Icarus):
+    /// - Anak dievaluasi SELF-determined (ctx=0).
+    /// - Operasi context-determined (~, unary ±, aritmetika, bitwise,
+    ///   shift/power-lhs) bekerja pada `max(lebar anak, ctx)`.
+    /// - Perbandingan/logical: operan saling di-extend ke max keduanya
+    ///   (TANPA konteks luar), hasil 1 bit.
+    /// - Concat & rhs shift/power: self-determined murni.
+    /// - Literal/variabel selebar `W` (lebar target akhir — generator
+    ///   merender literal sized ke lebar itu).
+    fn eval_w128(&self, w: u32, W: u32, a: u128, b: u128) -> (u128, u32, bool) {
         match self {
-            Expr::Lit(v) => (v & mask_of(w), w, false),
+            Expr::Lit(v) => ((*v as u128) & mask_of128(W), W.max(w), false),
             Expr::Var(c) => {
                 let x = if *c == 'a' { a } else { b };
-                (x & mask_of(w), w, false)
+                ((x & mask_of128(W)), W.max(w), false)
             }
             Expr::Un(op, e) => {
-                let (x, ew, hx) = e.eval_w(w, a, b);
-                let m = mask_of(ew);
+                let (x, ew, hx) = e.eval_w128(w, W, a, b);
+                // ~ / unary ± context-determined: operan di-extend ke
+                // max(lebar anak, konteks) SEBELUM operasi.
+                let mw = ew.max(w);
+                let m = mask_of128(mw);
+                let xe = x & m;
                 match op {
                     UnOp::Not => {
-                        // Bitwise not: X propagates (result is X)
                         if hx {
-                            (0, ew, true)
+                            (0, mw, true)
                         } else {
-                            ((!x) & m, ew, false)
+                            ((!xe) & m, mw, false)
                         }
                     }
                     UnOp::LogicNot => {
-                        // Logical not: X/Z treated as false (Verilog semantics)
-                        // Result is 1-bit, never X
-                        let truthy = if hx { false } else { x != 0 };
-                        (if truthy { 0 } else { 1 }, 1, false)
+                        // X/Z treated as false; nilai 1-bit, lebar konteks.
+                        let truthy = if hx { false } else { xe != 0 };
+                        (if truthy { 0 } else { 1 }, w.max(1), false)
                     }
                     UnOp::Neg => {
                         if hx {
-                            (0, ew, true)
+                            (0, mw, true)
                         } else {
-                            (((!x).wrapping_add(1)) & m, ew, false)
+                            (((!xe).wrapping_add(1)) & m, mw, false)
                         }
                     }
                 }
             }
             Expr::Bin(op, l, r) => {
-                let (x, lw, hx) = l.eval_w(w, a, b);
-                let (y, rw, hy) = r.eval_w(w, a, b);
+                // Anak concat: self-determined murni (ctx=0). Anak lainnya —
+                // termasuk operan comparison/logical — context-determined
+                // (warisi ctx; selaras propagate_context_width di elaborator
+                // dan divalidasi differential).
+                let self_det = *op == BinOp::Concat;
+                let c = if self_det { 0 } else { w };
+                let (x, lw, hx) = l.eval_w128(c, W, a, b);
+                let (y, rw, hy) = r.eval_w128(c, W, a, b);
                 let either_x = hx || hy;
                 match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Xnor => {
-                        let ow = lw.max(rw);
-                        let om = mask_of(ow);
+                    BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::And
+                    | BinOp::Or
+                    | BinOp::Xor
+                    | BinOp::Xnor => {
+                        let ow = lw.max(rw).max(w);
+                        let om = mask_of128(ow);
+                        let xe = x & om;
+                        let ye = y & om;
                         let v = match op {
-                            BinOp::Add => x.wrapping_add(y),
-                            BinOp::Sub => x.wrapping_sub(y),
-                            BinOp::Mul => x.wrapping_mul(y),
-                            BinOp::And => x & y,
-                            BinOp::Or => x | y,
-                            BinOp::Xor => x ^ y,
-                            BinOp::Xnor => !(x ^ y),
+                            BinOp::Add => xe.wrapping_add(ye),
+                            BinOp::Sub => xe.wrapping_sub(ye),
+                            BinOp::Mul => xe.wrapping_mul(ye),
+                            BinOp::And => xe & ye,
+                            BinOp::Or => xe | ye,
+                            BinOp::Xor => xe ^ ye,
+                            BinOp::Xnor => !(xe ^ ye),
                             _ => unreachable!(),
                         } & om;
                         (v, ow, either_x)
                     }
                     BinOp::Div => {
-                        let ow = lw.max(rw);
-                        if y == 0 {
+                        let ow = lw.max(rw).max(w);
+                        let ye = y & mask_of128(ow);
+                        let xe = x & mask_of128(ow);
+                        if ye == 0 {
                             (0, ow, true) // div by zero = X
                         } else if either_x {
                             (0, ow, true) // X propagates
                         } else {
-                            (x / y, ow, false)
+                            (xe / ye, ow, false)
                         }
                     }
                     BinOp::Mod => {
-                        let ow = lw.max(rw);
-                        if y == 0 {
+                        let ow = lw.max(rw).max(w);
+                        let ye = y & mask_of128(ow);
+                        let xe = x & mask_of128(ow);
+                        if ye == 0 {
                             (0, ow, true) // mod by zero = X
                         } else if either_x {
                             (0, ow, true) // X propagates
                         } else {
-                            (x % y, ow, false)
+                            (xe % ye, ow, false)
                         }
                     }
                     BinOp::Shl | BinOp::Shr | BinOp::Sshl | BinOp::Sshr => {
-                        let ow = lw; // lebar hasil = operand kiri
-                        let om = mask_of(ow);
+                        // LHS shift context-determined → ow termasuk ctx.
+                        let ow = lw.max(rw).max(w);
+                        let om = mask_of128(ow);
+                        let xe = x & om;
                         if either_x {
-                            (0, ow, true) // X propagates through shift
+                            (0, ow, true)
                         } else {
-                            let amt = y; // nilai rhs penuh (bukan dimask ke 63)
-                            let v = if amt >= ow as u64 || amt >= 64 {
-                                // IEEE 1800 §11.4.10: `>>>` hanya arithmetic
-                                // bila operand SIGNED; operand di subset fuzzer
-                                // selalu unsigned reg/literal → logical fill 0
-                                // (selaras engine maria & LRM).
-                                0u64
+                            let amt = y;
+                            let v = if amt >= ow as u128 || amt >= 128 {
+                                0u128
                             } else {
                                 match op {
-                                    BinOp::Shl | BinOp::Sshl => (x << amt as u32) & om, // arithmetic shift left = logical
-                                    BinOp::Shr | BinOp::Sshr => (x >> amt as u32) & om,
+                                    BinOp::Shl | BinOp::Sshl => ((xe << amt) & om),
+                                    BinOp::Shr | BinOp::Sshr => ((xe >> amt) & om),
                                     _ => unreachable!(),
                                 }
                             };
@@ -301,100 +341,128 @@ impl Expr {
                         }
                     }
                     BinOp::Power => {
-                        let ow = lw.max(rw);
-                        let om = mask_of(ow);
+                        let ow = lw.max(rw).max(w);
+                        let om = mask_of128(ow);
                         if either_x {
                             (0, ow, true)
-                        } else if y >= 64 {
-                            (0, ow, false)
                         } else {
-                            (x.wrapping_pow(y as u32) & om, ow, false)
+                            // Eksponensiasi modular biner mod 2^ow (semantik
+                            // SV: hasil di-size ke max operand, aritmetika
+                            // modular). Dulu `y >= 64 → 0` — salah total vs
+                            // Icarus (seed 86149882 / 110046652).
+                            let mut base = x & om;
+                            let mut acc: u128 = 1;
+                            let mut e = y;
+                            while e > 0 {
+                                if e & 1 == 1 {
+                                    acc = acc.wrapping_mul(base) & om;
+                                }
+                                e >>= 1;
+                                if e > 0 {
+                                    base = base.wrapping_mul(base) & om;
+                                }
+                            }
+                            (acc, ow, false)
                         }
                     }
                     BinOp::Concat => {
-                        let ow = lw + rw;
-                        let om = mask_of(ow);
-                        let v = if rw >= 64 { 0 } else { (x << rw) | y };
-                        (v & om, ow, either_x)
+                        let ow = lw.saturating_add(rw).min(128);
+                        let om = mask_of128(ow);
+                        let sh = rw.min(127);
+                        let v = ((x << sh) | y) & om;
+                        (v, ow, either_x)
                     }
                     BinOp::Inside => {
+                        let cw = lw.max(rw);
+                        let xe = x & mask_of128(cw);
+                        let ye = y & mask_of128(cw);
                         if either_x {
-                            return (0, 1, true);
+                            return (0, w.max(1), true);
                         }
-                        let v = if x == y { 1 } else { 0 };
-                        (v, 1, false)
+                        let v = if xe == ye { 1 } else { 0 };
+                        (v, w.max(1), false)
                     }
-BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::LogicAnd | BinOp::LogicOr | BinOp::CaseEq | BinOp::CaseNeq => {
+                    BinOp::Eq
+                    | BinOp::Ne
+                    | BinOp::Lt
+                    | BinOp::Le
+                    | BinOp::Gt
+                    | BinOp::Ge
+                    | BinOp::LogicAnd
+                    | BinOp::LogicOr
+                    | BinOp::CaseEq
+                    | BinOp::CaseNeq => {
+                        // Mutual extension ke max lebar operan, TANPA konteks
+                        // luar (divalidasi vs Icarus seed=332598).
+                        let cw = lw.max(rw);
+                        let xe = x & mask_of128(cw);
+                        let ye = y & mask_of128(cw);
                         if either_x {
                             // X in comparison operand = X result
-                            return (0, 1, true);
+                            return (0, w.max(1), true);
                         }
                         let v = match op {
-                            &BinOp::Eq => {
-                                if x == y {
+                            BinOp::Eq | BinOp::CaseEq => {
+                                if xe == ye {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            &BinOp::Ne => {
-                                if x != y {
+                            BinOp::Ne | BinOp::CaseNeq => {
+                                if xe != ye {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            &BinOp::Lt => {
-                                if x < y {
+                            BinOp::Lt => {
+                                if xe < ye {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            &BinOp::Le => {
-                                if x <= y {
+                            BinOp::Le => {
+                                if xe <= ye {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            &BinOp::Gt => {
-                                if x > y {
+                            BinOp::Gt => {
+                                if xe > ye {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            &BinOp::Ge => {
-                                if x >= y {
+                            BinOp::Ge => {
+                                if xe >= ye {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            &BinOp::LogicAnd => {
-                                if x != 0 && y != 0 {
+                            BinOp::LogicAnd => {
+                                if xe != 0 && ye != 0 {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            &BinOp::LogicOr => {
-                                if x != 0 || y != 0 {
+                            BinOp::LogicOr => {
+                                if xe != 0 || ye != 0 {
                                     1
                                 } else {
                                     0
                                 }
-                            }
-                            &BinOp::CaseEq => {
-                                if x == y { 1 } else { 0 }
-                            }
-                            &BinOp::CaseNeq => {
-                                if x != y { 1 } else { 0 }
                             }
                             _ => unreachable!(),
                         };
-                        (v, 1, false)
+                        // Hasil comparison bernilai 1 bit tapi lebar efektif =
+                        // konteks (operand sudah di-extend sebelum compare).
+                        (v, w.max(1), false)
                     }
                 }
             }
@@ -403,17 +471,48 @@ BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::L
 
     /// Evaluasi akhir: hasil ekspresi di-assign ke `y` (lebar `w`) dengan
     /// zero-extension (unsigned). Nilai dikembalikan ter-mask ke `w`.
+    /// Untuk w > 64, nilai yang terbaca adalah 64 bit rendah (kontrak
+    /// `LogicVec::to_u64` di sisi simulasi).
     pub fn eval(&self, w: u32, a: u64, b: u64) -> u64 {
-        let (v, _, _) = self.eval_w(w, a, b);
-        v & mask_of(w)
+        let (v, _, _) = self.eval_w128(w, w, a as u128, b as u128);
+        ((v & mask_of128(w)) & mask_of128(64)) as u64
     }
 
     /// Apakah evaluasi menyentuh state X (div/mod-by-zero, dsb.)? Kontrak
     /// terdokumentasi `eval_w`: "When has_x=true, oracle should skip
     /// comparison" — oracle memakai ini untuk melewatkan differential.
     pub fn eval_has_x(&self, w: u32, a: u64, b: u64) -> bool {
-        let (_, _, hx) = self.eval_w(w, a, b);
+        let (_, _, hx) = self.eval_w128(w, w, a as u128, b as u128);
         hx
+    }
+
+    /// Lebar intermediate MAKSIMUM (worst-case) dari ekspresi pada konteks
+    /// lebar `w`. Oracle memakai ini untuk skip comparison ketika ada
+    /// intermediate > 128 bit yang tak bisa dipastikan model emas u128.
+    pub fn max_width(&self, w: u64) -> u64 {
+        match self {
+            Expr::Lit(_) | Expr::Var(_) => w,
+            Expr::Un(_, e) => e.max_width(w),
+            Expr::Bin(op, l, r) => {
+                let lw = l.max_width(w);
+                let rw = r.max_width(w);
+                match op {
+                    BinOp::Concat => lw.saturating_add(rw),
+                    BinOp::Eq
+                    | BinOp::Ne
+                    | BinOp::Lt
+                    | BinOp::Le
+                    | BinOp::Gt
+                    | BinOp::Ge
+                    | BinOp::LogicAnd
+                    | BinOp::LogicOr
+                    | BinOp::CaseEq
+                    | BinOp::CaseNeq
+                    | BinOp::Inside => 1,
+                    _ => lw.max(rw),
+                }
+            }
+        }
     }
 
     /// Render ke SystemVerilog. Setiap sub-ekspresi non-leaf dibungkus
@@ -478,7 +577,7 @@ BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::L
 
 /// Bangun node ekspresi acak dengan kedalaman maksimum `depth`.
 pub fn gen_node(w: u32, rng: &mut fastrand::Rng, depth: u32) -> Expr {
-    if depth >= 3 {
+    if depth >= 4 {
         return leaf(w, rng);
     }
     let roll = rng.usize(0..10);

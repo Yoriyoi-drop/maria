@@ -36,7 +36,11 @@ pub struct ElabError {
 
 impl ElabError {
     pub fn new(msg: impl Into<String>, line: usize, col: usize) -> Self {
-        ElabError { msg: msg.into(), line, col }
+        ElabError {
+            msg: msg.into(),
+            line,
+            col,
+        }
     }
 }
 
@@ -70,9 +74,7 @@ pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
         Expr::Ident { line, col, .. } => (*line, *col),
         Expr::Value(_) | Expr::FillLit(_) | Expr::String(_) | Expr::Null => (0, 0),
         Expr::FuncCall { line, col, .. } => (*line, *col),
-        Expr::MethodCall { args, .. } => {
-            args.first().map(expr_location).unwrap_or((0, 0))
-        }
+        Expr::MethodCall { args, .. } => args.first().map(expr_location).unwrap_or((0, 0)),
         Expr::UnaryOp { expr: inner, .. }
         | Expr::Paren(inner)
         | Expr::BitSelect { expr: inner, .. }
@@ -81,10 +83,15 @@ pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
         | Expr::Dist { expr: inner, .. } => expr_location(inner),
         Expr::BinaryOp { lhs, rhs, .. } => {
             let (ll, lc) = expr_location(lhs);
-            if ll > 0 || lc > 0 { (ll, lc) } else { expr_location(rhs) }
+            if ll > 0 || lc > 0 {
+                (ll, lc)
+            } else {
+                expr_location(rhs)
+            }
         }
-        Expr::RangeSelect { expr: lhs, .. }
-        | Expr::PartSelect { expr: lhs, .. } => expr_location(lhs),
+        Expr::RangeSelect { expr: lhs, .. } | Expr::PartSelect { expr: lhs, .. } => {
+            expr_location(lhs)
+        }
         Expr::TernaryOp { cond, .. } => expr_location(cond),
         Expr::Inside { expr: inner, .. } => expr_location(inner),
         Expr::Concat(items) | Expr::StreamingConcat { slices: items, .. } => {
@@ -127,7 +134,11 @@ pub fn expand_all_generates(
     source_file: &str,
 ) -> Result<(), ElabError> {
     if std::env::var("DBG_GEN").is_ok() {
-        eprintln!("DBG-GEN: expand_all_generates start '{}' items={}", module.name.as_str(), module.items.len());
+        eprintln!(
+            "DBG-GEN: expand_all_generates start '{}' items={}",
+            module.name.as_str(),
+            module.items.len()
+        );
     }
     let mut i = 0;
     let mut total_items = 0usize;
@@ -139,12 +150,22 @@ pub fn expand_all_generates(
                     total_items += expanded.len();
                     expand_count += 1;
                     if std::env::var("DBG_GEN").is_ok() && expand_count % 100 == 0 {
-                        eprintln!("DBG-GEN: '{}' expands={} total={} items={}", module.name.as_str(), expand_count, total_items, module.items.len());
+                        eprintln!(
+                            "DBG-GEN: '{}' expands={} total={} items={}",
+                            module.name.as_str(),
+                            expand_count,
+                            total_items,
+                            module.items.len()
+                        );
                     }
                     if total_items > MAX_GENERATED_ITEMS {
                         return Err(ElabError::new(
-                            format!("generate expansion exceeded limit ({} items)", MAX_GENERATED_ITEMS),
-                            0, 0
+                            format!(
+                                "generate expansion exceeded limit ({} items)",
+                                MAX_GENERATED_ITEMS
+                            ),
+                            0,
+                            0,
                         ));
                     }
                     for item in &expanded {
@@ -175,8 +196,11 @@ pub fn expand_all_generates(
                     // (baris global → file/baris asli via resolve_source_location)
                     // agar warning selalu punya lokasi yang bisa diklik.
                     if e.line > 0 && e.line <= source_lines.len() {
-                        let (file, display_line) =
-                            maria_core::diagnostics::resolve_source_location(source_lines, source_file, e.line);
+                        let (file, display_line) = maria_core::diagnostics::resolve_source_location(
+                            source_lines,
+                            source_file,
+                            e.line,
+                        );
                         let snippet = SourceSnippet::new(
                             file,
                             display_line,
@@ -238,7 +262,13 @@ pub fn expand_generate_block(
                 match eval_result {
                     Ok(val) => {
                         let branch = if val != 0 { true_items } else { false_items };
-                        result.extend(expand_item_list(branch, param_vals, diag_sink, source_lines, source_file)?);
+                        result.extend(expand_item_list(
+                            branch,
+                            param_vals,
+                            diag_sink,
+                            source_lines,
+                            source_file,
+                        )?);
                     }
                     Err(e) => {
                         // Kondisi generate-if yang tidak bisa di-evaluasi konstan
@@ -251,13 +281,20 @@ pub fn expand_generate_block(
                         let mut diag = Diagnostic::new(
                             DiagLevel::Warning,
                             DiagCode::NotImplemented,
-                            format!("non-constant condition in generate if ({}), taking true branch", e),
+                            format!(
+                                "non-constant condition in generate if ({}), taking true branch",
+                                e
+                            ),
                         );
                         // Posisi kondisi generate di-render sebagai snippet
                         // file:line:col (sebelumnya hanya ditulis di teks pesan).
                         if cond_line > 0 && cond_line <= source_lines.len() {
                             let (file, display_line) =
-                                maria_core::diagnostics::resolve_source_location(source_lines, source_file, cond_line);
+                                maria_core::diagnostics::resolve_source_location(
+                                    source_lines,
+                                    source_file,
+                                    cond_line,
+                                );
                             let snippet = SourceSnippet::new(
                                 file,
                                 display_line,
@@ -267,7 +304,13 @@ pub fn expand_generate_block(
                             diag = diag.with_source_snippet(snippet);
                         }
                         diag_sink.push(diag);
-                        result.extend(expand_item_list(true_items, param_vals, diag_sink, source_lines, source_file)?);
+                        result.extend(expand_item_list(
+                            true_items,
+                            param_vals,
+                            diag_sink,
+                            source_lines,
+                            source_file,
+                        )?);
                     }
                 }
             }
@@ -280,15 +323,30 @@ pub fn expand_generate_block(
                 label,
             } => {
                 if std::env::var("DBG_GEN").is_ok() {
-                    eprintln!("DBG-GEN: for var={} init={:?} cond={:?} step={:?}", var.as_str(), init, cond, step);
+                    eprintln!(
+                        "DBG-GEN: for var={} init={:?} cond={:?} step={:?}",
+                        var.as_str(),
+                        init,
+                        cond,
+                        step
+                    );
                 }
-                let (init_line, init_col) = init.as_ref()
-                    .and_then(|s| match s { Stmt::BlockingAssign { rhs, .. } => Some(expr_location(rhs)), _ => None })
+                let (init_line, init_col) = init
+                    .as_ref()
+                    .and_then(|s| match s {
+                        Stmt::BlockingAssign { rhs, .. } => Some(expr_location(rhs)),
+                        _ => None,
+                    })
                     .unwrap_or((0, 0));
                 let start_val: i64 = match init {
                     Some(Stmt::BlockingAssign { rhs, .. }) => {
-                        const_eval_with_params(rhs, param_vals)
-                            .map_err(|e| ElabError::new(format!("generate for init eval failed: {}", e), init_line, init_col))?
+                        const_eval_with_params(rhs, param_vals).map_err(|e| {
+                            ElabError::new(
+                                format!("generate for init eval failed: {}", e),
+                                init_line,
+                                init_col,
+                            )
+                        })?
                     }
                     _ => 0,
                 };
@@ -302,9 +360,14 @@ pub fn expand_generate_block(
                         let (rhs_line, rhs_col) = expr_location(rhs);
                         let loc_line = if rhs_line > 0 { rhs_line } else { lim_line };
                         let loc_col = if rhs_col > 0 { rhs_col } else { lim_col };
-                        const_eval_with_params(rhs, param_vals)
-                            .map_err(|e| ElabError::new(format!("generate for limit eval failed: {}", e), loc_line, loc_col))?
-                    },
+                        const_eval_with_params(rhs, param_vals).map_err(|e| {
+                            ElabError::new(
+                                format!("generate for limit eval failed: {}", e),
+                                loc_line,
+                                loc_col,
+                            )
+                        })?
+                    }
                     Some(Expr::BinaryOp {
                         op: BinaryOp::Le,
                         rhs,
@@ -313,15 +376,25 @@ pub fn expand_generate_block(
                         let (rhs_line, rhs_col) = expr_location(rhs);
                         let loc_line = if rhs_line > 0 { rhs_line } else { lim_line };
                         let loc_col = if rhs_col > 0 { rhs_col } else { lim_col };
-                        const_eval_with_params(rhs, param_vals)
-                            .map_err(|e| ElabError::new(format!("generate for limit eval failed: {}", e), loc_line, loc_col))? + 1
-                    },
+                        const_eval_with_params(rhs, param_vals).map_err(|e| {
+                            ElabError::new(
+                                format!("generate for limit eval failed: {}", e),
+                                loc_line,
+                                loc_col,
+                            )
+                        })? + 1
+                    }
                     Some(c) => {
                         let (c_line, c_col) = expr_location(c);
                         let loc_line = if c_line > 0 { c_line } else { lim_line };
                         let loc_col = if c_col > 0 { c_col } else { lim_col };
-                        if const_eval_with_params(c, param_vals)
-                            .map_err(|e| ElabError::new(format!("generate for condition eval failed: {}", e), loc_line, loc_col))? != 0
+                        if const_eval_with_params(c, param_vals).map_err(|e| {
+                            ElabError::new(
+                                format!("generate for condition eval failed: {}", e),
+                                loc_line,
+                                loc_col,
+                            )
+                        })? != 0
                         {
                             1
                         } else {
@@ -348,7 +421,13 @@ pub fn expand_generate_block(
                             substitute_genvar_in_module_item(item, var.as_str(), cur);
                         }
                         scope_rename_generate_iteration(&mut substituted, label.as_ref(), cur);
-                        result.extend(expand_item_list(&substituted, param_vals, diag_sink, source_lines, source_file)?);
+                        result.extend(expand_item_list(
+                            &substituted,
+                            param_vals,
+                            diag_sink,
+                            source_lines,
+                            source_file,
+                        )?);
                         cur += step_val;
                     }
                 } else if step_val < 0 {
@@ -367,7 +446,13 @@ pub fn expand_generate_block(
                             substitute_genvar_in_module_item(item, var.as_str(), cur);
                         }
                         scope_rename_generate_iteration(&mut substituted, label.as_ref(), cur);
-                        result.extend(expand_item_list(&substituted, param_vals, diag_sink, source_lines, source_file)?);
+                        result.extend(expand_item_list(
+                            &substituted,
+                            param_vals,
+                            diag_sink,
+                            source_lines,
+                            source_file,
+                        )?);
                         cur += step_val;
                     }
                 }
@@ -387,9 +472,21 @@ pub fn expand_generate_block(
                         // karena ini sering terjadi di interface coverage OpenTitan.
                         diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, format!("non-constant expression in generate case at line {}:{} ({}), taking first case", case_line, case_col, e)));
                         if let Some(first) = items.first() {
-                            result.extend(expand_item_list(&first.body, param_vals, diag_sink, source_lines, source_file)?);
+                            result.extend(expand_item_list(
+                                &first.body,
+                                param_vals,
+                                diag_sink,
+                                source_lines,
+                                source_file,
+                            )?);
                         } else if let Some(default_items) = default {
-                            result.extend(expand_item_list(default_items, param_vals, diag_sink, source_lines, source_file)?);
+                            result.extend(expand_item_list(
+                                default_items,
+                                param_vals,
+                                diag_sink,
+                                source_lines,
+                                source_file,
+                            )?);
                         }
                         continue;
                     }
@@ -398,10 +495,21 @@ pub fn expand_generate_block(
                 for ci in items {
                     for label in &ci.labels {
                         let (lab_line, lab_col) = expr_location(label);
-                        let label_val = const_eval_with_params(label, param_vals)
-                            .map_err(|e| ElabError::new(format!("generate case label eval failed: {}", e), lab_line, lab_col))?;
+                        let label_val = const_eval_with_params(label, param_vals).map_err(|e| {
+                            ElabError::new(
+                                format!("generate case label eval failed: {}", e),
+                                lab_line,
+                                lab_col,
+                            )
+                        })?;
                         if label_val == case_val {
-                            result.extend(expand_item_list(&ci.body, param_vals, diag_sink, source_lines, source_file)?);
+                            result.extend(expand_item_list(
+                                &ci.body,
+                                param_vals,
+                                diag_sink,
+                                source_lines,
+                                source_file,
+                            )?);
                             matched = true;
                             break;
                         }
@@ -412,12 +520,24 @@ pub fn expand_generate_block(
                 }
                 if !matched {
                     if let Some(default_items) = default {
-                        result.extend(expand_item_list(default_items, param_vals, diag_sink, source_lines, source_file)?);
+                        result.extend(expand_item_list(
+                            default_items,
+                            param_vals,
+                            diag_sink,
+                            source_lines,
+                            source_file,
+                        )?);
                     }
                 }
             }
             GenerateItem::Items(items) => {
-                result.extend(expand_item_list(items, param_vals, diag_sink, source_lines, source_file)?);
+                result.extend(expand_item_list(
+                    items,
+                    param_vals,
+                    diag_sink,
+                    source_lines,
+                    source_file,
+                )?);
             }
         }
     }
@@ -453,7 +573,13 @@ fn expand_item_list(
     for item in items {
         match item {
             ModuleItem::Generate(gen) => {
-                result.extend(expand_generate_block(gen, &extended, diag_sink, source_lines, source_file)?);
+                result.extend(expand_generate_block(
+                    gen,
+                    &extended,
+                    diag_sink,
+                    source_lines,
+                    source_file,
+                )?);
             }
             other => result.push(other.clone()),
         }
@@ -575,15 +701,15 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
         }
         ModuleItem::Param(p) => {
             if let Some(default) = &mut p.default {
-                let old = std::mem::replace(
-                    default,
-                    Expr::Value(maria_ast::expr::Value::Decimal(0)),
-                );
+                let old =
+                    std::mem::replace(default, Expr::Value(maria_ast::expr::Value::Decimal(0)));
                 *default = substitute_loop_var_in_expr(&old, var_name, value);
             }
             if let Some((msb, lsb)) = &mut p.range {
-                let old_msb = std::mem::replace(msb, Expr::Value(maria_ast::expr::Value::Decimal(0)));
-                let old_lsb = std::mem::replace(lsb, Expr::Value(maria_ast::expr::Value::Decimal(0)));
+                let old_msb =
+                    std::mem::replace(msb, Expr::Value(maria_ast::expr::Value::Decimal(0)));
+                let old_lsb =
+                    std::mem::replace(lsb, Expr::Value(maria_ast::expr::Value::Decimal(0)));
                 *msb = substitute_loop_var_in_expr(&old_msb, var_name, value);
                 *lsb = substitute_loop_var_in_expr(&old_lsb, var_name, value);
             }
@@ -614,8 +740,7 @@ pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &st
             false_items,
             ..
         } => {
-            let old_cond =
-                std::mem::replace(cond, Expr::Value(maria_ast::expr::Value::Decimal(0)));
+            let old_cond = std::mem::replace(cond, Expr::Value(maria_ast::expr::Value::Decimal(0)));
             *cond = substitute_loop_var_in_expr(&old_cond, var_name, value);
             for item in true_items.iter_mut() {
                 substitute_genvar_in_module_item(item, var_name, value);
@@ -654,8 +779,7 @@ pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &st
             default,
             ..
         } => {
-            let old_expr =
-                std::mem::replace(expr, Expr::Value(maria_ast::expr::Value::Decimal(0)));
+            let old_expr = std::mem::replace(expr, Expr::Value(maria_ast::expr::Value::Decimal(0)));
             *expr = substitute_loop_var_in_expr(&old_expr, var_name, value);
             for ci in items.iter_mut() {
                 for label in ci.labels.iter_mut() {
@@ -732,18 +856,17 @@ fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
             base: Box::new(scope_rename_expr(base, map)),
             width: Box::new(scope_rename_expr(width, map)),
         },
-        Expr::Concat(exprs) => Expr::Concat(
-            exprs
-                .iter()
-                .map(|e| scope_rename_expr(e, map))
-                .collect(),
-        ),
-        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
+        Expr::Concat(exprs) => {
+            Expr::Concat(exprs.iter().map(|e| scope_rename_expr(e, map)).collect())
+        }
+        Expr::FuncCall {
+            name,
+            args,
+            line,
+            col,
+        } => Expr::FuncCall {
             name: *name,
-            args: args
-                .iter()
-                .map(|a| scope_rename_expr(a, map))
-                .collect(),
+            args: args.iter().map(|a| scope_rename_expr(a, map)).collect(),
             line: *line,
             col: *col,
         },
@@ -778,10 +901,7 @@ fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
         } => Expr::MethodCall {
             obj: Box::new(scope_rename_expr(obj, map)),
             method: *method,
-            args: args
-                .iter()
-                .map(|a| scope_rename_expr(a, map))
-                .collect(),
+            args: args.iter().map(|a| scope_rename_expr(a, map)).collect(),
             with_clause: with_clause
                 .clone()
                 .map(|wc| Box::new(scope_rename_expr(&wc, map))),
@@ -809,10 +929,7 @@ fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
             slice_size: slice_size
                 .as_ref()
                 .map(|ss| Box::new(scope_rename_expr(ss, map))),
-            slices: slices
-                .iter()
-                .map(|e| scope_rename_expr(e, map))
-                .collect(),
+            slices: slices.iter().map(|e| scope_rename_expr(e, map)).collect(),
         },
         Expr::Dist { expr, items } => Expr::Dist {
             expr: Box::new(scope_rename_expr(expr, map)),
@@ -826,7 +943,12 @@ fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
             width: Box::new(scope_rename_expr(width, map)),
             expr: Box::new(scope_rename_expr(inner, map)),
         },
-        Expr::ScopedIdent { package, item, line, col } => Expr::ScopedIdent {
+        Expr::ScopedIdent {
+            package,
+            item,
+            line,
+            col,
+        } => Expr::ScopedIdent {
             package: *package,
             item: *item,
             line: *line,
@@ -933,10 +1055,7 @@ fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
             col,
         } => Stmt::SysCall {
             name: *name,
-            args: args
-                .iter()
-                .map(|a| scope_rename_expr(a, map))
-                .collect(),
+            args: args.iter().map(|a| scope_rename_expr(a, map)).collect(),
             line: *line,
             col: *col,
         },
@@ -1019,13 +1138,9 @@ fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
             step,
             stmts,
         } => Stmt::LoopFor {
-            init: init
-                .as_ref()
-                .map(|s| Box::new(scope_rename_stmt(s, map))),
+            init: init.as_ref().map(|s| Box::new(scope_rename_stmt(s, map))),
             cond: cond.as_ref().map(|c| scope_rename_expr(c, map)),
-            step: step
-                .as_ref()
-                .map(|s| Box::new(scope_rename_stmt(s, map))),
+            step: step.as_ref().map(|s| Box::new(scope_rename_stmt(s, map))),
             stmts: scope_rename_stmts(stmts, map),
         },
         Stmt::Repeat { count, stmts } => Stmt::Repeat {
@@ -1034,9 +1149,7 @@ fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
         },
         Stmt::Wait { cond, stmt } => Stmt::Wait {
             cond: scope_rename_expr(cond, map),
-            stmt: stmt
-                .as_ref()
-                .map(|s| Box::new(scope_rename_stmt(s, map))),
+            stmt: stmt.as_ref().map(|s| Box::new(scope_rename_stmt(s, map))),
         },
         Stmt::Disable { name } => Stmt::Disable { name: *name },
         Stmt::Force { lhs, rhs } => Stmt::Force {
@@ -1049,10 +1162,9 @@ fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
         Stmt::Deassign { expr } => Stmt::Deassign {
             expr: scope_rename_expr(expr, map),
         },
-        Stmt::Return(expr) => Stmt::Return(
-            expr.as_ref()
-                .map(|e| Box::new(scope_rename_expr(e, map))),
-        ),
+        Stmt::Return(expr) => {
+            Stmt::Return(expr.as_ref().map(|e| Box::new(scope_rename_expr(e, map))))
+        }
         Stmt::Null => Stmt::Null,
         Stmt::SysFinish => Stmt::SysFinish,
         Stmt::EventControl { events, stmt } => Stmt::EventControl {
@@ -1060,9 +1172,7 @@ fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
                 .iter()
                 .map(|e| scope_rename_sensitivity(e, map))
                 .collect(),
-            stmt: stmt
-                .as_ref()
-                .map(|s| Box::new(scope_rename_stmt(s, map))),
+            stmt: stmt.as_ref().map(|s| Box::new(scope_rename_stmt(s, map))),
         },
         Stmt::EventTrigger { name } => Stmt::EventTrigger { name: *name },
         Stmt::ForeachLoop {
@@ -1074,11 +1184,7 @@ fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
             index_vars: index_vars.clone(),
             stmts: scope_rename_stmts(stmts, map),
         },
-        Stmt::NamedBlock {
-            name,
-            stmts,
-            decls,
-        } => Stmt::NamedBlock {
+        Stmt::NamedBlock { name, stmts, decls } => Stmt::NamedBlock {
             name: *name,
             stmts: scope_rename_stmts(stmts, map),
             decls: decls.clone(),
@@ -1092,7 +1198,10 @@ fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
                 })
                 .collect(),
         },
-        Stmt::Fork { processes, join_type } => Stmt::Fork {
+        Stmt::Fork {
+            processes,
+            join_type,
+        } => Stmt::Fork {
             processes: processes
                 .iter()
                 .map(|p| scope_rename_stmt(p, map))
@@ -1173,7 +1282,8 @@ fn scope_rename_module_item(item: &mut ModuleItem, map: &HashMap<Symbol, Symbol>
                     er.lsb = scope_rename_expr(&er.lsb, map);
                 }
                 if let Some(init) = &mut var.expr {
-                    let old = std::mem::replace(init, Expr::Value(maria_ast::expr::Value::Decimal(0)));
+                    let old =
+                        std::mem::replace(init, Expr::Value(maria_ast::expr::Value::Decimal(0)));
                     *init = scope_rename_expr(&old, map);
                 }
             }
@@ -1278,7 +1388,10 @@ fn scope_rename_generate_iteration(items: &mut [ModuleItem], label: Option<&Symb
     };
     let mut map = HashMap::with_capacity(locals.len());
     for l in &locals {
-        map.insert(*l, Symbol::intern(&format!("{}.{}", scope_name, l.as_str())));
+        map.insert(
+            *l,
+            Symbol::intern(&format!("{}.{}", scope_name, l.as_str())),
+        );
     }
     for item in items.iter_mut() {
         scope_rename_module_item(item, &map);

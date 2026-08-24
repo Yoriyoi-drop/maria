@@ -30,7 +30,15 @@ mod tests {
         let root = std::env::temp_dir().join("maria_db_meta");
         let _ = std::fs::create_dir_all(&root);
         let mut db = MicdDatabase::open_project(&root, "pid-m");
-        db.record_file(PathBuf::from("a.sv"), 42, vec![], FileStatus::Recompiled, 0, 10, vec![]);
+        db.record_file(
+            PathBuf::from("a.sv"),
+            42,
+            vec![],
+            FileStatus::Recompiled,
+            0,
+            10,
+            vec![],
+        );
         assert_eq!(file_count(&db), 1);
         assert!(file_meta(&db, Path::new("a.sv")).is_some());
         assert_eq!(recompiled_count(&db), 1);

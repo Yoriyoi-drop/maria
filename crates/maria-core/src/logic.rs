@@ -38,6 +38,17 @@ impl Default for LogicVec {
 }
 
 impl LogicVec {
+    /// Ambang guard OOM bersama (lihat `new`). Dipakai SEMUA constructor —
+    /// literal `4294967295'h0` lewat `fill`/`from_u64` tanpa clamp = alokasi
+    /// 4G+ slot (hang/OOM), bukan graceful.
+    fn sane_width(width: usize) -> usize {
+        if width > (1 << 27) {
+            1
+        } else {
+            width
+        }
+    }
+
     pub fn new(width: usize) -> Self {
         // Guard OOM untuk lebar signal BOGUS (hasil width-computation yang
         // salah / overflow param bisa berorder miliaran bit). Ambang 1<<27 bit
@@ -45,7 +56,7 @@ impl LogicVec {
         // realistis (OpenTitan sram_ctrl dgn ECC: 65536 x 76 ≈ 4.98M bit) tapi
         // tetap membatasi alokasi absurd. Ambang lama 1M bit memotong SRAM
         // legal → full_init 1 bit → index-out-of-bounds saat init array.
-        let w = if width > (1 << 27) { 1 } else { width };
+        let w = Self::sane_width(width);
         // Try arena-backed allocation first (zero-deallocation path)
         if let Some(ctor) = get_logicvec_ctor() {
             if let Some(lv) = ctor(w, LogicVal::X) {
@@ -60,6 +71,7 @@ impl LogicVec {
     }
 
     pub fn fill(val: LogicVal, width: usize) -> Self {
+        let width = Self::sane_width(width);
         // Try arena-backed allocation first (zero-deallocation path)
         if let Some(ctor) = get_logicvec_ctor() {
             if let Some(lv) = ctor(width, val) {
@@ -74,6 +86,7 @@ impl LogicVec {
     }
 
     pub fn from_u64(val: u64, width: usize) -> Self {
+        let width = Self::sane_width(width);
         // Try arena-backed allocation first (zero-deallocation path)
         if let Some(ctor) = get_logicvec_ctor() {
             if let Some(mut lv) = ctor(width, LogicVal::Zero) {

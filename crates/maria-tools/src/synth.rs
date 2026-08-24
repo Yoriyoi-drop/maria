@@ -8,11 +8,11 @@
 
 use std::path::PathBuf;
 
+use crate::{kv, section};
 use maria_core::error::SimError;
 use maria_elaboration::elaborator::ElaborateMode;
-use maria_synth::DeviceKind;
 use maria_synth::prelude::*;
-use crate::{section, kv};
+use maria_synth::DeviceKind;
 
 /// Opsi `synth`.
 pub struct SynthArgs<'a> {
@@ -119,7 +119,10 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
         for r in &results {
             kv(
                 r.name,
-                format!("{} → {} node ({} rewrite)", r.nodes_before, r.nodes_after, r.changed),
+                format!(
+                    "{} → {} node ({} rewrite)",
+                    r.nodes_before, r.nodes_after, r.changed
+                ),
             );
         }
 
@@ -144,10 +147,7 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
                 print!("{}", maria_netlist::emit_mvnet(&nl));
             }
             if args.emit_netlist {
-                let prefix = args
-                    .output
-                    .clone()
-                    .unwrap_or_else(|| top_name.clone());
+                let prefix = args.output.clone().unwrap_or_else(|| top_name.clone());
                 let v = maria_netlist::emit_verilog(&nl);
                 let json = maria_netlist::emit_json(&nl);
                 let mvnet = maria_netlist::emit_mvnet(&nl);
@@ -182,10 +182,7 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
             })
             .expect("device generic/fpga punya back-end");
             let res = maria_synth::tech_map(&sir_opt, arch.as_ref());
-            section(&format!(
-                "Tech Mapping (phase 4 — {})",
-                arch.name()
-            ));
+            section(&format!("Tech Mapping (phase 4 — {})", arch.name()));
             for s in &res.skipped {
                 println!("  [skipped] {s}");
             }
@@ -193,14 +190,8 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
             kv("CARRY4", res.carry4_count.to_string());
             kv("FF", res.ff_count.to_string());
             let dag = maria_netlist::verify_dag(&res.netlist);
-            kv(
-                "DAG",
-                if dag.ok { "ok" } else { "violation!" },
-            );
-            let prefix = args
-                .output
-                .clone()
-                .unwrap_or_else(|| top_name.clone());
+            kv("DAG", if dag.ok { "ok" } else { "violation!" });
+            let prefix = args.output.clone().unwrap_or_else(|| top_name.clone());
             for (suffix, content) in [
                 ("tech.v", maria_netlist::emit_verilog(&res.netlist)),
                 ("tech.json", maria_netlist::emit_json(&res.netlist)),
@@ -243,9 +234,13 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
                     })?;
                     (c, p.clone())
                 }
-                None => (maria_timing::Constraint::default(), "default (10ns)".to_string()),
+                None => (
+                    maria_timing::Constraint::default(),
+                    "default (10ns)".to_string(),
+                ),
             };
-            let rep = maria_timing::analyze(nl, &constraint, &maria_timing::TimingOptions::default());
+            let rep =
+                maria_timing::analyze(nl, &constraint, &maria_timing::TimingOptions::default());
             let area = maria_timing::estimate_area(nl);
             let timing_rpt = maria_timing::render_timing_report(&rep, &cname);
             let area_rpt = maria_timing::render_area_report(&area);
@@ -275,10 +270,17 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
             let first = maria_synth::report::first_error(&check).unwrap_or_default();
             return Err(SimError::with_diag(
                 maria_core::diagnostics::DiagCode::InvalidSyntax,
-                format!("synthesis check FAILED: {} error(s) — {}", check.error_count(), first),
+                format!(
+                    "synthesis check FAILED: {} error(s) — {}",
+                    check.error_count(),
+                    first
+                ),
             ));
         }
-        println!("\n✅ synthesis check OK — design sintesizable (skor {:.1}/100)", check.overall_score());
+        println!(
+            "\n✅ synthesis check OK — design sintesizable (skor {:.1}/100)",
+            check.overall_score()
+        );
         return Ok(());
     }
 

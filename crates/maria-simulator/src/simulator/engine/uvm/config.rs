@@ -6,11 +6,11 @@
 //! 1 file = 1 tanggung jawab: hanya path matching + lookup config db.
 
 use super::super::SimulationEngine;
-use maria_core::Symbol;
-use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
-use maria_ir::IrExpr;
 use crate::simulator::util::*;
+use maria_compiler::hir::{LogicVec, ObjId};
+use maria_core::error::SimError;
+use maria_core::Symbol;
+use maria_ir::IrExpr;
 
 /// Wildcard match — `*` match zero-or-more karakter (termasuk `.`), `?`
 /// match satu karakter. DP iteratif dua baris (space O(len inst_path)).
@@ -59,11 +59,7 @@ fn pattern_specificity(pattern: &str) -> (usize, usize, usize) {
 
 impl SimulationEngine {
     /// Cari nilai config db: exact match dulu, lalu wildcard paling spesifik.
-    pub(crate) fn config_db_find(
-        &self,
-        inst_name: &str,
-        field_name: &str,
-    ) -> Option<LogicVec> {
+    pub(crate) fn config_db_find(&self, inst_name: &str, field_name: &str) -> Option<LogicVec> {
         // 1) Exact match — kemenangan penuh.
         if let Some(v) = self
             .uvm_config_db_data
@@ -102,12 +98,11 @@ impl SimulationEngine {
     /// config_db_path_match + pattern_specificity). uvm_resource_db::set
     /// menyimpan key (scope, name); get/exists/read_by_name memakai lookup
     /// ini sehingga `set("*.env", ...)` terbaca oleh `get("tb.env", ...)`.
-    pub(crate) fn resource_db_find(
-        &self,
-        scope: &str,
-        name: &str,
-    ) -> Option<LogicVec> {
-        if let Some(v) = self.uvm_resource_db_data.get(&(scope.to_string(), name.to_string())) {
+    pub(crate) fn resource_db_find(&self, scope: &str, name: &str) -> Option<LogicVec> {
+        if let Some(v) = self
+            .uvm_resource_db_data
+            .get(&(scope.to_string(), name.to_string()))
+        {
             return Some(v.clone());
         }
         let mut best: Option<((usize, usize, usize), LogicVec)> = None;
@@ -192,10 +187,7 @@ impl SimulationEngine {
             "uvm_root::run_test" => {
                 // VERIF-04: varian class-method run_test("name") sebagai
                 // statement — sama dgn bare run_test (F18).
-                let test_name = arg_vals
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let test_name = arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                 self.run_uvm_test(&test_name)?;
             }
             "uvm_tr_database::get_db" => {
@@ -207,18 +199,12 @@ impl SimulationEngine {
             }
             "uvm_tr_database::get_stream" => {
                 // VERIF-18: get_stream(name) sebagai statement — buat stream.
-                let stream_name = arg_vals
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let stream_name = arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                 self.tr_stream_get(&stream_name);
             }
             "uvm_tr_database::set_stream" => {
                 // VERIF-18: set_stream(name) — stream default db.
-                let stream_name = arg_vals
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let stream_name = arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                 self.tr_stream_get(&stream_name);
                 self.tr_db_default_stream = Some(stream_name);
             }

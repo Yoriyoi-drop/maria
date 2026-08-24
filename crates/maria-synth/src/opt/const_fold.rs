@@ -48,8 +48,16 @@ impl SynthPass for ConstFold {
 }
 
 /// Fold node bila SEMUA operand konstanta 2-state.
-fn fold_node(m: &SirModule, kind: &SirNodeKind, inputs: &[ValueId], width: usize) -> Option<LogicVec> {
-    let consts: Vec<LogicVec> = inputs.iter().map(|v| resolve_const(m, *v)).collect::<Option<_>>()?;
+fn fold_node(
+    m: &SirModule,
+    kind: &SirNodeKind,
+    inputs: &[ValueId],
+    width: usize,
+) -> Option<LogicVec> {
+    let consts: Vec<LogicVec> = inputs
+        .iter()
+        .map(|v| resolve_const(m, *v))
+        .collect::<Option<_>>()?;
     let vals: Vec<Option<u64>> = consts.iter().map(u64_known).collect();
     if vals.iter().any(|v| v.is_none()) {
         return None; // ada X/Z → jangan fold
@@ -150,7 +158,12 @@ fn shift_left(a: u64, b: u64, msk: u64) -> u64 {
 }
 
 /// Identity / double inversion → konten nilai pengganti.
-fn identity_node(m: &SirModule, kind: &SirNodeKind, inputs: &[ValueId], width: usize) -> Option<SirValue> {
+fn identity_node(
+    m: &SirModule,
+    kind: &SirNodeKind,
+    inputs: &[ValueId],
+    width: usize,
+) -> Option<SirValue> {
     let msk = mask(width);
     match kind {
         // Buffer transparan.
@@ -176,9 +189,7 @@ fn identity_node(m: &SirModule, kind: &SirNodeKind, inputs: &[ValueId], width: u
             let c = operand_const(m, inputs);
             match c {
                 Some(0) => other_operand(m, inputs).map(|v| alias_content(m, v)),
-                Some(c) if c == msk => {
-                    Some(SirValue::Const(LogicVec::from_u64(msk, width.max(1))))
-                }
+                Some(c) if c == msk => Some(SirValue::Const(LogicVec::from_u64(msk, width.max(1)))),
                 _ => same_operand(inputs).map(|v| alias_content(m, v)),
             }
         }
@@ -186,9 +197,8 @@ fn identity_node(m: &SirModule, kind: &SirNodeKind, inputs: &[ValueId], width: u
             let c = operand_const(m, inputs);
             match c {
                 Some(0) => other_operand(m, inputs).map(|v| alias_content(m, v)),
-                _ => same_operand(inputs).map(|_| {
-                    SirValue::Const(LogicVec::from_u64(0, width.max(1)))
-                }),
+                _ => same_operand(inputs)
+                    .map(|_| SirValue::Const(LogicVec::from_u64(0, width.max(1)))),
             }
         }
         SirNodeKind::Mux => {
@@ -238,9 +248,9 @@ fn same_operand(inputs: &[ValueId]) -> Option<ValueId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pass::SynthPipeline;
     use maria_core::intern::Symbol;
     use maria_sir::{SirModule, SirNodeKind, SirValue};
-    use crate::pass::SynthPipeline;
 
     fn run_one(m: &mut SirModule, changed: usize) {
         let mut p = SynthPipeline::new();
@@ -330,8 +340,8 @@ mod tests {
         m.add_value(SirValue::Const(LogicVec::from_u64(0xAB, 8))); // 0
         m.add_value(SirValue::Const(LogicVec::from_u64(0xCD, 8))); // 1
         m.add_value(SirValue::Const(LogicVec::from_u64(0xEF, 8))); // 2
-        // replikasi x3: 8*3*3 = 72 bit — cukup pakai 9 operand 8-bit.
-        // (Simulasikan concat lebar: total = sum lebar = 72.)
+                                                                   // replikasi x3: 8*3*3 = 72 bit — cukup pakai 9 operand 8-bit.
+                                                                   // (Simulasikan concat lebar: total = sum lebar = 72.)
         let inputs: Vec<ValueId> = (0..9).map(|_| 0).collect();
         let nid = m.add_node(SirNodeKind::Concat, inputs, 72);
         let out = m.nodes[nid].output;

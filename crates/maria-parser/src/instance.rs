@@ -3,12 +3,12 @@
 // skip_balanced_paren, parse_modport, parse_port_list, parse_instance, parse_gate_primitive
 
 use super::Parser;
-use maria_ast::*;
-use maria_ast::types::const_eval_simple;
-use maria_core::error::SimError;
-use maria_core::intern::Symbol;
 use crate::lexer::*;
 use crate::util::*;
+use maria_ast::types::const_eval_simple;
+use maria_ast::*;
+use maria_core::error::SimError;
+use maria_core::intern::Symbol;
 
 impl Parser {
     pub(crate) fn parse_module(&mut self) -> Result<Module, SimError> {
@@ -16,7 +16,8 @@ impl Parser {
         self.typedef_names.clear();
         // Re-seed typedef GLOBAL (lintas file) yang di-clear di atas — tanpa
         // ini nama typedef dari file lain hilang di scope module.
-        self.typedef_names.extend(self.global_typedef_names.iter().copied());
+        self.typedef_names
+            .extend(self.global_typedef_names.iter().copied());
         // Type params module tidak boleh bocor antar-module.
         self.module_type_params.clear();
 
@@ -31,9 +32,7 @@ impl Parser {
                 self.advance();
                 *s
             }
-            _ => {
-                return Err(self.err("expected module name"))
-            }
+            _ => return Err(self.err("expected module name")),
         };
         let mut ports = Vec::new();
         let mut params = Vec::new();
@@ -90,7 +89,13 @@ impl Parser {
         loop {
             // Progress tracking
             if _mod_tokens > 0 && _mod_tokens.is_multiple_of(1000000) {
-                eprintln!("[DBG-MODULE-BODY] {} items parsed, token {}/{}, elapsed {:?}", _mod_tokens, self.pos.get(), self.tokens.len(), _mod_start.elapsed());
+                eprintln!(
+                    "[DBG-MODULE-BODY] {} items parsed, token {}/{}, elapsed {:?}",
+                    _mod_tokens,
+                    self.pos.get(),
+                    self.tokens.len(),
+                    _mod_start.elapsed()
+                );
             }
             // Stuck detection: if pos hasn't changed for too many iterations, abort
             if self.pos.get() == _last_pos {
@@ -99,8 +104,16 @@ impl Parser {
                     let line = self.peek_line();
                     let col = self.peek_col();
                     let tok_str = format!("{}", self.peek());
-                    let summary = if tok_str.len() > 40 { format!("{}...", &tok_str[..40]) } else { tok_str };
-                    self.push_warning_at(format!("parser stuck in module body at token: {}", summary), line, col);
+                    let summary = if tok_str.len() > 40 {
+                        format!("{}...", &tok_str[..40])
+                    } else {
+                        tok_str
+                    };
+                    self.push_warning_at(
+                        format!("parser stuck in module body at token: {}", summary),
+                        line,
+                        col,
+                    );
                     return Err(self.err("parser stuck (no progress) in module body"));
                 }
             } else {
@@ -185,7 +198,9 @@ impl Parser {
     pub(crate) fn parse_module_fast(&mut self) -> Result<(), SimError> {
         self.advance(); // consume 'module'
         match self.peek() {
-            Token::Ident(_) => { self.advance(); }
+            Token::Ident(_) => {
+                self.advance();
+            }
             _ => return Err(self.err("expected module name")),
         }
         // Skip #(params) if any
@@ -204,7 +219,9 @@ impl Parser {
         loop {
             match self.peek() {
                 Token::Endmodule | Token::EndInterface | Token::EndProgram | Token::Eof => {
-                    if self.peek() != &Token::Eof { self.advance(); }
+                    if self.peek() != &Token::Eof {
+                        self.advance();
+                    }
                     // Consume optional 'endmodule : name' suffix
                     if self.peek() == &Token::Colon {
                         self.advance();
@@ -254,7 +271,7 @@ impl Parser {
 
     pub(crate) fn parse_interface_fast(&mut self) -> Result<(), SimError> {
         self.advance(); // consume 'interface'
-        // Skip name
+                        // Skip name
         match self.peek() {
             Token::Ident(_) | Token::Hash => { /* name optional if #(params) follows */ }
             _ => return Err(self.err("expected interface name")),
@@ -278,7 +295,9 @@ impl Parser {
         loop {
             match self.peek() {
                 Token::EndInterface | Token::Eof => {
-                    if self.peek() != &Token::Eof { self.advance(); }
+                    if self.peek() != &Token::Eof {
+                        self.advance();
+                    }
                     break;
                 }
                 _ => {
@@ -363,7 +382,8 @@ impl Parser {
         self.advance(); // consume 'interface'
         self.typedef_names.clear();
         // Re-seed typedef GLOBAL (lintas file) yang di-clear di atas.
-        self.typedef_names.extend(self.global_typedef_names.iter().copied());
+        self.typedef_names
+            .extend(self.global_typedef_names.iter().copied());
         // Hygiene defensif: simetris dgn parse_module, cegah kejutan bila
         // interface kelak mulai memakai type param.
         self.module_type_params.clear();
@@ -379,9 +399,7 @@ impl Parser {
                 self.advance();
                 n
             }
-            _ => {
-                return Err(self.err("expected interface name"))
-            }
+            _ => return Err(self.err("expected interface name")),
         };
         let mut ports = Vec::new();
         let mut params = Vec::new();
@@ -396,17 +414,31 @@ impl Parser {
             self.advance(); // consume 'import'
             loop {
                 let pkg = match self.peek() {
-                    Token::Ident(s) => { let n = *s; self.advance(); n }
+                    Token::Ident(s) => {
+                        let n = *s;
+                        self.advance();
+                        n
+                    }
                     _ => break,
                 };
                 if self.peek() == &Token::Scope {
                     self.advance(); // consume '::'
                     let item_name = match self.peek() {
-                        Token::Star => { self.advance(); Symbol::intern("*") }
-                        Token::Ident(s) => { let n = *s; self.advance(); n }
+                        Token::Star => {
+                            self.advance();
+                            Symbol::intern("*")
+                        }
+                        Token::Ident(s) => {
+                            let n = *s;
+                            self.advance();
+                            n
+                        }
                         _ => Symbol::intern("*"),
                     };
-                    items.push(ModuleItem::Import { package: pkg, item: item_name });
+                    items.push(ModuleItem::Import {
+                        package: pkg,
+                        item: item_name,
+                    });
                 }
                 if self.peek() == &Token::Comma {
                     self.advance();
@@ -445,8 +477,16 @@ impl Parser {
                     let line = self.peek_line();
                     let col = self.peek_col();
                     let tok_str = format!("{}", self.peek());
-                    let summary = if tok_str.len() > 40 { format!("{}...", &tok_str[..40]) } else { tok_str };
-                    self.push_warning_at(format!("parser stuck in interface body at token: {}", summary), line, col);
+                    let summary = if tok_str.len() > 40 {
+                        format!("{}...", &tok_str[..40])
+                    } else {
+                        tok_str
+                    };
+                    self.push_warning_at(
+                        format!("parser stuck in interface body at token: {}", summary),
+                        line,
+                        col,
+                    );
                     return Err(self.err("parser stuck (no progress) in interface body"));
                 }
             } else {
@@ -533,9 +573,7 @@ impl Parser {
                 self.advance();
                 n
             }
-            _ => {
-                return Err(self.err("expected modport name"))
-            }
+            _ => return Err(self.err("expected modport name")),
         };
         self.expect(Token::LParen)?;
         let mut items = Vec::new();
@@ -553,9 +591,7 @@ impl Parser {
                     self.advance();
                     PortDirection::Inout
                 }
-                _ => {
-                    return Err(self.err("expected direction in modport"))
-                }
+                _ => return Err(self.err("expected direction in modport")),
             };
             // Collect all signals under this direction, comma-separated
             loop {
@@ -565,9 +601,7 @@ impl Parser {
                         self.advance();
                         n
                     }
-                    _ => {
-                        return Err(self.err("expected signal name in modport"))
-                    }
+                    _ => return Err(self.err("expected signal name in modport")),
                 };
                 items.push(ModportItem {
                     name: sig_name,
@@ -616,10 +650,7 @@ impl Parser {
                     existing.direction = np.direction;
                     // Body yang punya range/dtype MENIMPA header yang kosong
                     // (header non-ANSI cuma nama). Jangan menimpa dengan None.
-                    if np.range.is_some()
-                        || np.expr_range.is_some()
-                        || np.array_range.is_some()
-                    {
+                    if np.range.is_some() || np.expr_range.is_some() || np.array_range.is_some() {
                         existing.range = np.range;
                         existing.expr_range = np.expr_range;
                         existing.array_range = np.array_range;
@@ -649,9 +680,7 @@ impl Parser {
                         Token::Ident(_) => {
                             self.advance();
                         }
-                        _ => {
-                            return Err(self.err("expected port name"))
-                        }
+                        _ => return Err(self.err("expected port name")),
                     }
                     self.expect(Token::LParen)?;
                     if self.peek() != &Token::RParen {
@@ -758,29 +787,28 @@ impl Parser {
                     // rhs=1). Type parameter DIKECUALIKAN — `T [7:0]` di mana
                     // T = logic/bit adalah packed range vector (test
                     // `parameter type T = logic`), bukan array.
-                    let (range, expr_range, extra_packed_dims, array_range_pre) =
-                        if dtype_name.is_some()
-                            && !self
-                                .module_type_params
-                                .contains(&Symbol::intern(dtype_name.as_deref().unwrap_or("")))
-                        {
-                            let ar = expr_range.as_ref().and_then(|er| {
-                                if let (Ok(m), Ok(l)) = (
-                                    const_eval_simple(&er.msb),
-                                    const_eval_simple(&er.lsb),
-                                ) {
-                                    Some(Range {
-                                        msb: m as usize,
-                                        lsb: l as usize,
-                                    })
-                                } else {
-                                    None
-                                }
-                            });
-                            (None, None, Vec::new(), ar)
-                        } else {
-                            (range, expr_range, extra_packed_dims, None)
-                        };
+                    let (range, expr_range, extra_packed_dims, array_range_pre) = if dtype_name
+                        .is_some()
+                        && !self
+                            .module_type_params
+                            .contains(&Symbol::intern(dtype_name.as_deref().unwrap_or("")))
+                    {
+                        let ar = expr_range.as_ref().and_then(|er| {
+                            if let (Ok(m), Ok(l)) =
+                                (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                            {
+                                Some(Range {
+                                    msb: m as usize,
+                                    lsb: l as usize,
+                                })
+                            } else {
+                                None
+                            }
+                        });
+                        (None, None, Vec::new(), ar)
+                    } else {
+                        (range, expr_range, extra_packed_dims, None)
+                    };
 
                     loop {
                         let name_tok = self.peek().clone();
@@ -953,9 +981,7 @@ impl Parser {
                             self.advance();
                             *s
                         }
-                        _ => {
-                            return Err(self.err("expected parameter name"))
-                        }
+                        _ => return Err(self.err("expected parameter name")),
                     };
                     self.expect(Token::LParen)?;
                     if self.is_type_token() {
@@ -969,7 +995,10 @@ impl Parser {
                     }
                 } else {
                     let val = self.parse_expr(0)?;
-                    param_assigns.insert(Symbol::intern(&format!("__param{}", param_assigns.len())), val);
+                    param_assigns.insert(
+                        Symbol::intern(&format!("__param{}", param_assigns.len())),
+                        val,
+                    );
                 }
 
                 if self.peek() == &Token::Comma {
@@ -991,11 +1020,9 @@ impl Parser {
         let module_name = match &name_tok {
             Token::Ident(s) => {
                 self.advance();
-                                *s
+                *s
             }
-            _ => {
-                return Err(self.err("expected module name"))
-            }
+            _ => return Err(self.err("expected module name")),
         };
 
         // F31 fix: blok parameter `#(...)` legal di DUA posisi di SV:
@@ -1008,7 +1035,10 @@ impl Parser {
         let (mut param_assigns, mut type_param_assigns) = if self.peek() == &Token::Hash {
             self.parse_param_block()?
         } else {
-            (std::collections::HashMap::new(), std::collections::HashMap::new())
+            (
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            )
         };
 
         let inst_tok = self.peek().clone();
@@ -1017,9 +1047,7 @@ impl Parser {
                 self.advance();
                 *s
             }
-            _ => {
-                return Err(self.err("expected instance name"))
-            }
+            _ => return Err(self.err("expected instance name")),
         };
 
         // Parse optional array range [msb:lsb] for arrayed instances
@@ -1056,9 +1084,7 @@ impl Parser {
                                 self.advance();
                                 *s
                             }
-                            _ => {
-                            return Err(self.err("expected port name"))
-                            }
+                            _ => return Err(self.err("expected port name")),
                         };
 
                         if self.peek() == &Token::LParen {
@@ -1078,7 +1104,11 @@ impl Parser {
                         } else {
                             port_conns.push(PortConnection::Named {
                                 port: port_name,
-                                expr: Expr::Ident { name: port_name, line: 0, col: 0 },
+                                expr: Expr::Ident {
+                                    name: port_name,
+                                    line: 0,
+                                    col: 0,
+                                },
                             });
                         }
                     } else {
@@ -1134,7 +1164,11 @@ impl Parser {
                     }
                 } else {
                     // `.port` tanpa `(expr)` = koneksi ke signal senama.
-                    Expr::Ident { name: port_name, line: 0, col: 0 }
+                    Expr::Ident {
+                        name: port_name,
+                        line: 0,
+                        col: 0,
+                    }
                 };
                 port_conns.push(PortConnection::Named {
                     port: port_name,
@@ -1196,9 +1230,7 @@ impl Parser {
                 self.advance();
                 GateType::Not
             }
-            _ => {
-                return Err(self.err("expected gate type"))
-            }
+            _ => return Err(self.err("expected gate type")),
         };
 
         // Parse optional drive strength: (strength1, strength0)
@@ -1217,7 +1249,10 @@ impl Parser {
                                 self.advance();
                                 if self.peek() == &Token::RParen {
                                     self.advance();
-                                    drive_strength = Some((s1.as_str().to_lowercase(), s2.as_str().to_lowercase()));
+                                    drive_strength = Some((
+                                        s1.as_str().to_lowercase(),
+                                        s2.as_str().to_lowercase(),
+                                    ));
                                 }
                             }
                         }
@@ -1273,9 +1308,7 @@ impl Parser {
                     self.advance();
                     Some(s)
                 }
-                _ => {
-                    return Err(self.err("expected gate instance name"))
-                }
+                _ => return Err(self.err("expected gate instance name")),
             };
             name
         };
@@ -1302,5 +1335,4 @@ impl Parser {
             delay,
         })
     }
-
 }

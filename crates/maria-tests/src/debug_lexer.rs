@@ -17,7 +17,9 @@ endmodule";
         let mut lt = Vec::new();
         loop {
             let (tok, _, _) = legacy.next_token();
-            if tok == Token::Eof { break; }
+            if tok == Token::Eof {
+                break;
+            }
             lt.push(tok);
         }
 
@@ -26,7 +28,9 @@ endmodule";
         let mut ft = Vec::new();
         loop {
             let (tok, _, _) = fast.next_token();
-            if tok == Token::Eof { break; }
+            if tok == Token::Eof {
+                break;
+            }
             ft.push(tok);
         }
 
@@ -36,7 +40,10 @@ endmodule";
             assert_eq!(
                 std::mem::discriminant(l),
                 std::mem::discriminant(f),
-                "Pos {}: legacy={:?} vs fast={:?}", i, l, f
+                "Pos {}: legacy={:?} vs fast={:?}",
+                i,
+                l,
+                f
             );
         }
     }
@@ -54,13 +61,19 @@ mod debug_syscall_lex {
         let mut out = Vec::new();
         loop {
             let (tok, line, col) = lexer.next_token();
-            if tok == Token::Eof { break; }
+            if tok == Token::Eof {
+                break;
+            }
             out.push(format!("{}:{} {:?}", line, col, tok));
         }
         eprintln!("LEGACY TOKENS: {}", out.join(" | "));
         // Sanity: must contain Dollar
         let has_dollar = out.iter().any(|t| t.contains("Dollar"));
-        assert!(has_dollar, "legacy lexer should produce Dollar: {}", out.join(" | "));
+        assert!(
+            has_dollar,
+            "legacy lexer should produce Dollar: {}",
+            out.join(" | ")
+        );
     }
 
     #[test]
@@ -70,12 +83,18 @@ mod debug_syscall_lex {
         let mut out = Vec::new();
         loop {
             let (tok, line, col) = lexer.next_token();
-            if tok == Token::Eof { break; }
+            if tok == Token::Eof {
+                break;
+            }
             out.push(format!("{}:{} {:?}", line, col, tok));
         }
         eprintln!("FAST TOKENS: {}", out.join(" | "));
         // Sanity: must contain Dollar too
         let has_dollar = out.iter().any(|t| t.contains("Dollar"));
-        assert!(has_dollar, "fast lexer should produce Dollar: {}", out.join(" | "));
+        assert!(
+            has_dollar,
+            "fast lexer should produce Dollar: {}",
+            out.join(" | ")
+        );
     }
 }

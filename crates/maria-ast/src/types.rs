@@ -94,7 +94,9 @@ pub struct TaskDecl {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ConstraintItem {
     Expr(Expr),
-    SolveBefore { vars: Vec<Symbol> },
+    SolveBefore {
+        vars: Vec<Symbol>,
+    },
     /// `if (cond) { items } else { items }` — constraint kondisional (F12).
     /// Solver mengevaluasi cond lalu menerapkan hanya cabang yang terpenuhi.
     If {
@@ -917,12 +919,17 @@ pub struct ModuleInstance {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PortConnection {
     Positional(Expr),
-    Named { port: Symbol, expr: Expr },
+    Named {
+        port: Symbol,
+        expr: Expr,
+    },
     /// Koneksi port KOSONG (`.data_o()`) = TIDAK terhubung (LRM 1800 §23.3.2.6).
     /// Input yang tak terhubung mengambang (Z/X); output yang tak terhubung
     /// hanya didorong sisi child. JANGAN diubah jadi literal 0 (konflik
     /// multiple-driver → osilasi, terlihat di `prim_secded` checkers OpenTitan).
-    Unconnected { port: Symbol },
+    Unconnected {
+        port: Symbol,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -6,12 +6,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::{kv, open_project, section};
 use maria_ast::types::{GenerateItem, Module, ModuleItem, PortDirection, TypedefDecl};
 use maria_compiler::frontend::compile_session::CompileSession;
 use maria_compiler::frontend::module_index::EntryKind;
 use maria_compiler::micd::cache::CacheCategory;
 use maria_core::intern::Symbol;
-use crate::{open_project, section, kv};
 
 /// Opsi minspect.
 pub struct InspectArgs<'a> {
@@ -64,7 +64,10 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
     let (mut layer, pid) = crate::open_cache_layer(args.targets, args.incdirs, args.defines)?;
 
     section("Pipeline Cache");
-    kv("root", maria_compiler::micd::MicdDatabase::default_root().display());
+    kv(
+        "root",
+        maria_compiler::micd::MicdDatabase::default_root().display(),
+    );
     kv("project id", &pid);
     kv("files", files.len());
 
@@ -90,7 +93,8 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
     // menjalankan tool ulang (db.md "19. coverage/", "7. verify/ → lint/").
     if layer.contains(CacheCategory::Lint, "report") {
         if let Some(bytes) = layer.get(CacheCategory::Lint, "report") {
-            if let Ok(p) = bincode::deserialize::<maria_compiler::micd::cache::pipeline::LintPayload>(&bytes)
+            if let Ok(p) =
+                bincode::deserialize::<maria_compiler::micd::cache::pipeline::LintPayload>(&bytes)
             {
                 let w = p.findings.iter().filter(|f| f.severity == "W").count();
                 let e = p.findings.iter().filter(|f| f.severity == "E").count();
@@ -112,8 +116,9 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
     }
     if layer.contains(CacheCategory::Coverage, "last") {
         if let Some(bytes) = layer.get(CacheCategory::Coverage, "last") {
-            if let Ok(p) =
-                bincode::deserialize::<maria_compiler::micd::cache::pipeline::CoveragePayload>(&bytes)
+            if let Ok(p) = bincode::deserialize::<
+                maria_compiler::micd::cache::pipeline::CoveragePayload,
+            >(&bytes)
             {
                 let line_pct = if p.line_items > 0 {
                     p.line_hits as f64 / p.line_items as f64 * 100.0
@@ -126,24 +131,44 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
                     0.0
                 };
                 section("Coverage (dari cache)");
-                kv("line", format!("{}/{} ({:.1}%)", p.line_hits, p.line_items, line_pct));
-                kv("branch", format!("{}/{} ({:.1}%)", p.branch_covered, p.branch_total, branch_pct));
-                kv("toggle", format!("{} signals, {} transitions", p.toggle_signals, p.toggle_transitions));
-                kv("fsm", format!("{} signals, {} states", p.fsm_signals, p.fsm_states));
+                kv(
+                    "line",
+                    format!("{}/{} ({:.1}%)", p.line_hits, p.line_items, line_pct),
+                );
+                kv(
+                    "branch",
+                    format!(
+                        "{}/{} ({:.1}%)",
+                        p.branch_covered, p.branch_total, branch_pct
+                    ),
+                );
+                kv(
+                    "toggle",
+                    format!(
+                        "{} signals, {} transitions",
+                        p.toggle_signals, p.toggle_transitions
+                    ),
+                );
+                kv(
+                    "fsm",
+                    format!("{} signals, {} states", p.fsm_signals, p.fsm_states),
+                );
             }
         }
     }
     if layer.contains(CacheCategory::Simulation, "last") {
         if let Some(bytes) = layer.get(CacheCategory::Simulation, "last") {
-            if let Ok(p) =
-                bincode::deserialize::<maria_compiler::micd::cache::pipeline::SimulationPayload>(
-                    &bytes,
-                )
+            if let Ok(p) = bincode::deserialize::<
+                maria_compiler::micd::cache::pipeline::SimulationPayload,
+            >(&bytes)
             {
                 section("Simulation (dari cache)");
                 kv("end time", format!("#{}", p.end_time));
                 kv("events processed", p.events_processed);
-                kv("signals", format!("{} ({} init non-zero)", p.signal_count, p.init_signals));
+                kv(
+                    "signals",
+                    format!("{} ({} init non-zero)", p.signal_count, p.init_signals),
+                );
                 kv(
                     "sensitivity",
                     format!(
@@ -160,8 +185,9 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
     }
     if layer.contains(CacheCategory::Waveform, "last") {
         if let Some(bytes) = layer.get(CacheCategory::Waveform, "last") {
-            if let Ok(p) =
-                bincode::deserialize::<maria_compiler::micd::cache::pipeline::WaveformPayload>(&bytes)
+            if let Ok(p) = bincode::deserialize::<
+                maria_compiler::micd::cache::pipeline::WaveformPayload,
+            >(&bytes)
             {
                 section("Waveform (dari cache)");
                 kv("signals", p.signals.len());
@@ -183,8 +209,9 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
     }
     if layer.contains(CacheCategory::Optimize, "last") {
         if let Some(bytes) = layer.get(CacheCategory::Optimize, "last") {
-            if let Ok(p) =
-                bincode::deserialize::<maria_compiler::micd::cache::pipeline::OptimizePayload>(&bytes)
+            if let Ok(p) = bincode::deserialize::<
+                maria_compiler::micd::cache::pipeline::OptimizePayload,
+            >(&bytes)
             {
                 section("Optimize (dari cache)");
                 kv("constant folds", p.const_folds);
@@ -195,8 +222,9 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
     }
     if layer.contains(CacheCategory::Expression, "last") {
         if let Some(bytes) = layer.get(CacheCategory::Expression, "last") {
-            if let Ok(p) =
-                bincode::deserialize::<maria_compiler::micd::cache::pipeline::ExpressionPayload>(&bytes)
+            if let Ok(p) = bincode::deserialize::<
+                maria_compiler::micd::cache::pipeline::ExpressionPayload,
+            >(&bytes)
             {
                 section("Expression (dari cache)");
                 kv("expr evals", p.expr_evals);
@@ -218,11 +246,7 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
 
 /// Kumpulkan module + metadata ringkas dari design.
 fn module_map(design: &maria_ast::types::Design) -> HashMap<Symbol, Module> {
-    design
-        .modules
-        .iter()
-        .map(|m| (m.name, m.clone()))
-        .collect()
+    design.modules.iter().map(|m| (m.name, m.clone())).collect()
 }
 
 /// Semua nama module yang di-instantiate (langsung) oleh module lain.
@@ -301,7 +325,10 @@ fn count_typedefs_generate(gi: &GenerateItem) -> usize {
         } => count_typedefs(true_items) + count_typedefs(false_items),
         GenerateItem::For { body_items, .. } => count_typedefs(body_items),
         GenerateItem::Case { items, default, .. } => {
-            items.iter().map(|ci| count_typedefs(&ci.body)).sum::<usize>()
+            items
+                .iter()
+                .map(|ci| count_typedefs(&ci.body))
+                .sum::<usize>()
                 + default.as_deref().map(count_typedefs).unwrap_or(0)
         }
     }
@@ -328,7 +355,11 @@ fn count_params(module: &Module) -> usize {
 }
 
 /// Statistik project.
-fn stats(design: &maria_ast::types::Design, session: &CompileSession, json: bool) -> Result<(), maria_core::error::SimError> {
+fn stats(
+    design: &maria_ast::types::Design,
+    session: &CompileSession,
+    json: bool,
+) -> Result<(), maria_core::error::SimError> {
     let mut generate = 0usize;
     let mut parameters = 0usize;
     let mut typedefs = 0usize;
@@ -346,8 +377,16 @@ fn stats(design: &maria_ast::types::Design, session: &CompileSession, json: bool
     }
     // Statistik tambahan: package & interface items
     for p in &design.packages {
-        parameters += p.items.iter().filter(|i| matches!(i, maria_ast::types::PackageItem::Param(_))).count();
-        typedefs += p.items.iter().filter(|i| matches!(i, maria_ast::types::PackageItem::Typedef(_))).count();
+        parameters += p
+            .items
+            .iter()
+            .filter(|i| matches!(i, maria_ast::types::PackageItem::Param(_)))
+            .count();
+        typedefs += p
+            .items
+            .iter()
+            .filter(|i| matches!(i, maria_ast::types::PackageItem::Typedef(_)))
+            .count();
     }
     for i in &design.interfaces {
         parameters += i.params.len();
@@ -427,11 +466,7 @@ fn stats(design: &maria_ast::types::Design, session: &CompileSession, json: bool
 
 fn item_count_deep(item: &ModuleItem) -> usize {
     match item {
-        ModuleItem::Generate(g) => g
-            .items
-            .iter()
-            .map(count_generate_deep)
-            .sum::<usize>(),
+        ModuleItem::Generate(g) => g.items.iter().map(count_generate_deep).sum::<usize>(),
         _ => 0,
     }
 }
@@ -469,11 +504,8 @@ fn modules(
     session: &CompileSession,
     top: Option<&str>,
 ) -> Result<(), maria_core::error::SimError> {
-    let mut mods: Vec<(Symbol, Module)> = design
-        .modules
-        .iter()
-        .map(|m| (m.name, m.clone()))
-        .collect();
+    let mut mods: Vec<(Symbol, Module)> =
+        design.modules.iter().map(|m| (m.name, m.clone())).collect();
     mods.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
 
     section("Modules");
@@ -602,7 +634,10 @@ fn classes(design: &maria_ast::types::Design) -> Result<(), maria_core::error::S
     let mut cls: Vec<_> = design.classes.iter().collect();
     cls.sort_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
     for c in cls {
-        let base = c.extends.map(|e| e.as_str().to_string()).unwrap_or_default();
+        let base = c
+            .extends
+            .map(|e| e.as_str().to_string())
+            .unwrap_or_default();
         let n_members = c.members.len();
         println!(
             "  {:<40} members={:<4} extends={}",
@@ -637,11 +672,8 @@ fn parameters(
     _top: Option<&str>,
 ) -> Result<(), maria_core::error::SimError> {
     section("Parameters");
-    let mut mods: Vec<(Symbol, Module)> = design
-        .modules
-        .iter()
-        .map(|m| (m.name, m.clone()))
-        .collect();
+    let mut mods: Vec<(Symbol, Module)> =
+        design.modules.iter().map(|m| (m.name, m.clone())).collect();
     mods.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
 
     for (name, m) in &mods {
@@ -656,18 +688,17 @@ fn parameters(
         }
         println!("  {}", name.as_str());
         for p in params {
-            let kind = if p.is_localparam { "localparam" } else { "parameter" };
+            let kind = if p.is_localparam {
+                "localparam"
+            } else {
+                "parameter"
+            };
             let default = p
                 .default
                 .as_ref()
                 .map(|e| format!(" = {}", crate::expr_to_string(e)))
                 .unwrap_or_default();
-            println!(
-                "    {:<8} {:<32}{}",
-                kind,
-                p.name.as_str(),
-                default
-            );
+            println!("    {:<8} {:<32}{}", kind, p.name.as_str(), default);
         }
     }
     Ok(())

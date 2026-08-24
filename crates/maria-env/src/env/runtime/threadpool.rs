@@ -7,7 +7,9 @@ pub struct ThreadPoolHandle {
 
 impl ThreadPoolHandle {
     pub fn new(threads: usize) -> Self {
-        ThreadPoolHandle { threads: threads.max(1) }
+        ThreadPoolHandle {
+            threads: threads.max(1),
+        }
     }
 
     pub fn threads(&self) -> usize {

@@ -11,23 +11,23 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use maria_ast::Design;
-use std::sync::Arc;
-use crate::cache::{CacheManager, RemoteCacheBackend, RemoteSyncMode, compute_checksum};
-use maria_core::diagnostics::DiagCode;
-use maria_core::error::SimError;
+use crate::cache::{compute_checksum, CacheManager, RemoteCacheBackend, RemoteSyncMode};
 use crate::frontend::discovery::{DiscoveryOptions, FileDiscovery};
 use crate::frontend::io::MmapFile;
-use crate::frontend::module_index::{EntryKind, ModuleIndex, ModuleMeta, ParamMeta};
-use maria_core::intern::Symbol;
 use crate::frontend::lexer::FastLexer;
+use crate::frontend::module_index::{EntryKind, ModuleIndex, ModuleMeta, ParamMeta};
 use crate::micd::{self, MicdDatabase, MicdStats, PreprocEntry};
-use maria_parser::lexer::{Lexer, Token};
-use maria_parser::Parser;
-use maria_parser::preprocessor::Preprocessor;
 use crate::profiling::{Counter, Phase, Profiler};
-use crate::scheduler::incremental::IncrementalTracker;
 use crate::scheduler::dag::DependencyGraph;
+use crate::scheduler::incremental::IncrementalTracker;
+use maria_ast::Design;
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
+use maria_core::intern::Symbol;
+use maria_parser::lexer::{Lexer, Token};
+use maria_parser::preprocessor::Preprocessor;
+use maria_parser::Parser;
+use std::sync::Arc;
 
 /// Configuration untuk kompilasi.
 #[derive(Debug, Clone)]
@@ -129,7 +129,8 @@ pub struct SessionTiming {
     pub cached_files: usize,
     /// Files that were actually processed
     pub processed_files: usize,
-}/// F10: sumber konten file — buffer inline (transpile `.mv`) atau mmap disk.
+}
+/// F10: sumber konten file — buffer inline (transpile `.mv`) atau mmap disk.
 /// Enum ini menjaga jalur mmap tetap zero-copy (tanpa `to_vec()`) agar design
 /// besar (mis. opentitan) tidak memboros memori saat fase preprocess paralel
 /// (setiap file di-copy penuh = spike memori ~ukuran design).
@@ -210,7 +211,10 @@ impl CompileSession {
         // ── Phase 1: File Discovery ──
         let files: Vec<PathBuf> = self.discover_files()?;
         if files.is_empty() {
-            return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no source files found"));
+            return Err(SimError::with_diag(
+                DiagCode::ModuleNotFound,
+                "no source files found",
+            ));
         }
 
         // ── Phase 2: Detect changed files ──
@@ -277,17 +281,17 @@ impl CompileSession {
                 let mut pp = base_pp.clone();
                 let path_str = path.to_string_lossy();
                 let src_str = String::from_utf8_lossy(holder.as_bytes()).into_owned();
-                let preprocessed = pp
-                    .preprocess(&src_str, None)
-                    .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor {}: {}", path_str, e)))?;
+                let preprocessed = pp.preprocess(&src_str, None).map_err(|e| {
+                    SimError::with_diag(
+                        DiagCode::InvalidSyntax,
+                        format!("preprocessor {}: {}", path_str, e),
+                    )
+                })?;
                 // Jalur inline tidak menambah include deps (buffer sudah
                 // menggabungkan definisi bersama; `include di-strip).
                 if !pp.resolved_includes.is_empty() {
                     let mut inc = include_deps.lock().unwrap();
-                    inc.insert(
-                        path.clone(),
-                        pp.resolved_includes.iter().cloned().collect(),
-                    );
+                    inc.insert(path.clone(), pp.resolved_includes.iter().cloned().collect());
                 }
 
                 let combined = format!("`line 1 \"{}\"\n{}\n", path_str, preprocessed);
@@ -334,12 +338,26 @@ impl CompileSession {
             (HashSet::new(), HashSet::new())
         };
         if std::env::var("MARIA_DEBUG_PARSE").is_ok() && has_fresh {
-            eprintln!("[DBG-PARSE] global discovery: classes={} typedefs={}", global_classes.len(), global_typedefs.len());
+            eprintln!(
+                "[DBG-PARSE] global discovery: classes={} typedefs={}",
+                global_classes.len(),
+                global_typedefs.len()
+            );
         }
 
         // ── Phase 5: Parallel lexing + parsing dengan posisi global ──
         let lexer_payloads = &self.lexer_payloads;
-        let results: Vec<Result<(PathBuf, Design, u64, Vec<maria_core::diagnostics::Diagnostic>), SimError>> = prepared
+        let results: Vec<
+            Result<
+                (
+                    PathBuf,
+                    Design,
+                    u64,
+                    Vec<maria_core::diagnostics::Diagnostic>,
+                ),
+                SimError,
+            >,
+        > = prepared
             .into_par_iter()
             .enumerate()
             .map(|(file_idx, r)| {
@@ -395,8 +413,7 @@ impl CompileSession {
                     errors: 0,
                     source_bytes: combined.len() as u64,
                 };
-                let mut records =
-                    Vec::with_capacity(tokens.len());
+                let mut records = Vec::with_capacity(tokens.len());
                 for (tok, line, col) in &tokens {
                     summary.observe(tok);
                     records.push(crate::micd::cache::pipeline::TokenRecord {
@@ -423,7 +440,11 @@ impl CompileSession {
                     for e in &parse_errors {
                         eprintln!("  [DBG-PARSE] {:?}", e.message);
                     }
-                    eprintln!("[DBG-PARSE] n_packages={} n_modules={}", design.packages.len(), design.modules.len());
+                    eprintln!(
+                        "[DBG-PARSE] n_packages={} n_modules={}",
+                        design.packages.len(),
+                        design.modules.len()
+                    );
                 }
 
                 Ok((path, design, cksum, parse_errors))
@@ -437,7 +458,10 @@ impl CompileSession {
 
         // Count tokens
         if let Some(ref profiler) = self.profiler {
-            profiler.count(Counter::TokensLexed, tokens_lexed.load(std::sync::atomic::Ordering::Relaxed));
+            profiler.count(
+                Counter::TokensLexed,
+                tokens_lexed.load(std::sync::atomic::Ordering::Relaxed),
+            );
         }
 
         // Track cached vs processed files
@@ -468,7 +492,10 @@ impl CompileSession {
         // ── Phase 6: Build Index + Merge ──
         let index_start = Instant::now();
         if file_designs.is_empty() {
-            return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no parsed files"));
+            return Err(SimError::with_diag(
+                DiagCode::ModuleNotFound,
+                "no parsed files",
+            ));
         }
 
         // Separate file paths and designs
@@ -512,13 +539,14 @@ impl CompileSession {
             for module in &merged.modules {
                 let signals: Vec<crate::hir::HirSignal> = module
                     .ports
-                    .iter().map(|p| {
+                    .iter()
+                    .map(|p| {
                         let width = p
                             .range
                             .as_ref()
                             .map(|r| {
-                    let lo = r.lsb;
-                    let hi = r.msb;
+                                let lo = r.lsb;
+                                let hi = r.msb;
                                 hi.abs_diff(lo) + 1
                             })
                             .unwrap_or(1);
@@ -571,7 +599,8 @@ impl CompileSession {
             // Store per-file combined sources for future incremental compiles
             self.prev_combined_sources.clear();
             for (path, combined) in paths.iter().zip(parts.iter()) {
-                self.prev_combined_sources.insert(path.clone(), combined.1.clone());
+                self.prev_combined_sources
+                    .insert(path.clone(), combined.1.clone());
             }
             parts.clear();
         }
@@ -688,7 +717,10 @@ impl CompileSession {
             self.timing.discovery_ms = result.scan_time_ms;
             return Ok(result.files.iter().map(|f| f.path.clone()).collect());
         }
-        Err(SimError::with_diag(DiagCode::ModuleNotFound, "no source files configured"))
+        Err(SimError::with_diag(
+            DiagCode::ModuleNotFound,
+            "no source files configured",
+        ))
     }
 
     /// Build module index, dependency graph, and incremental tracking from parsed designs.
@@ -704,9 +736,10 @@ impl CompileSession {
         // ── Pass 1: Insert into index, create DAG nodes, register files ──
         for (i, design) in designs.iter().enumerate() {
             let path = &files[i];
-            let checksum = checksums.get(path).copied().unwrap_or_else(|| {
-                compute_checksum(&std::fs::read(path).unwrap_or_default())
-            });
+            let checksum = checksums
+                .get(path)
+                .copied()
+                .unwrap_or_else(|| compute_checksum(&std::fs::read(path).unwrap_or_default()));
 
             let mut module_nodes = Vec::new();
 
@@ -726,7 +759,11 @@ impl CompileSession {
                     .items
                     .iter()
                     .filter_map(|item| {
-                        if let maria_ast::ModuleItem::Import { package, item: import_item } = item {
+                        if let maria_ast::ModuleItem::Import {
+                            package,
+                            item: import_item,
+                        } = item
+                        {
                             Some((*package, *import_item))
                         } else {
                             None
@@ -742,22 +779,27 @@ impl CompileSession {
                         file: path.clone(),
                         file_checksum: checksum,
                         ports: module.ports.iter().map(|p| p.name).collect(),
-                        params: module.params.iter().map(|p| ParamMeta {
-                            name: p.name,
-                            has_default: p.default.is_some(),
-                            is_type: p.is_type_param,
-                            is_local: false,
-                        }).collect(),
+                        params: module
+                            .params
+                            .iter()
+                            .map(|p| ParamMeta {
+                                name: p.name,
+                                has_default: p.default.is_some(),
+                                is_type: p.is_type_param,
+                                is_local: false,
+                            })
+                            .collect(),
                         instances: instance_names.clone(),
                         imports,
                     },
                 );
 
                 // Create DAG node for this module
-                let node_id = self.dep_graph.add_node(
-                    crate::scheduler::Task::ParseFile(path.to_string_lossy().to_string())
-                );
-                module_nodes.push(node_id);                    module_to_node.insert(module.name, node_id);
+                let node_id = self.dep_graph.add_node(crate::scheduler::Task::ParseFile(
+                    path.to_string_lossy().to_string(),
+                ));
+                module_nodes.push(node_id);
+                module_to_node.insert(module.name, node_id);
             }
 
             for pkg in &design.packages {
@@ -785,7 +827,9 @@ impl CompileSession {
         for design in designs.iter() {
             for module in &design.modules {
                 let mod_sym = module.name;
-                let Some(&from) = module_to_node.get(&mod_sym) else { continue; };
+                let Some(&from) = module_to_node.get(&mod_sym) else {
+                    continue;
+                };
 
                 for item in &module.items {
                     if let maria_ast::ModuleItem::Instance(inst) = item {
@@ -835,13 +879,23 @@ impl CompileSession {
     }
 
     /// Get module metadata by Symbol from the module index.
-    pub fn get_module_by_sym(&self, name: Symbol) -> Option<crate::frontend::module_index::ModuleMeta> {
-        self.module_index.lookup(name, crate::frontend::module_index::EntryKind::Module)
+    pub fn get_module_by_sym(
+        &self,
+        name: Symbol,
+    ) -> Option<crate::frontend::module_index::ModuleMeta> {
+        self.module_index
+            .lookup(name, crate::frontend::module_index::EntryKind::Module)
     }
 
     /// Get module metadata by string name.
-    pub fn get_module_by_name(&self, name: &str) -> Option<crate::frontend::module_index::ModuleMeta> {
-        self.module_index.lookup(Symbol::intern(name), crate::frontend::module_index::EntryKind::Module)
+    pub fn get_module_by_name(
+        &self,
+        name: &str,
+    ) -> Option<crate::frontend::module_index::ModuleMeta> {
+        self.module_index.lookup(
+            Symbol::intern(name),
+            crate::frontend::module_index::EntryKind::Module,
+        )
     }
 
     /// Get the number of configured source files (not auto-discovered).
@@ -1214,10 +1268,7 @@ impl CompileSession {
                     micd::VerifyCheckKind::Parse,
                     micd::CheckResult::pass(ast_hash),
                 );
-                v.set_check(
-                    micd::VerifyCheckKind::Elaborate,
-                    micd::CheckResult::fresh(),
-                );
+                v.set_check(micd::VerifyCheckKind::Elaborate, micd::CheckResult::fresh());
                 verify_results.push(v);
 
                 // types.mdb: signature module (deteksi perubahan struktural)
@@ -1329,10 +1380,23 @@ impl CompileSession {
         }
         // MICD adalah cache per-project: file aktif sesi ini (untuk prune
         // file lintas-project yang menempel di root yang sama).
-        let active: Vec<PathBuf> = items.iter().map(|(p, _, _, _, _, _, _, _)| p.clone()).collect();
+        let active: Vec<PathBuf> = items
+            .iter()
+            .map(|(p, _, _, _, _, _, _, _)| p.clone())
+            .collect();
         let t_apply = std::time::Instant::now();
-        for (path, content_hash, size, deps, status, combined, design_bytes, include_hashes) in items {
-            db.record_file(path.clone(), content_hash, deps, status, flags, size, include_hashes);
+        for (path, content_hash, size, deps, status, combined, design_bytes, include_hashes) in
+            items
+        {
+            db.record_file(
+                path.clone(),
+                content_hash,
+                deps,
+                status,
+                flags,
+                size,
+                include_hashes,
+            );
             if let Some(bytes) = design_bytes {
                 db.cache_ast(path.clone(), content_hash, bytes);
             }
@@ -1567,7 +1631,10 @@ impl CompileSession {
     /// Elaborate a module lazily (on-demand via HIR pipeline).
     /// Returns the elaborated HIR module if it exists and lazy mode is enabled.
     /// Falls back to `merged_design` for on-demand AST→HIR conversion on cache miss.
-    pub fn elaborate_lazy_module(&self, name: Symbol) -> Option<std::sync::Arc<crate::hir::HirModule>> {
+    pub fn elaborate_lazy_module(
+        &self,
+        name: Symbol,
+    ) -> Option<std::sync::Arc<crate::hir::HirModule>> {
         if !self.config.use_lazy_elab {
             return None;
         }
@@ -1582,13 +1649,14 @@ impl CompileSession {
             if let Some(ast_module) = design.modules.iter().find(|m| m.name == name) {
                 let signals: Vec<crate::hir::HirSignal> = ast_module
                     .ports
-                    .iter().map(|p| {
+                    .iter()
+                    .map(|p| {
                         let width = p
                             .range
                             .as_ref()
                             .map(|r| {
-                    let lo = r.lsb;
-                    let hi = r.msb;
+                                let lo = r.lsb;
+                                let hi = r.msb;
                                 hi.abs_diff(lo) + 1
                             })
                             .unwrap_or(1);
@@ -1667,8 +1735,7 @@ impl CompileSession {
         let elab_start = Instant::now();
 
         // Create elaborator with source info for rich diagnostics
-        let (source_lines, source_file) = self.source_info()
-            .unwrap_or_default();
+        let (source_lines, source_file) = self.source_info().unwrap_or_default();
         let mut elaborator = if source_lines.is_empty() {
             maria_elaboration::Elaborator::new(design.clone())
         } else {
@@ -1708,8 +1775,7 @@ impl CompileSession {
         let elab_start = Instant::now();
 
         // Create elaborator with source info for rich diagnostics
-        let (source_lines, source_file) = self.source_info()
-            .unwrap_or_default();
+        let (source_lines, source_file) = self.source_info().unwrap_or_default();
         let mut elaborator = if source_lines.is_empty() {
             maria_elaboration::Elaborator::new(design.clone())
         } else {
@@ -1740,11 +1806,12 @@ impl CompileSession {
     /// and quick syntax/port checks.
     ///
     /// Returns (compiled Design, elaborated HIR count, module index length).
-    pub fn compile_lazy_only(
-        &mut self,
-    ) -> Result<(Design, usize, usize), SimError> {
+    pub fn compile_lazy_only(&mut self) -> Result<(Design, usize, usize), SimError> {
         if !self.config.use_lazy_elab {
-            return Err(SimError::with_diag(DiagCode::NotImplemented, "lazy mode not enabled (use --lazy)"));
+            return Err(SimError::with_diag(
+                DiagCode::NotImplemented,
+                "lazy mode not enabled (use --lazy)",
+            ));
         }
 
         let (design, module_index) = self.compile()?;
@@ -1765,7 +1832,10 @@ impl CompileSession {
         self.merged_source.as_ref().map(|src| {
             let lines: Vec<String> = src.lines().map(|l| l.to_string()).collect();
             // Extract first source file from the `line directive
-            let first_source = self.config.sources.first()
+            let first_source = self
+                .config
+                .sources
+                .first()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
             (lines, first_source)
@@ -1794,7 +1864,10 @@ mod tests {
         };
         let mut session = CompileSession::new(config);
         let (design, index) = session.compile().unwrap();
-        assert!(!design.modules.is_empty(), "should have at least one module");
+        assert!(
+            !design.modules.is_empty(),
+            "should have at least one module"
+        );
         assert!(index.len() >= 1, "should have indexed at least one module");
     }
 
@@ -1851,13 +1924,19 @@ mod tests {
             Ok(_) => panic!("expected elaboration error for missing module"),
         };
         let diag = err.to_diagnostic();
-        let snippet = diag.source_snippet.expect("error should carry a source snippet");
+        let snippet = diag
+            .source_snippet
+            .expect("error should carry a source snippet");
         assert!(
             snippet.file.ends_with("b.sv"),
             "expected file b.sv, got {}",
             snippet.file
         );
-        assert_eq!(snippet.line, 3, "expected file-relative line 3, got {}", snippet.line);
+        assert_eq!(
+            snippet.line, 3,
+            "expected file-relative line 3, got {}",
+            snippet.line
+        );
         assert!(
             snippet.source_line.contains("missing_module"),
             "snippet content mismatch: {:?}",
@@ -1894,8 +1973,12 @@ mod tests {
         // First compile: processed = 1, cached = 0
         assert_eq!(session.timing.processed_files, 1);
         assert_eq!(session.timing.cached_files, 0);
-        assert!(session.prev_checksums.contains_key(root_rel("test/counter.sv").as_path()));
-        assert!(session.prev_designs.contains_key(root_rel("test/counter.sv").as_path()));
+        assert!(session
+            .prev_checksums
+            .contains_key(root_rel("test/counter.sv").as_path()));
+        assert!(session
+            .prev_designs
+            .contains_key(root_rel("test/counter.sv").as_path()));
     }
 
     #[test]
@@ -2008,7 +2091,10 @@ mod tests {
 
         // Verify the metadata fingerprint matches a re-computed one
         let recomputed = session.metadata_fingerprint(&path);
-        assert_eq!(fp, recomputed, "metadata fingerprint should be reproducible");
+        assert_eq!(
+            fp, recomputed,
+            "metadata fingerprint should be reproducible"
+        );
     }
 
     #[test]
@@ -2017,7 +2103,11 @@ mod tests {
         let mut session = CompileSession::new(SessionConfig::default());
         let files = vec![root_rel("test/counter.sv"), root_rel("test/tb_counter.sv")];
         let changed = session.detect_changed(&files);
-        assert_eq!(changed.len(), 2, "all files should be 'changed' on first run");
+        assert_eq!(
+            changed.len(),
+            2,
+            "all files should be 'changed' on first run"
+        );
     }
 
     #[test]
@@ -2049,7 +2139,10 @@ mod tests {
 
         // Sesi 1: cold compile → semua diproses.
         {
-            let mut s = CompileSession::new(SessionConfig { sources: sources.clone(), ..Default::default() });
+            let mut s = CompileSession::new(SessionConfig {
+                sources: sources.clone(),
+                ..Default::default()
+            });
             let restored = s.attach_micd(MicdDatabase::open(&db_root));
             assert_eq!(restored, 0, "cold compile: tidak ada yang di-restore");
             let (design, _) = s.compile().unwrap();
@@ -2066,7 +2159,10 @@ mod tests {
 
         // Sesi 2: tanpa perubahan → semua file di-restore (parse di-skip).
         {
-            let mut s = CompileSession::new(SessionConfig { sources: sources.clone(), ..Default::default() });
+            let mut s = CompileSession::new(SessionConfig {
+                sources: sources.clone(),
+                ..Default::default()
+            });
             let restored = s.attach_micd(MicdDatabase::open(&db_root));
             assert_eq!(restored, 2, "semua AST harus di-restore dari MICD");
             let (design, _) = s.compile().unwrap();
@@ -2084,7 +2180,10 @@ mod tests {
             writeln!(f, "endmodule").unwrap();
         }
         {
-            let mut s = CompileSession::new(SessionConfig { sources: sources.clone(), ..Default::default() });
+            let mut s = CompileSession::new(SessionConfig {
+                sources: sources.clone(),
+                ..Default::default()
+            });
             let restored = s.attach_micd(MicdDatabase::open(&db_root));
             assert_eq!(restored, 1, "mod_a di-restore, mod_b berubah");
             let (design, _) = s.compile().unwrap();
@@ -2133,7 +2232,11 @@ mod tests {
 
         // Sesi 1: cold compile.
         {
-            let mut s = CompileSession::new(SessionConfig { sources: sources.clone(), incdirs: incdirs.clone(), ..Default::default() });
+            let mut s = CompileSession::new(SessionConfig {
+                sources: sources.clone(),
+                incdirs: incdirs.clone(),
+                ..Default::default()
+            });
             assert_eq!(s.attach_micd(MicdDatabase::open(&db_root)), 0);
             let (design, _) = s.compile().unwrap();
             assert_eq!(design.modules.len(), 1);
@@ -2142,7 +2245,11 @@ mod tests {
 
         // Sesi 2: tanpa perubahan → restore.
         {
-            let mut s = CompileSession::new(SessionConfig { sources: sources.clone(), incdirs: incdirs.clone(), ..Default::default() });
+            let mut s = CompileSession::new(SessionConfig {
+                sources: sources.clone(),
+                incdirs: incdirs.clone(),
+                ..Default::default()
+            });
             assert_eq!(s.attach_micd(MicdDatabase::open(&db_root)), 1);
             let (design, _) = s.compile().unwrap();
             assert_eq!(design.modules.len(), 1);
@@ -2158,9 +2265,16 @@ mod tests {
         // Sesi 3: top.sv content hash sama, tapi include berubah → TIDAK
         // boleh di-restore (harus di-reprocess agar width benar).
         {
-            let mut s = CompileSession::new(SessionConfig { sources: sources.clone(), incdirs: incdirs.clone(), ..Default::default() });
+            let mut s = CompileSession::new(SessionConfig {
+                sources: sources.clone(),
+                incdirs: incdirs.clone(),
+                ..Default::default()
+            });
             let restored = s.attach_micd(MicdDatabase::open(&db_root));
-            assert_eq!(restored, 0, "file dengan include yang berubah tidak boleh di-restore");
+            assert_eq!(
+                restored, 0,
+                "file dengan include yang berubah tidak boleh di-restore"
+            );
             let (design, _) = s.compile().unwrap();
             assert_eq!(design.modules.len(), 1);
         }
@@ -2243,8 +2357,14 @@ mod tests {
         let pos_leaf = order.iter().position(|&x| x == leaf).unwrap();
         let pos_mid = order.iter().position(|&x| x == mid).unwrap();
         let pos_top = order.iter().position(|&x| x == top).unwrap();
-        assert!(pos_leaf < pos_mid, "leaf should come before mid in topo order");
-        assert!(pos_mid < pos_top, "mid should come before top in topo order");
+        assert!(
+            pos_leaf < pos_mid,
+            "leaf should come before mid in topo order"
+        );
+        assert!(
+            pos_mid < pos_top,
+            "mid should come before top in topo order"
+        );
 
         // Verify initial ready set: leaf should be ready (no deps)
         let ready = graph.initial_ready();
@@ -2270,7 +2390,10 @@ mod tests {
         let mut session = CompileSession::new(config);
         let (design, _index) = session.compile().expect("inline source harus compile");
         assert!(
-            design.modules.iter().any(|m| m.name.as_str() == "inline_f10"),
+            design
+                .modules
+                .iter()
+                .any(|m| m.name.as_str() == "inline_f10"),
             "module dari buffer inline harus ter-compile"
         );
         // Tanpa inline_sources → error (file tidak ada di disk).
@@ -2279,7 +2402,10 @@ mod tests {
             ..Default::default()
         };
         let mut session2 = CompileSession::new(config2);
-        assert!(session2.compile().is_err(), "path non-existen tanpa inline harus error");
+        assert!(
+            session2.compile().is_err(),
+            "path non-existen tanpa inline harus error"
+        );
     }
 
     #[test]
@@ -2304,7 +2430,9 @@ mod tests {
             ..Default::default()
         };
         let mut session = CompileSession::new(config);
-        let (design, _index) = session.compile().expect("campuran disk+inline harus compile");
+        let (design, _index) = session
+            .compile()
+            .expect("campuran disk+inline harus compile");
         let names: Vec<&str> = design.modules.iter().map(|m| m.name.as_str()).collect();
         assert!(names.contains(&"disk_mod"));
         assert!(names.contains(&"inline_peer"));
@@ -2319,7 +2447,11 @@ mod tests {
 /// Over-collection aman: nama ekstra hanya membuat parser lebih condong
 /// mem-parse `name var;` sebagai deklarasi (benar untuk tipe) — tidak pernah
 /// mengubah instantiation module (yang tetap lewat sintaks `#( )` / `( )`).
-fn discover_names_in_source(src: &str, classes: &mut HashSet<Symbol>, typedefs: &mut HashSet<Symbol>) {
+fn discover_names_in_source(
+    src: &str,
+    classes: &mut HashSet<Symbol>,
+    typedefs: &mut HashSet<Symbol>,
+) {
     let mut lexer = FastLexer::new(src, "");
     let mut in_typedef = false;
     let mut last_ident: Option<Symbol> = None;
@@ -2379,4 +2511,3 @@ fn discover_names_in_source(src: &str, classes: &mut HashSet<Symbol>, typedefs: 
         }
     }
 }
-

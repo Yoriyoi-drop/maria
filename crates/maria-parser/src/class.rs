@@ -8,9 +8,9 @@
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
+use crate::lexer::*;
 use maria_ast::*;
 use maria_core::error::SimError;
-use crate::lexer::*;
 
 impl Parser {
     /// Fast skip for first pass: collect class name + fast-skip body to endclass.
@@ -71,15 +71,18 @@ impl Parser {
                             self.skip_semi();
                             then.push(ConstraintItem::Expr(e));
                         }
-                        Err(_) => {
-                            loop {
-                                match self.peek() {
-                                    Token::Semi => { self.advance(); break; }
-                                    Token::RBrace | Token::Eof => break,
-                                    _ => { self.advance(); }
+                        Err(_) => loop {
+                            match self.peek() {
+                                Token::Semi => {
+                                    self.advance();
+                                    break;
+                                }
+                                Token::RBrace | Token::Eof => break,
+                                _ => {
+                                    self.advance();
                                 }
                             }
-                        }
+                        },
                     }
                 }
                 if self.peek() == &Token::Else {
@@ -94,15 +97,18 @@ impl Parser {
                                 self.skip_semi();
                                 els.push(ConstraintItem::Expr(e));
                             }
-                            Err(_) => {
-                                loop {
-                                    match self.peek() {
-                                        Token::Semi => { self.advance(); break; }
-                                        Token::RBrace | Token::Eof => break,
-                                        _ => { self.advance(); }
+                            Err(_) => loop {
+                                match self.peek() {
+                                    Token::Semi => {
+                                        self.advance();
+                                        break;
+                                    }
+                                    Token::RBrace | Token::Eof => break,
+                                    _ => {
+                                        self.advance();
                                     }
                                 }
-                            }
+                            },
                         }
                     }
                 }
@@ -122,9 +128,14 @@ impl Parser {
                         // Recovery: skip ke ';' atau '}'
                         loop {
                             match self.peek() {
-                                Token::Semi => { self.advance(); break; }
+                                Token::Semi => {
+                                    self.advance();
+                                    break;
+                                }
                                 Token::RBrace | Token::Eof => break,
-                                _ => { self.advance(); }
+                                _ => {
+                                    self.advance();
+                                }
                             }
                         }
                     }
@@ -143,9 +154,14 @@ impl Parser {
                     // Error in constraint expression — skip to ';' or '}'
                     loop {
                         match self.peek() {
-                            Token::Semi => { self.advance(); break; }
+                            Token::Semi => {
+                                self.advance();
+                                break;
+                            }
                             Token::RBrace | Token::Eof => break,
-                            _ => { self.advance(); }
+                            _ => {
+                                self.advance();
+                            }
                         }
                     }
                 }
@@ -156,7 +172,7 @@ impl Parser {
 
     pub(crate) fn parse_class_fast(&mut self) -> Result<(), SimError> {
         self.advance(); // consume 'class'
-        // Skip optional #(type T = ...) parameter list
+                        // Skip optional #(type T = ...) parameter list
         if self.peek() == &Token::Hash {
             self.advance();
             if self.peek() == &Token::LParen {
@@ -186,8 +202,14 @@ impl Parser {
         if matches!(self.peek(), Token::Ident(s) if s.as_str() == "implements") {
             self.advance();
             loop {
-                if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
-                if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                if matches!(self.peek(), Token::Ident(_)) {
+                    self.advance();
+                }
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
         }
         self.skip_semi();
@@ -195,7 +217,9 @@ impl Parser {
         loop {
             match self.peek() {
                 Token::EndClass | Token::Eof => {
-                    if self.peek() == &Token::EndClass { self.advance(); }
+                    if self.peek() == &Token::EndClass {
+                        self.advance();
+                    }
                     // Skip optional ': name' after endclass
                     if self.peek() == &Token::Colon {
                         self.advance();
@@ -282,19 +306,21 @@ impl Parser {
                     }
                     break;
                 }
-                Token::Function => {
-                    match self.parse_function(false) {
-                        Ok(f) => members.push(ClassMember::Function(f)),
-                        Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                Token::Function => match self.parse_function(false) {
+                    Ok(f) => members.push(ClassMember::Function(f)),
+                    Err(_) => {
+                        let _ = self.skip_until_semi_or_end();
                     }
-                }
+                },
                 Token::Ident(s) if s == "extern" => {
                     // Extern prototype — consume until semicolon
                     self.advance(); // extern
-                    // Handle 'extern local', 'extern protected', 'extern virtual', etc.
+                                    // Handle 'extern local', 'extern protected', 'extern virtual', etc.
                     loop {
                         match self.peek() {
-                            Token::Ident(n) if n == "local" || n == "protected" || n == "virtual" => {
+                            Token::Ident(n)
+                                if n == "local" || n == "protected" || n == "virtual" =>
+                            {
                                 self.advance();
                             }
                             _ => break,
@@ -314,46 +340,59 @@ impl Parser {
                     let mut depth = 0i32;
                     loop {
                         match self.peek() {
-                            Token::Semi if depth <= 0 => { self.advance(); break; }
-                            Token::LParen => { depth += 1; self.advance(); }
-                            Token::RParen => { depth -= 1; self.advance(); }
+                            Token::Semi if depth <= 0 => {
+                                self.advance();
+                                break;
+                            }
+                            Token::LParen => {
+                                depth += 1;
+                                self.advance();
+                            }
+                            Token::RParen => {
+                                depth -= 1;
+                                self.advance();
+                            }
                             Token::EndClass | Token::Eof => break,
-                            _ => { self.advance(); }
+                            _ => {
+                                self.advance();
+                            }
                         }
                     }
                 }
                 Token::Virtual => {
                     self.advance();
                     match self.peek() {
-                        Token::Function => {
-                            match self.parse_function(true) {
-                                Ok(f) => members.push(ClassMember::Function(f)),
-                                Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                        Token::Function => match self.parse_function(true) {
+                            Ok(f) => members.push(ClassMember::Function(f)),
+                            Err(_) => {
+                                let _ = self.skip_until_semi_or_end();
                             }
-                        }
-                        Token::Task => {
-                            match self.parse_task(true) {
-                                Ok(t) => members.push(ClassMember::Task(t)),
-                                Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                        },
+                        Token::Task => match self.parse_task(true) {
+                            Ok(t) => members.push(ClassMember::Task(t)),
+                            Err(_) => {
+                                let _ = self.skip_until_semi_or_end();
                             }
-                        }
-                        _ => {
-                            match self.parse_decl() {
-                                Ok(mut decl) => {
-                                    for n in &mut decl.names { n.is_rand = false; }
-                                    members.push(ClassMember::Decl(decl));
+                        },
+                        _ => match self.parse_decl() {
+                            Ok(mut decl) => {
+                                for n in &mut decl.names {
+                                    n.is_rand = false;
                                 }
-                                Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                                members.push(ClassMember::Decl(decl));
                             }
-                        }
+                            Err(_) => {
+                                let _ = self.skip_until_semi_or_end();
+                            }
+                        },
                     }
                 }
-                Token::Task => {
-                    match self.parse_task(false) {
-                        Ok(t) => members.push(ClassMember::Task(t)),
-                        Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                Token::Task => match self.parse_task(false) {
+                    Ok(t) => members.push(ClassMember::Task(t)),
+                    Err(_) => {
+                        let _ = self.skip_until_semi_or_end();
                     }
-                }
+                },
                 Token::Input
                 | Token::Output
                 | Token::Inout
@@ -384,27 +423,29 @@ impl Parser {
                 | Token::TriAnd
                 | Token::TriOr
                 | Token::Supply0
-                | Token::Supply1 => {
+                | Token::Supply1 => match self.parse_decl() {
+                    Ok(mut decl) => {
+                        for n in &mut decl.names {
+                            n.is_rand = false;
+                        }
+                        members.push(ClassMember::Decl(decl));
+                    }
+                    Err(_) => {
+                        let _ = self.skip_until_semi_or_end();
+                    }
+                },
+                Token::Rand | Token::RandC => {
+                    self.advance();
                     match self.parse_decl() {
                         Ok(mut decl) => {
                             for n in &mut decl.names {
-                                n.is_rand = false;
+                                n.is_rand = true;
                             }
                             members.push(ClassMember::Decl(decl));
                         }
                         Err(_) => {
                             let _ = self.skip_until_semi_or_end();
                         }
-                    }
-                }
-                Token::Rand | Token::RandC => {
-                    self.advance();
-                    match self.parse_decl() {
-                        Ok(mut decl) => {
-                            for n in &mut decl.names { n.is_rand = true; }
-                            members.push(ClassMember::Decl(decl));
-                        }
-                        Err(_) => { let _ = self.skip_until_semi_or_end(); }
                     }
                 }
                 Token::Ident(name) if self.type_param_names.contains(name) => {
@@ -433,9 +474,14 @@ impl Parser {
                     self.advance(); // pure
                     loop {
                         match self.peek() {
-                            Token::Semi => { self.advance(); break; }
+                            Token::Semi => {
+                                self.advance();
+                                break;
+                            }
                             Token::EndClass | Token::Eof => break,
-                            _ => { self.advance(); }
+                            _ => {
+                                self.advance();
+                            }
                         }
                     }
                 }
@@ -464,13 +510,19 @@ impl Parser {
                     self.expect(Token::LBrace)?;
                     let body = self.parse_constraint_items()?;
                     self.expect(Token::RBrace)?;
-                    members.push(ClassMember::Constraint { name: cname, body, is_static: false });
+                    members.push(ClassMember::Constraint {
+                        name: cname,
+                        body,
+                        is_static: false,
+                    });
                 }
                 Token::Let => {
                     // LANG-40: `let` di dalam class.
                     match self.parse_let_decl() {
                         Ok(ld) => members.push(ClassMember::Let(ld)),
-                        Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                        Err(_) => {
+                            let _ = self.skip_until_semi_or_end();
+                        }
                     }
                 }
                 Token::Static => {
@@ -483,7 +535,11 @@ impl Parser {
                         self.expect(Token::LBrace)?;
                         let body = self.parse_constraint_items()?;
                         self.expect(Token::RBrace)?;
-                        members.push(ClassMember::Constraint { name: cname, body, is_static: true });
+                        members.push(ClassMember::Constraint {
+                            name: cname,
+                            body,
+                            is_static: true,
+                        });
                     }
                     // Bukan static constraint (static var/function/task) — token
                     // Static sudah dikonsumsi; member diparse di iterasi berikutnya.

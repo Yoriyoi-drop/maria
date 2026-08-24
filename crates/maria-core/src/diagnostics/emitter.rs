@@ -168,13 +168,7 @@ impl TerminalEmitter {
                 BLUE, BOX_TR, RESET, span.file, span.start, span.end
             )?;
             if let Some(label) = &span.label {
-                writeln!(
-                    self.writer,
-                    "   {}     {}{}",
-                    BLUE,
-                    label,
-                    RESET
-                )?;
+                writeln!(self.writer, "   {}     {}{}", BLUE, label, RESET)?;
             }
         }
 
@@ -208,30 +202,18 @@ impl TerminalEmitter {
 
         // Notes
         for note in &diag.notes {
-            writeln!(
-                self.writer,
-                "   {}note:{} {}",
-                CYAN, RESET, note.message
-            )?;
+            writeln!(self.writer, "   {}note:{} {}", CYAN, RESET, note.message)?;
         }
 
         // Help / suggestion
         if let Some(suggestion) = &diag.suggestion {
             writeln!(self.writer)?;
-            writeln!(
-                self.writer,
-                "   {}help:{} {}",
-                GREEN, RESET, suggestion
-            )?;
+            writeln!(self.writer, "   {}help:{} {}", GREEN, RESET, suggestion)?;
         }
 
         // Hints
         for hint in &diag.hints {
-            writeln!(
-                self.writer,
-                "   {}help:{} {}",
-                GREEN, RESET, hint
-            )?;
+            writeln!(self.writer, "   {}help:{} {}", GREEN, RESET, hint)?;
         }
 
         // Fix-it hints
@@ -242,10 +224,23 @@ impl TerminalEmitter {
                 writeln!(
                     self.writer,
                     "   {}fix-it:{} {} ({}:{}:{}-{}:{})",
-                    MAGENTA, RESET, fix_it.description, fix_it.file, fix_it.start_line, fix_it.start_col, fix_it.end_line, fix_it.end_col
+                    MAGENTA,
+                    RESET,
+                    fix_it.description,
+                    fix_it.file,
+                    fix_it.start_line,
+                    fix_it.start_col,
+                    fix_it.end_line,
+                    fix_it.end_col
                 )?;
                 if !fix_it.replacement.is_empty() {
-                    writeln!(self.writer, "       {}-> '{}'{}", CYAN, fix_it.replacement.escape_debug(), RESET)?;
+                    writeln!(
+                        self.writer,
+                        "       {}-> '{}'{}",
+                        CYAN,
+                        fix_it.replacement.escape_debug(),
+                        RESET
+                    )?;
                 } else {
                     writeln!(self.writer, "       {}delete{}", CYAN, RESET)?;
                 }
@@ -342,9 +337,22 @@ impl TerminalEmitter {
             writeln!(self.writer)?;
             writeln!(self.writer, "Fix-it suggestions:")?;
             for fix_it in &diag.fix_its {
-                writeln!(self.writer, "   = fix-it: {} ({}:{}:{}-{}:{})", fix_it.description, fix_it.file, fix_it.start_line, fix_it.start_col, fix_it.end_line, fix_it.end_col)?;
+                writeln!(
+                    self.writer,
+                    "   = fix-it: {} ({}:{}:{}-{}:{})",
+                    fix_it.description,
+                    fix_it.file,
+                    fix_it.start_line,
+                    fix_it.start_col,
+                    fix_it.end_line,
+                    fix_it.end_col
+                )?;
                 if !fix_it.replacement.is_empty() {
-                    writeln!(self.writer, "       -> '{}'", fix_it.replacement.escape_debug())?;
+                    writeln!(
+                        self.writer,
+                        "       -> '{}'",
+                        fix_it.replacement.escape_debug()
+                    )?;
                 } else {
                     writeln!(self.writer, "       (delete)")?;
                 }
@@ -418,11 +426,7 @@ impl TerminalEmitter {
         // Notes
         for note in &diag.notes {
             if self.use_color {
-                writeln!(
-                    self.writer,
-                    "  {}note:{} {}",
-                    CYAN, RESET, note.message
-                )?;
+                writeln!(self.writer, "  {}note:{} {}", CYAN, RESET, note.message)?;
             } else {
                 writeln!(self.writer, "  = note: {}", note.message)?;
             }
@@ -431,11 +435,7 @@ impl TerminalEmitter {
         // Hints
         for hint in &diag.hints {
             if self.use_color {
-                writeln!(
-                    self.writer,
-                    "  {}help:{} {}",
-                    GREEN, RESET, hint
-                )?;
+                writeln!(self.writer, "  {}help:{} {}", GREEN, RESET, hint)?;
             } else {
                 writeln!(self.writer, "  = help: {}", hint)?;
             }
@@ -450,9 +450,22 @@ impl TerminalEmitter {
                 writeln!(self.writer, "Fix-it suggestions:")?;
             }
             for fix_it in &diag.fix_its {
-                writeln!(self.writer, "   = fix-it: {} ({}:{}:{}-{}:{})", fix_it.description, fix_it.file, fix_it.start_line, fix_it.start_col, fix_it.end_line, fix_it.end_col)?;
+                writeln!(
+                    self.writer,
+                    "   = fix-it: {} ({}:{}:{}-{}:{})",
+                    fix_it.description,
+                    fix_it.file,
+                    fix_it.start_line,
+                    fix_it.start_col,
+                    fix_it.end_line,
+                    fix_it.end_col
+                )?;
                 if !fix_it.replacement.is_empty() {
-                    writeln!(self.writer, "       -> '{}'", fix_it.replacement.escape_debug())?;
+                    writeln!(
+                        self.writer,
+                        "       -> '{}'",
+                        fix_it.replacement.escape_debug()
+                    )?;
                 } else {
                     writeln!(self.writer, "       (delete)")?;
                 }
@@ -477,8 +490,14 @@ impl TerminalEmitter {
         let diags = sink.diagnostics();
         let count = diags.len();
         let error_count = diags.iter().filter(|d| d.is_error()).count();
-        let warning_count = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
-        let note_count = diags.iter().filter(|d| d.level == DiagLevel::Note || d.level == DiagLevel::Info).count();
+        let warning_count = diags
+            .iter()
+            .filter(|d| d.level == DiagLevel::Warning)
+            .count();
+        let note_count = diags
+            .iter()
+            .filter(|d| d.level == DiagLevel::Note || d.level == DiagLevel::Info)
+            .count();
 
         for diag in &diags {
             self.emit(diag)?;
@@ -493,9 +512,7 @@ impl TerminalEmitter {
                     writeln!(
                         self.writer,
                         "{}{}{} error(s), {}{}{} warning(s), {} note(s){}",
-                        RED, error_count, RESET,
-                        YELLOW, warning_count, RESET,
-                        note_count, RESET
+                        RED, error_count, RESET, YELLOW, warning_count, RESET, note_count, RESET
                     )?;
                 } else if warning_count > 0 {
                     writeln!(
@@ -504,11 +521,7 @@ impl TerminalEmitter {
                         warning_count, note_count
                     )?;
                 } else {
-                    writeln!(
-                        self.writer,
-                        "{} note(s)",
-                        note_count
-                    )?;
+                    writeln!(self.writer, "{} note(s)", note_count)?;
                 }
             } else {
                 writeln!(
@@ -557,7 +570,10 @@ pub fn format_diagnostic(diag: &Diagnostic) -> String {
     let mut output = String::new();
 
     // Header (tanpa separator atas/bawah)
-    output.push_str(&format!("{}[{}]: {}\n\n", diag.level, diag.code, diag.message));
+    output.push_str(&format!(
+        "{}[{}]: {}\n\n",
+        diag.level, diag.code, diag.message
+    ));
 
     // Source snippet
     if let Some(snippet) = &diag.source_snippet {
@@ -718,7 +734,10 @@ mod tests {
     fn test_emitter_with_summary() {
         let sink = DiagSink::new();
         sink.push(Diagnostic::error(DiagCode::NullHandle, "null handle"));
-        sink.push(Diagnostic::warning(DiagCode::UninitializedRegister, "uninit reg"));
+        sink.push(Diagnostic::warning(
+            DiagCode::UninitializedRegister,
+            "uninit reg",
+        ));
         sink.push(Diagnostic::note("test note"));
 
         let mut emitter = TerminalEmitter::new()
@@ -731,10 +750,13 @@ mod tests {
     #[test]
     fn test_emitter_colored() {
         let snippet = SourceSnippet::new("test.sv", 10, 5, "    signal = 1'b0;");
-        let d = Diagnostic::error(DiagCode::SignalUninitialized, "Signal read before assignment")
-            .with_source_snippet(snippet)
-            .with_explanation("Signal was read but never assigned a value.")
-            .with_suggestion("Initialize signal in the reset block.");
+        let d = Diagnostic::error(
+            DiagCode::SignalUninitialized,
+            "Signal read before assignment",
+        )
+        .with_source_snippet(snippet)
+        .with_explanation("Signal was read but never assigned a value.")
+        .with_suggestion("Initialize signal in the reset block.");
 
         let output = format_diagnostic(&d);
         assert!(output.contains("RT1005"));

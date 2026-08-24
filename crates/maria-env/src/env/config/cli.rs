@@ -82,7 +82,11 @@ mod tests {
     #[test]
     fn test_cli_zero_jobs_ignored() {
         let mut ctx = ConfigContext::new(MariaConfig::default());
-        EnvCliOptions { jobs: Some(0), ..Default::default() }.apply(&mut ctx);
+        EnvCliOptions {
+            jobs: Some(0),
+            ..Default::default()
+        }
+        .apply(&mut ctx);
         // jobs=0 berarti auto — tidak mengunci jumlah thread.
         assert_eq!(ctx.jobs(), None);
         assert!(ctx.max_threads() >= 1);

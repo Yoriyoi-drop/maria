@@ -61,7 +61,8 @@ fn debug_parse_body_localparam() {
 
     // Tes lexing langsung pada baris $value$plusargs
     {
-        let line = "  if ( !$value$plusargs(\"accelerate_regulators_power_up_time=%d\", dv_hook) ) begin";
+        let line =
+            "  if ( !$value$plusargs(\"accelerate_regulators_power_up_time=%d\", dv_hook) ) begin";
         for (label, toks) in [
             ("F-$", {
                 let mut lex = maria_compiler::frontend::FastLexer::new(line, "x");
@@ -108,7 +109,10 @@ fn debug_parse_body_localparam() {
             let (tl, ll, cl) = lex_l.next_token();
             let same = std::mem::discriminant(&tf) == std::mem::discriminant(&tl);
             if !same {
-                eprintln!("DIVERGE at tok#{}: FAST={:?}({}:{}) LEGACY={:?}({}:{})", n, tf, lf, cf, tl, ll, cl);
+                eprintln!(
+                    "DIVERGE at tok#{}: FAST={:?}({}:{}) LEGACY={:?}({}:{})",
+                    n, tf, lf, cf, tl, ll, cl
+                );
                 break;
             }
             if tf == maria_parser::lexer::Token::Eof {

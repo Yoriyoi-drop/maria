@@ -12,8 +12,8 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 use std::path::PathBuf;
 
-use maria_ir::{LogicVal, LogicVec};
 use maria_core::Symbol;
+use maria_ir::{LogicVal, LogicVec};
 
 // ─── Binary I/O helpers (mirror checkpoint.rs) ───
 
@@ -77,7 +77,10 @@ fn read_logic_val<R: Read>(r: &mut R) -> io::Result<LogicVal> {
         1 => Ok(LogicVal::One),
         2 => Ok(LogicVal::X),
         3 => Ok(LogicVal::Z),
-        _ => Err(io::Error::new(io::ErrorKind::InvalidData, "invalid LogicVal byte")),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid LogicVal byte",
+        )),
     }
 }
 
@@ -178,18 +181,20 @@ impl SignalHistoryStore {
     pub fn record(&mut self, time: u64, name: Symbol, value: LogicVec) {
         // Extract oldest entry BEFORE mutable borrow on self.memory
         let spill_candidate = if self.spill_enabled {
-            let deque = self.memory.entry(name).or_insert_with(|| {
-                VecDeque::with_capacity(self.memory_per_signal.min(1024))
-            });
+            let deque = self
+                .memory
+                .entry(name)
+                .or_insert_with(|| VecDeque::with_capacity(self.memory_per_signal.min(1024)));
             if deque.len() >= self.memory_per_signal {
                 deque.pop_front()
             } else {
                 None
             }
         } else {
-            let deque = self.memory.entry(name).or_insert_with(|| {
-                VecDeque::with_capacity(self.memory_per_signal.min(1024))
-            });
+            let deque = self
+                .memory
+                .entry(name)
+                .or_insert_with(|| VecDeque::with_capacity(self.memory_per_signal.min(1024)));
             if deque.len() >= self.memory_per_signal {
                 deque.pop_front()
             } else {
@@ -206,9 +211,10 @@ impl SignalHistoryStore {
         }
 
         // Now insert new entry (fresh borrow)
-        let deque = self.memory.entry(name).or_insert_with(|| {
-            VecDeque::with_capacity(self.memory_per_signal.min(1024))
-        });
+        let deque = self
+            .memory
+            .entry(name)
+            .or_insert_with(|| VecDeque::with_capacity(self.memory_per_signal.min(1024)));
         deque.push_back((time, value));
         self.total_memory = self.memory.values().map(|d| d.len() as u64).sum();
     }
@@ -372,7 +378,10 @@ impl SignalHistoryStore {
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
         if &magic != b"HIST" {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "bad history magic"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bad history magic",
+            ));
         }
         let _version = read_u32(&mut reader)?;
         // Note: no total_count field — entries follow immediately after version

@@ -70,7 +70,11 @@ fn parallel_sim(workers: usize, seeds: &[u64]) -> Vec<Option<u64>> {
     for h in handles {
         h.join().expect("worker panic (bukan catch_unwind)");
     }
-    assert_eq!(failures.load(Ordering::SeqCst), 0, "ada PANIC saat sim paralel");
+    assert_eq!(
+        failures.load(Ordering::SeqCst),
+        0,
+        "ada PANIC saat sim paralel"
+    );
     let out: Vec<Option<u64>> = results
         .lock()
         .unwrap()

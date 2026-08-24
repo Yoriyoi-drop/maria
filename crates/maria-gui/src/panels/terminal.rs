@@ -73,7 +73,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         let resp = ui.add(
             egui::TextEdit::singleline(&mut state.term_input)
                 .id_source("term_input")
-                .hint_text(if running { "▶ proses berjalan…" } else { "$ perintah" })
+                .hint_text(if running {
+                    "▶ proses berjalan…"
+                } else {
+                    "$ perintah"
+                })
                 .desired_width((ui.available_width() - 70.0).max(50.0)),
         );
 

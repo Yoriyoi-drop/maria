@@ -107,9 +107,9 @@ fn pow2_shift(c: u64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pass::SynthPipeline;
     use maria_core::intern::Symbol;
     use maria_sir::SirModule;
-    use crate::pass::SynthPipeline;
 
     #[test]
     fn mul_by_power_of_two_becomes_shift() {
@@ -126,7 +126,11 @@ mod tests {
         let node = &m2.nodes[nid];
         assert_eq!(node.kind, SirNodeKind::Shl, "a*4 → a<<2");
         assert_eq!(node.inputs[0], 0);
-        assert_eq!(m2.values[out], SirValue::Node(nid), "output tetap node (Shl)");
+        assert_eq!(
+            m2.values[out],
+            SirValue::Node(nid),
+            "output tetap node (Shl)"
+        );
     }
 
     #[test]

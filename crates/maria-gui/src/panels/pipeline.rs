@@ -50,7 +50,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     ui.add_space(4.0);
 
     // ── Incremental Cache (MICD) ──
-    ui.label(egui::RichText::new("Incremental Cache (MICD)").strong().size(12.0));
+    ui.label(
+        egui::RichText::new("Incremental Cache (MICD)")
+            .strong()
+            .size(12.0),
+    );
     ui.add_space(4.0);
     match &info.micd {
         Some(m) => cache_view(ui, m),

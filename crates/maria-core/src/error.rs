@@ -46,8 +46,7 @@ impl SimError {
     /// Buat error dengan structured Diagnostic (error code, konteks, dll).
     /// Menggantikan format string-based `[CODE] message` dengan Diagnostic nyata.
     pub fn with_diag(code: DiagCode, message: impl Into<String>) -> Self {
-        let diag = Diagnostic::new(DiagLevel::Error, code, message.into())
-            .with_code_context();
+        let diag = Diagnostic::new(DiagLevel::Error, code, message.into()).with_code_context();
         Self::Diagnostic(diag)
     }
 
@@ -67,8 +66,9 @@ impl SimError {
         Self::Diagnostic(diag)
     }
 
-        /// Ekstrak error code dari message format "[RT0001] message"
-    fn parse_error_code(msg: &str) -> Option<&'static str> {        if msg.starts_with('[') {
+    /// Ekstrak error code dari message format "[RT0001] message"
+    fn parse_error_code(msg: &str) -> Option<&'static str> {
+        if msg.starts_with('[') {
             if let Some(end) = msg.find(']') {
                 let code_str = &msg[1..end];
                 if let Some(code) = crate::diagnostics::codes::lookup_code(code_str) {
@@ -120,7 +120,7 @@ impl SimError {
     /// Dapatkan error code yang sesuai.
     pub fn error_code(&self) -> &'static str {
         let msg = self.to_string();
-        
+
         // Coba parse dari format "[RT0001] message"
         if let Some(code) = Self::parse_error_code(&msg) {
             return code;
@@ -134,7 +134,9 @@ impl SimError {
         match self {
             SimError::Parse(ref _msg) => Self::parse_code(&msg).as_str(),
             SimError::Elaborate(_) => {
-                if msg.contains("Unable to determine top-level design") || msg.contains("Top resolution failed") {
+                if msg.contains("Unable to determine top-level design")
+                    || msg.contains("Top resolution failed")
+                {
                     "EL3001"
                 } else if msg.contains("not found") || msg.contains("module") {
                     "E3001"
@@ -239,7 +241,9 @@ impl SimError {
     fn strip_nested_error_codes(msg: &str) -> String {
         let mut result = msg.to_string();
         while let Some(idx) = result.find("error[") {
-            let Some(rel_end) = result[idx + 6..].find(']') else { break };
+            let Some(rel_end) = result[idx + 6..].find(']') else {
+                break;
+            };
             let end = idx + 6 + rel_end;
             let code = &result[idx + 6..end];
             // Validasi format kode: EXXXX (huruf E + 4 digit)
@@ -249,7 +253,9 @@ impl SimError {
             if !valid {
                 break;
             }
-            let Some(stripped) = result[end + 1..].strip_prefix(": ") else { break };
+            let Some(stripped) = result[end + 1..].strip_prefix(": ") else {
+                break;
+            };
             result = format!("{}{}", &result[..idx], stripped);
         }
         result
@@ -288,7 +294,13 @@ impl SimError {
             // Runtime Scheduler (RT2xxx)
             c if c.starts_with("RT2") => 50,
             // Runtime Simulation (RT7xxx assertions, RT1xxx signals, RT9xxx internal)
-            c if c.starts_with("RT7") || c.starts_with("RT1") || c.starts_with("RT9") || c == "E9001" => 60,
+            c if c.starts_with("RT7")
+                || c.starts_with("RT1")
+                || c.starts_with("RT9")
+                || c == "E9001" =>
+            {
+                60
+            }
             // DPI Link failed (RT8xxx)
             c if c.starts_with("RT8") => 70,
             // Preprocessor, IO, Debugger, Waveform
@@ -308,7 +320,9 @@ impl std::fmt::Display for SimError {
             SimError::Waveform(msg) => write!(f, "{}", msg),
             SimError::Debugger(msg) => write!(f, "{}", msg),
             SimError::Io(kind, msg) => write!(f, "I/O error ({}): {}", kind, msg),
-            SimError::Diagnostic(diag) => write!(f, "{}[{}]: {}", diag.level, diag.code, diag.message),
+            SimError::Diagnostic(diag) => {
+                write!(f, "{}[{}]: {}", diag.level, diag.code, diag.message)
+            }
         }
     }
 }

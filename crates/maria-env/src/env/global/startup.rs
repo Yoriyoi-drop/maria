@@ -90,7 +90,10 @@ fn build_env(config: ConfigContext, workspace: WorkspaceContext) -> Result<Globa
     // 9. Simulation (butuh config: max_time).
     let simulation = Arc::new(SimulationContext::new().with_max_time(config.sim_timeout()));
 
-    telemetry.trace("startup", &format!("env siap: {} file source", compiler.source_count));
+    telemetry.trace(
+        "startup",
+        &format!("env siap: {} file source", compiler.source_count),
+    );
 
     Ok(GlobalEnv::new(
         config,

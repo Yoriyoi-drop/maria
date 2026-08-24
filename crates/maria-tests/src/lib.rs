@@ -12,20 +12,19 @@ pub use maria_api::*;
 
 // MDME module - available for both tests and example binary
 
-
 // Private use mirror dari lib.rs lama — dibawa ke submodule test via glob
 // `use super::*` (tests/mod.rs, edge_tests.rs) sehingga `fs::…`, `Lexer`,
 // `Parser`, `Preprocessor` tetap valid tanpa edit di 15K LOC test.
 // (cfg(test): hanya terpakai saat crate ini di-test, hindari unused-import
 // warning pada build lib biasa.)
 #[cfg(test)]
-use std::fs;
-#[cfg(test)]
 use maria_parser::lexer::Lexer;
 #[cfg(test)]
 use maria_parser::preprocessor::Preprocessor;
 #[cfg(test)]
 use maria_parser::Parser;
+#[cfg(test)]
+use std::fs;
 
 #[cfg(test)]
 mod tests;

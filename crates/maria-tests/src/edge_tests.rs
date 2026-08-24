@@ -26,7 +26,11 @@ module top;
   initial #1 $finish;
 endmodule"#,
     );
-    assert!(result.is_ok(), "func typedef packed port: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "func typedef packed port: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -44,7 +48,11 @@ module top;
   initial #1 $finish;
 endmodule"#,
     );
-    assert!(result.is_ok(), "func typedef packed scalar: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "func typedef packed scalar: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -64,7 +72,11 @@ module top;
   end
 endmodule"#,
     );
-    assert!(result.is_ok(), "task typedef packed port: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "task typedef packed port: {:?}",
+        result.err()
+    );
 }
 
 // === 1. Zero-width / edge-width vectors ===

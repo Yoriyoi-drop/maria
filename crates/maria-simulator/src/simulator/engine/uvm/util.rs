@@ -1,9 +1,9 @@
 use super::super::SimulationEngine;
-use maria_core::error::SimError;
-use maria_core::diagnostics::DiagCode;
-use maria_ir::*;
 use maria_ast::*;
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
 use maria_core::Symbol;
+use maria_ir::*;
 use std::collections::HashMap;
 
 impl SimulationEngine {
@@ -66,7 +66,13 @@ impl SimulationEngine {
                 let completed = self
                     .evaluate_ast_block_with_delay_fork(&method_def.stmts, self.active_fork_id)?;
                 if std::env::var("DBG_UVM").is_ok() {
-                    eprintln!("[DBG-F26] task '{}' fid={:?} completed={} nstmts={}", method, self.active_fork_id, completed, method_def.stmts.len());
+                    eprintln!(
+                        "[DBG-F26] task '{}' fid={:?} completed={} nstmts={}",
+                        method,
+                        self.active_fork_id,
+                        completed,
+                        method_def.stmts.len()
+                    );
                 }
                 if !completed {
                     // Task suspended by delay — keep scope & context alive for
@@ -234,7 +240,10 @@ impl SimulationEngine {
         self.find_method_quiet(class_name, method).ok_or_else(|| {
             self.diag_error(
                 DiagCode::DpiError,
-                format!("method '{}' not found in class '{}' or its parents", method, class_name),
+                format!(
+                    "method '{}' not found in class '{}' or its parents",
+                    method, class_name
+                ),
             )
         })
     }
@@ -377,7 +386,9 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err(self.diag_error(DiagCode::MemoryOutOfBounds, "pop_front on empty queue"));
+                    return Err(
+                        self.diag_error(DiagCode::MemoryOutOfBounds, "pop_front on empty queue")
+                    );
                 }
                 let mut bits = Vec::with_capacity(elem_width);
                 for i in 0..elem_width {
@@ -398,7 +409,9 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err(self.diag_error(DiagCode::MemoryOutOfBounds, "pop_back on empty queue"));
+                    return Err(
+                        self.diag_error(DiagCode::MemoryOutOfBounds, "pop_back on empty queue")
+                    );
                 }
                 let start = lv.width - elem_width;
                 let mut bits = Vec::with_capacity(elem_width);
@@ -420,7 +433,9 @@ impl SimulationEngine {
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err(self.diag_error(DiagCode::DpiError, "push_front expects 1 argument"));
+                    return Err(
+                        self.diag_error(DiagCode::DpiError, "push_front expects 1 argument")
+                    );
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -447,9 +462,9 @@ impl SimulationEngine {
                 Ok(LogicVec::new(0))
             }
             "exists" => {
-                let index_expr = args
-                    .first()
-                    .ok_or_else(|| self.diag_error(DiagCode::DpiError, "exists expects 1 argument"))?;
+                let index_expr = args.first().ok_or_else(|| {
+                    self.diag_error(DiagCode::DpiError, "exists expects 1 argument")
+                })?;
                 let idx_val = self.evaluate_expr(index_expr)?;
                 let idx = idx_val.to_u64() as usize;
                 let lv = self.state.read_signal(sig_id);
@@ -486,7 +501,10 @@ impl SimulationEngine {
             }
             "insert" => {
                 if args.len() < 2 {
-                    return Err(self.diag_error(DiagCode::DpiError, "insert expects 2 arguments (index, value)"));
+                    return Err(self.diag_error(
+                        DiagCode::DpiError,
+                        "insert expects 2 arguments (index, value)",
+                    ));
                 }
                 let idx_val = self.evaluate_expr(&args[0])?;
                 let idx = idx_val.to_u64() as usize;
@@ -1013,5 +1031,4 @@ impl SimulationEngine {
             )),
         }
     }
-
 }

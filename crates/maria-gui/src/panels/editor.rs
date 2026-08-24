@@ -9,8 +9,8 @@ use egui::TextBuffer;
 
 use super::super::semantic;
 use super::super::state::{
-    BottomTab, DiagEntry, DiagLevel, GuiState, OpenFile, PeekInfo, StickyScope, diag_matches_file,
-    word_count,
+    diag_matches_file, word_count, BottomTab, DiagEntry, DiagLevel, GuiState, OpenFile, PeekInfo,
+    StickyScope,
 };
 
 pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
@@ -24,7 +24,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                         .strong()
                         .color(ui.visuals().selection.bg_fill),
                 );
-                ui.label(egui::RichText::new("RTL Engineering Control Center").size(14.0).weak());
+                ui.label(
+                    egui::RichText::new("RTL Engineering Control Center")
+                        .size(14.0)
+                        .weak(),
+                );
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new("Open project → compile → run simulation")
@@ -106,7 +110,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                 let resp = ui
                     .selectable_label(
                         false,
-                        egui::RichText::new(&project_name).monospace().size(11.0).strong(),
+                        egui::RichText::new(&project_name)
+                            .monospace()
+                            .size(11.0)
+                            .strong(),
                     )
                     .on_hover_text("Buka tab Project");
                 if resp.clicked() {
@@ -141,12 +148,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
 
             // Fallback: file di luar project root → tampilkan path mentah
             if rel_parts.is_empty() {
-                ui.label(
-                    egui::RichText::new(&path_str)
-                        .weak()
-                        .monospace()
-                        .size(10.0),
-                );
+                ui.label(egui::RichText::new(&path_str).weak().monospace().size(10.0));
             }
         });
 
@@ -197,10 +199,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                 // Statistik global (compile time + coverage) di ujung strip.
                 ui.separator();
                 let ct = format!("⏱ {:.2} ms", info.total_time_ms);
-                ui.label(
-                    egui::RichText::new(&ct).weak().monospace().size(10.0),
-                )
-                .on_hover_text("Total compile + elaborate");
+                ui.label(egui::RichText::new(&ct).weak().monospace().size(10.0))
+                    .on_hover_text("Total compile + elaborate");
                 if let Some(pct) = cov_pct {
                     let color = if pct >= 90.0 {
                         egui::Color32::from_rgb(34, 197, 94) // hijau
@@ -245,18 +245,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
 
     // Data compile untuk Hover tooltip — field-split valid (disjoint dari
     // `state.open_files` yang dipinjam mut oleh `f`), sama seperti Code Lens.
-    let sig_info: Option<&HashMap<String, (String, usize)>> = state
-        .compile_info
-        .as_ref()
-        .map(|ci| &ci.signal_info);
-    let ref_counts: Option<&HashMap<String, usize>> = state
-        .compile_info
-        .as_ref()
-        .map(|ci| &ci.ref_counts);
-    let symbol_files: Option<&HashMap<String, PathBuf>> = state
-        .compile_info
-        .as_ref()
-        .map(|ci| &ci.symbol_files);
+    let sig_info: Option<&HashMap<String, (String, usize)>> =
+        state.compile_info.as_ref().map(|ci| &ci.signal_info);
+    let ref_counts: Option<&HashMap<String, usize>> =
+        state.compile_info.as_ref().map(|ci| &ci.ref_counts);
+    let symbol_files: Option<&HashMap<String, PathBuf>> =
+        state.compile_info.as_ref().map(|ci| &ci.symbol_files);
     // Data AST untuk Autocomplete — module/interface/package dari compile
     // (field-split valid: disjoint dari `state.open_files` yang dipinjam `f`).
     let modules: Option<&Vec<String>> = state.compile_info.as_ref().map(|ci| &ci.modules);
@@ -814,7 +808,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                     }
                 }
             }
-            state.log(format!("✏ Rename '{}' → '{}' · {} referensi", old, new, renamed));
+            state.log(format!(
+                "✏ Rename '{}' → '{}' · {} referensi",
+                old, new, renamed
+            ));
         }
     }
 
@@ -868,8 +865,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                             .weak()
                             .size(10.0),
                     );
-                    let resp2 =
-                        ui.interact(ui.max_rect(), ui.id().with("peek_click"), egui::Sense::click());
+                    let resp2 = ui.interact(
+                        ui.max_rect(),
+                        ui.id().with("peek_click"),
+                        egui::Sense::click(),
+                    );
                     if resp2.clicked() {
                         goto = true;
                         clicked_inside = true;
@@ -975,8 +975,7 @@ fn build_code_lens(
 fn draw_minimap(ui: &mut egui::Ui, content: &str, file_diags: &[&DiagEntry]) -> bool {
     let mm_w = 14.0;
     let height = ui.available_height().max(40.0);
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(mm_w, height), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(mm_w, height), egui::Sense::click());
     let painter = ui.painter_at(rect);
 
     // Latar belakang strip
@@ -1054,9 +1053,7 @@ fn draw_minimap(ui: &mut egui::Ui, content: &str, file_diags: &[&DiagEntry]) -> 
                             DiagLevel::Warning => yellow,
                             DiagLevel::Info => egui::Color32::from_rgb(59, 130, 246),
                         };
-                        ui.label(
-                            egui::RichText::new(m).monospace().size(11.0).color(color),
-                        );
+                        ui.label(egui::RichText::new(m).monospace().size(11.0).color(color));
                     }
                 });
             }
@@ -1105,9 +1102,24 @@ fn truncate(t: &str) -> String {
 /// (`function automatic int foo(...)` → `foo`).
 fn fn_task_name(words: &[&str]) -> String {
     const SKIP: &[&str] = &[
-        "automatic", "static", "pure", "extern", "void", "int", "integer",
-        "logic", "bit", "byte", "shortint", "longint", "real", "shortreal",
-        "reg", "wire", "signed", "unsigned",
+        "automatic",
+        "static",
+        "pure",
+        "extern",
+        "void",
+        "int",
+        "integer",
+        "logic",
+        "bit",
+        "byte",
+        "shortint",
+        "longint",
+        "real",
+        "shortreal",
+        "reg",
+        "wire",
+        "signed",
+        "unsigned",
     ];
     for w in words.iter().skip(1) {
         let clean: String = w
@@ -1121,7 +1133,11 @@ fn fn_task_name(words: &[&str]) -> String {
     }
     words
         .get(1)
-        .map(|w| w.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect())
+        .map(|w| {
+            w.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -1190,8 +1206,8 @@ fn build_sticky(content: &str) -> Vec<StickyScope> {
             match *w {
                 "begin" => depth += 1,
                 "end" => depth = depth.saturating_sub(1),
-                "endmodule" | "endinterface" | "endpackage" | "endprogram"
-                | "endfunction" | "endtask" => depth = 0,
+                "endmodule" | "endinterface" | "endpackage" | "endprogram" | "endfunction"
+                | "endtask" => depth = 0,
                 _ => {}
             }
         }
@@ -1249,8 +1265,7 @@ fn draw_sticky_header(ui: &mut egui::Ui, f: &OpenFile, line_h: f32) -> Option<us
             egui::pos2(rect.left(), rect.top() + i as f32 * row_h),
             egui::vec2(rect.width(), row_h),
         );
-        let row_resp =
-            ui.interact(row_rect, ui.id().with(("sticky", i)), egui::Sense::click());
+        let row_resp = ui.interact(row_rect, ui.id().with(("sticky", i)), egui::Sense::click());
 
         let is_inner = i + 1 == n;
         let color = if is_inner {
@@ -1264,12 +1279,12 @@ fn draw_sticky_header(ui: &mut egui::Ui, f: &OpenFile, line_h: f32) -> Option<us
 
         // Titik berwarna per jenis scope (palet selaras semantic highlight).
         let dot = match s.kind.as_str() {
-            "module" => egui::Color32::from_rgb(59, 130, 246),   // biru
+            "module" => egui::Color32::from_rgb(59, 130, 246), // biru
             "interface" => egui::Color32::from_rgb(168, 85, 247), // ungu
-            "package" => egui::Color32::from_rgb(6, 182, 212),    // cyan
+            "package" => egui::Color32::from_rgb(6, 182, 212), // cyan
             "function" | "task" => egui::Color32::from_rgb(249, 115, 22), // oranye
             "always" | "initial" => egui::Color32::from_rgb(34, 197, 94), // hijau
-            _ => egui::Color32::from_rgb(148, 163, 184),          // abu (begin)
+            _ => egui::Color32::from_rgb(148, 163, 184),       // abu (begin)
         };
         painter.rect_filled(
             egui::Rect::from_center_size(
@@ -1313,7 +1328,15 @@ fn hovered_identifier(
     char_w: f32,
     line_h: f32,
 ) -> Option<(String, semantic::SemKind)> {
-    identifier_at_pos(resp, content, scroll_top, scroll_left, char_w, line_h, resp.hover_pos()?)
+    identifier_at_pos(
+        resp,
+        content,
+        scroll_top,
+        scroll_left,
+        char_w,
+        line_h,
+        resp.hover_pos()?,
+    )
 }
 
 /// Identifier di posisi tertentu (screen). Dipakai hover tooltip & Ctrl+Click
@@ -1356,9 +1379,7 @@ fn resolve_goto(
     symbol_files: Option<&HashMap<String, PathBuf>>,
 ) -> Option<(PathBuf, Option<usize>)> {
     match kind {
-        semantic::SemKind::Module
-        | semantic::SemKind::Interface
-        | semantic::SemKind::Package => {
+        semantic::SemKind::Module | semantic::SemKind::Interface | semantic::SemKind::Package => {
             let path = symbol_files.and_then(|m| m.get(name)).cloned()?;
             let kw = match kind {
                 semantic::SemKind::Module => "module",
@@ -1377,7 +1398,9 @@ fn resolve_goto(
         | semantic::SemKind::Typedef
         | semantic::SemKind::Enum => {
             let info = scan_hover_info(&f.content, name);
-            let line = info.declared_line.or_else(|| first_word_line(&f.content, name));
+            let line = info
+                .declared_line
+                .or_else(|| first_word_line(&f.content, name));
             Some((f.path.clone(), line))
         }
         _ => None,
@@ -1442,10 +1465,28 @@ struct HoverInfo {
 /// dan doc comment — heuristik teks (bukan LSP penuh, cukup untuk tooltip).
 fn scan_hover_info(content: &str, name: &str) -> HoverInfo {
     const DECL_KW: &[&str] = &[
-        "input", "output", "inout", "logic", "reg", "wire", "bit", "var",
-        "tri", "integer", "int", "signed", "unsigned", "parameter",
-        "localparam", "typedef", "genvar", "time", "real", "byte",
-        "shortint", "longint",
+        "input",
+        "output",
+        "inout",
+        "logic",
+        "reg",
+        "wire",
+        "bit",
+        "var",
+        "tri",
+        "integer",
+        "int",
+        "signed",
+        "unsigned",
+        "parameter",
+        "localparam",
+        "typedef",
+        "genvar",
+        "time",
+        "real",
+        "byte",
+        "shortint",
+        "longint",
     ];
     let mut declared: Option<usize> = None;
     let mut used = 0usize;
@@ -1691,16 +1732,74 @@ fn utf8_len(b: u8) -> usize {
 /// Keyword SystemVerilog umum — kandidat autocomplete tingkat pertama
 /// (selain symbol dari AST: module/interface/package/signal).
 const SV_KEYWORDS: &[&str] = &[
-    "module", "endmodule", "interface", "endinterface", "package", "endpackage",
-    "always", "always_ff", "always_comb", "always_latch", "initial", "final",
-    "begin", "end", "if", "else", "case", "casez", "casex", "default", "for",
-    "while", "repeat", "forever", "fork", "join", "join_any", "join_none",
-    "input", "output", "inout", "logic", "reg", "wire", "bit", "int", "integer",
-    "byte", "shortint", "longint", "time", "real", "tri", "parameter",
-    "localparam", "genvar", "assign", "function", "endfunction", "task",
-    "endtask", "typedef", "enum", "struct", "union", "class", "endclass",
-    "return", "break", "continue", "signed", "unsigned", "var", "void",
-    "import", "export", "assert", "cover",
+    "module",
+    "endmodule",
+    "interface",
+    "endinterface",
+    "package",
+    "endpackage",
+    "always",
+    "always_ff",
+    "always_comb",
+    "always_latch",
+    "initial",
+    "final",
+    "begin",
+    "end",
+    "if",
+    "else",
+    "case",
+    "casez",
+    "casex",
+    "default",
+    "for",
+    "while",
+    "repeat",
+    "forever",
+    "fork",
+    "join",
+    "join_any",
+    "join_none",
+    "input",
+    "output",
+    "inout",
+    "logic",
+    "reg",
+    "wire",
+    "bit",
+    "int",
+    "integer",
+    "byte",
+    "shortint",
+    "longint",
+    "time",
+    "real",
+    "tri",
+    "parameter",
+    "localparam",
+    "genvar",
+    "assign",
+    "function",
+    "endfunction",
+    "task",
+    "endtask",
+    "typedef",
+    "enum",
+    "struct",
+    "union",
+    "class",
+    "endclass",
+    "return",
+    "break",
+    "continue",
+    "signed",
+    "unsigned",
+    "var",
+    "void",
+    "import",
+    "export",
+    "assert",
+    "cover",
 ];
 
 /// Kandidat autocomplete: keyword SV + module/interface/package + signal

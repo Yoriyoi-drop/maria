@@ -331,7 +331,8 @@ fn tokenize(content: &str) -> Vec<LibToken> {
             '.' => {
                 // Check if this is a decimal number (e.g., "0.01")
                 // If current contains only digits (or a number prefix), treat this as part of a decimal
-                let is_decimal = !current.is_empty() && current.chars().all(|c| c.is_ascii_digit() || c == '-');
+                let is_decimal =
+                    !current.is_empty() && current.chars().all(|c| c.is_ascii_digit() || c == '-');
                 if is_decimal {
                     current.push('.');
                 } else {
@@ -476,10 +477,7 @@ impl LibertyParser {
     fn parse_library(&mut self) -> Result<LibertyLibrary, String> {
         let ident = self.expect_ident()?;
         if ident.to_lowercase() != "library" {
-            return Err(format!(
-                "expected 'library', found '{}' at token 0",
-                ident
-            ));
+            return Err(format!("expected 'library', found '{}' at token 0", ident));
         }
         self.expect(&LibToken::LParen)?;
         let name = self.expect_ident()?;
@@ -537,7 +535,12 @@ impl LibertyParser {
                             self.advance();
                             if self.peek() == Some(&LibToken::Colon) {
                                 self.advance();
-                                while matches!(self.peek(), Some(LibToken::Ident(_)) | Some(LibToken::StringLit(_)) | Some(LibToken::Number(_))) {
+                                while matches!(
+                                    self.peek(),
+                                    Some(LibToken::Ident(_))
+                                        | Some(LibToken::StringLit(_))
+                                        | Some(LibToken::Number(_))
+                                ) {
                                     self.advance();
                                 }
                                 if self.peek() == Some(&LibToken::Semi) {
@@ -546,7 +549,9 @@ impl LibertyParser {
                             } else if self.peek() == Some(&LibToken::LParen) {
                                 // Skip group: keyword(args) { ... }
                                 self.advance(); // skip (
-                                while self.peek() != Some(&LibToken::RParen) && self.peek().is_some() {
+                                while self.peek() != Some(&LibToken::RParen)
+                                    && self.peek().is_some()
+                                {
                                     self.advance();
                                 }
                                 if self.peek() == Some(&LibToken::RParen) {
@@ -783,8 +788,12 @@ impl LibertyParser {
                             self.expect(&LibToken::Colon)?;
                             let sense = self.expect_ident()?;
                             match sense.to_lowercase().as_str() {
-                                "positive_unate" => arc.timing_sense = LibertyTimingSense::PositiveUnate,
-                                "negative_unate" => arc.timing_sense = LibertyTimingSense::NegativeUnate,
+                                "positive_unate" => {
+                                    arc.timing_sense = LibertyTimingSense::PositiveUnate
+                                }
+                                "negative_unate" => {
+                                    arc.timing_sense = LibertyTimingSense::NegativeUnate
+                                }
                                 "non_unate" => arc.timing_sense = LibertyTimingSense::NonUnate,
                                 _ => {}
                             }
@@ -819,7 +828,7 @@ impl LibertyParser {
 
     fn parse_delay_table(&mut self) -> Result<LibertyDelayTable, String> {
         self.advance(); // consume keyword (cell_rise, etc.)
-        
+
         let template_name = if self.peek() == Some(&LibToken::LParen) {
             self.advance();
             // Handle empty parens: cell_rise() — no template name
@@ -847,7 +856,9 @@ impl LibertyParser {
         loop {
             match self.peek() {
                 None | Some(LibToken::RBrace) => break,
-                Some(LibToken::Semi) => { self.advance(); }
+                Some(LibToken::Semi) => {
+                    self.advance();
+                }
                 Some(LibToken::Ident(keyword)) => {
                     let kw = keyword.to_lowercase();
                     match kw.as_str() {
@@ -880,7 +891,9 @@ impl LibertyParser {
                         }
                     }
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
 
@@ -894,17 +907,18 @@ impl LibertyParser {
         // index_1("0.1, 0.5, 1.0") → [0.1, 0.5, 1.0]
         match self.peek() {
             Some(LibToken::StringLit(s)) => {
-                let vals: Result<Vec<f64>, _> = s
-                    .split(',')
-                    .map(|v| v.trim().parse::<f64>())
-                    .collect();
+                let vals: Result<Vec<f64>, _> =
+                    s.split(',').map(|v| v.trim().parse::<f64>()).collect();
                 self.advance();
                 vals.map_err(|e| format!("invalid number in list: {}", e))
             }
             _ => {
                 // Try comma-separated numbers without quotes
                 let mut vals = Vec::new();
-                while matches!(self.peek(), Some(LibToken::Number(_)) | Some(LibToken::Comma) | Some(LibToken::Minus)) {
+                while matches!(
+                    self.peek(),
+                    Some(LibToken::Number(_)) | Some(LibToken::Comma) | Some(LibToken::Minus)
+                ) {
                     if self.peek() == Some(&LibToken::Comma) {
                         self.advance();
                         continue;
@@ -927,17 +941,15 @@ impl LibertyParser {
         }
     }
 
-    /// Parse a 2D matrix of values: "0.05, 0.10", "0.10, 0.20" 
+    /// Parse a 2D matrix of values: "0.05, 0.10", "0.10, 0.20"
     fn parse_value_matrix(&mut self) -> Result<Vec<Vec<f64>>, String> {
         let mut matrix = Vec::new();
         loop {
             match self.peek() {
                 Some(LibToken::RParen) => break,
                 Some(LibToken::StringLit(s)) => {
-                    let row: Result<Vec<f64>, _> = s
-                        .split(',')
-                        .map(|v| v.trim().parse::<f64>())
-                        .collect();
+                    let row: Result<Vec<f64>, _> =
+                        s.split(',').map(|v| v.trim().parse::<f64>()).collect();
                     matrix.push(row.map_err(|e| format!("invalid number: {}", e))?);
                     self.advance();
                 }
@@ -955,7 +967,7 @@ impl LibertyParser {
     fn parse_ff(&mut self) -> Result<LibertyFF, String> {
         self.advance(); // consume 'ff'
         self.expect(&LibToken::LParen)?;
-        
+
         // Optional arguments
         while self.peek() != Some(&LibToken::RParen) && self.peek().is_some() {
             self.advance();
@@ -973,7 +985,9 @@ impl LibertyParser {
         loop {
             match self.peek() {
                 None | Some(LibToken::RBrace) => break,
-                Some(LibToken::Semi) => { self.advance(); }
+                Some(LibToken::Semi) => {
+                    self.advance();
+                }
                 Some(LibToken::Ident(keyword)) => {
                     let kw = keyword.to_lowercase();
                     match kw.as_str() {
@@ -1007,7 +1021,9 @@ impl LibertyParser {
                         }
                     }
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
 
@@ -1035,7 +1051,9 @@ impl LibertyParser {
         loop {
             match self.peek() {
                 None | Some(LibToken::RBrace) => break,
-                Some(LibToken::Semi) => { self.advance(); }
+                Some(LibToken::Semi) => {
+                    self.advance();
+                }
                 Some(LibToken::Ident(keyword)) => {
                     let kw = keyword.to_lowercase();
                     match kw.as_str() {
@@ -1073,7 +1091,9 @@ impl LibertyParser {
                         }
                     }
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
 
@@ -1179,7 +1199,7 @@ mod tests {
         let library = LibertyLibrary::parse(lib).unwrap();
         let buf = library.cells.get("BUF").unwrap();
         assert!((buf.area.unwrap() - 5.0).abs() < 1e-9);
-        
+
         let pin_a = buf.pins.get("A").unwrap();
         assert_eq!(pin_a.direction, LibertyPinDirection::Input);
         assert!((pin_a.capacitance.unwrap() - 0.01).abs() < 1e-9);
@@ -1192,7 +1212,7 @@ mod tests {
         assert_eq!(arc.related_pin, "A");
         assert!(arc.cell_rise.is_some());
         assert!(arc.cell_fall.is_some());
-        
+
         let rise = library.get_rise_delay("BUF", "A", "Y");
         assert!(rise.is_some());
         assert!((rise.unwrap() - 0.05).abs() < 1e-9);

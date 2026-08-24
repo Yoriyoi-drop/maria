@@ -133,8 +133,7 @@ pub fn history_of(root: &Path, id: u64) -> Vec<u64> {
 /// Common ancestor terdekat (merge-base) dari dua snapshot. `None` bila
 /// tidak ada yang berbagi garis keturunan.
 pub fn merge_base(root: &Path, a: u64, b: u64) -> Option<u64> {
-    let hist_a: std::collections::HashSet<u64> =
-        history_of(root, a).into_iter().collect();
+    let hist_a: std::collections::HashSet<u64> = history_of(root, a).into_iter().collect();
     let mut stack = vec![b];
     let mut visited = std::collections::HashSet::new();
     while let Some(cur) = stack.pop() {
@@ -166,7 +165,11 @@ impl MicdDatabase {
     /// DAG bercabang/merge, gunakan [`MicdDatabase::snapshot_from`].
     pub fn snapshot(&mut self, note: String) -> io::Result<u64> {
         let parent = last_snapshot_id(&self.snapshots);
-        let parents = if parent == 0 { Vec::new() } else { vec![parent] };
+        let parents = if parent == 0 {
+            Vec::new()
+        } else {
+            vec![parent]
+        };
         self.snapshot_from(parents, note)
     }
 
@@ -237,10 +240,7 @@ impl MicdDatabase {
                         if let Some(parent) = path.parent() {
                             std::fs::create_dir_all(parent).ok();
                         }
-                        let _ = std::fs::write(
-                            path,
-                            bincode::serialize(&s).unwrap_or_default(),
-                        );
+                        let _ = std::fs::write(path, bincode::serialize(&s).unwrap_or_default());
                     }
                 }
             }
@@ -327,11 +327,7 @@ mod tests {
             parents,
             ..Snapshot::default()
         };
-        std::fs::write(
-            snapshot_path(root, id),
-            bincode::serialize(&s).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(snapshot_path(root, id), bincode::serialize(&s).unwrap()).unwrap();
     }
 
     #[test]

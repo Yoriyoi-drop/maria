@@ -6,9 +6,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::{collect_targets, kv, section};
 use maria_ast::types::GenerateItem;
 use maria_core::error::SimError;
-use crate::{collect_targets, section, kv};
 
 /// Opsi mcheck.
 pub struct CheckArgs<'a> {
@@ -64,7 +64,11 @@ struct IncludeInfo {
 }
 
 /// Scan semua file: cek `include missing + circular include graph.
-fn scan_includes(targets: &[String], do_missing: bool, do_circular: bool) -> Result<usize, SimError> {
+fn scan_includes(
+    targets: &[String],
+    do_missing: bool,
+    do_circular: bool,
+) -> Result<usize, SimError> {
     let files = collect_targets(targets)?;
     if files.is_empty() {
         return Ok(0);
@@ -118,8 +122,12 @@ fn scan_includes(targets: &[String], do_missing: bool, do_circular: bool) -> Res
 
 /// Ekstrak `include directive dari satu file + resolve terhadap dir/incdirs.
 fn analyze_includes(path: &Path, all_files: &[PathBuf]) -> Result<IncludeInfo, SimError> {
-    let src = std::fs::read_to_string(path)
-        .map_err(|e| SimError::with_diag(maria_core::diagnostics::DiagCode::IoError, format!("{}: {}", path.display(), e)))?;
+    let src = std::fs::read_to_string(path).map_err(|e| {
+        SimError::with_diag(
+            maria_core::diagnostics::DiagCode::IoError,
+            format!("{}: {}", path.display(), e),
+        )
+    })?;
 
     let file_set: HashSet<&Path> = all_files.iter().map(|p| p.as_path()).collect();
     let dir = path.parent().unwrap_or(Path::new("."));
@@ -133,9 +141,13 @@ fn analyze_includes(path: &Path, all_files: &[PathBuf]) -> Result<IncludeInfo, S
             continue;
         }
         // Ekstrak nama file antara tanda kutip
-        let Some(open) = trimmed.find('"') else { continue };
+        let Some(open) = trimmed.find('"') else {
+            continue;
+        };
         let rest = &trimmed[open + 1..];
-        let Some(close) = rest.find('"') else { continue };
+        let Some(close) = rest.find('"') else {
+            continue;
+        };
         let name = &rest[..close];
         if name.is_empty() {
             continue;
@@ -146,9 +158,10 @@ fn analyze_includes(path: &Path, all_files: &[PathBuf]) -> Result<IncludeInfo, S
         if cand.exists() {
             let abs = std::fs::canonicalize(&cand).unwrap_or(cand);
             resolved.push(abs);
-        } else if let Some(hit) = all_files.iter().find(|f| {
-            f.file_name().map(|n| n == name).unwrap_or(false)
-        }) {
+        } else if let Some(hit) = all_files
+            .iter()
+            .find(|f| f.file_name().map(|n| n == name).unwrap_or(false))
+        {
             let abs = std::fs::canonicalize(hit).unwrap_or_else(|_| hit.clone());
             resolved.push(abs);
         } else if file_set.contains(cand.as_path()) {
@@ -161,7 +174,10 @@ fn analyze_includes(path: &Path, all_files: &[PathBuf]) -> Result<IncludeInfo, S
 }
 
 /// Deteksi cycle pada include graph via DFS coloring.
-fn find_include_cycle(graph: &HashMap<PathBuf, Vec<PathBuf>>, files: &[PathBuf]) -> Option<Vec<PathBuf>> {
+fn find_include_cycle(
+    graph: &HashMap<PathBuf, Vec<PathBuf>>,
+    files: &[PathBuf],
+) -> Option<Vec<PathBuf>> {
     #[derive(Clone, Copy, PartialEq)]
     enum Color {
         White,
@@ -249,7 +265,10 @@ fn scan_design(
         }
         unresolved.sort();
         for u in &unresolved {
-            println!("  ! UNRESOLVED: module '{}' di-instantiate tapi tidak terdefinisi", u);
+            println!(
+                "  ! UNRESOLVED: module '{}' di-instantiate tapi tidak terdefinisi",
+                u
+            );
         }
         kv("unresolved modules", unresolved.len());
         problem += unresolved.len();
@@ -301,7 +320,10 @@ fn scan_design(
             }
         }
         if seen.len() > 1 {
-            let mut list: Vec<String> = seen.iter().map(|(k, v)| format!("{} ({} file)", k, v)).collect();
+            let mut list: Vec<String> = seen
+                .iter()
+                .map(|(k, v)| format!("{} ({} file)", k, v))
+                .collect();
             list.sort();
             for l in &list {
                 println!("  ! {}", l);
@@ -316,7 +338,10 @@ fn scan_design(
     Ok(problem)
 }
 
-fn collect_mod_instances(items: &[maria_ast::types::ModuleItem], out: &mut Vec<maria_core::intern::Symbol>) {
+fn collect_mod_instances(
+    items: &[maria_ast::types::ModuleItem],
+    out: &mut Vec<maria_core::intern::Symbol>,
+) {
     use maria_ast::types::ModuleItem;
     for it in items {
         match it {
@@ -334,7 +359,11 @@ fn collect_mod_instances(items: &[maria_ast::types::ModuleItem], out: &mut Vec<m
 fn collect_gen_instances(gi: &GenerateItem, out: &mut Vec<maria_core::intern::Symbol>) {
     match gi {
         GenerateItem::Items(items) => collect_mod_instances(items, out),
-        GenerateItem::If { true_items, false_items, .. } => {
+        GenerateItem::If {
+            true_items,
+            false_items,
+            ..
+        } => {
             collect_mod_instances(true_items, out);
             collect_mod_instances(false_items, out);
         }
@@ -358,27 +387,53 @@ fn collect_gen_instances(gi: &GenerateItem, out: &mut Vec<maria_core::intern::Sy
 fn compare_ir_designs(a: &maria_ir::IrDesign, b: &maria_ir::IrDesign) -> Vec<String> {
     let mut diffs = Vec::new();
     if a.modules.len() != b.modules.len() {
-        diffs.push(format!("module count: {} vs {}", a.modules.len(), b.modules.len()));
+        diffs.push(format!(
+            "module count: {} vs {}",
+            a.modules.len(),
+            b.modules.len()
+        ));
     }
     if a.top.signals.len() != b.top.signals.len() {
-        diffs.push(format!("top signal count: {} vs {}", a.top.signals.len(), b.top.signals.len()));
+        diffs.push(format!(
+            "top signal count: {} vs {}",
+            a.top.signals.len(),
+            b.top.signals.len()
+        ));
     }
     if a.top.processes.len() != b.top.processes.len() {
-        diffs.push(format!("process count: {} vs {}", a.top.processes.len(), b.top.processes.len()));
+        diffs.push(format!(
+            "process count: {} vs {}",
+            a.top.processes.len(),
+            b.top.processes.len()
+        ));
     }
     for (i, (sa, sb)) in a.top.signals.iter().zip(b.top.signals.iter()).enumerate() {
         if sa.width != sb.width {
-            diffs.push(format!("signal[{}] '{}' width: {} vs {}", i, sa.name, sa.width, sb.width));
+            diffs.push(format!(
+                "signal[{}] '{}' width: {} vs {}",
+                i, sa.name, sa.width, sb.width
+            ));
         }
         if sa.is_signed != sb.is_signed {
-            diffs.push(format!("signal[{}] '{}' signed: {} vs {}", i, sa.name, sa.is_signed, sb.is_signed));
+            diffs.push(format!(
+                "signal[{}] '{}' signed: {} vs {}",
+                i, sa.name, sa.is_signed, sb.is_signed
+            ));
         }
     }
     if a.classes.len() != b.classes.len() {
-        diffs.push(format!("class count: {} vs {}", a.classes.len(), b.classes.len()));
+        diffs.push(format!(
+            "class count: {} vs {}",
+            a.classes.len(),
+            b.classes.len()
+        ));
     }
     if a.covergroups.len() != b.covergroups.len() {
-        diffs.push(format!("covergroup count: {} vs {}", a.covergroups.len(), b.covergroups.len()));
+        diffs.push(format!(
+            "covergroup count: {} vs {}",
+            a.covergroups.len(),
+            b.covergroups.len()
+        ));
     }
     diffs
 }
@@ -386,14 +441,39 @@ fn compare_ir_designs(a: &maria_ir::IrDesign, b: &maria_ir::IrDesign) -> Vec<Str
 fn run_ast_diff(targets: &[String], other: &str) -> Result<(), SimError> {
     use maria_core::diagnostics::DiagCode;
     let a_file = targets.first().ok_or_else(|| {
-        SimError::with_diag(DiagCode::InvalidSyntax, "--ast-diff butuh file pertama: mcheck a.sv --ast-diff b.sv")
+        SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            "--ast-diff butuh file pertama: mcheck a.sv --ast-diff b.sv",
+        )
     })?;
     println!("AST diff: {} vs {}", a_file, other);
 
-    let (_, _, ir_a) = crate::open_elaborated(std::slice::from_ref(a_file), &[], &[], None, maria_elaboration::elaborator::ElaborateMode::StrictSimulation)
-        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("gagal compile '{}': {}", a_file, e)))?;
-    let (_, _, ir_b) = crate::open_elaborated(&[other.to_string()], &[], &[], None, maria_elaboration::elaborator::ElaborateMode::StrictSimulation)
-        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("gagal compile '{}': {}", other, e)))?;
+    let (_, _, ir_a) = crate::open_elaborated(
+        std::slice::from_ref(a_file),
+        &[],
+        &[],
+        None,
+        maria_elaboration::elaborator::ElaborateMode::StrictSimulation,
+    )
+    .map_err(|e| {
+        SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            format!("gagal compile '{}': {}", a_file, e),
+        )
+    })?;
+    let (_, _, ir_b) = crate::open_elaborated(
+        &[other.to_string()],
+        &[],
+        &[],
+        None,
+        maria_elaboration::elaborator::ElaborateMode::StrictSimulation,
+    )
+    .map_err(|e| {
+        SimError::with_diag(
+            DiagCode::InvalidSyntax,
+            format!("gagal compile '{}': {}", other, e),
+        )
+    })?;
 
     let diffs = compare_ir_designs(&ir_a, &ir_b);
     if diffs.is_empty() {
@@ -403,7 +483,8 @@ fn run_ast_diff(targets: &[String], other: &str) -> Result<(), SimError> {
         println!("⚠️  {} perbedaan struktural:", diffs.len());
         for d in &diffs {
             println!("  - {}", d);
-        }        Err(SimError::with_diag(
+        }
+        Err(SimError::with_diag(
             maria_core::diagnostics::DiagCode::AssertionFailed,
             format!("AST berbeda: {} perbedaan", diffs.len()),
         ))
@@ -421,7 +502,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "maria_astdiff_{}_{}",
             std::process::id(),
-            std::thread::current().name().unwrap_or("t").replace("::", "_")
+            std::thread::current()
+                .name()
+                .unwrap_or("t")
+                .replace("::", "_")
         ));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("t.sv");
@@ -445,17 +529,25 @@ mod tests {
         let src = "module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule";
         let a = elabor(src);
         let b = elabor(src);
-        assert!(compare_ir_designs(&a, &b).is_empty(), "file identik harus 0 diff");
+        assert!(
+            compare_ir_designs(&a, &b).is_empty(),
+            "file identik harus 0 diff"
+        );
     }
 
     #[test]
     fn test_ast_diff_width_mismatch() {
         // PARSER-13: lebar signal berbeda → diff terdeteksi.
-        let a = elabor("module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule");
-        let b = elabor("module m(input clk); reg [15:0] q; always @(posedge clk) q <= q + 1; endmodule");
+        let a =
+            elabor("module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule");
+        let b = elabor(
+            "module m(input clk); reg [15:0] q; always @(posedge clk) q <= q + 1; endmodule",
+        );
         let diffs = compare_ir_designs(&a, &b);
         assert!(
-            diffs.iter().any(|d| d.contains("width") && d.contains("8 vs 16")),
+            diffs
+                .iter()
+                .any(|d| d.contains("width") && d.contains("8 vs 16")),
             "lebar 8 vs 16 harus terdeteksi: {:?}",
             diffs
         );

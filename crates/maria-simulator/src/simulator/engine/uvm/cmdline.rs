@@ -17,10 +17,10 @@
 //! 1 file = 1 tanggung jawab: hanya uvm_cmdline_processor.
 
 use super::super::SimulationEngine;
+use crate::simulator::util::{logicvec_to_string, string_to_logicvec};
+use maria_compiler::hir::{LogicVec, ObjId};
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
-use crate::simulator::util::{logicvec_to_string, string_to_logicvec};
 
 impl SimulationEngine {
     /// Method `uvm_cmdline_processor` — query plusarg command line (non-block).
@@ -50,7 +50,13 @@ impl SimulationEngine {
                 let keys: Vec<String> = self.plusargs.keys().cloned().collect();
                 self.uvm_cmdline_values = keys
                     .into_iter()
-                    .map(|k| format!("+{}={}", k, self.plusargs.get(&k).cloned().unwrap_or_default()))
+                    .map(|k| {
+                        format!(
+                            "+{}={}",
+                            k,
+                            self.plusargs.get(&k).cloned().unwrap_or_default()
+                        )
+                    })
                     .collect();
                 Ok(LogicVec::from_u64(self.uvm_cmdline_values.len() as u64, 64))
             }
@@ -64,10 +70,7 @@ impl SimulationEngine {
                 };
                 let pat_str = logicvec_to_string(pat);
                 let pat_str = pat_str.trim_start_matches('+');
-                let hit = self
-                    .plusargs
-                    .keys()
-                    .any(|k| k.starts_with(pat_str));
+                let hit = self.plusargs.keys().any(|k| k.starts_with(pat_str));
                 Ok(LogicVec::from_u64(hit as u64, 1))
             }
             "get_arg_value" => {

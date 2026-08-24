@@ -1,9 +1,9 @@
 use super::super::SimulationEngine;
+use crate::simulator::util::string_to_logicvec;
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
-use maria_ir::*;
-use crate::simulator::util::string_to_logicvec;
 use maria_core::Symbol;
+use maria_ir::*;
 
 impl SimulationEngine {
     pub(crate) fn find_phase_class_name(&self) -> Option<String> {
@@ -131,9 +131,7 @@ impl SimulationEngine {
                     false_branch,
                     ..
                 } => {
-                    if Self::ir_has_run_test(true_branch)
-                        || Self::ir_has_run_test(false_branch)
-                    {
+                    if Self::ir_has_run_test(true_branch) || Self::ir_has_run_test(false_branch) {
                         return true;
                     }
                 }
@@ -148,10 +146,7 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::LoopFor {
-                    init,
-                    step,
-                    body,
-                    ..
+                    init, step, body, ..
                 } => {
                     if let Some(i) = init {
                         if Self::ir_has_run_test(std::slice::from_ref(i)) {
@@ -214,9 +209,7 @@ impl SimulationEngine {
                     fail_stmt,
                     ..
                 } => {
-                    if Self::ir_has_run_test(pass_stmt)
-                        || Self::ir_has_run_test(fail_stmt)
-                    {
+                    if Self::ir_has_run_test(pass_stmt) || Self::ir_has_run_test(fail_stmt) {
                         return true;
                     }
                 }
@@ -273,10 +266,7 @@ impl SimulationEngine {
                     }
                 }
                 maria_ast::Stmt::LoopFor {
-                    init,
-                    step,
-                    stmts,
-                    ..
+                    init, step, stmts, ..
                 } => {
                     if let Some(i) = init {
                         if Self::ast_has_run_test(std::slice::from_ref(i)) {
@@ -366,7 +356,11 @@ impl SimulationEngine {
                 }
             }
         };
-        if !self.design.classes.contains_key(&Symbol::intern(&class_name)) {
+        if !self
+            .design
+            .classes
+            .contains_key(&Symbol::intern(&class_name))
+        {
             self.emit_warning(
                 DiagCode::DpiError,
                 format!("run_test: class '{}' tidak ditemukan", class_name),
@@ -376,15 +370,15 @@ impl SimulationEngine {
         let obj_id = self.state.alloc_object(Symbol::intern(class_name.as_str()));
         // Panggil constructor bila class mendefinisikan `new` (jalur user
         // eksplisit). Objek tanpa new dibiarkan kosong (perilaku legacy).
-        if self
-            .find_method_quiet(class_name.as_str(), "new")
-            .is_some()
-        {
+        if self.find_method_quiet(class_name.as_str(), "new").is_some() {
             self.current_this = Some(obj_id);
             let r = self.execute_method(
                 obj_id,
                 "new",
-                &[string_to_logicvec("uvm_test_top"), LogicVec::from_u64(0, 64)],
+                &[
+                    string_to_logicvec("uvm_test_top"),
+                    LogicVec::from_u64(0, 64),
+                ],
             );
             r?;
             self.current_this = None;
@@ -481,7 +475,12 @@ impl SimulationEngine {
             .get_object(obj_id)
             .map(|o| o.class_name.to_string())
             .unwrap_or_default();
-        for phase in ["extract_phase", "check_phase", "report_phase", "final_phase"] {
+        for phase in [
+            "extract_phase",
+            "check_phase",
+            "report_phase",
+            "final_phase",
+        ] {
             // F22: children phase SELALU di-propagate walau root TIDAK punya
             // phase tsb (sama seperti run_phase) — pola nyata: env punya
             // check_phase/report_phase tapi test tidak → check/report env
@@ -498,13 +497,20 @@ impl SimulationEngine {
         Ok(())
     }
 
-    pub(crate) fn call_phase_on_children(&mut self, obj_id: ObjId, phase: &str) -> Result<(), SimError> {
+    pub(crate) fn call_phase_on_children(
+        &mut self,
+        obj_id: ObjId,
+        phase: &str,
+    ) -> Result<(), SimError> {
         if let Some(cdata) = self.uvm_component_data.get(&obj_id) {
             let children = cdata.children.clone();
             for child_id in children {
                 if let Some(obj) = self.state.get_object(child_id) {
                     let child_class = &obj.class_name;
-                    if self.find_method_quiet(child_class.as_str(), phase).is_some() {
+                    if self
+                        .find_method_quiet(child_class.as_str(), phase)
+                        .is_some()
+                    {
                         let phase_args = self.uvm_phase_args();
                         self.current_this = Some(child_id);
                         self.execute_method(child_id, phase, &phase_args)?;
@@ -529,7 +535,10 @@ impl SimulationEngine {
                     None => return false,
                 },
                 None => {
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -553,7 +562,10 @@ impl SimulationEngine {
                     // DV library classes (mis. `dv_base_scoreboard extends
                     // uvm_component`) juga perlu di-handle — nama mereka tidak
                     // diawali `uvm_` tapi hierarchy-nya sah.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -574,7 +586,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -595,7 +610,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -616,7 +634,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -637,7 +658,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -662,7 +686,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -683,7 +710,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -722,7 +752,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -813,7 +846,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -834,7 +870,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -855,7 +894,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -879,7 +921,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -900,7 +945,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -921,7 +969,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -942,7 +993,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -964,7 +1018,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -990,7 +1047,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -1011,7 +1071,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -1032,7 +1095,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -1053,7 +1119,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -1092,7 +1161,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -1113,7 +1185,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -1134,7 +1209,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -1155,7 +1233,10 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
@@ -1176,10 +1257,12 @@ impl SimulationEngine {
                     // Conservatively assume UVM hierarchy bila class asli terdaftar
                     // di design (user/DV library class). Builtin polos tidak
                     // terdaftar → false agar dispatch spesifik berjalan.
-                    return self.design.classes.contains_key(&Symbol::intern(class_name));
+                    return self
+                        .design
+                        .classes
+                        .contains_key(&Symbol::intern(class_name));
                 }
             }
         }
     }
-
 }

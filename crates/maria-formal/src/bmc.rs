@@ -40,19 +40,30 @@ impl FormalEngine {
 
         // Pre-allocate signal variable context
         // sig_id_d = { name: "sig_{id}_{d}", width }
-        let signal_widths: Vec<u32> = design.top.signals
+        let signal_widths: Vec<u32> = design
+            .top
+            .signals
             .iter()
             .map(|s| s.width.clamp(1, 64) as u32)
             .collect();
 
         // Collect initial values for each signal
-        let init_vals: Vec<u64> = design.top.signals
+        let init_vals: Vec<u64> = design
+            .top
+            .signals
             .iter()
             .map(|s| s.init_val.to_u64())
             .collect();
 
         for (aidx, (assert_name, cond)) in all_assertions.iter().enumerate() {
-            let result = self.bmc_check_single(bound, n_signals, &signal_widths, &init_vals, &assignments, cond);
+            let result = self.bmc_check_single(
+                bound,
+                n_signals,
+                &signal_widths,
+                &init_vals,
+                &assignments,
+                cond,
+            );
             results.push((format!("{}.assert_{}", assert_name, aidx), result));
         }
         results
@@ -81,7 +92,11 @@ impl FormalEngine {
         for d in 0..=bound {
             let mut depth_vars = Vec::with_capacity(n_signals);
             for i in 0..n_signals {
-                let width = if i < signal_widths.len() { signal_widths[i] } else { 64 };
+                let width = if i < signal_widths.len() {
+                    signal_widths[i]
+                } else {
+                    64
+                };
                 let var = z3::ast::BV::new_const(format!("sig_{}_{}", i, d), width);
                 depth_vars.push(var);
             }
@@ -168,7 +183,14 @@ impl FormalEngine {
         if self.config.induction && bound >= 2 {
             // Reset solver before induction — clear BMC constraints from solver
             self.reset();
-            return self.check_inductive(bound, n_signals, signal_widths, init_vals, assignments, cond);
+            return self.check_inductive(
+                bound,
+                n_signals,
+                signal_widths,
+                init_vals,
+                assignments,
+                cond,
+            );
         }
 
         FormalResult::Pass
@@ -215,13 +237,17 @@ impl FormalEngine {
             Some(s) => s,
             None => return FormalResult::Error("Z3 solver not initialized".into()),
         };
-        
+
         // Create variables for 2 depths (0 = pre, 1 = post)
         let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity(2);
         for d in 0..2 {
             let mut depth_vars = Vec::with_capacity(n_signals);
             for i in 0..n_signals {
-                let width = if i < signal_widths.len() { signal_widths[i] } else { 64 };
+                let width = if i < signal_widths.len() {
+                    signal_widths[i]
+                } else {
+                    64
+                };
                 let var = z3::ast::BV::new_const(format!("induct_sig_{}_{}", i, d), width);
                 depth_vars.push(var);
             }
@@ -278,7 +304,7 @@ impl FormalEngine {
             z3::SatResult::Sat => {
                 // Induction step failed (SAT = counterexample found at step k+1)
                 // Could try higher k (k=2, k=3) for more complex properties
-                FormalResult::Pass  // BMC already proved up to bound
+                FormalResult::Pass // BMC already proved up to bound
             }
             z3::SatResult::Unknown => {
                 // Z3 timeout or inconclusive
@@ -411,57 +437,55 @@ impl FormalEngine {
                 let val = lv.to_u64();
                 Some(z3::ast::Bool::from_bool(val != 0))
             }
-            IrExpr::BinaryOp(op, lhs, rhs) => {
-                match op {
-                    BinaryIrOp::Eq | BinaryIrOp::CaseEq | BinaryIrOp::EqWild => {
-                        let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
-                        let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
-                        let (l, r) = self.zero_extend_match(&l, &r);
-                        Some(l.eq(&r))
-                    }
-                    BinaryIrOp::Neq | BinaryIrOp::CaseNeq | BinaryIrOp::NeqWild => {
-                        let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
-                        let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
-                        let (l, r) = self.zero_extend_match(&l, &r);
-                        Some(l.eq(&r).not())
-                    }
-                    BinaryIrOp::Lt => {
-                        let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
-                        let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
-                        let (l, r) = self.zero_extend_match(&l, &r);
-                        Some(l.bvslt(&r))
-                    }
-                    BinaryIrOp::Le => {
-                        let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
-                        let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
-                        let (l, r) = self.zero_extend_match(&l, &r);
-                        Some(l.bvsle(&r))
-                    }
-                    BinaryIrOp::Gt => {
-                        let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
-                        let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
-                        let (l, r) = self.zero_extend_match(&l, &r);
-                        Some(l.bvsgt(&r))
-                    }
-                    BinaryIrOp::Ge => {
-                        let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
-                        let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
-                        let (l, r) = self.zero_extend_match(&l, &r);
-                        Some(l.bvsge(&r))
-                    }
-                    BinaryIrOp::LogicalAnd => {
-                        let l = self.expr_to_z3_bool_at(lhs, depth, sig_vars)?;
-                        let r = self.expr_to_z3_bool_at(rhs, depth, sig_vars)?;
-                        Some(z3::ast::Bool::and(&[l, r]))
-                    }
-                    BinaryIrOp::LogicalOr => {
-                        let l = self.expr_to_z3_bool_at(lhs, depth, sig_vars)?;
-                        let r = self.expr_to_z3_bool_at(rhs, depth, sig_vars)?;
-                        Some(z3::ast::Bool::or(&[l, r]))
-                    }
-                    _ => None,
+            IrExpr::BinaryOp(op, lhs, rhs) => match op {
+                BinaryIrOp::Eq | BinaryIrOp::CaseEq | BinaryIrOp::EqWild => {
+                    let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
+                    let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
+                    let (l, r) = self.zero_extend_match(&l, &r);
+                    Some(l.eq(&r))
                 }
-            }
+                BinaryIrOp::Neq | BinaryIrOp::CaseNeq | BinaryIrOp::NeqWild => {
+                    let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
+                    let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
+                    let (l, r) = self.zero_extend_match(&l, &r);
+                    Some(l.eq(&r).not())
+                }
+                BinaryIrOp::Lt => {
+                    let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
+                    let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
+                    let (l, r) = self.zero_extend_match(&l, &r);
+                    Some(l.bvslt(&r))
+                }
+                BinaryIrOp::Le => {
+                    let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
+                    let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
+                    let (l, r) = self.zero_extend_match(&l, &r);
+                    Some(l.bvsle(&r))
+                }
+                BinaryIrOp::Gt => {
+                    let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
+                    let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
+                    let (l, r) = self.zero_extend_match(&l, &r);
+                    Some(l.bvsgt(&r))
+                }
+                BinaryIrOp::Ge => {
+                    let l = self.expr_to_z3_int_at(lhs, depth, sig_vars)?;
+                    let r = self.expr_to_z3_int_at(rhs, depth, sig_vars)?;
+                    let (l, r) = self.zero_extend_match(&l, &r);
+                    Some(l.bvsge(&r))
+                }
+                BinaryIrOp::LogicalAnd => {
+                    let l = self.expr_to_z3_bool_at(lhs, depth, sig_vars)?;
+                    let r = self.expr_to_z3_bool_at(rhs, depth, sig_vars)?;
+                    Some(z3::ast::Bool::and(&[l, r]))
+                }
+                BinaryIrOp::LogicalOr => {
+                    let l = self.expr_to_z3_bool_at(lhs, depth, sig_vars)?;
+                    let r = self.expr_to_z3_bool_at(rhs, depth, sig_vars)?;
+                    Some(z3::ast::Bool::or(&[l, r]))
+                }
+                _ => None,
+            },
             IrExpr::UnaryOp(UnaryIrOp::Not, inner) => {
                 let v = self.expr_to_z3_bool_at(inner, depth, sig_vars)?;
                 Some(v.not())
@@ -512,7 +536,11 @@ fn walk_assertions(prefix: &str, stmts: &[IrStmt], result: &mut Vec<(String, IrE
             IrStmt::NamedBlock { stmts: inner, .. } => {
                 walk_assertions(prefix, inner, result);
             }
-            IrStmt::If { true_branch, false_branch, .. } => {
+            IrStmt::If {
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 walk_assertions(prefix, true_branch, result);
                 walk_assertions(prefix, false_branch, result);
             }
@@ -532,7 +560,8 @@ fn walk_assertions(prefix: &str, stmts: &[IrStmt], result: &mut Vec<(String, IrE
 /// For MVP: one depth of assignments (combinational logic is stateless — same every cycle).
 pub(crate) fn collect_combinational_assignments(
     processes: &[Process],
-) -> Vec<Vec<(usize, Box<IrExpr>)>> {    let mut all_assignments: Vec<(usize, Box<IrExpr>)> = Vec::new();
+) -> Vec<Vec<(usize, Box<IrExpr>)>> {
+    let mut all_assignments: Vec<(usize, Box<IrExpr>)> = Vec::new();
     let mut seen_signals: HashSet<usize> = HashSet::new();
 
     for process in processes {
@@ -573,7 +602,11 @@ fn walk_assignments(
             IrStmt::NamedBlock { stmts: inner, .. } => {
                 walk_assignments(inner, result, seen);
             }
-            IrStmt::If { true_branch, false_branch, .. } => {
+            IrStmt::If {
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 walk_assignments(true_branch, result, seen);
                 walk_assignments(false_branch, result, seen);
             }

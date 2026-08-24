@@ -1,22 +1,26 @@
-use super::super::SimulationEngine;
 use super::super::engine_utils::{edge_matches_abbrev, evaluate_string_method, sym_char_matches};
+use super::super::SimulationEngine;
 use crate::simulator::packed::PackedLogicVec;
 use crate::simulator::packed_eval::{eval_binary_packed, eval_unary_packed, is_packable_binary_op};
-use crate::simulator::util::*;
-use maria_ast::*;
-use maria_core::error::SimError;
-use maria_core::diagnostics::DiagCode;
-use maria_ir::*;
-use maria_core::Symbol;
 use crate::simulator::types::*;
+use crate::simulator::util::*;
 use crate::simulator::value::*;
+use maria_ast::*;
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
+use maria_core::Symbol;
+use maria_ir::*;
 use rand::Rng;
 use rand::SeedableRng;
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 
 impl SimulationEngine {
-    pub(crate) fn eval_assign_rhs(&mut self, expr: &IrExpr, lhs: &IrLValue) -> Result<LogicVec, SimError> {
+    pub(crate) fn eval_assign_rhs(
+        &mut self,
+        expr: &IrExpr,
+        lhs: &IrLValue,
+    ) -> Result<LogicVec, SimError> {
         if let IrExpr::FillLit(v) = expr {
             let w = self.get_lvalue_width(lhs);
             Ok(LogicVec::fill(*v, w))
@@ -34,7 +38,13 @@ impl SimulationEngine {
                 let size_val = self.evaluate_expr(&args[0])?;
                 let size = size_val.to_u64() as usize;
                 if let Some(sig_id) = self.signal_id_from_lvalue(lhs) {
-                    let elem_width = self.design.top.signals.get(sig_id).map(|s| s.elem_width).unwrap_or(1);
+                    let elem_width = self
+                        .design
+                        .top
+                        .signals
+                        .get(sig_id)
+                        .map(|s| s.elem_width)
+                        .unwrap_or(1);
                     Ok(LogicVec::fill(LogicVal::X, size * elem_width))
                 } else {
                     self.evaluate_expr(expr)
@@ -43,8 +53,57 @@ impl SimulationEngine {
                 self.evaluate_expr(expr)
             }
         } else {
-            self.evaluate_expr(expr)
+            // Verilog context-width (IEEE 1800-2017 §11.6): width ekspresi RHS
+            // = max(width LHS, self-determined). Kritis untuk SHIFT — tanpa
+            // ini `(a[31:12]) << 12` dievaluasi dalam 20-bit operand dan semua
+            // bit high terbuang (kasus nyata: picorv32
+            // `decoded_imm <= mem_rdata_q[31:12] << 12` menghasilkan 0).
+            let target_w = self.get_lvalue_width(lhs);
+            self.evaluate_expr_ctx(expr, target_w)
         }
+    }
+
+    /// Evaluasi expression dengan width konteks assignment. Hanya shift yang
+    /// butuh perlakuan khusus (operand di-extend ke ctx_width sebelum digeser);
+    /// node lain dievaluasi normal.
+    pub(crate) fn evaluate_expr_ctx(
+        &mut self,
+        expr: &IrExpr,
+        ctx_width: usize,
+    ) -> Result<LogicVec, SimError> {
+        if let IrExpr::BinaryOp(op, l, r) = expr {
+            if matches!(
+                op,
+                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr
+            ) {
+                let mut lv = self.evaluate_expr(l)?;
+                if lv.width < ctx_width {
+                    // >>> (Sshr) arithmetic HANYA untuk operand signed
+                    // (extend sign bit); unsigned → zero-extend (>>> = logical,
+                    // IEEE 1800-2017 §11.4.10). Shl/Shr/Sshl selalu zero.
+                    let sign_fill = matches!(op, BinaryIrOp::Sshr)
+                        && is_signed_expr(l, &self.design.top.signals);
+                    let fill = if sign_fill {
+                        lv.bits.last().copied().unwrap_or(LogicVal::Zero)
+                    } else {
+                        LogicVal::Zero
+                    };
+                    lv.bits.resize(ctx_width, fill);
+                    lv.width = ctx_width;
+                }
+                let rv = self.evaluate_expr(r)?;
+                // Dispatch >>> identik dengan jalur evaluate_expr_impl:
+                // signed → arithmetic (eval_sshr_signed), unsigned → logical.
+                if *op == BinaryIrOp::Sshr {
+                    if is_signed_expr(l, &self.design.top.signals) {
+                        return Ok(eval_sshr_signed(&lv, &rv));
+                    }
+                    return Ok(eval_binary(BinaryIrOp::Shr, &lv, &rv));
+                }
+                return Ok(eval_binary(op.clone(), &lv, &rv));
+            }
+        }
+        self.evaluate_expr(expr)
     }
 
     pub(crate) fn evaluate_expr(&mut self, expr: &IrExpr) -> Result<LogicVec, SimError> {
@@ -79,7 +138,11 @@ impl SimulationEngine {
                         for &sid in &sig_ids {
                             if sid < n_sigs {
                                 let sig = self.state.read_signal(sid);
-                                if sig.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z)) {
+                                if sig
+                                    .bits
+                                    .iter()
+                                    .any(|b| matches!(b, LogicVal::X | LogicVal::Z))
+                                {
                                     all_clean = false;
                                     break;
                                 }
@@ -97,9 +160,11 @@ impl SimulationEngine {
                                 signal_values.push(self.state.read_signal(i).to_u64());
                             }
 
-                            let jit_result = jit.eval_expression(expr, &signal_values, result_width);
+                            let jit_result =
+                                jit.eval_expression(expr, &signal_values, result_width);
                             if let Some(result) = jit_result {
-                                self.expr_recursion_depth = self.expr_recursion_depth.saturating_sub(1);
+                                self.expr_recursion_depth =
+                                    self.expr_recursion_depth.saturating_sub(1);
                                 return Ok(result);
                             }
                         }
@@ -285,7 +350,6 @@ impl SimulationEngine {
                 Ok(eval_unary(op.clone(), &val))
             }
             IrExpr::BinaryOp(op, lhs, rhs) => {
-                
                 let lval = self.evaluate_expr(lhs)?;
                 let rval = self.evaluate_expr(rhs)?;
                 let lhs_is_real = matches!(lhs.as_ref(), IrExpr::Signal(id, _) if self.design.top.signals.get(*id).map(|s| s.is_real).unwrap_or(false));
@@ -349,14 +413,22 @@ impl SimulationEngine {
                     if self.use_packed_eval && is_packable_binary_op(op) {
                         let packed_lhs = PackedLogicVec::from_logicvec(&lval);
                         let packed_rhs = PackedLogicVec::from_logicvec(&rval);
-                        if let Some(packed_result) = eval_binary_packed(op, &packed_lhs, &packed_rhs) {
+                        if let Some(packed_result) =
+                            eval_binary_packed(op, &packed_lhs, &packed_rhs)
+                        {
                             let result = packed_result.to_logicvec();
                             return Ok(result);
                         }
                     }
                     // Try JIT for non-real binary operations (but not shifts/comparisons - JIT uses max width which is wrong for shifts, and signed comparison for all comparisons)
-                    let is_shift = matches!(op, BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr);
-                    let is_comparison = matches!(op, BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge);
+                    let is_shift = matches!(
+                        op,
+                        BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr
+                    );
+                    let is_comparison = matches!(
+                        op,
+                        BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge
+                    );
                     if !is_shift && !is_comparison {
                         if let Some(ref mut jit) = self.jit_evaluator {
                             if let Some(result) = jit.eval_binary(op, &lval, &rval) {
@@ -442,7 +514,8 @@ impl SimulationEngine {
                     }
                     "$urandom_seed" => {
                         let prev_seed = self.rand_seed;
-                        let seed = args.first()
+                        let seed = args
+                            .first()
                             .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                             .unwrap_or(LogicVec::from_u64(0, 32))
                             .to_u64();
@@ -462,12 +535,8 @@ impl SimulationEngine {
                         }
                         Ok(LogicVec::from_u64(prev_seed, 64))
                     }
-                    "$get_randcount" => {
-                        Ok(LogicVec::from_u64(self.rand_call_count, 32))
-                    }
-                    "$get_randstate" => {
-                        Ok(LogicVec::from_u64(self.rand_seed, 64))
-                    }
+                    "$get_randcount" => Ok(LogicVec::from_u64(self.rand_call_count, 32)),
+                    "$get_randstate" => Ok(LogicVec::from_u64(self.rand_seed, 64)),
                     "$signed" => {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
@@ -485,7 +554,10 @@ impl SimulationEngine {
                                 Ok(val)
                             }
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$signed expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$signed expects 1 argument",
+                            ))
                         }
                     }
                     "$unsigned" => {
@@ -494,7 +566,10 @@ impl SimulationEngine {
                             // Unsigned: zero-extend (already the default)
                             Ok(val)
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$unsigned expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$unsigned expects 1 argument",
+                            ))
                         }
                     }
                     "$countones" => {
@@ -504,7 +579,10 @@ impl SimulationEngine {
                                 val.bits.iter().filter(|b| **b == LogicVal::One).count() as u64;
                             Ok(LogicVec::from_u64(count, 32))
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$countones expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$countones expects 1 argument",
+                            ))
                         }
                     }
                     "$onehot" => {
@@ -514,7 +592,10 @@ impl SimulationEngine {
                             let is_onehot = ones == 1;
                             Ok(LogicVec::from_u64(if is_onehot { 1 } else { 0 }, 1))
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$onehot expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$onehot expects 1 argument",
+                            ))
                         }
                     }
                     "$isunknown" => {
@@ -526,17 +607,24 @@ impl SimulationEngine {
                                 .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
                             Ok(LogicVec::from_u64(if has_x_or_z { 1 } else { 0 }, 1))
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$isunknown expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$isunknown expects 1 argument",
+                            ))
                         }
                     }
                     "$countbits" => {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
                             // $countbits counts non-zero bits (1, X, Z)
-                            let count = val.bits.iter().filter(|b| **b != LogicVal::Zero).count() as u64;
+                            let count =
+                                val.bits.iter().filter(|b| **b != LogicVal::Zero).count() as u64;
                             Ok(LogicVec::from_u64(count, 32))
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$countbits expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$countbits expects 1 argument",
+                            ))
                         }
                     }
                     "$dimensions" => {
@@ -559,7 +647,10 @@ impl SimulationEngine {
                                 Ok(LogicVec::from_u64(0, 32))
                             }
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$dimensions expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$dimensions expects 1 argument",
+                            ))
                         }
                     }
                     "$onehot0" => {
@@ -568,23 +659,26 @@ impl SimulationEngine {
                             let ones = val.bits.iter().filter(|b| **b == LogicVal::One).count();
                             Ok(LogicVec::from_u64(if ones <= 1 { 1 } else { 0 }, 1))
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$onehot0 expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$onehot0 expects 1 argument",
+                            ))
                         }
                     }
-"$cast" => {
+                    "$cast" => {
                         if args.len() >= 2 {
                             // $cast(dest, src) - dynamic cast for class handles or type cast
                             // First argument is destination (lvalue), second is source
                             // For class handles: check if src object class is same or subclass of dest class
                             // For type cast: just assign and return success
-                            
+
                             // Evaluate source first (returns object ID for class handles)
                             let src_val = self.evaluate_expr(&args[1])?;
-                            
+
                             // Check if destination is a class handle signal
                             let dest_arg = &args[0];
                             let mut success = 1u64;
-                            
+
                             // If dest is a signal, check its SignalInfo for class_name
                             if let IrExpr::Signal(sig_id, _) = dest_arg {
                                 if *sig_id < self.design.top.signals.len() {
@@ -593,25 +687,43 @@ impl SimulationEngine {
                                         // Destination signal is a class handle - check class hierarchy
                                         // Get the object ID currently stored in the destination signal
                                         let dest_obj_id = self.state.read_signal(*sig_id).to_u64();
-                                        
+
                                         // Source value is the object ID to cast from
                                         let src_obj_id = src_val.to_u64();
-                                        
+
                                         if src_obj_id == 0 {
                                             // Casting null to class handle - always succeeds, sets to null
-                                            self.state.write_signal(*sig_id, LogicVec::from_u64(0, sig_info.width));
+                                            self.state.write_signal(
+                                                *sig_id,
+                                                LogicVec::from_u64(0, sig_info.width),
+                                            );
                                         } else if src_obj_id < self.state.objects.len() as u64 {
                                             let src_obj = &self.state.objects[src_obj_id as usize];
                                             if !src_obj.class_name.is_empty() {
                                                 // Check if src_obj.class_name is same as or subclass of dest_class_name
                                                 let src_class = src_obj.class_name;
-                                                success = if self.is_subclass_or_same(src_class, dest_class_name) { 1 } else { 0 };
+                                                success = if self
+                                                    .is_subclass_or_same(src_class, dest_class_name)
+                                                {
+                                                    1
+                                                } else {
+                                                    0
+                                                };
                                                 if success == 1 {
                                                     // Perform the cast - write source object ID to destination
-                                                    self.state.write_signal(*sig_id, LogicVec::from_u64(src_obj_id, sig_info.width));
+                                                    self.state.write_signal(
+                                                        *sig_id,
+                                                        LogicVec::from_u64(
+                                                            src_obj_id,
+                                                            sig_info.width,
+                                                        ),
+                                                    );
                                                 } else {
                                                     // Cast failed - write null (0)
-                                                    self.state.write_signal(*sig_id, LogicVec::from_u64(0, sig_info.width));
+                                                    self.state.write_signal(
+                                                        *sig_id,
+                                                        LogicVec::from_u64(0, sig_info.width),
+                                                    );
                                                 }
                                             }
                                         }
@@ -628,10 +740,13 @@ impl SimulationEngine {
                                 // For now, just evaluate and return success
                                 success = 1;
                             }
-                            
+
                             Ok(LogicVec::from_u64(success, 1))
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$cast requires two arguments"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$cast requires two arguments",
+                            ))
                         }
                     }
                     "$typename" => {
@@ -642,7 +757,10 @@ impl SimulationEngine {
                             let val = self.evaluate_expr(arg)?;
                             Ok(val)
                         } else {
-                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$typename expects 1 argument"))
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::DpiError,
+                                "$typename expects 1 argument",
+                            ))
                         }
                     }
                     "$fopen" => {
@@ -1056,10 +1174,8 @@ impl SimulationEngine {
                             .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let test_name = arg_vals
-                            .first()
-                            .map(logicvec_to_string)
-                            .unwrap_or_default();
+                        let test_name =
+                            arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                         self.run_uvm_test(&test_name)?;
                         Ok(LogicVec::from_u64(1, 1))
                     }
@@ -1098,10 +1214,8 @@ impl SimulationEngine {
                             .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let test_name = arg_vals
-                            .first()
-                            .map(logicvec_to_string)
-                            .unwrap_or_default();
+                        let test_name =
+                            arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                         self.run_uvm_test(&test_name)?;
                         Ok(LogicVec::from_u64(1, 1))
                     }
@@ -1124,10 +1238,8 @@ impl SimulationEngine {
                             .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let stream_name = arg_vals
-                            .first()
-                            .map(logicvec_to_string)
-                            .unwrap_or_default();
+                        let stream_name =
+                            arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                         let id = self.tr_stream_get(&stream_name);
                         Ok(LogicVec::from_u64(id as u64, 64))
                     }
@@ -1141,10 +1253,8 @@ impl SimulationEngine {
                             .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let stream_name = arg_vals
-                            .first()
-                            .map(logicvec_to_string)
-                            .unwrap_or_default();
+                        let stream_name =
+                            arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                         self.tr_stream_get(&stream_name);
                         self.tr_db_default_stream = Some(stream_name);
                         Ok(LogicVec::from_u64(0, 64))
@@ -1197,7 +1307,11 @@ impl SimulationEngine {
                             }
                         }
                         Ok(LogicVec::from_u64(
-                            if self.config_db_exists(&inst_name, &field_name) { 1 } else { 0 },
+                            if self.config_db_exists(&inst_name, &field_name) {
+                                1
+                            } else {
+                                0
+                            },
                             1,
                         ))
                     }
@@ -1219,7 +1333,11 @@ impl SimulationEngine {
                             String::new()
                         };
                         Ok(LogicVec::from_u64(
-                            if self.config_db_exists(&inst_name, &field_name) { 1 } else { 0 },
+                            if self.config_db_exists(&inst_name, &field_name) {
+                                1
+                            } else {
+                                0
+                            },
                             1,
                         ))
                     }
@@ -1354,7 +1472,11 @@ impl SimulationEngine {
                             String::new()
                         };
                         Ok(LogicVec::from_u64(
-                            if self.resource_db_exists(&scope, &rname) { 1 } else { 0 },
+                            if self.resource_db_exists(&scope, &rname) {
+                                1
+                            } else {
+                                0
+                            },
                             1,
                         ))
                     }
@@ -1364,7 +1486,9 @@ impl SimulationEngine {
                         // method has_plusarg/get_arg_value di-dispatch via
                         // execute_uvm_cmdline_method (class uvm_cmdline_processor).
                         let obj_id = if self.uvm_cmdline_id.is_none() {
-                            let id = self.state.alloc_object(Symbol::intern("uvm_cmdline_processor"));
+                            let id = self
+                                .state
+                                .alloc_object(Symbol::intern("uvm_cmdline_processor"));
                             self.uvm_cmdline_id = Some(id);
                             id
                         } else {
@@ -1559,7 +1683,9 @@ impl SimulationEngine {
                     .any(|c| c.name == *class_name);
                 let effective_name = if is_cg {
                     format!("__covergroup_{}", class_name)
-                } else if let Some(override_type) = self.factory_type_overrides.get(class_name.as_str()) {
+                } else if let Some(override_type) =
+                    self.factory_type_overrides.get(class_name.as_str())
+                {
                     override_type.to_string()
                 } else {
                     class_name.to_string()
@@ -1673,7 +1799,10 @@ impl SimulationEngine {
                 if let Some(obj_id) = self.current_this {
                     Ok(LogicVec::from_u64(obj_id as u64, 64))
                 } else {
-                    Err(self.diag_error(maria_core::diagnostics::DiagCode::NullHandle, "'this' used outside of class method"))
+                    Err(self.diag_error(
+                        maria_core::diagnostics::DiagCode::NullHandle,
+                        "'this' used outside of class method",
+                    ))
                 }
             }
             IrExpr::MethodCall {
@@ -1703,11 +1832,7 @@ impl SimulationEngine {
                             .design
                             .classes
                             .get(&class_sym)
-                            .map(|cd| {
-                                cd.constraints
-                                    .iter()
-                                    .any(|(bn, st, _)| bn == field && *st)
-                            })
+                            .map(|cd| cd.constraints.iter().any(|(bn, st, _)| bn == field && *st))
                             .unwrap_or(false);
                         if let Some(arg) = args.first() {
                             let mode = self.evaluate_expr(arg)?.to_u64() != 0;
@@ -1764,7 +1889,8 @@ impl SimulationEngine {
                                         } else {
                                             cn.to_string()
                                         };
-                                        let new_id = self.state.alloc_object(Symbol::intern(&class_for_obj));
+                                        let new_id =
+                                            self.state.alloc_object(Symbol::intern(&class_for_obj));
                                         self.state.write_signal(
                                             *id,
                                             LogicVec::from_u64(new_id as u64, 64),
@@ -1773,7 +1899,11 @@ impl SimulationEngine {
                                             .iter()
                                             .map(|a| self.evaluate_expr(a))
                                             .collect::<Result<_, _>>()?;
-                                        return self.execute_method(new_id, method.as_str(), &arg_vals);
+                                        return self.execute_method(
+                                            new_id,
+                                            method.as_str(),
+                                            &arg_vals,
+                                        );
                                     }
                                 }
                             }
@@ -1787,7 +1917,13 @@ impl SimulationEngine {
                         .map(|s| s.is_dynamic || s.is_queue)
                         .unwrap_or(false);
                     if is_arr {
-                        let sig_info = self.design.top.signals.get(*id).cloned().unwrap_or_default();
+                        let sig_info = self
+                            .design
+                            .top
+                            .signals
+                            .get(*id)
+                            .cloned()
+                            .unwrap_or_default();
                         return self.evaluate_array_method(
                             *id,
                             &sig_info,
@@ -1964,7 +2100,10 @@ impl SimulationEngine {
                     vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
                 let slen = slice_size.unwrap_or(1);
                 if slen == 0 {
-                    return Err(self.diag_error(maria_core::diagnostics::DiagCode::MemoryOutOfBounds, "streaming slice size must be > 0"));
+                    return Err(self.diag_error(
+                        maria_core::diagnostics::DiagCode::MemoryOutOfBounds,
+                        "streaming slice size must be > 0",
+                    ));
                 }
                 let mut result = Vec::new();
                 if op == ">>" {
@@ -2067,8 +2206,7 @@ impl SimulationEngine {
                         }
                     };
                     // Store current arg values for next evaluation
-                    self.udp_prev_args
-                        .insert(*udp_name, arg_vals.clone());
+                    self.udp_prev_args.insert(*udp_name, arg_vals.clone());
                     return Ok(result);
                 }
                 // No match — return X (or retain current value for sequential)
@@ -2080,8 +2218,7 @@ impl SimulationEngine {
                 } else {
                     LogicVec::fill(LogicVal::X, 1)
                 };
-                self.udp_prev_args
-                    .insert(*udp_name, arg_vals.clone());
+                self.udp_prev_args.insert(*udp_name, arg_vals.clone());
                 Ok(result)
             }
             IrExpr::FuncCall { func_name, args } => {
@@ -2137,12 +2274,19 @@ impl SimulationEngine {
                         let handle = binding_val.to_u64() as usize;
                         if handle > 0 && handle < self.design.top.signals.len() {
                             // Bound — extract instance path from the bound signal's name
-                            let bound_sig_name = self.design.top.signals.get(handle).map(|s| s.name.as_str()).unwrap_or("<out-of-bounds>");
+                            let bound_sig_name = self
+                                .design
+                                .top
+                                .signals
+                                .get(handle)
+                                .map(|s| s.name.as_str())
+                                .unwrap_or("<out-of-bounds>");
                             // Strip the signal name to get instance path: top.inst.sig -> top.inst
                             if let Some(dot_pos) = bound_sig_name.rfind('.') {
                                 let inst_path = &bound_sig_name[..dot_pos];
                                 let sig_key = format!("{}.{}", inst_path, field);
-                                if let Some(&field_sid) = self.design.hier_signal_map.get(&Symbol::intern(&sig_key))
+                                if let Some(&field_sid) =
+                                    self.design.hier_signal_map.get(&Symbol::intern(&sig_key))
                                 {
                                     result = self.state.read_signal(field_sid).clone();
                                 }
@@ -2168,9 +2312,16 @@ impl SimulationEngine {
                 let lw = self.compute_jit_expr_width(lhs);
                 let rw = self.compute_jit_expr_width(rhs);
                 match op {
-                    BinaryIrOp::Eq | BinaryIrOp::Neq | BinaryIrOp::CaseEq | BinaryIrOp::CaseNeq
-                    | BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge
-                    | BinaryIrOp::EqWild | BinaryIrOp::NeqWild => 1,
+                    BinaryIrOp::Eq
+                    | BinaryIrOp::Neq
+                    | BinaryIrOp::CaseEq
+                    | BinaryIrOp::CaseNeq
+                    | BinaryIrOp::Lt
+                    | BinaryIrOp::Le
+                    | BinaryIrOp::Gt
+                    | BinaryIrOp::Ge
+                    | BinaryIrOp::EqWild
+                    | BinaryIrOp::NeqWild => 1,
                     _ => lw.max(rw),
                 }
             }
@@ -2200,11 +2351,7 @@ impl SimulationEngine {
     ) -> Result<LogicVec, SimError> {
         let name = func_name;
         // Check recursion depth
-        let depth = self
-            .recursion_depth
-            .get(name)
-            .copied()
-            .unwrap_or(0);
+        let depth = self.recursion_depth.get(name).copied().unwrap_or(0);
         if depth >= self.max_recursion_depth {
             return Err(self.diag_error(
                 maria_core::diagnostics::DiagCode::InternalError,
@@ -2251,8 +2398,7 @@ impl SimulationEngine {
                     maria_ast::types::DataType::Void => 0,
                     maria_ast::types::DataType::Byte => 8,
                     maria_ast::types::DataType::Shortint => 16,
-                    maria_ast::types::DataType::Int
-                    | maria_ast::types::DataType::Integer => 32,
+                    maria_ast::types::DataType::Int | maria_ast::types::DataType::Integer => 32,
                     maria_ast::types::DataType::Longint => 64,
                     maria_ast::types::DataType::Time => 64,
                     _ => 1,
@@ -2340,5 +2486,4 @@ impl SimulationEngine {
 
         Ok(return_val)
     }
-
 }

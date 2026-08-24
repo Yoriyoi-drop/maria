@@ -50,6 +50,53 @@ pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
 /// Lebar self-determined literal sized (`2'b11` → 2, `8'hFF` → 8, Paren
 /// tembus). `None` untuk unsized/ekspresi lain — pemakai mempertahankan
 /// semantik i64 lama.
+///
+/// Signedness ekspresi (IEEE 1800 §6.11 / §11.8.2): desimal unsized &
+/// literal ber-suffix `s` SIGNED; sized B/H/O tanpa `s` UNSIGNED; unary
+/// ±/~ mewarisi operand. LRM: perbandingan UNSIGNED bila SALAH SATU operand
+/// unsigned. Dipakai arm Lt/Le/Gt/Ge — dulu selalu i64 signed sehingga
+/// const-fold `-((-(32'h...) >= !(32'h...)))` salah (ditemukan fuzzer
+/// seed=59498908, dikonfirmasi Icarus).
+fn is_signed_expr(e: &Expr) -> bool {
+    match e {
+        Expr::Value(Value::Decimal(_)) => true,
+        Expr::Value(Value::Binary { is_signed, .. })
+        | Expr::Value(Value::Hex { is_signed, .. })
+        | Expr::Value(Value::Octal { is_signed, .. }) => *is_signed,
+        Expr::Paren(inner) => is_signed_expr(inner),
+        Expr::UnaryOp { op, expr: inner } => match op {
+            UnaryOp::Not
+            | UnaryOp::ReductionAnd
+            | UnaryOp::ReductionNand
+            | UnaryOp::ReductionOr
+            | UnaryOp::ReductionNor
+            | UnaryOp::ReductionXor
+            | UnaryOp::ReductionXnor => false,
+            _ => is_signed_expr(inner),
+        },
+        _ => false,
+    }
+}
+
+/// Bandingkan dua nilai const dengan aturan signedness SV.
+fn const_cmp(
+    lhs: &Expr,
+    rhs: &Expr,
+    l: i64,
+    r: i64,
+    op: impl Fn(std::cmp::Ordering) -> bool,
+) -> i64 {
+    let ord = if is_signed_expr(lhs) && is_signed_expr(rhs) {
+        l.cmp(&r)
+    } else {
+        (l as u64).cmp(&(r as u64))
+    };
+    if op(ord) {
+        1
+    } else {
+        0
+    }
+}
 pub fn sized_width(e: &Expr) -> Option<u64> {
     match e {
         Expr::Paren(inner) => sized_width(inner),
@@ -62,6 +109,43 @@ pub fn sized_width(e: &Expr) -> Option<u64> {
         Expr::Value(Value::Octal { bits, width, .. }) => {
             Some(width.map(|w| w as u64).unwrap_or(bits.len() as u64 * 3))
         }
+        // Self-determined width (IEEE 1800 §11.8.1):
+        // - `!x` & semua reduction → 1 bit.
+        // - `~x` / unary ± → lebar operand (ditemukan fuzzer seed=769558:
+        //   `~(!(lit))` tanpa width info menghasilkan -1 unmasked yang
+        //   merusak concat element width).
+        Expr::UnaryOp { op, expr } => match op {
+            UnaryOp::Not
+            | UnaryOp::ReductionAnd
+            | UnaryOp::ReductionNand
+            | UnaryOp::ReductionOr
+            | UnaryOp::ReductionNor
+            | UnaryOp::ReductionXor
+            | UnaryOp::ReductionXnor => Some(1),
+            UnaryOp::BitNot | UnaryOp::Minus | UnaryOp::Plus => sized_width(expr),
+        },
+        // Perbandingan/relasional/logical biner → 1 bit.
+        Expr::BinaryOp { op, .. } => matches!(
+            op,
+            BinaryOp::Eq
+                | BinaryOp::Neq
+                | BinaryOp::CaseEq
+                | BinaryOp::CaseNeq
+                | BinaryOp::EqWild
+                | BinaryOp::NeqWild
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge
+                | BinaryOp::LogicalAnd
+                | BinaryOp::LogicalOr
+        )
+        .then_some(1),
+        // Concat → jumlah lebar elemen (None bila ada yang tak diketahui).
+        Expr::Concat(elems) => elems
+            .iter()
+            .map(sized_width)
+            .try_fold(0u64, |acc, w| w.map(|w| acc + w)),
         _ => None,
     }
 }
@@ -103,12 +187,14 @@ pub fn const_eval_with_params(
             expr: inner,
         } => {
             let v = const_eval_with_params(inner, param_vals)?;
-            // SV §11.4.9: lebar hasil `~` = lebar operand self-determined.
-            // Literal sized menentukan lebar → mask hasil ke lebar itu agar
-            // `~(2'b11)` = 2'b00 (=0), bukan -4 i64 (bug: `!(~(2'b11))` = 0
-            // padahal harusnya 1). Operand tanpa lebar statis tetap i64.
+            // Mask ke lebar self-determined operand (SV §11.4.9). Jangan
+            // melebar ke 32: `!(~x)` menguji zero-ness hasil — inversi pada
+            // lebar lain mengubah nol-tidak-nolnya (ditemukan fuzzer
+            // seed=19238926: `!(~(2'b11)) + 2'b11`). Subtree ber-~/unary --
+            // tidak di-fold oleh try_fold_const (guard di const_fold.rs);
+            // konteks ditangani jalur runtime + propagasi Cast.
             match sized_width(inner) {
-                Some(w) if w > 0 && w < 64 => Ok(!v & ((1i64 << w) - 1)),
+                Some(w) if w > 0 && w < 64 => Ok(!v & (((1u64 << w) - 1) as i64)),
                 _ => Ok(!v),
             }
         }
@@ -153,7 +239,10 @@ pub fn const_eval_with_params(
             if l == i64::MIN && r == -1 {
                 return Ok(0);
             }
-            Ok(l / r)
+            // SV unsigned semantics: literal besar (> i64::MAX) adalah
+            // bit-pattern u64 — pembagian unsigned (ditemukan fuzzer
+            // seed=120172402: modulo literal 64-bit salah tanda).
+            Ok((((l as u64) / (r as u64)) as i64))
         }
         Expr::BinaryOp {
             op: BinaryOp::Power,
@@ -161,19 +250,30 @@ pub fn const_eval_with_params(
             rhs,
         } => {
             let base = const_eval_with_params(lhs, param_vals)?;
-            let exp = const_eval_with_params(rhs, param_vals)? as u32;
-            // Manual wrapping power to avoid overflow panic
-            let mut result: i64 = 1;
-            let mut b = base;
-            let mut e = exp;
+            let exp = const_eval_with_params(rhs, param_vals)?;
+            // Eksponensiasi modular biner mod 2^ow — hasil `**` di-size ke
+            // max(lebar operan, 32 utk unsized). Dulu wrapping i64 penuh
+            // tanpa mask: `7'b0010010 ** 7'b0011100` = 0 mod 128 tapi
+            // menghasilkan nilai 64-bit besar → comparison menyusul salah
+            // (ditemukan fuzzer seed=34711072, dikonfirmasi Icarus).
+            let ow = sized_width(lhs)
+                .max(sized_width(rhs))
+                .unwrap_or(64)
+                .clamp(1, 63) as u32;
+            let m: u64 = (1u64 << ow) - 1;
+            let mut b = (base as u64) & m;
+            let mut acc: u64 = 1 & m;
+            let mut e = exp as u64;
             while e > 0 {
                 if e & 1 == 1 {
-                    result = result.wrapping_mul(b);
+                    acc = acc.wrapping_mul(b) & m;
                 }
-                b = b.wrapping_mul(b);
                 e >>= 1;
+                if e > 0 {
+                    b = b.wrapping_mul(b) & m;
+                }
             }
-            Ok(result)
+            Ok(acc as i64)
         }
         Expr::BinaryOp {
             op: BinaryOp::Mod,
@@ -189,7 +289,8 @@ pub fn const_eval_with_params(
             if l == i64::MIN && r == -1 {
                 return Ok(0);
             }
-            Ok(l % r)
+            // Unsigned semantics (sama dgn Div — lihat catatan di atas).
+            Ok((((l as u64) % (r as u64)) as i64))
         }
         Expr::BinaryOp {
             op: BinaryOp::Eq,
@@ -216,7 +317,7 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            Ok(if l < r { 1 } else { 0 })
+            Ok(const_cmp(lhs, rhs, l, r, |o| o == std::cmp::Ordering::Less))
         }
         Expr::BinaryOp {
             op: BinaryOp::Le,
@@ -225,7 +326,9 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            Ok(if l <= r { 1 } else { 0 })
+            Ok(const_cmp(lhs, rhs, l, r, |o| {
+                o != std::cmp::Ordering::Greater
+            }))
         }
         Expr::BinaryOp {
             op: BinaryOp::Gt,
@@ -234,7 +337,7 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            Ok(if l > r { 1 } else { 0 })
+            Ok(const_cmp(lhs, rhs, l, r, |o| o == std::cmp::Ordering::Greater))
         }
         Expr::BinaryOp {
             op: BinaryOp::Ge,
@@ -243,7 +346,7 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            Ok(if l >= r { 1 } else { 0 })
+            Ok(const_cmp(lhs, rhs, l, r, |o| o != std::cmp::Ordering::Less))
         }
         Expr::BinaryOp {
             op: BinaryOp::LogicalAnd,
@@ -306,7 +409,7 @@ pub fn const_eval_with_params(
             } else {
                 Ok(l << r)
             }
-        },
+        }
         Expr::BinaryOp {
             op: BinaryOp::Shr,
             lhs,
@@ -319,7 +422,7 @@ pub fn const_eval_with_params(
             } else {
                 Ok(l >> r)
             }
-        },
+        }
         Expr::BinaryOp {
             op: BinaryOp::Sshl,
             lhs,
@@ -332,7 +435,7 @@ pub fn const_eval_with_params(
             } else {
                 Ok(l << r)
             }
-        },
+        }
         Expr::BinaryOp {
             op: BinaryOp::Sshr,
             lhs,
@@ -508,13 +611,17 @@ pub fn const_eval_with_params(
                 if std::env::var("DBG_MEMBER").is_ok() {
                     eprintln!(
                         "[DBG-MEMBER] key '{}' NOT FOUND (obj={:?} field={} bk={})",
-                        key, obj, field.as_str(), bk
+                        key,
+                        obj,
+                        field.as_str(),
+                        bk
                     );
                 }
             } else if std::env::var("DBG_MEMBER").is_ok() {
                 eprintln!(
                     "[DBG-MEMBER-NO-BASE] obj={:?} field={}",
-                    obj, field.as_str()
+                    obj,
+                    field.as_str()
                 );
             }
             Err("member access not allowed in constant expression".to_string())
@@ -530,7 +637,12 @@ pub fn const_eval_with_params(
                 // HANYA base literal 0 yang dimaknai rentang — slice ekspresi
                 // user (`inside {y[3:0]}`) tetap dievaluasi sebagai bit-slice
                 // agar tidak salah diartikan sebagai rentang.
-                if let Expr::RangeSelect { expr: base, msb, lsb } = item {
+                if let Expr::RangeSelect {
+                    expr: base,
+                    msb,
+                    lsb,
+                } = item
+                {
                     if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) {
                         // `inside {[a:b]}`: msb=a adalah batas BAWAH, lsb=b batas atas.
                         let lo = const_eval_with_params(msb, param_vals)?;
@@ -559,7 +671,11 @@ pub fn const_eval_with_params(
             // 2D array lookup via flattened keys `name[r][c]` (mis. PiRotate [5][5]).
             // `PiRotate[r][c]` → BitSelect(BitSelect(Ident PiRotate, r), c); cari
             // key `PiRotate[r][c]` langsung.
-            if let Expr::BitSelect { expr: inner, index: row_idx } = expr.as_ref() {
+            if let Expr::BitSelect {
+                expr: inner,
+                index: row_idx,
+            } = expr.as_ref()
+            {
                 if let Expr::Ident { name, .. } = inner.as_ref() {
                     let r = const_eval_with_params(row_idx, param_vals)?;
                     let c = const_eval_with_params(index, param_vals)?;
@@ -587,7 +703,7 @@ pub fn const_eval_with_params(
             if width >= 64 {
                 Ok(base_val >> l)
             } else {
-                let mask = (1i64 << width) - 1;
+                let mask = ((1u64 << width) - 1) as i64;
                 Ok((base_val >> l) & mask)
             }
         }
@@ -610,7 +726,7 @@ pub fn const_eval_with_params(
             if width >= 64 {
                 Ok(src >> lsb)
             } else {
-                let mask = (1i64 << width) - 1;
+                let mask = ((1u64 << width) - 1) as i64;
                 Ok((src >> lsb) & mask)
             }
         }
@@ -635,16 +751,24 @@ pub fn const_eval_with_params(
         // OpenTitan prim_util_pkg::vbits(value) = (value == 1) ? 1 : $clog2(value)
         Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "vbits" => {
             let v = const_eval_with_params(args.first().ok_or("vbits needs 1 arg")?, param_vals)?;
-            Ok(if v == 1 { 1 } else {
+            Ok(if v == 1 {
+                1
+            } else {
                 let n = v as u64;
                 let msb = (64 - n.leading_zeros()) as i64;
-                if n.is_power_of_two() { msb - 1 } else { msb }
+                if n.is_power_of_two() {
+                    msb - 1
+                } else {
+                    msb
+                }
             })
         }
         // OpenTitan prim_util_pkg::ceil_div(a, b) = ceiling division
         Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "ceil_div" => {
-            let a = const_eval_with_params(args.first().ok_or("ceil_div needs 2 args")?, param_vals)?;
-            let b = const_eval_with_params(args.get(1).ok_or("ceil_div needs 2 args")?, param_vals)?;
+            let a =
+                const_eval_with_params(args.first().ok_or("ceil_div needs 2 args")?, param_vals)?;
+            let b =
+                const_eval_with_params(args.get(1).ok_or("ceil_div needs 2 args")?, param_vals)?;
             if b == 0 {
                 return Err("division by zero in ceil_div".to_string());
             }
@@ -654,8 +778,14 @@ pub fn const_eval_with_params(
         // syndrome ECC per tipe & lebar data (tabel konstanta; tipe enum:
         // SecdedHsiao=0, SecdedHamming=1, SecdedInvHsiao=2, SecdedInvHamming=3).
         Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "get_synd_width" => {
-            let sd = const_eval_with_params(args.first().ok_or("get_synd_width needs 2 args")?, param_vals)?;
-            let w = const_eval_with_params(args.get(1).ok_or("get_synd_width needs 2 args")?, param_vals)?;
+            let sd = const_eval_with_params(
+                args.first().ok_or("get_synd_width needs 2 args")?,
+                param_vals,
+            )?;
+            let w = const_eval_with_params(
+                args.get(1).ok_or("get_synd_width needs 2 args")?,
+                param_vals,
+            )?;
             let synd = match (sd, w) {
                 (0, 16) | (2, 16) => 6,
                 (0, 22) | (2, 22) => 6,
@@ -673,13 +803,33 @@ pub fn const_eval_with_params(
         // OpenTitan prim_secded_pkg::is_width_valid(sd_type, width) — apakah
         // kombinasi tipe+lebar didukung (tabel konstanta).
         Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "is_width_valid" => {
-            let sd = const_eval_with_params(args.first().ok_or("is_width_valid needs 2 args")?, param_vals)?;
-            let w = const_eval_with_params(args.get(1).ok_or("is_width_valid needs 2 args")?, param_vals)?;
+            let sd = const_eval_with_params(
+                args.first().ok_or("is_width_valid needs 2 args")?,
+                param_vals,
+            )?;
+            let w = const_eval_with_params(
+                args.get(1).ok_or("is_width_valid needs 2 args")?,
+                param_vals,
+            )?;
             let valid = match (sd, w) {
-                (0, 16) | (0, 22) | (0, 32) | (0, 57) | (0, 64)
-                | (2, 16) | (2, 22) | (2, 32) | (2, 57) | (2, 64)
-                | (1, 16) | (1, 32) | (1, 64) | (1, 68)
-                | (3, 16) | (3, 32) | (3, 64) | (3, 68) => 1,
+                (0, 16)
+                | (0, 22)
+                | (0, 32)
+                | (0, 57)
+                | (0, 64)
+                | (2, 16)
+                | (2, 22)
+                | (2, 32)
+                | (2, 57)
+                | (2, 64)
+                | (1, 16)
+                | (1, 32)
+                | (1, 64)
+                | (1, 68)
+                | (3, 16)
+                | (3, 32)
+                | (3, 64)
+                | (3, 68) => 1,
                 _ => 0,
             };
             Ok(valid)
@@ -738,6 +888,9 @@ pub fn const_eval_with_params(
             let mut shift: u32 = 0;
             for elem in elems.iter().rev() {
                 let v = const_eval_with_params(elem, param_vals)?;
+                // Lebar elemen: literal sized eksplisit → self-determined
+                // width ekspresi (mis. `~(!(x))` = 1 bit) → fallback
+                // bit-length nilai.
                 let w: u32 = match elem {
                     Expr::Value(Value::Hex { bits, width, .. }) => {
                         width.unwrap_or(bits.len() * 4).max(1) as u32
@@ -748,11 +901,20 @@ pub fn const_eval_with_params(
                     Expr::Value(Value::Octal { bits, width, .. }) => {
                         width.unwrap_or(bits.len() * 3).max(1) as u32
                     }
-                    _ => (64u32 - (v as u64).leading_zeros()).max(1),
+                    _ => sized_width(elem)
+                        .map(|w| w as u32)
+                        .unwrap_or((64u32 - (v as u64).leading_zeros()).max(1)),
                 };
-                let w = w.min(63);
-                acc |= ((v as u64) & ((1u64 << w).wrapping_sub(1)))
-                    .wrapping_shl(shift.min(63));
+                // Elemen/kumulasi melebihi 63 bit → jangan fold diam-diam.
+                // Cek PAKAI lebar mentah — dulu `w.min(63)` dipakai sebelum
+                // cek sehingga elemen 64-bit lolos lalu kehilangan MSB-nya
+                // (ditemukan fuzzer seed=823576: `{64'h…, 64'h…}`).
+                // Kembalikan Err agar elaborator membangun IR Concat runtime
+                // yang mengevaluasi pada lebar penuh.
+                if w == 0 || shift + w > 63 {
+                    return Err("concat wider than 63 bits is not constant-foldable".to_string());
+                }
+                acc |= ((v as u64) & ((1u64 << w).wrapping_sub(1))).wrapping_shl(shift.min(63));
                 shift = shift.saturating_add(w);
                 if shift >= 63 {
                     break;
@@ -762,23 +924,40 @@ pub fn const_eval_with_params(
         }
         // OpenTitan entropy_src_pkg::bucket_ht_data_width(w) = min(w, 4)
         // (BucketHtDataMaxWidth = 4) — lebar data per bucket health-test.
-        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "bucket_ht_data_width" => {
-            let w = const_eval_with_params(args.first().ok_or("bucket_ht_data_width needs 1 arg")?, param_vals)?;
+        Expr::FuncCall { name, args, .. }
+            if base_func_name(name.as_str()) == "bucket_ht_data_width" =>
+        {
+            let w = const_eval_with_params(
+                args.first().ok_or("bucket_ht_data_width needs 1 arg")?,
+                param_vals,
+            )?;
             Ok(if w >= 4 { 4 } else { w })
         }
         // OpenTitan otbn_pkg::SecAddRandWidth(w) = 2 * ($clog2(w) * w + 1) —
         // lebar randomness untuk otbn_sec_add / otbn_mask_accelerator
         // (localparam `RandWidth = SecAddRandWidth(Width)`).
         Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "SecAddRandWidth" => {
-            let w = const_eval_with_params(args.first().ok_or("SecAddRandWidth needs 1 arg")?, param_vals)?;
-            let clog = if w <= 1 { 1 } else { 63 - (w as u64).leading_zeros() as i64 };
+            let w = const_eval_with_params(
+                args.first().ok_or("SecAddRandWidth needs 1 arg")?,
+                param_vals,
+            )?;
+            let clog = if w <= 1 {
+                1
+            } else {
+                63 - (w as u64).leading_zeros() as i64
+            };
             Ok(2 * (clog * w + 1))
         }
         // OpenTitan entropy_src_pkg::num_bucket_ht_inst(w) =
         // ceil_div(w, bucket_ht_data_width(w)) — jumlah instance bucket
         // (dipakai generate for di entropy_src.sv).
-        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "num_bucket_ht_inst" => {
-            let w = const_eval_with_params(args.first().ok_or("num_bucket_ht_inst needs 1 arg")?, param_vals)?;
+        Expr::FuncCall { name, args, .. }
+            if base_func_name(name.as_str()) == "num_bucket_ht_inst" =>
+        {
+            let w = const_eval_with_params(
+                args.first().ok_or("num_bucket_ht_inst needs 1 arg")?,
+                param_vals,
+            )?;
             let b = if w >= 4 { 4 } else { w };
             if b == 0 {
                 return Err("division by zero in num_bucket_ht_inst".to_string());
@@ -807,7 +986,10 @@ pub fn const_eval_with_params(
 /// `name[idx]` untuk BitSelect konstanta, `name[r][c]` untuk BitSelect 2D.
 /// Dipakai `const_eval_with_params` pada `Expr::MemberAccess` untuk mencari
 /// key ter-flatten `name[idx].field` di param_vals.
-fn expr_base_key(expr: &Expr, param_vals: &std::collections::HashMap<Symbol, i64>) -> Option<String> {
+fn expr_base_key(
+    expr: &Expr,
+    param_vals: &std::collections::HashMap<Symbol, i64>,
+) -> Option<String> {
     match expr {
         Expr::Ident { name, .. } => Some(name.as_str().to_string()),
         Expr::BitSelect { expr: inner, index } => {

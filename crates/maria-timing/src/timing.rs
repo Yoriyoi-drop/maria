@@ -44,7 +44,10 @@ pub struct TimingOptions {
 
 impl Default for TimingOptions {
     fn default() -> Self {
-        TimingOptions { setup_ns: 0.2, clk_to_q_ns: 0.5 }
+        TimingOptions {
+            setup_ns: 0.2,
+            clk_to_q_ns: 0.5,
+        }
     }
 }
 
@@ -153,7 +156,9 @@ pub fn analyze(nl: &Netlist, c: &Constraint, opts: &TimingOptions) -> TimingRepo
             if !in_max.is_finite() {
                 continue; // input belum siap (menunggu driver lain)
             }
-            let fanout = nl.nets[c.outputs.first().map(|o| o.net).unwrap_or(0)].loads.len();
+            let fanout = nl.nets[c.outputs.first().map(|o| o.net).unwrap_or(0)]
+                .loads
+                .len();
             let out = in_max + cell_delay(c, fanout);
             for o in &c.outputs {
                 if out > arrival[o.net] {
@@ -199,9 +204,9 @@ pub fn analyze(nl: &Netlist, c: &Constraint, opts: &TimingOptions) -> TimingRepo
     }
     // Output port: required = period − output_delay.
     for (id, net) in nl.nets.iter().enumerate() {
-        let is_output_port = port_dir
-            .iter()
-            .any(|(name, dir)| *name == net.name && matches!(dir, PortDir::Output | PortDir::Inout));
+        let is_output_port = port_dir.iter().any(|(name, dir)| {
+            *name == net.name && matches!(dir, PortDir::Output | PortDir::Inout)
+        });
         if !is_output_port {
             continue;
         }
@@ -333,15 +338,28 @@ pub fn render_timing_report(r: &TimingReport, constraint_name: &str) -> String {
     s.push_str("── Timing Report (STA)\n");
     s.push_str(&format!("  constraint   {}\n", constraint_name));
     s.push_str(&format!("  period       {:.2} ns\n", r.period_ns));
-    s.push_str(&format!("  WNS          {}{:.2} ns\n", if r.wns_ns < 0.0 { "" } else { "+" }, r.wns_ns));
-    s.push_str(&format!("  TNS          {}{:.2} ns\n", if r.tns_ns < 0.0 { "" } else { "+" }, r.tns_ns));
+    s.push_str(&format!(
+        "  WNS          {}{:.2} ns\n",
+        if r.wns_ns < 0.0 { "" } else { "+" },
+        r.wns_ns
+    ));
+    s.push_str(&format!(
+        "  TNS          {}{:.2} ns\n",
+        if r.tns_ns < 0.0 { "" } else { "+" },
+        r.tns_ns
+    ));
     s.push_str(&format!("  max fanout   {}\n", r.max_fanout));
-    s.push_str(&format!("  endpoints    {} ({} ff, {} out)\n",
+    s.push_str(&format!(
+        "  endpoints    {} ({} ff, {} out)\n",
         r.endpoints.len(),
         r.endpoints.iter().filter(|e| e.kind == "ff").count(),
-        r.endpoints.iter().filter(|e| e.kind == "out").count()));
+        r.endpoints.iter().filter(|e| e.kind == "out").count()
+    ));
     if r.endpoints.iter().any(|e| e.false_path) {
-        s.push_str(&format!("  ({} false path di-skip)\n", r.endpoints.iter().filter(|e| e.false_path).count()));
+        s.push_str(&format!(
+            "  ({} false path di-skip)\n",
+            r.endpoints.iter().filter(|e| e.false_path).count()
+        ));
     }
     s.push('\n');
     for p in &r.critical_paths {
@@ -351,7 +369,11 @@ pub fn render_timing_report(r: &TimingReport, constraint_name: &str) -> String {
             p.from
         ));
         for (i, c) in p.cells.iter().rev().enumerate() {
-            let arrow = if i + 1 < p.cells.len() { "    ↓" } else { "    └" };
+            let arrow = if i + 1 < p.cells.len() {
+                "    ↓"
+            } else {
+                "    └"
+            };
             s.push_str(&format!("    {}\n{}\n", c, arrow));
         }
         s.push_str(&format!("    {}\n", p.to));
@@ -390,17 +412,52 @@ mod tests {
         nl.nets[q].is_io = true;
 
         let mut l1 = CellInstance::new(Symbol::intern("u1"), CellKind::Lut { init: 0x8 }, 1);
-        l1.inputs = vec![PinConn { net: a, pin: "i0".into(), bit: None }, PinConn { net: b, pin: "i1".into(), bit: None }];
-        l1.outputs = vec![PinConn { net: t1, pin: "o".into(), bit: None }];
+        l1.inputs = vec![
+            PinConn {
+                net: a,
+                pin: "i0".into(),
+                bit: None,
+            },
+            PinConn {
+                net: b,
+                pin: "i1".into(),
+                bit: None,
+            },
+        ];
+        l1.outputs = vec![PinConn {
+            net: t1,
+            pin: "o".into(),
+            bit: None,
+        }];
         let mut l2 = CellInstance::new(Symbol::intern("u2"), CellKind::Lut { init: 0x1 }, 1);
-        l2.inputs = vec![PinConn { net: t1, pin: "i0".into(), bit: None }];
-        l2.outputs = vec![PinConn { net: t2, pin: "o".into(), bit: None }];
+        l2.inputs = vec![PinConn {
+            net: t1,
+            pin: "i0".into(),
+            bit: None,
+        }];
+        l2.outputs = vec![PinConn {
+            net: t2,
+            pin: "o".into(),
+            bit: None,
+        }];
         let mut ff = CellInstance::new(Symbol::intern("q_reg"), CellKind::Dff, 1);
         ff.inputs = vec![
-            PinConn { net: clk, pin: "c".into(), bit: None },
-            PinConn { net: t2, pin: "d".into(), bit: None },
+            PinConn {
+                net: clk,
+                pin: "c".into(),
+                bit: None,
+            },
+            PinConn {
+                net: t2,
+                pin: "d".into(),
+                bit: None,
+            },
         ];
-        ff.outputs = vec![PinConn { net: q, pin: "q".into(), bit: None }];
+        ff.outputs = vec![PinConn {
+            net: q,
+            pin: "q".into(),
+            bit: None,
+        }];
         nl.add_cell(l1);
         nl.add_cell(l2);
         nl.add_cell(ff);
@@ -411,13 +468,20 @@ mod tests {
     fn wns_critical_path_manual() {
         let nl = lut_chain_ff();
         let c = Constraint {
-            clocks: vec![crate::constraint::ClockSpec { name: "clk".into(), period_ns: 10.0 }],
+            clocks: vec![crate::constraint::ClockSpec {
+                name: "clk".into(),
+                period_ns: 10.0,
+            }],
             ..Default::default()
         };
         let r = analyze(&nl, &c, &TimingOptions::default());
         // a→LUT1 (0.30 + 0.05×1 fanout = 0.35) → LUT2 (0.30 + 0.05×1 = 0.35)
         // arrival FF-D = 0.70; required = 10 − 0.2 = 9.80; slack = 9.10.
-        assert!((r.wns_ns - 9.10).abs() < 1e-6, "WNS = 9.10, dapat {}", r.wns_ns);
+        assert!(
+            (r.wns_ns - 9.10).abs() < 1e-6,
+            "WNS = 9.10, dapat {}",
+            r.wns_ns
+        );
         assert!((r.tns_ns).abs() < 1e-9, "TNS = 0");
         // Critical path: LUT2 → LUT1 (dari endpoint FF-D).
         let cp = &r.critical_paths[0];
@@ -435,8 +499,16 @@ mod tests {
         let y = nl.add_net(Symbol::intern("y"), 1);
         nl.nets[y].is_io = true;
         let mut l = CellInstance::new(Symbol::intern("u0"), CellKind::Lut { init: 0x1 }, 1);
-        l.inputs = vec![PinConn { net: a, pin: "i0".into(), bit: None }];
-        l.outputs = vec![PinConn { net: y, pin: "o".into(), bit: None }];
+        l.inputs = vec![PinConn {
+            net: a,
+            pin: "i0".into(),
+            bit: None,
+        }];
+        l.outputs = vec![PinConn {
+            net: y,
+            pin: "o".into(),
+            bit: None,
+        }];
         nl.add_cell(l);
         nl
     }
@@ -445,7 +517,10 @@ mod tests {
     fn output_port_endpoint_gets_arrival() {
         let nl = lut_to_output();
         let c = Constraint {
-            clocks: vec![crate::constraint::ClockSpec { name: "clk".into(), period_ns: 10.0 }],
+            clocks: vec![crate::constraint::ClockSpec {
+                name: "clk".into(),
+                period_ns: 10.0,
+            }],
             input_delay_ns: 2.0,
             output_delay_ns: 1.0,
             ..Default::default()
@@ -455,10 +530,22 @@ mod tests {
         let e = &r.endpoints[0];
         assert_eq!(e.name, "y");
         // arrival = input_delay 2.0 + LUT 0.30 (fanout 0 — port output) = 2.30.
-        assert!((e.arrival_ns - 2.30).abs() < 1e-6, "arrival y = 2.30, dapat {}", e.arrival_ns);
+        assert!(
+            (e.arrival_ns - 2.30).abs() < 1e-6,
+            "arrival y = 2.30, dapat {}",
+            e.arrival_ns
+        );
         // required = 10 − 1 = 9 → slack = 9 − 2.30 = 6.70.
-        assert!((e.slack_ns - 6.70).abs() < 1e-6, "slack = 6.70, dapat {}", e.slack_ns);
-        assert!((r.wns_ns - 6.70).abs() < 1e-6, "WNS = 6.70, dapat {}", r.wns_ns);
+        assert!(
+            (e.slack_ns - 6.70).abs() < 1e-6,
+            "slack = 6.70, dapat {}",
+            e.slack_ns
+        );
+        assert!(
+            (r.wns_ns - 6.70).abs() < 1e-6,
+            "WNS = 6.70, dapat {}",
+            r.wns_ns
+        );
         assert!(!r.critical_paths.is_empty(), "harus ada critical path ke y");
         assert_eq!(r.critical_paths[0].to, "y");
     }
@@ -467,12 +554,19 @@ mod tests {
     fn violation_reports_negative_wns() {
         let nl = lut_chain_ff();
         let c = Constraint {
-            clocks: vec![crate::constraint::ClockSpec { name: "clk".into(), period_ns: 0.5 }],
+            clocks: vec![crate::constraint::ClockSpec {
+                name: "clk".into(),
+                period_ns: 0.5,
+            }],
             ..Default::default()
         };
         let r = analyze(&nl, &c, &TimingOptions::default());
         // required = 0.5 − 0.2 = 0.30; arrival 0.70 → slack = −0.40.
-        assert!((r.wns_ns - -0.40).abs() < 1e-6, "WNS negatif, dapat {}", r.wns_ns);
+        assert!(
+            (r.wns_ns - -0.40).abs() < 1e-6,
+            "WNS negatif, dapat {}",
+            r.wns_ns
+        );
         assert!((r.tns_ns - -0.40).abs() < 1e-6, "TNS = WNS (satu endpoint)");
     }
 
@@ -480,15 +574,29 @@ mod tests {
     fn false_path_skipped_from_wns() {
         let nl = lut_chain_ff();
         let c = Constraint {
-            clocks: vec![crate::constraint::ClockSpec { name: "clk".into(), period_ns: 0.5 }],
-            false_paths: vec![crate::constraint::PathSpec { from: None, to: Some("q_reg".into()), cycles: 0 }],
+            clocks: vec![crate::constraint::ClockSpec {
+                name: "clk".into(),
+                period_ns: 0.5,
+            }],
+            false_paths: vec![crate::constraint::PathSpec {
+                from: None,
+                to: Some("q_reg".into()),
+                cycles: 0,
+            }],
             ..Default::default()
         };
         let r = analyze(&nl, &c, &TimingOptions::default());
         // False path q_reg di-skip dari WNS. Endpoint tersisa: output port `q`
         // (FF-Q → q): arrival = clk_to_q 0.5, required = 0.5 → slack 0.0.
-        assert!((r.wns_ns - 0.0).abs() < 1e-9, "false path di-skip, WNS = {}", r.wns_ns);
-        assert_eq!(r.critical_paths[0].to, "q", "critical path tersisa ke output q");
+        assert!(
+            (r.wns_ns - 0.0).abs() < 1e-9,
+            "false path di-skip, WNS = {}",
+            r.wns_ns
+        );
+        assert_eq!(
+            r.critical_paths[0].to, "q",
+            "critical path tersisa ke output q"
+        );
         assert!(r.critical_paths.iter().all(|p| p.to != "q_reg"));
     }
 }

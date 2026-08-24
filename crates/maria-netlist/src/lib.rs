@@ -24,7 +24,7 @@ pub mod net;
 
 pub use cell::{CellId, CellInstance, CellKind, PinConn, PinRef};
 pub use emit::{emit_mvnet, emit_summary, emit_verilog};
-pub use graph::{DagCheck, NetlistStats, combinational_levels, stats, verify_dag};
+pub use graph::{combinational_levels, stats, verify_dag, DagCheck, NetlistStats};
 pub use json::emit_json;
 pub use lower::lower_module;
 pub use net::{Net, NetId, Netlist, Port, PortDir};

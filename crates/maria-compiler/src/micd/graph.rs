@@ -48,10 +48,7 @@ impl FileGraph {
         if file == dep {
             return; // self-edge tidak bermakna
         }
-        self.deps
-            .entry(file)
-            .or_default()
-            .push(dep);
+        self.deps.entry(file).or_default().push(dep);
         self.dirty_reverse = true;
     }
 
@@ -134,10 +131,7 @@ impl FileGraph {
 
     /// Simbol yang digunakan sebuah file.
     pub fn symbols_used_by(&self, file: &Path) -> Vec<String> {
-        self.symbol_uses
-            .get(file)
-            .cloned()
-            .unwrap_or_default()
+        self.symbol_uses.get(file).cloned().unwrap_or_default()
     }
 
     /// File tempat simbol didefinisikan.
@@ -177,10 +171,7 @@ impl FileGraph {
 
     /// Dependensi langsung sebuah file.
     pub fn deps_of(&self, file: &Path) -> Vec<PathBuf> {
-        self.deps
-            .get(file)
-            .cloned()
-            .unwrap_or_default()
+        self.deps.get(file).cloned().unwrap_or_default()
     }
 
     /// Banyak node terdaftar.
@@ -282,8 +273,14 @@ mod tests {
 
         let affected = g.affected_by_symbols(&["crc"]);
         assert!(affected.contains(&PathBuf::from("uart.sv")));
-        assert!(affected.contains(&PathBuf::from("cpu.sv")), "dependent cpu ikut");
-        assert!(affected.contains(&PathBuf::from("top.sv")), "dependent top ikut");
+        assert!(
+            affected.contains(&PathBuf::from("cpu.sv")),
+            "dependent cpu ikut"
+        );
+        assert!(
+            affected.contains(&PathBuf::from("top.sv")),
+            "dependent top ikut"
+        );
     }
 
     #[test]

@@ -101,7 +101,11 @@ impl GlobalDiagnosticEngine {
 
     /// Helper: laporkan note (tanpa kode error).
     pub fn report_note(&self, message: impl Into<String>) {
-        self.report(Diagnostic::new(DiagLevel::Note, DiagCode::SimulationError, message.into()));
+        self.report(Diagnostic::new(
+            DiagLevel::Note,
+            DiagCode::SimulationError,
+            message.into(),
+        ));
     }
 
     // ── Koleksi ──
@@ -128,7 +132,10 @@ impl GlobalDiagnosticEngine {
 
     /// Filter per level.
     pub fn by_level(&self, level: DiagLevel) -> Vec<Diagnostic> {
-        self.all().into_iter().filter(|d| d.level == level).collect()
+        self.all()
+            .into_iter()
+            .filter(|d| d.level == level)
+            .collect()
     }
 
     pub fn errors(&self) -> Vec<Diagnostic> {
@@ -154,13 +161,19 @@ impl GlobalDiagnosticEngine {
 
     /// Filter per nama file sumber (cocok pada source_snippet atau spans).
     pub fn by_source(&self, file: &str) -> Vec<Diagnostic> {
-        self.all().into_iter().filter(|d| {
-            d.source_snippet.as_ref().map(|s| s.file.contains(file)).unwrap_or(false)
-                || d.spans
-                    .first()
-                    .map(|sp| sp.file.as_str().contains(file))
+        self.all()
+            .into_iter()
+            .filter(|d| {
+                d.source_snippet
+                    .as_ref()
+                    .map(|s| s.file.contains(file))
                     .unwrap_or(false)
-        }).collect()
+                    || d.spans
+                        .first()
+                        .map(|sp| sp.file.as_str().contains(file))
+                        .unwrap_or(false)
+            })
+            .collect()
     }
 
     // ── Coverage / penyaringan ──
@@ -254,7 +267,11 @@ impl GlobalDiagnosticEngine {
         let w = st.by_level.get(&DiagLevel::Warning).copied().unwrap_or(0);
         let f = st.by_level.get(&DiagLevel::Fatal).copied().unwrap_or(0);
         let n = st.by_level.get(&DiagLevel::Note).copied().unwrap_or(0);
-        let up = st.collected.iter().filter(|d| d.source_snippet.is_none() && d.spans.is_empty()).count();
+        let up = st
+            .collected
+            .iter()
+            .filter(|d| d.source_snippet.is_none() && d.spans.is_empty())
+            .count();
         let registry = all_codes().len();
         drop(st);
         format!(
@@ -294,16 +311,9 @@ impl GlobalDiagnosticEngine {
         }
         let up = self.unpositioned();
         if !up.is_empty() {
-            out.push_str(&format!(
-                "  Unpositioned diagnostics ({}):\n",
-                up.len()
-            ));
+            out.push_str(&format!("  Unpositioned diagnostics ({}):\n", up.len()));
             for d in up.iter().take(20) {
-                out.push_str(&format!(
-                    "    [{}] {}\n",
-                    d.code.as_str(),
-                    d.message
-                ));
+                out.push_str(&format!("    [{}] {}\n", d.code.as_str(), d.message));
             }
         }
         out

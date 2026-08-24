@@ -145,7 +145,7 @@ mod tests {
         std::fs::write(&path, "module small; endmodule").unwrap();
 
         let mf = MmapFile::open(&path).unwrap();
-        assert!(mf.mmap.is_none());  // Small file, no mmap
+        assert!(mf.mmap.is_none()); // Small file, no mmap
 
         let _ = std::fs::remove_dir_all(&dir);
     }

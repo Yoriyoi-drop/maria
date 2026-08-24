@@ -1,7 +1,7 @@
 use super::super::SimulationEngine;
+use maria_ast::*;
 use maria_core::error::SimError;
 use maria_ir::*;
-use maria_ast::*;
 use rand::Rng;
 
 impl SimulationEngine {
@@ -34,8 +34,12 @@ impl SimulationEngine {
                         (data, ref_event)
                     {
                         if let (Some((_, dsid)), Some((_, rsid))) = (
-                            signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()),
-                            signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()),
+                            signal_names
+                                .iter()
+                                .find(|(n, _)| n.as_str() == data_sig.as_str()),
+                            signal_names
+                                .iter()
+                                .find(|(n, _)| n.as_str() == ref_sig.as_str()),
                         ) {
                             if let (Some(&data_chg), Some(&ref_chg)) = (
                                 self.signal_last_change.get(dsid),
@@ -74,8 +78,12 @@ impl SimulationEngine {
                         (ref_event, data)
                     {
                         if let (Some((_, rsid)), Some((_, dsid))) = (
-                            signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()),
-                            signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()),
+                            signal_names
+                                .iter()
+                                .find(|(n, _)| n.as_str() == ref_sig.as_str()),
+                            signal_names
+                                .iter()
+                                .find(|(n, _)| n.as_str() == data_sig.as_str()),
                         ) {
                             if let (Some(&ref_chg), Some(&data_chg)) = (
                                 self.signal_last_change.get(rsid),
@@ -113,8 +121,12 @@ impl SimulationEngine {
                         (ref_event, data)
                     {
                         if let (Some((_, rsid)), Some((_, dsid))) = (
-                            signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()),
-                            signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()),
+                            signal_names
+                                .iter()
+                                .find(|(n, _)| n.as_str() == ref_sig.as_str()),
+                            signal_names
+                                .iter()
+                                .find(|(n, _)| n.as_str() == data_sig.as_str()),
                         ) {
                             if let (Some(&ref_chg), Some(&data_chg)) = (
                                 self.signal_last_change.get(rsid),
@@ -160,7 +172,10 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
+                        if let Some((_, sid)) = signal_names
+                            .iter()
+                            .find(|(n, _)| n.as_str() == data_sig.as_str())
+                        {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= limit_val {
@@ -185,7 +200,10 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
+                        if let Some((_, sid)) = signal_names
+                            .iter()
+                            .find(|(n, _)| n.as_str() == data_sig.as_str())
+                        {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= limit_val {
@@ -212,7 +230,10 @@ impl SimulationEngine {
                     let recov_val = const_eval_simple(recovery_limit).unwrap_or(0) as u64;
                     let remov_val = const_eval_simple(removal_limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
+                        if let Some((_, sid)) = signal_names
+                            .iter()
+                            .find(|(n, _)| n.as_str() == data_sig.as_str())
+                        {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= recov_val {
@@ -246,7 +267,10 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: ref_sig, .. } = ref_event {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()) {
+                        if let Some((_, sid)) = signal_names
+                            .iter()
+                            .find(|(n, _)| n.as_str() == ref_sig.as_str())
+                        {
                             // Dedupe: hanya fire saat edge baru terjadi pada step ini
                             // (last_change == current_time) dan period antar-edge < limit.
                             if let (Some(&last_change), Some(&prev_change)) = (
@@ -280,7 +304,10 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: ref_sig, .. } = ref_event {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()) {
+                        if let Some((_, sid)) = signal_names
+                            .iter()
+                            .find(|(n, _)| n.as_str() == ref_sig.as_str())
+                        {
                             // Dedupe: fire sekali saat pulse berakhir (edge baru terjadi),
                             // lebar pulse = last_change - prev_change. Bila ref_edge
                             // dispesifikasikan, pulse berakhir pada edge KEBALIKAN arah
@@ -288,10 +315,12 @@ impl SimulationEngine {
                             // di negedge) — filter ini mencegah false positive pulse low.
                             let dir_ok = match ref_edge {
                                 Some(maria_ast::types::EdgeKind::PosEdge) => {
-                                    self.signal_last_dir.get(sid) == Some(&maria_ast::types::EdgeKind::NegEdge)
+                                    self.signal_last_dir.get(sid)
+                                        == Some(&maria_ast::types::EdgeKind::NegEdge)
                                 }
                                 Some(maria_ast::types::EdgeKind::NegEdge) => {
-                                    self.signal_last_dir.get(sid) == Some(&maria_ast::types::EdgeKind::PosEdge)
+                                    self.signal_last_dir.get(sid)
+                                        == Some(&maria_ast::types::EdgeKind::PosEdge)
                                 }
                                 None => true,
                             };
@@ -322,21 +351,28 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
+                        if let Some((_, sid)) = signal_names
+                            .iter()
+                            .find(|(n, _)| n.as_str() == data_sig.as_str())
+                        {
                             if let Some(&data_change) = self.signal_last_change.get(sid) {
                                 if let Expr::Ident { name: ref_sig, .. } = &ref_event {
-                                    if let Some((_, rsid)) =
-                                        signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str())
+                                    if let Some((_, rsid)) = signal_names
+                                        .iter()
+                                        .find(|(n, _)| n.as_str() == ref_sig.as_str())
                                     {
                                         if let Some(&ref_change) = self.signal_last_change.get(rsid)
                                         {
                                             let skew = data_change.abs_diff(ref_change);
                                             // Dedupe: hanya fire saat salah satu sinyal berubah
                                             if skew > limit_val
-                                                && (data_change == current_time || ref_change == current_time)
+                                                && (data_change == current_time
+                                                    || ref_change == current_time)
                                             {
                                                 let key = ("$skew".to_string(), *sid);
-                                                if self.timing_reported.get(&key) != Some(&current_time) {
+                                                if self.timing_reported.get(&key)
+                                                    != Some(&current_time)
+                                                {
                                                     self.timing_reported.insert(key, current_time);
                                                     self.emit_warning(
                                                         maria_core::diagnostics::DiagCode::TimingViolation,
@@ -360,20 +396,27 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
+                        if let Some((_, sid)) = signal_names
+                            .iter()
+                            .find(|(n, _)| n.as_str() == data_sig.as_str())
+                        {
                             if let Some(&data_change) = self.signal_last_change.get(sid) {
                                 if let Expr::Ident { name: ref_sig, .. } = &ref_event {
-                                    if let Some((_, rsid)) =
-                                        signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str())
+                                    if let Some((_, rsid)) = signal_names
+                                        .iter()
+                                        .find(|(n, _)| n.as_str() == ref_sig.as_str())
                                     {
                                         if let Some(&ref_change) = self.signal_last_change.get(rsid)
                                         {
                                             let skew = data_change.abs_diff(ref_change);
                                             if skew > limit_val
-                                                && (data_change == current_time || ref_change == current_time)
+                                                && (data_change == current_time
+                                                    || ref_change == current_time)
                                             {
                                                 let key = ("$timeskew".to_string(), *sid);
-                                                if self.timing_reported.get(&key) != Some(&current_time) {
+                                                if self.timing_reported.get(&key)
+                                                    != Some(&current_time)
+                                                {
                                                     self.timing_reported.insert(key, current_time);
                                                     self.emit_warning(
                                                         maria_core::diagnostics::DiagCode::TimingViolation,
@@ -398,7 +441,10 @@ impl SimulationEngine {
                     let start_val = const_eval_simple(start_limit).unwrap_or(0) as u64;
                     let end_val = const_eval_simple(end_limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
+                        if let Some((_, sid)) = signal_names
+                            .iter()
+                            .find(|(n, _)| n.as_str() == data_sig.as_str())
+                        {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta >= start_val && delta <= end_val {
@@ -463,7 +509,11 @@ impl SimulationEngine {
         for check in &checks {
             let tname = check.type_name().to_string();
             match check {
-                crate::simulator::sdf::TimingCheck::Setup { signal, ref_signal, delay } => {
+                crate::simulator::sdf::TimingCheck::Setup {
+                    signal,
+                    ref_signal,
+                    delay,
+                } => {
                     let limit = delay.get(mode);
                     let (Some(dsid), Some(rsid)) = (
                         resolve_id(&signal_names, signal),
@@ -503,7 +553,10 @@ impl SimulationEngine {
                         }
                     } else {
                         let limit_u = limit as u64;
-                        if ref_chg == current_time && data_chg < ref_chg && ref_chg - data_chg <= limit_u {
+                        if ref_chg == current_time
+                            && data_chg < ref_chg
+                            && ref_chg - data_chg <= limit_u
+                        {
                             let key = (tname.clone(), rsid);
                             if self.timing_reported.get(&key) != Some(&ref_chg) {
                                 self.timing_reported.insert(key, ref_chg);
@@ -516,7 +569,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::simulator::sdf::TimingCheck::Hold { signal, ref_signal, delay } => {
+                crate::simulator::sdf::TimingCheck::Hold {
+                    signal,
+                    ref_signal,
+                    delay,
+                } => {
                     let limit = delay.get(mode);
                     let (Some(dsid), Some(rsid)) = (
                         resolve_id(&signal_names, signal),
@@ -535,7 +592,10 @@ impl SimulationEngine {
                         // violation saat ref edge terjadi, data berubah dalam
                         // |limit| sebelum ref.
                         let win = (-limit) as u64;
-                        if ref_chg == current_time && data_chg < ref_chg && ref_chg - data_chg <= win {
+                        if ref_chg == current_time
+                            && data_chg < ref_chg
+                            && ref_chg - data_chg <= win
+                        {
                             let key = (format!("{}-neg", tname), rsid);
                             if self.timing_reported.get(&key) != Some(&ref_chg) {
                                 self.timing_reported.insert(key, ref_chg);
@@ -548,7 +608,10 @@ impl SimulationEngine {
                         }
                     } else {
                         let limit_u = limit as u64;
-                        if data_chg == current_time && ref_chg < data_chg && data_chg - ref_chg <= limit_u {
+                        if data_chg == current_time
+                            && ref_chg < data_chg
+                            && data_chg - ref_chg <= limit_u
+                        {
                             let key = (tname.clone(), dsid);
                             if self.timing_reported.get(&key) != Some(&data_chg) {
                                 self.timing_reported.insert(key, data_chg);
@@ -561,7 +624,12 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::simulator::sdf::TimingCheck::Setuphold { signal, ref_signal, setup, hold } => {
+                crate::simulator::sdf::TimingCheck::Setuphold {
+                    signal,
+                    ref_signal,
+                    setup,
+                    hold,
+                } => {
                     let setup_l = setup.get(mode);
                     let hold_l = hold.get(mode);
                     let (Some(dsid), Some(rsid)) = (
@@ -579,7 +647,10 @@ impl SimulationEngine {
                     // Setup component (negatif → window setelah ref edge)
                     if setup_l < 0.0 {
                         let win = (-setup_l) as u64;
-                        if data_chg == current_time && ref_chg < data_chg && data_chg - ref_chg <= win {
+                        if data_chg == current_time
+                            && ref_chg < data_chg
+                            && data_chg - ref_chg <= win
+                        {
                             let key = ("$setuphold-setup-neg".to_string(), dsid);
                             if self.timing_reported.get(&key) != Some(&data_chg) {
                                 self.timing_reported.insert(key, data_chg);
@@ -592,7 +663,10 @@ impl SimulationEngine {
                         }
                     } else {
                         let limit_u = setup_l as u64;
-                        if ref_chg == current_time && data_chg < ref_chg && ref_chg - data_chg <= limit_u {
+                        if ref_chg == current_time
+                            && data_chg < ref_chg
+                            && ref_chg - data_chg <= limit_u
+                        {
                             let key = ("$setuphold-setup".to_string(), rsid);
                             if self.timing_reported.get(&key) != Some(&ref_chg) {
                                 self.timing_reported.insert(key, ref_chg);
@@ -607,7 +681,10 @@ impl SimulationEngine {
                     // Hold component (negatif → window sebelum ref edge)
                     if hold_l < 0.0 {
                         let win = (-hold_l) as u64;
-                        if ref_chg == current_time && data_chg < ref_chg && ref_chg - data_chg <= win {
+                        if ref_chg == current_time
+                            && data_chg < ref_chg
+                            && ref_chg - data_chg <= win
+                        {
                             let key = ("$setuphold-hold-neg".to_string(), rsid);
                             if self.timing_reported.get(&key) != Some(&ref_chg) {
                                 self.timing_reported.insert(key, ref_chg);
@@ -620,7 +697,10 @@ impl SimulationEngine {
                         }
                     } else {
                         let limit_u = hold_l as u64;
-                        if data_chg == current_time && ref_chg < data_chg && data_chg - ref_chg <= limit_u {
+                        if data_chg == current_time
+                            && ref_chg < data_chg
+                            && data_chg - ref_chg <= limit_u
+                        {
                             let key = ("$setuphold-hold".to_string(), dsid);
                             if self.timing_reported.get(&key) != Some(&data_chg) {
                                 self.timing_reported.insert(key, data_chg);
@@ -633,9 +713,15 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::simulator::sdf::TimingCheck::Width { signal, delay, threshold: _ } => {
+                crate::simulator::sdf::TimingCheck::Width {
+                    signal,
+                    delay,
+                    threshold: _,
+                } => {
                     let limit = delay.get(mode);
-                    let Some(sid) = resolve_id(&signal_names, signal) else { continue };
+                    let Some(sid) = resolve_id(&signal_names, signal) else {
+                        continue;
+                    };
                     let (Some(&last_change), Some(&prev_change)) = (
                         self.signal_last_change.get(&sid),
                         self.signal_prev_change.get(&sid),
@@ -672,8 +758,10 @@ impl SimulationEngine {
                                 self.timing_reported.insert(key, last_change);
                                 self.emit_warning(
                                     maria_core::diagnostics::DiagCode::TimingViolation,
-                                    format!("{} violation: signal '{}' pulse width {}ns < minimum {}ns",
-                                        tname, signal, pulse, limit as u64),
+                                    format!(
+                                        "{} violation: signal '{}' pulse width {}ns < minimum {}ns",
+                                        tname, signal, pulse, limit as u64
+                                    ),
                                 );
                             }
                         }
@@ -681,7 +769,9 @@ impl SimulationEngine {
                 }
                 crate::simulator::sdf::TimingCheck::Period { signal, delay } => {
                     let limit = delay.get(mode);
-                    let Some(sid) = resolve_id(&signal_names, signal) else { continue };
+                    let Some(sid) = resolve_id(&signal_names, signal) else {
+                        continue;
+                    };
                     let (Some(&last_change), Some(&prev_change)) = (
                         self.signal_last_change.get(&sid),
                         self.signal_prev_change.get(&sid),
@@ -696,17 +786,29 @@ impl SimulationEngine {
                                 self.timing_reported.insert(key, last_change);
                                 self.emit_warning(
                                     maria_core::diagnostics::DiagCode::TimingViolation,
-                                    format!("{} violation: signal '{}' period {}ns < minimum {}ns",
-                                        tname, signal, period, limit as u64),
+                                    format!(
+                                        "{} violation: signal '{}' period {}ns < minimum {}ns",
+                                        tname, signal, period, limit as u64
+                                    ),
                                 );
                             }
                         }
                     }
                 }
-                crate::simulator::sdf::TimingCheck::Recovery { signal, ref_signal: _, delay }
-                | crate::simulator::sdf::TimingCheck::Removal { signal, ref_signal: _, delay } => {
+                crate::simulator::sdf::TimingCheck::Recovery {
+                    signal,
+                    ref_signal: _,
+                    delay,
+                }
+                | crate::simulator::sdf::TimingCheck::Removal {
+                    signal,
+                    ref_signal: _,
+                    delay,
+                } => {
                     let limit = delay.get(mode);
-                    let Some(sid) = resolve_id(&signal_names, signal) else { continue };
+                    let Some(sid) = resolve_id(&signal_names, signal) else {
+                        continue;
+                    };
                     if let Some(&last_change) = self.signal_last_change.get(&sid) {
                         let delta = current_time - last_change;
                         if delta > 0 && delta <= limit as u64 {
@@ -722,7 +824,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::simulator::sdf::TimingCheck::Skew { signal, ref_signal, delay } => {
+                crate::simulator::sdf::TimingCheck::Skew {
+                    signal,
+                    ref_signal,
+                    delay,
+                } => {
                     let limit = delay.get(mode);
                     let (Some(sid), Some(rsid)) = (
                         resolve_id(&signal_names, signal),
@@ -735,14 +841,18 @@ impl SimulationEngine {
                         self.signal_last_change.get(&rsid),
                     ) {
                         let skew = data_change.abs_diff(ref_change);
-                        if skew > limit as u64 && (data_change == current_time || ref_change == current_time) {
+                        if skew > limit as u64
+                            && (data_change == current_time || ref_change == current_time)
+                        {
                             let key = (tname.clone(), sid);
                             if self.timing_reported.get(&key) != Some(&current_time) {
                                 self.timing_reported.insert(key, current_time);
                                 self.emit_warning(
                                     maria_core::diagnostics::DiagCode::TimingViolation,
-                                    format!("{} violation: skew {}ns > max {}ns between '{}' and '{}'",
-                                        tname, skew, limit as u64, signal, ref_signal),
+                                    format!(
+                                        "{} violation: skew {}ns > max {}ns between '{}' and '{}'",
+                                        tname, skew, limit as u64, signal, ref_signal
+                                    ),
                                 );
                             }
                         }
@@ -752,7 +862,6 @@ impl SimulationEngine {
         }
         Ok(())
     }
-
 
     pub(crate) fn evaluate_dpi_call(
         &mut self,
@@ -769,16 +878,16 @@ impl SimulationEngine {
             .find(|d| d.name == name)
             .cloned();
         let is_task = dpi_info.as_ref().map(|d| d.is_task).unwrap_or(false);
-        
+
         if is_task {
             return Ok(LogicVec::new(0));
         }
-        
+
         let arg_vals: Vec<LogicVec> = args
             .iter()
             .map(|a| self.evaluate_expr(a))
             .collect::<Result<_, _>>()?;
-        
+
         // Known built-in DPI functions (work without external libraries)
         match name {
             "svBitToInt" | "svToInt" => {
@@ -856,7 +965,10 @@ impl SimulationEngine {
 
         // Find matching IrDpiImport and register library
         // Clone the info first to avoid borrow conflicts
-        let dpi_info = self.design.dpi_imports.iter()
+        let dpi_info = self
+            .design
+            .dpi_imports
+            .iter()
             .find(|d| d.name.as_str() == name)
             .cloned();
 
@@ -896,11 +1008,13 @@ impl SimulationEngine {
     ) -> Result<LogicVec, SimError> {
         self.emit_warning(
             maria_core::diagnostics::DiagCode::DpiError,
-            format!("DPI function '{}' not available (compile with --features dpi)", name),
+            format!(
+                "DPI function '{}' not available (compile with --features dpi)",
+                name
+            ),
         );
         Ok(LogicVec::from_u64(0, return_width.max(1)))
     }
-
 
     pub(crate) fn handle_ast_syscall(
         &mut self,
@@ -940,5 +1054,4 @@ impl SimulationEngine {
         }
         Ok(())
     }
-
 }

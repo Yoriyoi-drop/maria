@@ -12,6 +12,12 @@
 //! - Testcase Minimizer (mengecilkan reproducer)
 //! - Differential Executor (bandingkan dengan Verilator/Icarus)
 
+#[cfg(test)]
+mod concurrency_diff;
+#[allow(dead_code)]
+mod differential;
+#[cfg(test)]
+mod eof_truncation;
 #[allow(dead_code)]
 mod expr;
 #[allow(dead_code)]
@@ -19,34 +25,32 @@ mod gen;
 #[allow(dead_code)]
 mod guide;
 #[allow(dead_code)]
-mod oracle;
-#[allow(dead_code)]
-mod semantic_mutator;
-#[allow(dead_code)]
 mod hierarchy_mutator;
-#[allow(dead_code)]
-mod minimizer;
-#[allow(dead_code)]
-mod differential;
+#[cfg(test)]
+mod metamorphic;
 #[allow(dead_code)]
 mod mgte;
 #[allow(dead_code)]
+mod minimizer;
+#[allow(dead_code)]
+mod oracle;
+#[allow(dead_code)]
 mod parallel;
-#[cfg(test)]
-mod eof_truncation;
 #[cfg(test)]
 mod preproc;
 #[cfg(test)]
 mod resources;
 #[cfg(test)]
-mod metamorphic;
+mod scheduler;
+#[allow(dead_code)]
+mod semantic_mutator;
 #[cfg(test)]
-mod concurrency_diff;
+mod waveform;
 
 use gen::GenInput;
 use guide::CoverageGuide;
+use mgte::{MGTEConfig, MGTEMode, MGTE};
 use oracle::{check, Verdict};
-use mgte::{MGTE, MGTEConfig, MGTEMode};
 use parallel::{ParallelConfig, DEFAULT_WORKERS};
 
 #[test]
@@ -92,12 +96,32 @@ fn guided_fuzz() {
         );
     }
 
+    // Persist reproducer bug ke disk agar bisa dianalisis ulang tanpa
+    // mengulang run (dulu hanya stderr — hilang begitu terminal ditutup).
+    if !bugs.is_empty() {
+        let dir = std::env::temp_dir().join(format!("maria-fuzz-crashes-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        for (i, b) in bugs.iter().enumerate() {
+            let path = dir.join(format!("bug-{:03}-seed-{}.sv", i, b.input.seed));
+            let _ = std::fs::write(
+                &path,
+                format!(
+                    "// bug: {}\n// seed={} w={}\n{}",
+                    b.message,
+                    b.input.seed,
+                    b.input.w,
+                    b.input.to_source()
+                ),
+            );
+            eprintln!("[guided_fuzz] crash disimpan: {}", path.display());
+        }
+    }
+
     assert!(
         bugs.is_empty(),
         "ditemukan {} anomali:\n{}",
         bugs.len(),
-        bugs
-            .iter()
+        bugs.iter()
             .map(|b| format!(
                 "  seed={} w={} expr=`{}`\n    source:\n{}\n    bug: {}\n",
                 b.input.seed,
@@ -188,7 +212,10 @@ fn mgte_deterministic_regression() {
     let stats = mgte.run();
 
     eprintln!("[MGTE Deterministic] {}", stats_summary(&stats));
-    assert_eq!(stats.bugs_found, 0, "regression: MGTE found bugs on deterministic seed");
+    assert_eq!(
+        stats.bugs_found, 0,
+        "regression: MGTE found bugs on deterministic seed"
+    );
 }
 
 #[test]
@@ -206,7 +233,15 @@ fn mgte_parallel_10_workers() {
 
     eprintln!("[MGTE Parallel] {}", stats_summary(&stats));
     assert_eq!(stats.total_iterations, 100);
-    assert!(stats.passed + stats.compile_failures + stats.bugs_found >= 90);
+    // Semua iterasi harus tercatat dengan outcome salah satu kategori.
+    assert!(stats.passed + stats.compile_failures >= 90);
+    // Dulu hanya cek total — bugs_found > 0 lolos tanpa gagal. Sekarang
+    // bug apapun = kegagalan keras, konsisten dengan mode deterministik.
+    assert_eq!(
+        stats.bugs_found, 0,
+        "regression: MGTE parallel menemukan {} bug",
+        stats.bugs_found
+    );
 }
 
 fn stats_summary(stats: &mgte::MGTEStats) -> String {

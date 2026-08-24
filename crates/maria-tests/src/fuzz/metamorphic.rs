@@ -143,10 +143,7 @@ fn metamorphic_literal_form_invariant() {
         "module m; wire [7:0] w = 'sd90; assign y = w; initial #1 $finish; endmodule",
         "module m; wire [7:0] w = 8'd0000_090; assign y = w; initial #1 $finish; endmodule",
     ];
-    let results: Vec<Option<u64>> = variants
-        .iter()
-        .map(|v| sim_signal(v, 10, "y"))
-        .collect();
+    let results: Vec<Option<u64>> = variants.iter().map(|v| sim_signal(v, 10, "y")).collect();
     for (i, r) in results.iter().enumerate() {
         eprintln!("[lit-form] {} => {:?}", variants[i], r);
     }

@@ -9,10 +9,10 @@
 //! counter. 1 file = 1 tanggung jawab: comparator TLM.
 
 use super::super::SimulationEngine;
-use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
 use crate::simulator::types::*;
 use crate::simulator::util::*;
+use maria_compiler::hir::{LogicVec, ObjId};
+use maria_core::error::SimError;
 use maria_core::Symbol;
 
 impl SimulationEngine {
@@ -35,7 +35,9 @@ impl SimulationEngine {
                 // Analysis-imp internal (ACTUAL): `mon.ap.connect(comp.analysis_imp)`
                 // → `ap.write(item)` → imp → parent.write (di sini).
                 let imp_name = format!("{}_imp", if name.is_empty() { "comp" } else { &name });
-                let imp_id = self.state.alloc_object(Symbol::intern("__uvm_analysis_imp"));
+                let imp_id = self
+                    .state
+                    .alloc_object(Symbol::intern("__uvm_analysis_imp"));
                 self.uvm_analysis_imp_data.insert(
                     imp_id,
                     UvmAnalysisImpData {
@@ -65,15 +67,15 @@ impl SimulationEngine {
             // write(actual): pop expected head, bandingkan, increment counter.
             "write" => {
                 let actual = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                let mut cdata = self
-                    .uvm_comparator_data
-                    .get(&obj_id)
-                    .cloned()
-                    .unwrap_or(UvmComparatorData {
-                        expected: std::collections::VecDeque::new(),
-                        matches: 0,
-                        mismatches: 0,
-                    });
+                let mut cdata =
+                    self.uvm_comparator_data
+                        .get(&obj_id)
+                        .cloned()
+                        .unwrap_or(UvmComparatorData {
+                            expected: std::collections::VecDeque::new(),
+                            matches: 0,
+                            mismatches: 0,
+                        });
                 match cdata.expected.pop_front() {
                     None => {
                         // Tidak ada expected → mismatch (seperti UVM asli:

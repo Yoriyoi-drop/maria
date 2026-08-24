@@ -93,14 +93,34 @@ mod tests {
         let q = nl.add_net(Symbol::intern("q"), 1);
         let clk = nl.add_net(Symbol::intern("clk"), 1);
         let mut l = CellInstance::new(Symbol::intern("u0"), CellKind::Lut { init: 0x1 }, 1);
-        l.inputs = vec![PinConn { net: a, pin: "i0".into(), bit: None }];
-        l.outputs = vec![PinConn { net: a, pin: "o".into(), bit: None }];
+        l.inputs = vec![PinConn {
+            net: a,
+            pin: "i0".into(),
+            bit: None,
+        }];
+        l.outputs = vec![PinConn {
+            net: a,
+            pin: "o".into(),
+            bit: None,
+        }];
         let mut ff = CellInstance::new(Symbol::intern("q_reg"), CellKind::Dff, 1);
         ff.inputs = vec![
-            PinConn { net: clk, pin: "c".into(), bit: None },
-            PinConn { net: a, pin: "d".into(), bit: None },
+            PinConn {
+                net: clk,
+                pin: "c".into(),
+                bit: None,
+            },
+            PinConn {
+                net: a,
+                pin: "d".into(),
+                bit: None,
+            },
         ];
-        ff.outputs = vec![PinConn { net: q, pin: "q".into(), bit: None }];
+        ff.outputs = vec![PinConn {
+            net: q,
+            pin: "q".into(),
+            bit: None,
+        }];
         nl.add_cell(l);
         nl.add_cell(ff);
         let r = estimate_area(&nl);

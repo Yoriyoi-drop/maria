@@ -38,7 +38,6 @@ impl GlobalEnv {
     /// Env minimal dengan semua context default (tanpa load file config).
     /// Dipakai fallback bila startup_with gagal, atau untuk tool/library.
     pub fn minimal() -> Self {
-        use maria_core::config::MariaConfig;
         use crate::env::cache::CacheContext;
         use crate::env::compiler::CompilerContext;
         use crate::env::config::ConfigContext;
@@ -51,6 +50,7 @@ impl GlobalEnv {
         use crate::env::telemetry::TelemetryContext;
         use crate::env::verification::VerificationContext;
         use crate::env::workspace::WorkspaceContext;
+        use maria_core::config::MariaConfig;
 
         let config = Arc::new(ConfigContext::new(MariaConfig::default()));
         let workspace = Arc::new(WorkspaceContext::open(&config));

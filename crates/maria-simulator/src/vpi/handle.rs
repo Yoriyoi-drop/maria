@@ -5,8 +5,8 @@
 #![allow(non_upper_case_globals)]
 
 use super::types::*;
-use maria_ir::*;
 use maria_core::intern::Symbol;
+use maria_ir::*;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,11 +16,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[allow(dead_code)]
 pub(crate) enum VpiObjectKind {
     Null,
-    Module(usize, Symbol),          // index in design.modules
-    Signal(SignalId, usize),        // (signal_id, instance_level)
-    Process(usize),                 // process index
-    Port(SignalId, usize),          // (signal_id, port_index)
-    Scope(String),                  // fully qualified scope name
+    Module(usize, Symbol),   // index in design.modules
+    Signal(SignalId, usize), // (signal_id, instance_level)
+    Process(usize),          // process index
+    Port(SignalId, usize),   // (signal_id, port_index)
+    Scope(String),           // fully qualified scope name
     Iterator {
         kind: VpiIteratorKind,
         items: Vec<VpiObject>,
@@ -132,22 +132,22 @@ pub fn vpi_handle(vpi_type: i32, ref_handle: vpiHandle) -> vpiHandle {
                 let name = engine.design.top.name;
                 let obj = VpiObject::new(VpiObjectKind::Module(0, name));
                 vpi_register_object(obj)
-            }).unwrap_or(vpiHandle::NULL)
+            })
+            .unwrap_or(vpiHandle::NULL)
         }
         (vpiScope, VpiObjectKind::Module(_, _)) => {
             // Module is also a scope
             ref_handle
         }
-        (vpiReg | vpiNet, VpiObjectKind::Signal(_, _)) => {
-            ref_handle
-        }
+        (vpiReg | vpiNet, VpiObjectKind::Signal(_, _)) => ref_handle,
         (vpiParent, VpiObjectKind::Signal(_, _)) => {
             // Return the module containing this signal
             super::with_vpi_engine(|engine| {
                 let name = engine.design.top.name;
                 let obj = VpiObject::new(VpiObjectKind::Module(0, name));
                 vpi_register_object(obj)
-            }).unwrap_or(vpiHandle::NULL)
+            })
+            .unwrap_or(vpiHandle::NULL)
         }
         (vpiParent, _) => vpiHandle::NULL,
         _ => vpiHandle::NULL,
@@ -186,7 +186,8 @@ pub fn vpi_handle_by_name(name: &str, scope: vpiHandle) -> vpiHandle {
             }
         }
         vpiHandle::NULL
-    }).unwrap_or(vpiHandle::NULL)
+    })
+    .unwrap_or(vpiHandle::NULL)
 }
 
 // ─── vpi_iterate ───
@@ -201,7 +202,12 @@ pub fn vpi_iterate(vpi_type: i32, ref_handle: vpiHandle) -> vpiHandle {
         (vpiReg | vpiNet, VpiObjectKind::Module(_, _)) => {
             // Iterate signals of a module
             super::with_vpi_engine(|engine| {
-                let sigs: Vec<VpiObject> = engine.design.top.signals.iter().enumerate()
+                let sigs: Vec<VpiObject> = engine
+                    .design
+                    .top
+                    .signals
+                    .iter()
+                    .enumerate()
                     .filter(|(_, s)| match vpi_type {
                         vpiReg => s.kind == SignalKind::Reg || s.kind == SignalKind::Logic,
                         vpiNet => s.kind == SignalKind::Wire,
@@ -218,12 +224,18 @@ pub fn vpi_iterate(vpi_type: i32, ref_handle: vpiHandle) -> vpiHandle {
                     cursor: 0,
                 });
                 vpi_register_object(iter)
-            }).unwrap_or(vpiHandle::NULL)
+            })
+            .unwrap_or(vpiHandle::NULL)
         }
         (vpiPort, VpiObjectKind::Module(_, _)) => {
             // Iterate ports of a module
             super::with_vpi_engine(|engine| {
-                let ports = engine.design.top.inputs.iter().chain(engine.design.top.outputs.iter())
+                let ports = engine
+                    .design
+                    .top
+                    .inputs
+                    .iter()
+                    .chain(engine.design.top.outputs.iter())
                     .chain(engine.design.top.inouts.iter())
                     .enumerate()
                     .map(|(i, sig_id)| VpiObject::new(VpiObjectKind::Port(*sig_id, i)))
@@ -237,12 +249,16 @@ pub fn vpi_iterate(vpi_type: i32, ref_handle: vpiHandle) -> vpiHandle {
                     cursor: 0,
                 });
                 vpi_register_object(iter)
-            }).unwrap_or(vpiHandle::NULL)
+            })
+            .unwrap_or(vpiHandle::NULL)
         }
         (vpiTopModule, _) => {
             // Iterate all top-level modules
             super::with_vpi_engine(|engine| {
-                let modules: Vec<VpiObject> = engine.design.modules.iter()
+                let modules: Vec<VpiObject> = engine
+                    .design
+                    .modules
+                    .iter()
                     .enumerate()
                     .map(|(i, (name, _))| VpiObject::new(VpiObjectKind::Module(i, *name)))
                     .collect();
@@ -255,7 +271,8 @@ pub fn vpi_iterate(vpi_type: i32, ref_handle: vpiHandle) -> vpiHandle {
                     cursor: 0,
                 });
                 vpi_register_object(iter)
-            }).unwrap_or(vpiHandle::NULL)
+            })
+            .unwrap_or(vpiHandle::NULL)
         }
         _ => vpiHandle::NULL,
     }
@@ -298,112 +315,120 @@ pub fn vpi_get(property: i32, handle: vpiHandle) -> i32 {
         None => return 0,
     };
     match property {
-        vpiType => {
-            match &obj.kind {
-                VpiObjectKind::Module(_, _) => vpiModule,
-                VpiObjectKind::Signal(_, _) => vpiReg,
-                VpiObjectKind::Process(_) => vpiProcess,
-                VpiObjectKind::Port(_, _) => vpiPort,
-                VpiObjectKind::Iterator { .. } => 0,
-                VpiObjectKind::Scope(_) => vpiScope,
-                VpiObjectKind::SysTfCall { .. } => vpiSysFunc,
-                VpiObjectKind::Null => 0,
-                VpiObjectKind::Time(_) => vpiTimeVar,
+        vpiType => match &obj.kind {
+            VpiObjectKind::Module(_, _) => vpiModule,
+            VpiObjectKind::Signal(_, _) => vpiReg,
+            VpiObjectKind::Process(_) => vpiProcess,
+            VpiObjectKind::Port(_, _) => vpiPort,
+            VpiObjectKind::Iterator { .. } => 0,
+            VpiObjectKind::Scope(_) => vpiScope,
+            VpiObjectKind::SysTfCall { .. } => vpiSysFunc,
+            VpiObjectKind::Null => 0,
+            VpiObjectKind::Time(_) => vpiTimeVar,
+        },
+        vpiSize => match &obj.kind {
+            VpiObjectKind::Signal(sig_id, _) => super::with_vpi_engine(|engine| {
+                engine
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| s.width as i32)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0),
+            VpiObjectKind::Module(_, _) => {
+                super::with_vpi_engine(|engine| engine.design.top.signals.len() as i32).unwrap_or(0)
             }
-        }
-        vpiSize => {
-            match &obj.kind {
-                VpiObjectKind::Signal(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id).map(|s| s.width as i32).unwrap_or(0)
-                    }).unwrap_or(0)
-                }
-                VpiObjectKind::Module(_, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.len() as i32
-                    }).unwrap_or(0)
-                }
-                _ => 0,
-            }
-        }
-        vpiDirection => {
-            match &obj.kind {
-                VpiObjectKind::Port(sig_id, _) | VpiObjectKind::Signal(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        if let Some(sig) = engine.design.top.signals.get(*sig_id) {
-                            match sig.kind {
-                                SignalKind::Input => vpiInput,
-                                SignalKind::Output => vpiOutput,
-                                SignalKind::Inout => vpiInout,
-                                _ => vpiNoDirection,
-                            }
-                        } else {
-                            vpiNoDirection
+            _ => 0,
+        },
+        vpiDirection => match &obj.kind {
+            VpiObjectKind::Port(sig_id, _) | VpiObjectKind::Signal(sig_id, _) => {
+                super::with_vpi_engine(|engine| {
+                    if let Some(sig) = engine.design.top.signals.get(*sig_id) {
+                        match sig.kind {
+                            SignalKind::Input => vpiInput,
+                            SignalKind::Output => vpiOutput,
+                            SignalKind::Inout => vpiInout,
+                            _ => vpiNoDirection,
                         }
-                    }).unwrap_or(vpiNoDirection)
-                }
-                _ => vpiNoDirection,
+                    } else {
+                        vpiNoDirection
+                    }
+                })
+                .unwrap_or(vpiNoDirection)
             }
-        }
-        vpiVector => {
-            match &obj.kind {
-                VpiObjectKind::Signal(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id).map(|s| (s.width > 1) as i32).unwrap_or(0)
-                    }).unwrap_or(0)
-                }
-                _ => 0,
-            }
-        }
-        vpiSigned => {
-            match &obj.kind {
-                VpiObjectKind::Signal(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id).map(|s| s.is_signed as i32).unwrap_or(0)
-                    }).unwrap_or(0)
-                }
-                _ => 0,
-            }
-        }
-        vpiLeftRange => {
-            match &obj.kind {
-                VpiObjectKind::Signal(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id).map(|s| s.width as i32 - 1).unwrap_or(-1)
-                    }).unwrap_or(-1)
-                }
-                _ => -1,
-            }
-        }
-        vpiRightRange => {
-            match &obj.kind {
-                VpiObjectKind::Signal(_, _) => 0,
-                _ => 0,
-            }
-        }
+            _ => vpiNoDirection,
+        },
+        vpiVector => match &obj.kind {
+            VpiObjectKind::Signal(sig_id, _) => super::with_vpi_engine(|engine| {
+                engine
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| (s.width > 1) as i32)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0),
+            _ => 0,
+        },
+        vpiSigned => match &obj.kind {
+            VpiObjectKind::Signal(sig_id, _) => super::with_vpi_engine(|engine| {
+                engine
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| s.is_signed as i32)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0),
+            _ => 0,
+        },
+        vpiLeftRange => match &obj.kind {
+            VpiObjectKind::Signal(sig_id, _) => super::with_vpi_engine(|engine| {
+                engine
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| s.width as i32 - 1)
+                    .unwrap_or(-1)
+            })
+            .unwrap_or(-1),
+            _ => -1,
+        },
+        vpiRightRange => match &obj.kind {
+            VpiObjectKind::Signal(_, _) => 0,
+            _ => 0,
+        },
         vpiOpType => 0,
         vpiLineNo => 0,
-        vpiRegType => {
-            match &obj.kind {
-                VpiObjectKind::Signal(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id).map(|s| {
-                            #[allow(unreachable_patterns)]
-                            match s.kind {
-                                SignalKind::Reg => vpiReg,
-                                SignalKind::Logic => vpiReg,
-                                SignalKind::Wire => vpiNet,
-                                SignalKind::Input => vpiReg,
-                                SignalKind::Output => vpiReg,
-                                SignalKind::Inout => vpiReg,
-                                _ => vpiReg,
-                            }
-                        }).unwrap_or(vpiReg)
-                    }).unwrap_or(vpiReg)
-                }
-                _ => vpiReg,
-            }
-        }
+        vpiRegType => match &obj.kind {
+            VpiObjectKind::Signal(sig_id, _) => super::with_vpi_engine(|engine| {
+                engine
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| {
+                        #[allow(unreachable_patterns)]
+                        match s.kind {
+                            SignalKind::Reg => vpiReg,
+                            SignalKind::Logic => vpiReg,
+                            SignalKind::Wire => vpiNet,
+                            SignalKind::Input => vpiReg,
+                            SignalKind::Output => vpiReg,
+                            SignalKind::Inout => vpiReg,
+                            _ => vpiReg,
+                        }
+                    })
+                    .unwrap_or(vpiReg)
+            })
+            .unwrap_or(vpiReg),
+            _ => vpiReg,
+        },
         vpiTimeUnit => -12, // Default ps
         vpiTimePrecision => -12,
         _ => 0,
@@ -441,43 +466,51 @@ pub fn vpi_get_str(property: i32, handle: vpiHandle) -> *mut c_char {
         None => return std::ptr::null_mut(),
     };
     let result = match property {
-        vpiName | vpiFullName => {
-            match &obj.kind {
-                VpiObjectKind::Module(_, name) => name.as_str().to_string(),
-                VpiObjectKind::Signal(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id).map(|s| s.name.to_string())
-                    }).flatten().unwrap_or_default()
-                }
-                VpiObjectKind::Port(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id).map(|s| s.name.to_string())
-                    }).flatten().unwrap_or_default()
-                }
-                VpiObjectKind::Scope(name) => name.clone(),
-                VpiObjectKind::SysTfCall { name, .. } => name.clone(),
-                _ => String::new(),
-            }
-        }
-        vpiDefName => {
-            match &obj.kind {
-                VpiObjectKind::Module(_, name) => name.as_str().to_string(),
-                _ => String::new(),
-            }
-        }
+        vpiName | vpiFullName => match &obj.kind {
+            VpiObjectKind::Module(_, name) => name.as_str().to_string(),
+            VpiObjectKind::Signal(sig_id, _) => super::with_vpi_engine(|engine| {
+                engine
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| s.name.to_string())
+            })
+            .flatten()
+            .unwrap_or_default(),
+            VpiObjectKind::Port(sig_id, _) => super::with_vpi_engine(|engine| {
+                engine
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| s.name.to_string())
+            })
+            .flatten()
+            .unwrap_or_default(),
+            VpiObjectKind::Scope(name) => name.clone(),
+            VpiObjectKind::SysTfCall { name, .. } => name.clone(),
+            _ => String::new(),
+        },
+        vpiDefName => match &obj.kind {
+            VpiObjectKind::Module(_, name) => name.as_str().to_string(),
+            _ => String::new(),
+        },
         vpiFile => {
             // SignalInfo/IrModule tidak punya file_path field —
             // gunakan module name sebagai identitas
             match &obj.kind {
-                VpiObjectKind::Signal(sig_id, _) => {
-                    super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id)
-                            .map(|_| engine.design.top.name.as_str().to_string())
-                    }).flatten().unwrap_or_default()
-                }
-                VpiObjectKind::Module(_, name) => {
-                    name.as_str().to_string()
-                }
+                VpiObjectKind::Signal(sig_id, _) => super::with_vpi_engine(|engine| {
+                    engine
+                        .design
+                        .top
+                        .signals
+                        .get(*sig_id)
+                        .map(|_| engine.design.top.name.as_str().to_string())
+                })
+                .flatten()
+                .unwrap_or_default(),
+                VpiObjectKind::Module(_, name) => name.as_str().to_string(),
                 _ => String::new(),
             }
         }
@@ -494,7 +527,11 @@ pub fn vpi_get_str(property: i32, handle: vpiHandle) -> *mut c_char {
 
 /// vpi_free_object(handle) — release a VPI object.
 pub fn vpi_free_object(handle: vpiHandle) -> i32 {
-    if vpi_remove_object(handle) { 1 } else { 0 }
+    if vpi_remove_object(handle) {
+        1
+    } else {
+        0
+    }
 }
 
 // ─── vpi_chk_error ───
@@ -579,7 +616,10 @@ mod tests {
         }
         assert!(!vpi_objects().lock().unwrap().is_empty());
         reset_registry();
-        assert!(vpi_objects().lock().unwrap().is_empty(), "clear semua objek");
+        assert!(
+            vpi_objects().lock().unwrap().is_empty(),
+            "clear semua objek"
+        );
     }
 
     #[test]

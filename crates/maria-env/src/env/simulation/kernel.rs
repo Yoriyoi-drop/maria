@@ -76,7 +76,10 @@ mod tests {
             ElaborateMode::StrictSimulation,
         )
         .unwrap();
-        let opts = KernelOptions { max_time: Some(100), ..Default::default() };
+        let opts = KernelOptions {
+            max_time: Some(100),
+            ..Default::default()
+        };
         let (_engine, t) = SimulationKernel::run(ir, &opts).unwrap();
         assert!(t >= 5);
     }

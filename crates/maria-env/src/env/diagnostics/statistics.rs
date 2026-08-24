@@ -20,7 +20,8 @@ impl DiagStatistics {
     }
 
     pub fn record_note(&self) {
-        self.notes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.notes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn total(&self) -> u64 {

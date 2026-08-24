@@ -10,9 +10,9 @@
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
-use maria_ir::IrDesign;
 use crate::simulator::distributed::protocol::*;
 use crate::simulator::SimulationEngine;
+use maria_ir::IrDesign;
 
 /// Configuration for a distributed slave node.
 #[derive(Debug, Clone)]
@@ -57,14 +57,18 @@ impl DistributedSlave {
     /// Run the slave node: connect to master, receive partition, simulate fully.
     pub fn run(&mut self, design: &IrDesign) -> Result<(), String> {
         if self.config.verbose {
-            eprintln!("[Slave] Connecting to master at {}:{}...",
-                self.config.master_host, self.config.master_port);
+            eprintln!(
+                "[Slave] Connecting to master at {}:{}...",
+                self.config.master_host, self.config.master_port
+            );
         }
 
         // Step 1: Connect to master
-        let stream = TcpStream::connect(format!("{}:{}",
-            self.config.master_host, self.config.master_port))
-            .map_err(|e| format!("[Slave] Cannot connect to master: {}", e))?;
+        let stream = TcpStream::connect(format!(
+            "{}:{}",
+            self.config.master_host, self.config.master_port
+        ))
+        .map_err(|e| format!("[Slave] Cannot connect to master: {}", e))?;
 
         let stream = Arc::new(Mutex::new(stream));
         self.stream = Some(stream.clone());
@@ -81,7 +85,10 @@ impl DistributedSlave {
                 .ok_or_else(|| "[Slave] Master disconnected during handshake".to_string())?;
 
             if msg_type != 0x10 {
-                return Err(format!("[Slave] Expected PartitionAssign (0x10), got {:#x}", msg_type));
+                return Err(format!(
+                    "[Slave] Expected PartitionAssign (0x10), got {:#x}",
+                    msg_type
+                ));
             }
 
             let assign = decode_partition_assign(&payload)
@@ -92,9 +99,13 @@ impl DistributedSlave {
                 .map_err(|e| format!("[Slave] Send ack failed: {}", e))?;
 
             if self.config.verbose {
-                eprintln!("[Slave] Assigned partition {} of {} ({} signals, {} cross signals)",
-                    assign.partition_id, assign.num_partitions,
-                    assign.num_signals, assign.cross_signals.len());
+                eprintln!(
+                    "[Slave] Assigned partition {} of {} ({} signals, {} cross signals)",
+                    assign.partition_id,
+                    assign.num_partitions,
+                    assign.num_signals,
+                    assign.cross_signals.len()
+                );
             }
 
             assign
@@ -105,11 +116,14 @@ impl DistributedSlave {
         // Step 3: Extract sub-design for this partition
         // Phase 9 enhancement: only simulate the partition's portion of the design
         let partition = crate::simulator::distributed::partitioner::DesignPartitioner::partition(
-            design, assignment.num_partitions as usize
+            design,
+            assignment.num_partitions as usize,
         );
         let sub_design = if assignment.num_partitions > 1 {
             crate::simulator::distributed::partitioner::DesignPartitioner::extract_partition_design(
-                design, assignment.partition_id as usize, &partition
+                design,
+                assignment.partition_id as usize,
+                &partition,
             )
         } else {
             design.clone()
@@ -123,7 +137,9 @@ impl DistributedSlave {
 
         // Step 5: Run simulation on sub-design (heartbeats handled synchronously in main loop)
         let mut engine = SimulationEngine::new(sub_design, self.config.max_time);
-        engine.run().map_err(|e| format!("[Slave] Simulation error: {}", e))?;
+        engine
+            .run()
+            .map_err(|e| format!("[Slave] Simulation error: {}", e))?;
 
         if self.config.verbose {
             eprintln!("[Slave] Simulation complete. Sending results...");
@@ -138,8 +154,12 @@ impl DistributedSlave {
         }
 
         if self.config.verbose {
-            eprintln!("[Slave] Done. Partition {} simulated {} time units ({} signals).",
-                self.partition_id, engine.state.time, engine.design.top.signals.len());
+            eprintln!(
+                "[Slave] Done. Partition {} simulated {} time units ({} signals).",
+                self.partition_id,
+                engine.state.time,
+                engine.design.top.signals.len()
+            );
         }
 
         Ok(())

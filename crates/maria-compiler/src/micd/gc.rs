@@ -208,11 +208,7 @@ fn evict_lru_preproc(db: &mut MicdDatabase, budget: u64, st: &mut GcStats) {
 }
 
 fn evict_lru_verify(db: &mut MicdDatabase, max: usize, st: &mut GcStats) {
-    let mut order: Vec<(u64, u64)> = db
-        .verify_accessed
-        .iter()
-        .map(|(h, at)| (*h, *at))
-        .collect();
+    let mut order: Vec<(u64, u64)> = db.verify_accessed.iter().map(|(h, at)| (*h, *at)).collect();
     order.sort_by_key(|(_, at)| *at);
     for (hash, _) in order {
         if db.verify.len() <= max {
@@ -234,11 +230,7 @@ fn evict_lru_verify(db: &mut MicdDatabase, max: usize, st: &mut GcStats) {
 /// pun → sampah.
 fn compact_unreachable(db: &mut MicdDatabase, st: &mut GcStats) {
     let known: HashSet<&PathBuf> = db.files.keys().collect();
-    let live_hashes: HashSet<u64> = db
-        .files
-        .values()
-        .map(|m| m.content_hash)
-        .collect();
+    let live_hashes: HashSet<u64> = db.files.values().map(|m| m.content_hash).collect();
 
     // AST & preproc: path tidak terdaftar → buang.
     let stale_ast: Vec<PathBuf> = db
@@ -316,7 +308,8 @@ mod tests {
     use crate::micd::verify::VerifyResult;
 
     fn root(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("maria_micd_gc_{}_{}", std::process::id(), name));
+        let dir =
+            std::env::temp_dir().join(format!("maria_micd_gc_{}_{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

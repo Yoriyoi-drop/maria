@@ -43,7 +43,12 @@ mod tests {
 
     #[test]
     fn test_assertion_report() {
-        let r = AssertionReport { total: 3, passed: 2, failed: 1, errored: 0 };
+        let r = AssertionReport {
+            total: 3,
+            passed: 2,
+            failed: 1,
+            errored: 0,
+        };
         assert!(!r.is_clean());
         assert!(AssertionReport::default().is_clean());
     }
@@ -52,8 +57,18 @@ mod tests {
     fn test_assertion_summary() {
         let s = AssertionSummary {
             by_assertion: vec![
-                AssertionReport { total: 2, passed: 2, failed: 0, errored: 0 },
-                AssertionReport { total: 1, passed: 1, failed: 0, errored: 0 },
+                AssertionReport {
+                    total: 2,
+                    passed: 2,
+                    failed: 0,
+                    errored: 0,
+                },
+                AssertionReport {
+                    total: 1,
+                    passed: 1,
+                    failed: 0,
+                    errored: 0,
+                },
             ],
         };
         assert_eq!(s.total(), 3);

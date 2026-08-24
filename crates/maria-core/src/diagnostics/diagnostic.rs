@@ -58,7 +58,13 @@ pub struct FixItHint {
 
 impl FixItHint {
     /// Buat fix-it untuk insert teks di posisi tertentu
-    pub fn insert(file: impl Into<String>, line: usize, col: usize, text: impl Into<String>, description: impl Into<String>) -> Self {
+    pub fn insert(
+        file: impl Into<String>,
+        line: usize,
+        col: usize,
+        text: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
         FixItHint {
             file: file.into(),
             start_line: line,
@@ -100,7 +106,15 @@ impl FixItHint {
         end_col: usize,
         description: impl Into<String>,
     ) -> Self {
-        FixItHint::replace(file, start_line, start_col, end_line, end_col, "", description)
+        FixItHint::replace(
+            file,
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+            "",
+            description,
+        )
     }
 }
 
@@ -880,19 +894,17 @@ impl DiagCode {
             | DiagCode::AssertionImmediateFailed
             | DiagCode::CoverProperty
             | DiagCode::AssertionDisableError => "Assertion",
-            DiagCode::DpiError
-            | DiagCode::DpiImportNotFound
-            | DiagCode::DpiScopeError => "DPI",
-            DiagCode::InternalError
-            | DiagCode::Unreachable
-            | DiagCode::NotImplemented => "Internal",
+            DiagCode::DpiError | DiagCode::DpiImportNotFound | DiagCode::DpiScopeError => "DPI",
+            DiagCode::InternalError | DiagCode::Unreachable | DiagCode::NotImplemented => {
+                "Internal"
+            }
             DiagCode::WaveformError => "Waveform",
-            DiagCode::PreprocessorError
-            | DiagCode::DebuggerError
-            | DiagCode::IoError => "Infrastructure",
-            DiagCode::SimulationError
-            | DiagCode::OutOfBounds
-            | DiagCode::RuntimeTypeMismatch => "Runtime",
+            DiagCode::PreprocessorError | DiagCode::DebuggerError | DiagCode::IoError => {
+                "Infrastructure"
+            }
+            DiagCode::SimulationError | DiagCode::OutOfBounds | DiagCode::RuntimeTypeMismatch => {
+                "Runtime"
+            }
             DiagCode::UninitializedRegister
             | DiagCode::WidthMismatchWarning
             | DiagCode::UnusedSignal
@@ -1330,7 +1342,16 @@ impl fmt::Display for Diagnostic {
         if !self.fix_its.is_empty() {
             write!(f, "\n\nFix-it suggestions:")?;
             for fix_it in &self.fix_its {
-                write!(f, "\n  = fix-it: {} ({}:{}:{}-{}:{})", fix_it.description, fix_it.file, fix_it.start_line, fix_it.start_col, fix_it.end_line, fix_it.end_col)?;
+                write!(
+                    f,
+                    "\n  = fix-it: {} ({}:{}:{}-{}:{})",
+                    fix_it.description,
+                    fix_it.file,
+                    fix_it.start_line,
+                    fix_it.start_col,
+                    fix_it.end_line,
+                    fix_it.end_col
+                )?;
                 if !fix_it.replacement.is_empty() {
                     write!(f, " -> '{}'", fix_it.replacement.escape_debug())?;
                 } else {
@@ -1492,8 +1513,8 @@ mod tests {
             .with_delta(12)
             .with_module("uart_top")
             .with_process("write_task");
-        let d = Diagnostic::error(DiagCode::NullHandle, "null handle access")
-            .with_runtime_context(ctx);
+        let d =
+            Diagnostic::error(DiagCode::NullHandle, "null handle access").with_runtime_context(ctx);
         assert!(d.runtime_context.is_some());
         let formatted = d.runtime_context.as_ref().unwrap().format();
         assert!(formatted.contains("uart_top"));

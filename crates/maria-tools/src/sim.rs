@@ -3,11 +3,11 @@
 //! Wrapper ringkas pipeline simulasi: compile → elaborate → run engine →
 //! VCD/FST + ringkasan assertion/coverage.
 
-use maria_elaboration::elaborator::ElaborateMode;
+use crate::{kv, open_elaborated, section};
 use maria_core::error::SimError;
+use maria_elaboration::elaborator::ElaborateMode;
 use maria_simulator::simulator::SimulationEngine;
 use std::time::Instant;
-use crate::{open_elaborated, section, kv};
 
 /// Opsi msim.
 pub struct SimArgs<'a> {
@@ -25,7 +25,13 @@ pub struct SimArgs<'a> {
 /// Jalankan msim.
 pub fn run(args: &SimArgs) -> Result<(), SimError> {
     // Use StrictSimulation mode for simulation tools (Rule 10)
-    let (_session, _design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::StrictSimulation)?;
+    let (_session, _design, ir) = open_elaborated(
+        args.files,
+        args.incdirs,
+        args.defines,
+        args.top,
+        ElaborateMode::StrictSimulation,
+    )?;
     let top_name = ir.top.name.as_str();
 
     let mut engine = SimulationEngine::new(ir, args.max_time);
@@ -118,7 +124,10 @@ pub fn run(args: &SimArgs) -> Result<(), SimError> {
     if engine.sev_fatal_count > 0 {
         return Err(SimError::with_diag(
             maria_core::diagnostics::DiagCode::AssertionFailed,
-            format!("$fatal: simulasi dihentikan ({} fatal)", engine.sev_fatal_count),
+            format!(
+                "$fatal: simulasi dihentikan ({} fatal)",
+                engine.sev_fatal_count
+            ),
         ));
     }
     Ok(())

@@ -94,7 +94,8 @@ pub fn is_backtick(buf: &[u8]) -> bool {
 
 /// Check if all bytes in buffer are whitespace (for SIMD result verification).
 pub fn is_all_whitespace(buf: &[u8]) -> bool {
-    buf.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
+    buf.iter()
+        .all(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
 }
 
 // ─── AVX2 Implementation ───
@@ -261,7 +262,8 @@ pub(crate) mod test_utils {
             if is_x86_feature_detected!("avx2") {
                 let avx2 = unsafe { count_whitespace_avx2(buf) };
                 assert_eq!(
-                    scalar, avx2,
+                    scalar,
+                    avx2,
                     "AVX2 mismatch for buffer {:?}",
                     std::str::from_utf8(buf).unwrap_or("<invalid>")
                 );
@@ -269,7 +271,8 @@ pub(crate) mod test_utils {
             if is_x86_feature_detected!("sse4.2") {
                 let sse = unsafe { count_whitespace_sse42(buf) };
                 assert_eq!(
-                    scalar, sse,
+                    scalar,
+                    sse,
                     "SSE4.2 mismatch for buffer {:?}",
                     std::str::from_utf8(buf).unwrap_or("<invalid>")
                 );
@@ -382,7 +385,8 @@ mod tests {
         for (buf, expected) in &test_cases {
             let result = count_whitespace(buf);
             assert_eq!(
-                result, *expected,
+                result,
+                *expected,
                 "Failed for buffer {:?} (len={}): expected {}, got {}",
                 std::str::from_utf8(buf).unwrap_or("<invalid>"),
                 buf.len(),
@@ -448,7 +452,7 @@ mod tests {
             b"    ",
             b"     x",                            // 5 spaces + x (byte0=ws, bug-prone)
             b"      x",                           // 6 spaces + x
-            b"                        x", // 24 spaces + x
+            b"                        x",         // 24 spaces + x
             b"                                x", // 32 spaces + x
             b"                                        x", // 40 spaces + x
             b"x",
@@ -461,10 +465,12 @@ mod tests {
             let dispatch = count_whitespace(p);
             let scalar = count_whitespace_scalar(p);
             assert_eq!(
-                dispatch, scalar,
+                dispatch,
+                scalar,
                 "Dispatch mismatch for pattern {:?}: dispatch={}, scalar={}",
                 std::str::from_utf8(p).unwrap_or("<invalid>"),
-                dispatch, scalar
+                dispatch,
+                scalar
             );
         }
     }

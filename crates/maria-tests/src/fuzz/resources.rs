@@ -81,17 +81,17 @@ fn fuzz_extreme_literals() {
         "module m; wire w = 1'bx; endmodule".to_string(),
         "module m; wire [1023:0] w = 1024'h0; endmodule".to_string(),
         "module m; wire [65535:0] w = 65536'hx; endmodule".to_string(),
-        "module m; wire w = 0'd0; endmodule".to_string(),           // width 0
-        "module m; wire w = 2'b2; endmodule".to_string(),           // digit invalid
-        "module m; wire w = 8'b; endmodule".to_string(),            // tanpa digit
-        "module m; wire w = 'd; endmodule".to_string(),             // sized tanpa width
+        "module m; wire w = 0'd0; endmodule".to_string(), // width 0
+        "module m; wire w = 2'b2; endmodule".to_string(), // digit invalid
+        "module m; wire w = 8'b; endmodule".to_string(),  // tanpa digit
+        "module m; wire w = 'd; endmodule".to_string(),   // sized tanpa width
         "module m; wire w = 8'd99999999999999999999; endmodule".to_string(), // overflow nilai
-        "module m; wire w = 4'sd15; endmodule".to_string(),         // signed
-        "module m; wire w = 8'b1010_; endmodule".to_string(),       // underscore trailing
-        "module m; wire w = 16'h____; endmodule".to_string(),       // underscore semua
+        "module m; wire w = 4'sd15; endmodule".to_string(), // signed
+        "module m; wire w = 8'b1010_; endmodule".to_string(), // underscore trailing
+        "module m; wire w = 16'h____; endmodule".to_string(), // underscore semua
         "module m; real r = 3.; endmodule".to_string(),
         "module m; real r = .5; endmodule".to_string(),
-        "module m; wire w = 8'o779; endmodule".to_string(),         // octal invalid
+        "module m; wire w = 8'o779; endmodule".to_string(), // octal invalid
         "module m; wire w = 65'haaaaaaaaaaaaaaaaaaa; endmodule".to_string(),
     ];
     cases.push(format!("module m; wire w = {}'h0; endmodule", u32::MAX)); // width ekstrem
@@ -116,13 +116,7 @@ fn fuzz_long_identifiers() {
         let r = with_timeout(10, move || crate::compile_str(&t).is_ok());
         assert!(r.is_some(), "hang/crash pada identifier len {}", len);
     }
-    let escaped = [
-        "\\bus+width ",
-        "\\$root.x ",
-        "\\ ",
-        "\\a\\\n b",
-        "\\\\",
-    ];
+    let escaped = ["\\bus+width ", "\\$root.x ", "\\ ", "\\a\\\n b", "\\\\"];
     for (i, e) in escaped.iter().enumerate() {
         let src = format!("module m; wire {}; endmodule", e);
         let t = src;

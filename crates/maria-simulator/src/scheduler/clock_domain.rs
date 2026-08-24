@@ -16,8 +16,8 @@
 //! 4. **Safety**: Processes yang mengandung delay, event control, atau system calls
 //!    TIDAK boleh di-fuse — mereka tetap pakai event-driven evaluation.
 
-use std::collections::{HashMap, HashSet};
 use maria_ir::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Types ───
 
@@ -127,10 +127,7 @@ impl ClockDomainAnalysis {
         // Phase 2: For each clock group, find follower combinational processes.
         // A combinational process is a follower if it reads ANY signal
         // that is written by a sequential process in this clock group.
-        let seq_writes: Vec<HashSet<SignalId>> = processes
-            .iter()
-            .map(get_process_writes)
-            .collect();
+        let seq_writes: Vec<HashSet<SignalId>> = processes.iter().map(get_process_writes).collect();
 
         for ((clock_signal, edge), seq_pids) in clock_groups {
             // Collect ALL signals written by sequential processes in this domain
@@ -146,10 +143,11 @@ impl ClockDomainAnalysis {
                 .iter()
                 .enumerate()
                 .filter(|(pid, p)| {
-                    !seq_pids.contains(pid) && matches!(
-                        p,
-                        Process::Combinational { .. } | Process::CombReactive { .. }
-                    )
+                    !seq_pids.contains(pid)
+                        && matches!(
+                            p,
+                            Process::Combinational { .. } | Process::CombReactive { .. }
+                        )
                 })
                 .filter(|(_, p)| {
                     let reads = get_process_reads(p);
@@ -219,8 +217,12 @@ fn get_process_writes(process: &Process) -> HashSet<SignalId> {
 fn get_process_reads(process: &Process) -> HashSet<SignalId> {
     let mut reads = HashSet::new();
     match process {
-        Process::Combinational { sensitivity, body, .. }
-        | Process::CombReactive { sensitivity, body, .. } => {
+        Process::Combinational {
+            sensitivity, body, ..
+        }
+        | Process::CombReactive {
+            sensitivity, body, ..
+        } => {
             for s in sensitivity {
                 reads.insert(s.sig_id);
             }
@@ -248,18 +250,22 @@ fn get_process_reads(process: &Process) -> HashSet<SignalId> {
 fn collect_stmt_writes(stmts: &[IrStmt], writes: &mut HashSet<SignalId>) {
     for stmt in stmts {
         match stmt {
-            IrStmt::Block { stmts: inner }
-            | IrStmt::NamedBlock { stmts: inner, .. } => {
+            IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                 collect_stmt_writes(inner, writes);
             }
-            IrStmt::BlockingAssign { lhs, .. }
-            | IrStmt::NonBlockingAssign { lhs, .. } => {
+            IrStmt::BlockingAssign { lhs, .. } | IrStmt::NonBlockingAssign { lhs, .. } => {
                 lvalue_collect_writes(lhs, writes);
             }
-            IrStmt::Force { lvalue, .. } | IrStmt::Release { lvalue, .. } | IrStmt::Deassign { lvalue, .. } => {
+            IrStmt::Force { lvalue, .. }
+            | IrStmt::Release { lvalue, .. }
+            | IrStmt::Deassign { lvalue, .. } => {
                 lvalue_collect_writes(lvalue, writes);
             }
-            IrStmt::If { true_branch, false_branch, .. } => {
+            IrStmt::If {
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 collect_stmt_writes(true_branch, writes);
                 collect_stmt_writes(false_branch, writes);
             }
@@ -269,7 +275,9 @@ fn collect_stmt_writes(stmts: &[IrStmt], writes: &mut HashSet<SignalId>) {
                 }
                 collect_stmt_writes(default, writes);
             }
-            IrStmt::LoopFor { init, step, body, .. } => {
+            IrStmt::LoopFor {
+                init, step, body, ..
+            } => {
                 if let Some(s) = init {
                     collect_stmt_writes(&[s.as_ref().clone()], writes);
                 }
@@ -278,9 +286,12 @@ fn collect_stmt_writes(stmts: &[IrStmt], writes: &mut HashSet<SignalId>) {
                 }
                 collect_stmt_writes(body, writes);
             }
-            IrStmt::LoopWhile { body, .. } | IrStmt::LoopDoWhile { body, .. }
-            | IrStmt::Repeat { body, .. } | IrStmt::Foreach { body, .. }
-            | IrStmt::Delay { body, .. } | IrStmt::Wait { body, .. } => {
+            IrStmt::LoopWhile { body, .. }
+            | IrStmt::LoopDoWhile { body, .. }
+            | IrStmt::Repeat { body, .. }
+            | IrStmt::Foreach { body, .. }
+            | IrStmt::Delay { body, .. }
+            | IrStmt::Wait { body, .. } => {
                 collect_stmt_writes(body, writes);
             }
             IrStmt::EventTrigger { sig_id, .. } => {
@@ -291,9 +302,21 @@ fn collect_stmt_writes(stmts: &[IrStmt], writes: &mut HashSet<SignalId>) {
                     collect_stmt_writes(p, writes);
                 }
             }
-            IrStmt::Assert { pass_stmt, fail_stmt, .. }
-            | IrStmt::Assume { pass_stmt, fail_stmt, .. }
-            | IrStmt::Expect { pass_stmt, fail_stmt, .. } => {
+            IrStmt::Assert {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Assume {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Expect {
+                pass_stmt,
+                fail_stmt,
+                ..
+            } => {
                 collect_stmt_writes(pass_stmt, writes);
                 collect_stmt_writes(fail_stmt, writes);
             }
@@ -308,20 +331,28 @@ fn collect_stmt_writes(stmts: &[IrStmt], writes: &mut HashSet<SignalId>) {
 fn collect_stmt_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
     for stmt in stmts {
         match stmt {
-            IrStmt::Block { stmts: inner }
-            | IrStmt::NamedBlock { stmts: inner, .. } => {
+            IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                 collect_stmt_reads(inner, reads);
             }
-            IrStmt::BlockingAssign { rhs, .. }
-            | IrStmt::NonBlockingAssign { rhs, .. } => {
+            IrStmt::BlockingAssign { rhs, .. } | IrStmt::NonBlockingAssign { rhs, .. } => {
                 collect_expr_reads(rhs, reads);
             }
-            IrStmt::If { cond, true_branch, false_branch, .. } => {
+            IrStmt::If {
+                cond,
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 collect_expr_reads(cond, reads);
                 collect_stmt_reads(true_branch, reads);
                 collect_stmt_reads(false_branch, reads);
             }
-            IrStmt::Case { expr: case_expr, items, default, .. } => {
+            IrStmt::Case {
+                expr: case_expr,
+                items,
+                default,
+                ..
+            } => {
                 collect_expr_reads(case_expr, reads);
                 for item in items {
                     for pat in &item.labels {
@@ -343,7 +374,9 @@ fn collect_stmt_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
                 collect_expr_reads(count, reads);
                 collect_stmt_reads(body, reads);
             }
-            IrStmt::Foreach { array_var, body, .. } => {
+            IrStmt::Foreach {
+                array_var, body, ..
+            } => {
                 collect_expr_reads(array_var, reads);
                 collect_stmt_reads(body, reads);
             }
@@ -361,8 +394,20 @@ fn collect_stmt_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
                     collect_stmt_reads(p, reads);
                 }
             }
-            IrStmt::Assert { cond, pass_stmt, fail_stmt, disable_iff, .. }
-            | IrStmt::Assume { cond, pass_stmt, fail_stmt, disable_iff, .. } => {
+            IrStmt::Assert {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                disable_iff,
+                ..
+            }
+            | IrStmt::Assume {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                disable_iff,
+                ..
+            } => {
                 collect_expr_reads(cond, reads);
                 if let Some(di) = disable_iff {
                     collect_expr_reads(di, reads);
@@ -370,12 +415,22 @@ fn collect_stmt_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
                 collect_stmt_reads(pass_stmt, reads);
                 collect_stmt_reads(fail_stmt, reads);
             }
-            IrStmt::Expect { cond, pass_stmt, fail_stmt, .. } => {
+            IrStmt::Expect {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                ..
+            } => {
                 collect_expr_reads(cond, reads);
                 collect_stmt_reads(pass_stmt, reads);
                 collect_stmt_reads(fail_stmt, reads);
             }
-            IrStmt::Cover { cond, pass_stmt, disable_iff, .. } => {
+            IrStmt::Cover {
+                cond,
+                pass_stmt,
+                disable_iff,
+                ..
+            } => {
                 collect_expr_reads(cond, reads);
                 if let Some(di) = disable_iff {
                     collect_expr_reads(di, reads);
@@ -399,8 +454,7 @@ fn collect_expr_reads(expr: &IrExpr, reads: &mut HashSet<SignalId>) {
         | IrExpr::BitSelect(sig_id, _) => {
             reads.insert(*sig_id);
         }
-        IrExpr::ExprRangeSelect(inner, _, _)
-        | IrExpr::ExprBitSelect(inner, _) => {
+        IrExpr::ExprRangeSelect(inner, _, _) | IrExpr::ExprBitSelect(inner, _) => {
             collect_expr_reads(inner, reads);
         }
         IrExpr::ExprPartSelect(inner, base, width) => {
@@ -417,8 +471,7 @@ fn collect_expr_reads(expr: &IrExpr, reads: &mut HashSet<SignalId>) {
                 collect_expr_reads(e, reads);
             }
         }
-        IrExpr::Replicate(_, inner) | IrExpr::UnaryOp(_, inner)
-        | IrExpr::Signed(inner) => {
+        IrExpr::Replicate(_, inner) | IrExpr::UnaryOp(_, inner) | IrExpr::Signed(inner) => {
             collect_expr_reads(inner, reads);
         }
         IrExpr::BinaryOp(_, lhs, rhs) | IrExpr::Cond(_, lhs, rhs) => {
@@ -434,13 +487,20 @@ fn collect_expr_reads(expr: &IrExpr, reads: &mut HashSet<SignalId>) {
                 collect_expr_reads(item, reads);
             }
         }
-        IrExpr::DpiCall { args, .. } | IrExpr::SysFunc { args, .. }
-        | IrExpr::NewCall { args, .. } | IrExpr::FuncCall { args, .. } => {
+        IrExpr::DpiCall { args, .. }
+        | IrExpr::SysFunc { args, .. }
+        | IrExpr::NewCall { args, .. }
+        | IrExpr::FuncCall { args, .. } => {
             for arg in args {
                 collect_expr_reads(arg, reads);
             }
         }
-        IrExpr::MethodCall { obj, args, with_clause, .. } => {
+        IrExpr::MethodCall {
+            obj,
+            args,
+            with_clause,
+            ..
+        } => {
             collect_expr_reads(obj, reads);
             for arg in args {
                 collect_expr_reads(arg, reads);
@@ -543,9 +603,21 @@ mod tests {
             top: IrModule {
                 name: Symbol::intern("top"),
                 signals: vec![
-                    SignalInfo { name: Symbol::intern("clk"), width: 1, ..default_si() },
-                    SignalInfo { name: Symbol::intern("counter"), width: 8, ..default_si() },
-                    SignalInfo { name: Symbol::intern("out"), width: 8, ..default_si() },
+                    SignalInfo {
+                        name: Symbol::intern("clk"),
+                        width: 1,
+                        ..default_si()
+                    },
+                    SignalInfo {
+                        name: Symbol::intern("counter"),
+                        width: 8,
+                        ..default_si()
+                    },
+                    SignalInfo {
+                        name: Symbol::intern("out"),
+                        width: 8,
+                        ..default_si()
+                    },
                 ],
                 inputs: vec![],
                 outputs: vec![],
@@ -609,21 +681,27 @@ mod tests {
             top: IrModule {
                 name: Symbol::intern("top"),
                 signals: vec![
-                    SignalInfo { name: Symbol::intern("clk"), width: 1, ..default_si() },
-                    SignalInfo { name: Symbol::intern("q"), width: 8, ..default_si() },
+                    SignalInfo {
+                        name: Symbol::intern("clk"),
+                        width: 1,
+                        ..default_si()
+                    },
+                    SignalInfo {
+                        name: Symbol::intern("q"),
+                        width: 8,
+                        ..default_si()
+                    },
                 ],
                 inputs: vec![],
                 outputs: vec![],
                 inouts: vec![],
-                processes: vec![
-                    Process::Sequential {
-                        name: Symbol::intern("seq"),
-                        clock: ClockEdge::PosEdge(clk_sig),
-                        reset: None,
-                        body: seq_body,
-                        iff: None,
-                    },
-                ],
+                processes: vec![Process::Sequential {
+                    name: Symbol::intern("seq"),
+                    clock: ClockEdge::PosEdge(clk_sig),
+                    reset: None,
+                    body: seq_body,
+                    iff: None,
+                }],
                 sub_instances: vec![],
             },
             modules: HashMap::new(),

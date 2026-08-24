@@ -123,8 +123,8 @@ impl Default for IncrementalTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scheduler::work_stealing::Task;
     use crate::scheduler::dag::DependencyGraph;
+    use crate::scheduler::work_stealing::Task;
 
     #[test]
     fn test_incremental_register() {

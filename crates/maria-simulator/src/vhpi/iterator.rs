@@ -18,31 +18,57 @@ pub fn vhpi_iterate(kind: i32, ref_handle: VhpiHandle) -> VhpiHandle {
         (vhpiSignal, VhpiObjectKind::Module(_, _)) => {
             // Iterate semua signal modul (bukan port).
             with_vhpi_engine(|engine| {
-                let items: Vec<VhpiHandle> = engine.design.top.signals.iter().enumerate()
-                    .filter(|(_, s)| !matches!(s.kind, SignalKind::Input | SignalKind::Output | SignalKind::Inout))
+                let items: Vec<VhpiHandle> = engine
+                    .design
+                    .top
+                    .signals
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| {
+                        !matches!(
+                            s.kind,
+                            SignalKind::Input | SignalKind::Output | SignalKind::Inout
+                        )
+                    })
                     .map(|(i, _)| super::handle::register_object(VhpiObjectKind::Signal(i, 0)))
                     .collect();
-                if items.is_empty() { return VhpiHandle::NULL; }
+                if items.is_empty() {
+                    return VhpiHandle::NULL;
+                }
                 super::handle::register_object(VhpiObjectKind::Iterator { items, cursor: 0 })
-            }).unwrap_or(VhpiHandle::NULL)
+            })
+            .unwrap_or(VhpiHandle::NULL)
         }
-        (vhpiPort, VhpiObjectKind::Module(_, _)) => {
-            with_vhpi_engine(|engine| {
-                let items: Vec<VhpiHandle> = engine.design.top.signals.iter().enumerate()
-                    .filter(|(_, s)| matches!(s.kind, SignalKind::Input | SignalKind::Output | SignalKind::Inout))
-                    .map(|(i, _)| super::handle::register_object(VhpiObjectKind::Port(i, 0)))
-                    .collect();
-                if items.is_empty() { return VhpiHandle::NULL; }
-                super::handle::register_object(VhpiObjectKind::Iterator { items, cursor: 0 })
-            }).unwrap_or(VhpiHandle::NULL)
-        }
+        (vhpiPort, VhpiObjectKind::Module(_, _)) => with_vhpi_engine(|engine| {
+            let items: Vec<VhpiHandle> = engine
+                .design
+                .top
+                .signals
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    matches!(
+                        s.kind,
+                        SignalKind::Input | SignalKind::Output | SignalKind::Inout
+                    )
+                })
+                .map(|(i, _)| super::handle::register_object(VhpiObjectKind::Port(i, 0)))
+                .collect();
+            if items.is_empty() {
+                return VhpiHandle::NULL;
+            }
+            super::handle::register_object(VhpiObjectKind::Iterator { items, cursor: 0 })
+        })
+        .unwrap_or(VhpiHandle::NULL),
         _ => VhpiHandle::NULL,
     }
 }
 
 /// vhpi_scan(iterator) — object berikutnya, NULL saat habis.
 pub fn vhpi_scan(iter_handle: VhpiHandle) -> VhpiHandle {
-    if iter_handle.is_null() { return VhpiHandle::NULL; }
+    if iter_handle.is_null() {
+        return VhpiHandle::NULL;
+    }
     let id = iter_handle.ptr as u64;
     let mut reg = super::handle::vhpi_objects_for_scan();
     let next = {
@@ -52,7 +78,9 @@ pub fn vhpi_scan(iter_handle: VhpiHandle) -> VhpiHandle {
         };
         match &mut obj.kind {
             VhpiObjectKind::Iterator { items, cursor } => {
-                if *cursor >= items.len() { return VhpiHandle::NULL; }
+                if *cursor >= items.len() {
+                    return VhpiHandle::NULL;
+                }
                 let item = items[*cursor];
                 *cursor += 1;
                 item

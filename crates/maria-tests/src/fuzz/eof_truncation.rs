@@ -31,7 +31,10 @@ const CORPUS: &[&str] = &[
 ];
 
 /// Jalankan `f` dengan timeout — hang = kegagalan keras (livelock parser).
-fn with_timeout<T: Send + 'static>(name: &str, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+fn with_timeout<T: Send + 'static>(
+    name: &str,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)

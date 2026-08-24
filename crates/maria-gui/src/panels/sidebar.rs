@@ -2,10 +2,10 @@
 
 use eframe::egui;
 
+use super::super::state::{classify_file, FileCat, GuiState, SidebarTab};
 use super::architecture;
 use super::dependency;
 use super::search;
-use super::super::state::{FileCat, GuiState, SidebarTab, classify_file};
 
 pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     // ── Tab selector ──
@@ -23,7 +23,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             state.sidebar_tab = SidebarTab::Symbols;
         }
         if ui
-            .selectable_label(state.sidebar_tab == SidebarTab::Architecture, "Architecture")
+            .selectable_label(
+                state.sidebar_tab == SidebarTab::Architecture,
+                "Architecture",
+            )
             .clicked()
         {
             state.sidebar_tab = SidebarTab::Architecture;
@@ -166,10 +169,10 @@ fn project_tab(ui: &mut egui::Ui, state: &mut GuiState) {
 /// Warna nama file per kategori (desain: sedikit warna, banyak informasi).
 fn file_cat_color(cat: FileCat) -> egui::Color32 {
     match cat {
-        FileCat::Rtl => egui::Color32::from_rgb(79, 193, 255),     // biru — RTL
+        FileCat::Rtl => egui::Color32::from_rgb(79, 193, 255), // biru — RTL
         FileCat::Testbench => egui::Color32::from_rgb(34, 197, 94), // hijau — TB
         FileCat::Library => egui::Color32::from_rgb(168, 85, 247), // ungu — lib/IP
-        FileCat::Include => egui::Color32::from_rgb(6, 182, 212),   // cyan — header
+        FileCat::Include => egui::Color32::from_rgb(6, 182, 212), // cyan — header
         FileCat::All => egui::Color32::GRAY,
     }
 }
@@ -208,7 +211,11 @@ fn file_row(
             .monospace()
             .size(12.0)
             .color(file_cat_color(cat));
-        if ui.selectable_label(false, text).on_hover_text(rel).clicked() {
+        if ui
+            .selectable_label(false, text)
+            .on_hover_text(rel)
+            .clicked()
+        {
             *to_open = Some(path.clone());
         }
     });
@@ -236,23 +243,21 @@ fn tree_nodes(
                 continue;
             }
             let id = egui::Id::new(&node.path).with("dir");
-            egui::CollapsingHeader::new(
-                egui::RichText::new(format!("📁 {}", node.name)).weak(),
-            )
-            .id_salt(id)
-            .default_open(depth < 1)
-            .show(ui, |ui| {
-                tree_nodes(
-                    ui,
-                    &node.children,
-                    depth + 1,
-                    bookmarks,
-                    bookmarks_only,
-                    cat,
-                    to_open,
-                    to_toggle,
-                );
-            });
+            egui::CollapsingHeader::new(egui::RichText::new(format!("📁 {}", node.name)).weak())
+                .id_salt(id)
+                .default_open(depth < 1)
+                .show(ui, |ui| {
+                    tree_nodes(
+                        ui,
+                        &node.children,
+                        depth + 1,
+                        bookmarks,
+                        bookmarks_only,
+                        cat,
+                        to_open,
+                        to_toggle,
+                    );
+                });
         } else {
             // Filter bookmark: hanya file yang di-bookmark yang tampil.
             if bookmarks_only && !bookmarks.contains(&node.path) {
@@ -306,30 +311,48 @@ fn dir_has(
 fn symbols_tab(ui: &mut egui::Ui, state: &mut GuiState) {
     let Some(info) = &state.compile_info else {
         ui.add_space(8.0);
-        ui.label(egui::RichText::new("Compile dulu untuk melihat symbols").weak().italics());
+        ui.label(
+            egui::RichText::new("Compile dulu untuk melihat symbols")
+                .weak()
+                .italics(),
+        );
         return;
     };
 
-    egui::ScrollArea::vertical().id_salt("symbols_scroll").show(ui, |ui| {
-        if !info.modules.is_empty() {
-            ui.label(egui::RichText::new("Modules").strong().size(11.0));
-            for m in &info.modules {
-                ui.label(egui::RichText::new(format!("▸ {}", m)).monospace().size(12.0));
+    egui::ScrollArea::vertical()
+        .id_salt("symbols_scroll")
+        .show(ui, |ui| {
+            if !info.modules.is_empty() {
+                ui.label(egui::RichText::new("Modules").strong().size(11.0));
+                for m in &info.modules {
+                    ui.label(
+                        egui::RichText::new(format!("▸ {}", m))
+                            .monospace()
+                            .size(12.0),
+                    );
+                }
+                ui.add_space(6.0);
             }
-            ui.add_space(6.0);
-        }
-        if !info.packages.is_empty() {
-            ui.label(egui::RichText::new("Packages").strong().size(11.0));
-            for m in &info.packages {
-                ui.label(egui::RichText::new(format!("◈ {}", m)).monospace().size(12.0));
+            if !info.packages.is_empty() {
+                ui.label(egui::RichText::new("Packages").strong().size(11.0));
+                for m in &info.packages {
+                    ui.label(
+                        egui::RichText::new(format!("◈ {}", m))
+                            .monospace()
+                            .size(12.0),
+                    );
+                }
+                ui.add_space(6.0);
             }
-            ui.add_space(6.0);
-        }
-        if !info.interfaces.is_empty() {
-            ui.label(egui::RichText::new("Interfaces").strong().size(11.0));
-            for m in &info.interfaces {
-                ui.label(egui::RichText::new(format!("◇ {}", m)).monospace().size(12.0));
+            if !info.interfaces.is_empty() {
+                ui.label(egui::RichText::new("Interfaces").strong().size(11.0));
+                for m in &info.interfaces {
+                    ui.label(
+                        egui::RichText::new(format!("◇ {}", m))
+                            .monospace()
+                            .size(12.0),
+                    );
+                }
             }
-        }
-    });
+        });
 }

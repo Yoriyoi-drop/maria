@@ -46,7 +46,11 @@ pub fn set_thread_arena(arena: Option<&mut SimulationArena>) {
     });
     // Register/deregister LogicVecCtor so LogicVec constructors go through arena.
     // try_alloc_logicvec has the exact signature fn(usize, LogicVal) -> Option<LogicVec>.
-    maria_core::logic::set_logicvec_ctor(if has_arena { Some(try_alloc_logicvec) } else { None });
+    maria_core::logic::set_logicvec_ctor(if has_arena {
+        Some(try_alloc_logicvec)
+    } else {
+        None
+    });
 }
 
 /// RAII guard: me-reset thread-local arena saat drop.
@@ -129,10 +133,7 @@ impl SimulationArena {
         } else {
             self.alloc_count += 1;
         }
-        LogicVec {
-            width: w,
-            bits,
-        }
+        LogicVec { width: w, bits }
     }
 
     /// Allocate a temporary LogicVec without pool reuse tracking (always creates fresh).
@@ -163,10 +164,7 @@ impl SimulationArena {
         bits.clear();
         bits.extend_from_slice(&other.bits);
         self.alloc_count += 1;
-        LogicVec {
-            width: w,
-            bits,
-        }
+        LogicVec { width: w, bits }
     }
 
     /// Return a LogicVec's backing storage to the pool for reuse.
@@ -268,13 +266,20 @@ mod tests {
         let mut arena = SimulationArena::new();
         // Gunakan alloc_raw untuk mengisi bump arena
         let _ptr = arena.alloc_raw(128, 8);
-        assert!(arena.memory_used() > 0, "bump arena should have memory after alloc_raw");
+        assert!(
+            arena.memory_used() > 0,
+            "bump arena should have memory after alloc_raw"
+        );
         let _lv1 = arena.alloc_logicvec(128, LogicVal::X);
         assert!(arena.alloc_count > 0);
         arena.reset_cycle();
         // Bump arena reset -> memory_used = 0
         assert_eq!(arena.memory_used(), 0, "memory should be 0 after reset");
-        assert_eq!(arena.alloc_count(), 0, "alloc_count should be 0 after reset");
+        assert_eq!(
+            arena.alloc_count(),
+            0,
+            "alloc_count should be 0 after reset"
+        );
     }
 
     #[test]

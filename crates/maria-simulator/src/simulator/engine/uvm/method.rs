@@ -1,10 +1,10 @@
 use super::super::SimulationEngine;
-use maria_core::error::SimError;
-use maria_core::diagnostics::DiagCode;
-use maria_ir::*;
-use maria_ast::*;
-use maria_core::Symbol;
 use crate::simulator::engine::uvm::constraint_solver::{InlineConstraint, SolveResult};
+use maria_ast::*;
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
+use maria_core::Symbol;
+use maria_ir::*;
 use std::collections::{HashMap, HashSet};
 
 impl SimulationEngine {
@@ -141,119 +141,153 @@ impl SimulationEngine {
         // dipakai bila tidak ada override user (pola "only intercept if class
         // doesn't override").
         if method == "randomize" {
-            let has_user_method = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_user_method = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_user_method {
                 return self.execute_randomize(obj_id, class_name.as_str());
             }
         }
         // Check uvm_callbacks hierarchy (must be before general object dispatch)
         if self.is_uvm_callbacks_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_callbacks_add(obj_id, method, args);
             }
         }
         // Check uvm_callback hierarchy
         if self.is_uvm_callback_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_callback_method(obj_id, method, args);
             }
         }
         // Check uvm_driver hierarchy (most specific first)
         if self.is_uvm_driver_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_driver_method(obj_id, method, args);
             }
         }
         // Check uvm_sequencer hierarchy
         if self.is_uvm_sequencer_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_sequencer_method(obj_id, method, args);
             }
         }
         // Check uvm_sequence hierarchy
         if self.is_uvm_sequence_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_sequence_method(obj_id, method, args);
             }
         }
         // Check uvm_monitor hierarchy
         if self.is_uvm_monitor_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_monitor_method(obj_id, method, args);
             }
         }
         // Check uvm_analysis_port hierarchy
         if self.is_uvm_analysis_port_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_analysis_port_method(obj_id, method, args);
             }
         }
         // Check uvm_analysis_imp hierarchy
         if self.is_uvm_analysis_imp_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_analysis_imp_method(obj_id, method, args);
             }
         }
         // Check uvm_reg_block hierarchy (most specific reg layer first)
         if self.is_uvm_reg_block_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_reg_block_method(obj_id, method, args);
             }
         }
         // Check uvm_reg_map hierarchy
         if self.is_uvm_reg_map_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_reg_map_method(obj_id, method, args);
             }
         }
         // Check uvm_reg hierarchy
         if self.is_uvm_reg_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_reg_method(obj_id, method, args);
             }
         }
         // Check uvm_reg_field hierarchy
         if self.is_uvm_reg_field_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_reg_field_method(obj_id, method, args);
             }
         }
         // Check uvm_sequence_item hierarchy
         if self.is_uvm_sequence_item_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_sequence_item_method(obj_id, method, args);
             }
         }
         // Check for uvm_component hierarchy methods — only intercept if class doesn't override
         if self.is_uvm_component_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_component_method(obj_id, method, args);
             }
         }
         // Check for uvm_report_object hierarchy methods — only intercept if class doesn't override
         if self.is_uvm_report_object_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_report_object_method(obj_id, method, args);
             }
         }
         // Check for uvm_object hierarchy methods — only intercept if class doesn't override
         if self.is_uvm_object_hierarchy(class_name.as_str()) {
-            let has_override = self.find_method_quiet(class_name.as_str(), method).is_some();
+            let has_override = self
+                .find_method_quiet(class_name.as_str(), method)
+                .is_some();
             if !has_override {
                 return self.execute_uvm_object_method(obj_id, method, args);
             }
@@ -268,14 +302,19 @@ impl SimulationEngine {
         // extends uvm_report_object → uvm_object. Dispatch ke builtin
         // report_object (new/set_name/uvm_report_* dll) supaya tidak error
         // RT8001 "method 'X' not found in class".
-        if !self.design.classes.contains_key(&Symbol::intern(class_name.as_str()))
+        if !self
+            .design
+            .classes
+            .contains_key(&Symbol::intern(class_name.as_str()))
             && class_name.as_str().starts_with("uvm_")
         {
             return self.execute_uvm_report_object_method(obj_id, method, args);
         }
 
         // Normal dispatch: find method in the full class hierarchy (virtual dispatch)
-        let method_def = self.find_method_in_hierarchy(class_name.as_str(), method)?.clone();
+        let method_def = self
+            .find_method_in_hierarchy(class_name.as_str(), method)?
+            .clone();
         // Static methods don't receive `this`
         let this_opt = if method_def.is_static {
             None
@@ -291,7 +330,11 @@ impl SimulationEngine {
         result
     }
 
-    pub(crate) fn execute_randomize(&mut self, obj_id: ObjId, class_name: &str) -> Result<LogicVec, SimError> {
+    pub(crate) fn execute_randomize(
+        &mut self,
+        obj_id: ObjId,
+        class_name: &str,
+    ) -> Result<LogicVec, SimError> {
         // Try the smart constraint solver first (domain analysis + guided generation)
         match self.solve_constraints(obj_id, class_name, None)? {
             SolveResult::Satisfied => Ok(LogicVec::from_u64(1, 1)),
@@ -359,7 +402,12 @@ impl SimulationEngine {
             .design
             .classes
             .get(&Symbol::intern(class_name))
-            .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, format!("class '{}' not found", class_name)))?
+            .ok_or_else(|| {
+                SimError::with_diag(
+                    DiagCode::NullHandle,
+                    format!("class '{}' not found", class_name),
+                )
+            })?
             .clone();
         if class_def.rand_fields.is_empty() {
             return Ok(LogicVec::from_u64(1, 1));
@@ -375,10 +423,7 @@ impl SimulationEngine {
                     if vars.len() >= 2 {
                         let first = &vars[0];
                         for later in &vars[1..] {
-                            before_map
-                                .entry(*first)
-                                .or_default()
-                                .insert(*later);
+                            before_map.entry(*first).or_default().insert(*later);
                         }
                     }
                 }
@@ -464,5 +509,4 @@ impl SimulationEngine {
         // memeriksa return value untuk retry/fallback.
         Ok(LogicVec::from_u64(0, 1))
     }
-
 }

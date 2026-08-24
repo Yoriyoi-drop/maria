@@ -178,11 +178,7 @@ impl MdbWriter {
     /// Duplicate key: objek terakhir menang (hapus entry lama).
     pub fn put(&mut self, key: u64, kind: u8, data: Vec<u8>) {
         if self.keys.contains(&key) {
-            let pos = self
-                .objects
-                .iter()
-                .position(|o| o.key == key)
-                .unwrap();
+            let pos = self.objects.iter().position(|o| o.key == key).unwrap();
             self.objects[pos].len = data.len() as u32;
             self.objects[pos].kind = kind;
             self.blobs[pos] = data;
@@ -449,11 +445,8 @@ mod tests {
     use super::*;
 
     fn test_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "maria_mdb_test_{}_{}",
-            std::process::id(),
-            name
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("maria_mdb_test_{}_{}", std::process::id(), name));
         let _ = std::fs::create_dir_all(&dir);
         dir.join(format!("{}.mdb", name))
     }
@@ -554,18 +547,28 @@ mod tests {
     fn test_lz4_compression_roundtrip() {
         let path = test_path("lz4");
         // Data berulang → sangat compressible.
-        let big: Vec<u8> = format!("module x;\n{}\nendmodule", "  logic [7:0] a = 8'hAA;\n".repeat(500))
-            .into_bytes();
+        let big: Vec<u8> = format!(
+            "module x;\n{}\nendmodule",
+            "  logic [7:0] a = 8'hAA;\n".repeat(500)
+        )
+        .into_bytes();
         let mut w = MdbWriter::with_compression(Compression::Lz4);
         w.put(1, KIND_AST, big.clone());
         let data = w.serialize();
-        assert!(data.len() < big.len(), "LZ4 harus mengecilkan blob ({})", data.len());
+        assert!(
+            data.len() < big.len(),
+            "LZ4 harus mengecilkan blob ({})",
+            data.len()
+        );
         w.write_to(&path).unwrap();
 
         let r = MdbReader::open(&path).unwrap();
         assert!(r.compressed, "flag LZ4 terbaca");
         assert_eq!(r.get(1).unwrap(), big, "decompress = data asli");
-        assert!(r.get_slice(1).is_none(), "get_slice tidak valid utk store terkompresi");
+        assert!(
+            r.get_slice(1).is_none(),
+            "get_slice tidak valid utk store terkompresi"
+        );
         let _ = std::fs::remove_file(&path);
     }
 

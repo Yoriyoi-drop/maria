@@ -280,8 +280,7 @@ impl<'a> FastLexer<'a> {
             } else {
                 self.pos - 1 // whitespace consumed: exclude it
             };
-            let ident = std::str::from_utf8(&self.input[id_start..end])
-                .unwrap_or("");
+            let ident = std::str::from_utf8(&self.input[id_start..end]).unwrap_or("");
             return Token::Ident(Symbol::intern(ident));
         }
 
@@ -503,9 +502,7 @@ impl<'a> FastLexer<'a> {
                 literal.push('\'');
                 self.skip_byte();
                 // Base character (bisa 'sh' untuk signed)
-                while self.pos < self.input.len()
-                    && self.input[self.pos].is_ascii_alphabetic()
-                {
+                while self.pos < self.input.len() && self.input[self.pos].is_ascii_alphabetic() {
                     literal.push(self.input[self.pos] as char);
                     self.skip_byte();
                 }
@@ -924,7 +921,9 @@ impl<'a> FastLexer<'a> {
                             b'd' | b'D' => 10,
                             _ => 16,
                         };
-                        while self.pos < self.input.len() && self.input[self.pos].is_ascii_whitespace() {
+                        while self.pos < self.input.len()
+                            && self.input[self.pos].is_ascii_whitespace()
+                        {
                             self.skip_byte();
                         }
                         let mut value = String::new();
@@ -961,7 +960,9 @@ impl<'a> FastLexer<'a> {
                                     b'd' | b'D' => 10,
                                     _ => 16,
                                 };
-                                while self.pos < self.input.len() && self.input[self.pos].is_ascii_whitespace() {
+                                while self.pos < self.input.len()
+                                    && self.input[self.pos].is_ascii_whitespace()
+                                {
                                     self.skip_byte();
                                 }
                                 let mut value = String::new();
@@ -1021,7 +1022,11 @@ mod tests {
     fn test_fast_lexer_basic_module() {
         let input = "module test; endmodule";
         let tokens = fast_tokenize(input);
-        assert_eq!(tokens.len(), 4, "expected 4 tokens: Module, Ident, Semi, Endmodule");
+        assert_eq!(
+            tokens.len(),
+            4,
+            "expected 4 tokens: Module, Ident, Semi, Endmodule"
+        );
         assert_eq!(tokens[0].0, Token::Module);
         assert_eq!(tokens[1].0, Token::Ident(Symbol::intern("test")));
         assert_eq!(tokens[2].0, Token::Semi);
@@ -1042,13 +1047,19 @@ mod tests {
         let input = "8'b10101010 42 32'habcd";
         let tokens = fast_tokenize(input);
         assert_eq!(tokens.len(), 3);
-        if let Token::Number { ref value, base, .. } = tokens[0].0 {
+        if let Token::Number {
+            ref value, base, ..
+        } = tokens[0].0
+        {
             assert_eq!(value, "10101010");
             assert_eq!(base, Some(2));
         } else {
             panic!("expected Number token");
         }
-        if let Token::Number { ref value, base, .. } = tokens[1].0 {
+        if let Token::Number {
+            ref value, base, ..
+        } = tokens[1].0
+        {
             assert_eq!(value, "42");
             assert_eq!(base, None);
         } else {
@@ -1151,10 +1162,7 @@ mod tests {
         let input = "'0 '1 'x 'z";
         let tokens = fast_tokenize(input);
         assert_eq!(tokens.len(), 4);
-        assert_eq!(
-            tokens[0].0,
-            Token::FillLit(maria_ir::LogicVal::Zero)
-        );
+        assert_eq!(tokens[0].0, Token::FillLit(maria_ir::LogicVal::Zero));
         assert_eq!(tokens[1].0, Token::FillLit(maria_ir::LogicVal::One));
         assert_eq!(tokens[2].0, Token::FillLit(maria_ir::LogicVal::X));
         assert_eq!(tokens[3].0, Token::FillLit(maria_ir::LogicVal::Z));
@@ -1282,7 +1290,12 @@ endmodule";
             Token::Sshr,
             Token::NonBlockingAssign,
         ];
-        assert_eq!(ops.len(), expected.len(), "jumlah operator tidak cocok: {:?}", ops);
+        assert_eq!(
+            ops.len(),
+            expected.len(),
+            "jumlah operator tidak cocok: {:?}",
+            ops
+        );
         for (i, exp) in expected.iter().enumerate() {
             assert_eq!(ops[i], exp, "operator posisi {} tidak cocok", i);
         }
@@ -1326,4 +1339,3 @@ endmodule";
         }
     }
 }
-

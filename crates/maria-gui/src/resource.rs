@@ -202,7 +202,8 @@ mod tests {
 
     #[test]
     fn meminfo_parsing_kb() {
-        let mem = "MemTotal:       16261528 kB\nMemFree:          1245 kB\nMemAvailable:   9000000 kB\n";
+        let mem =
+            "MemTotal:       16261528 kB\nMemFree:          1245 kB\nMemAvailable:   9000000 kB\n";
         let (total, avail) = parse_meminfo(mem).expect("meminfo parsed");
         assert_eq!(total, 16261528);
         assert_eq!(avail, 9000000);

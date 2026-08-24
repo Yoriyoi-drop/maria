@@ -35,7 +35,11 @@ pub(crate) fn mask(width: usize) -> u64 {
 /// Nilai u64 dari LogicVec bila SEMUA bit 2-state (0/1). X/Z → None
 /// (folding 4-state aman di-skip, bukan disalah-fold).
 pub(crate) fn u64_known(lv: &LogicVec) -> Option<u64> {
-    if lv.bits.iter().all(|b| matches!(b, LogicVal::Zero | LogicVal::One)) {
+    if lv
+        .bits
+        .iter()
+        .all(|b| matches!(b, LogicVal::Zero | LogicVal::One))
+    {
         Some(lv.to_u64() & mask(lv.width))
     } else {
         None

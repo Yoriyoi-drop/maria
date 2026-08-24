@@ -1,10 +1,10 @@
-use std::collections::HashMap;
 use super::Elaborator;
 use maria_ast::*;
 use maria_core::diagnostics::diagnostic::DiagCode;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 use maria_ir::*;
+use std::collections::HashMap;
 
 impl Elaborator {
     /// Signature deterministik untuk cache IR instance ber-parameter: module
@@ -29,7 +29,10 @@ impl Elaborator {
         tkeys.sort_by_key(|k| k.as_str());
         for k in tkeys {
             h = combine_checksum(h, compute_str_checksum(k.as_str()));
-            h = combine_checksum(h, compute_checksum(&(type_param_map[k] as u64).to_le_bytes()));
+            h = combine_checksum(
+                h,
+                compute_checksum(&(type_param_map[k] as u64).to_le_bytes()),
+            );
         }
         (module_name, h)
     }
@@ -66,12 +69,7 @@ impl Elaborator {
         top.sub_instances = saved_instances;
         let jobs = std::mem::take(&mut *self.iface_alias_jobs.borrow_mut());
         for (port_name, iface_name, inst_path) in jobs {
-            let Some(iface) = self
-                .design
-                .interfaces
-                .iter()
-                .find(|i| i.name == iface_name)
-            else {
+            let Some(iface) = self.design.interfaces.iter().find(|i| i.name == iface_name) else {
                 continue;
             };
             for d in &iface.decls {
@@ -118,8 +116,8 @@ impl Elaborator {
             let inst_module = module_index
                 .get(&inst.module_name)
                 .map(|&i| &self.design.modules[i]);
-            let needs_custom_params = inst_module.is_some_and(|m| !m.params.is_empty())
-                && !inst.param_map.is_empty();
+            let needs_custom_params =
+                inst_module.is_some_and(|m| !m.params.is_empty()) && !inst.param_map.is_empty();
             let needs_type_params = !inst.type_param_map.is_empty();
             let mut child = if needs_custom_params || needs_type_params {
                 // Cache IR per signature (module + override). Ribuan instance
@@ -127,8 +125,11 @@ impl Elaborator {
                 // signature, bukan per instance (bottleneck flatten di desain
                 // besar: ~62k-ctx resolve + AST clone + elaborasi penuh per
                 // instance).
-                let sig =
-                    self.param_ir_signature(inst.module_name, &inst.param_map, &inst.type_param_map);
+                let sig = self.param_ir_signature(
+                    inst.module_name,
+                    &inst.param_map,
+                    &inst.type_param_map,
+                );
                 let cached = self.param_ir_cache.get(&sig).cloned();
                 match cached {
                     Some(ir) => ir,
@@ -161,8 +162,7 @@ impl Elaborator {
                                 }
                             },
                         };
-                        let param_vals =
-                            self.resolve_param_values(&ast_module, &inst.param_map)?;
+                        let param_vals = self.resolve_param_values(&ast_module, &inst.param_map)?;
                         let ir = self.elaborate_module_with_params_and_type(
                             &ast_module,
                             known_mods,
@@ -237,26 +237,26 @@ impl Elaborator {
 
         // Map port connections
         for (port_name, &parent_sig) in inst.port_map.iter() {
-                if let Some(child_sig) = child.signals.iter().position(|s| s.name == *port_name) {
-                    let child_sig_info = &child.signals[child_sig];
-                    let parent_sig_info = &top.signals[parent_sig];
-                    let child_width = child_sig_info.width;
-                    // Bandingkan lebar yang relevan: bila child port adalah
-                    // unpacked array (array_depth > 1), bandingkan lebar TOTAL
-                    // (parent.width sudah termasuk array depth). Bila child port
-                    // scalar, bandingkan elem_width parent — ini menjaga kompat
-                    // dengan pola lama (array signal → scalar port) yang tetap
-                    // diterima.
-                    let parent_width = if child_sig_info.array_depth > 1 {
-                        parent_sig_info.width
-                    } else {
-                        parent_sig_info.elem_width
-                    };
-                    if child_width != parent_width {
-                        // SV LRM: koneksi signal dengan lebar berbeda ke port adalah
-                        // legal — implisit zero-extension / truncation saat sim. Jadi
-                        // cukup warning (WR0102), bukan error yang memblokir design.
-                        self.elab_warn_at(
+            if let Some(child_sig) = child.signals.iter().position(|s| s.name == *port_name) {
+                let child_sig_info = &child.signals[child_sig];
+                let parent_sig_info = &top.signals[parent_sig];
+                let child_width = child_sig_info.width;
+                // Bandingkan lebar yang relevan: bila child port adalah
+                // unpacked array (array_depth > 1), bandingkan lebar TOTAL
+                // (parent.width sudah termasuk array depth). Bila child port
+                // scalar, bandingkan elem_width parent — ini menjaga kompat
+                // dengan pola lama (array signal → scalar port) yang tetap
+                // diterima.
+                let parent_width = if child_sig_info.array_depth > 1 {
+                    parent_sig_info.width
+                } else {
+                    parent_sig_info.elem_width
+                };
+                if child_width != parent_width {
+                    // SV LRM: koneksi signal dengan lebar berbeda ke port adalah
+                    // legal — implisit zero-extension / truncation saat sim. Jadi
+                    // cukup warning (WR0102), bukan error yang memblokir design.
+                    self.elab_warn_at(
                             DiagCode::WidthMismatchWarning,
                             format!(
                                 "port width mismatch on instance '{}': port '{}' expects width {}, connected signal '{}' has width {}",
@@ -266,24 +266,24 @@ impl Elaborator {
                             inst.line,
                             inst.col,
                         );
-                    }
-                    // Untuk port unpacked-array, pastikan lebar ELEMEN juga cocok.
-                    // Dua kasus bisa punya total width sama tapi elemen beda
-                    // (mis. [15:0][0:1] vs [7:0][0:3]) — tanpa guard ini check lolos
-                    // namun indexing array di engine salah.
-                    if child_sig_info.array_depth > 1
-                        && child_sig_info.elem_width != parent_sig_info.elem_width
-                    {
-                        // Array of STRUCT: lebar elemen di-resolve per-module dan
-                        // bergantung konteks param — untuk struct yang sama bisa
-                        // menghasilkan angka berbeda antar modul (mis. 1 vs 12
-                        // untuk tl_d2h_t[2] di OpenTitan). Check ini jadi false-
-                        // positive yang memblokir design valid → downgrade ke
-                        // warning (lebar total sudah diperiksa di atas).
-                        let is_struct_typed = !child_sig_info.struct_fields.is_empty()
-                            || !parent_sig_info.struct_fields.is_empty();
-                        if is_struct_typed {
-                            self.elab_warn_at(
+                }
+                // Untuk port unpacked-array, pastikan lebar ELEMEN juga cocok.
+                // Dua kasus bisa punya total width sama tapi elemen beda
+                // (mis. [15:0][0:1] vs [7:0][0:3]) — tanpa guard ini check lolos
+                // namun indexing array di engine salah.
+                if child_sig_info.array_depth > 1
+                    && child_sig_info.elem_width != parent_sig_info.elem_width
+                {
+                    // Array of STRUCT: lebar elemen di-resolve per-module dan
+                    // bergantung konteks param — untuk struct yang sama bisa
+                    // menghasilkan angka berbeda antar modul (mis. 1 vs 12
+                    // untuk tl_d2h_t[2] di OpenTitan). Check ini jadi false-
+                    // positive yang memblokir design valid → downgrade ke
+                    // warning (lebar total sudah diperiksa di atas).
+                    let is_struct_typed = !child_sig_info.struct_fields.is_empty()
+                        || !parent_sig_info.struct_fields.is_empty();
+                    if is_struct_typed {
+                        self.elab_warn_at(
                                 DiagCode::WidthMismatchWarning,
                                 format!(
                                     "port array element width mismatch on instance '{}': port '{}' expects element width {}, connected signal '{}' has element width {} (struct-typed; ignored)",
@@ -293,24 +293,24 @@ impl Elaborator {
                                 inst.line,
                                 inst.col,
                             );
-                        } else {
-                            return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
+                    } else {
+                        return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
                                 "port array element width mismatch on instance '{}': port '{}' expects element width {}, connected signal '{}' has element width {}",
                                 inst.instance_name, port_name, child_sig_info.elem_width,
                                 parent_sig_info.name, parent_sig_info.elem_width
                             ), inst.line, inst.col));
-                        }
                     }
-                    // Port type checking: inout must connect to tri. Downgrade
-                    // ke warning (bukan error): pola Verilator/DV umum —
-                    // `chip_earlgrey_verilator` mengkoneksikan pad inout ke
-                    // signal `logic`, dan port inout TANPA `tri` (top_earlgrey
-                    // `inout flash_test_voltage_h_io`) ter-resolve ke Wire.
-                    // Check keras di sini memblokir desain valid (E3003 palsu).
-                    if child.signals[child_sig].kind == SignalKind::Inout
-                        && top.signals[parent_sig].net_type != NetType::Tri
-                    {
-                        self.elab_warn_at(
+                }
+                // Port type checking: inout must connect to tri. Downgrade
+                // ke warning (bukan error): pola Verilator/DV umum —
+                // `chip_earlgrey_verilator` mengkoneksikan pad inout ke
+                // signal `logic`, dan port inout TANPA `tri` (top_earlgrey
+                // `inout flash_test_voltage_h_io`) ter-resolve ke Wire.
+                // Check keras di sini memblokir desain valid (E3003 palsu).
+                if child.signals[child_sig].kind == SignalKind::Inout
+                    && top.signals[parent_sig].net_type != NetType::Tri
+                {
+                    self.elab_warn_at(
                             DiagCode::ParamMismatch,
                             format!(
                                 "port type mismatch on instance '{}': inout port '{}' connects to '{}' with net type {:?} (expected tri; treated as net)",
@@ -321,93 +321,95 @@ impl Elaborator {
                             inst.line,
                             inst.col,
                         );
-                    }
-                    sig_remap[child_sig] = Some(parent_sig);
-                    // Add hierarchical alias: inst_name.port_name -> parent signal ID
-                    hier_signal_map
-                            .insert(Symbol::intern(&format!("{}.{}", inst.instance_name, port_name)), parent_sig);
-                    // F28: port interface (`axi_if`) dikoneksikan ke instance
-                    // interface di parent (handle `__iface_<inst>`) — akses
-                    // field `axi_if.<f>` di child harus resolve ke signal
-                    // flatten `inst.<f>`. Kumpulkan JOB (diproses post-pass di
-                    // flatten_instances setelah SEMUA instance ter-flatten)
-                    // agar tidak bergantung urutan AST: instance interface
-                    // boleh muncul setelah child module.
-                    if child_sig_info.iface_type.is_some() {
-                        let iface_name = child_sig_info
-                            .iface_type
-                            .as_ref()
-                            .map(|t| {
-                                t.as_str().split('.').next().unwrap_or(t.as_str())
-                            });
-                        // Instance path disimpan di class_name handle (F28) —
-                        // nama signal handle berbasis hint (`__iface_inst_port`)
-                        // tidak memuat nama instance. class_name handle interface
-                        // tidak dipakai sebagai class object (hanya metadata).
-                        if let (Some(iface_name), Some(inst_path)) = (
-                            iface_name,
-                            top.signals[parent_sig].class_name,
-                        ) {
-                            self.iface_alias_jobs.borrow_mut().push((
-                                *port_name,
-                                Symbol::intern(iface_name),
-                                inst_path,
-                            ));
-                        }
+                }
+                sig_remap[child_sig] = Some(parent_sig);
+                // Add hierarchical alias: inst_name.port_name -> parent signal ID
+                hier_signal_map.insert(
+                    Symbol::intern(&format!("{}.{}", inst.instance_name, port_name)),
+                    parent_sig,
+                );
+                // F28: port interface (`axi_if`) dikoneksikan ke instance
+                // interface di parent (handle `__iface_<inst>`) — akses
+                // field `axi_if.<f>` di child harus resolve ke signal
+                // flatten `inst.<f>`. Kumpulkan JOB (diproses post-pass di
+                // flatten_instances setelah SEMUA instance ter-flatten)
+                // agar tidak bergantung urutan AST: instance interface
+                // boleh muncul setelah child module.
+                if child_sig_info.iface_type.is_some() {
+                    let iface_name = child_sig_info
+                        .iface_type
+                        .as_ref()
+                        .map(|t| t.as_str().split('.').next().unwrap_or(t.as_str()));
+                    // Instance path disimpan di class_name handle (F28) —
+                    // nama signal handle berbasis hint (`__iface_inst_port`)
+                    // tidak memuat nama instance. class_name handle interface
+                    // tidak dipakai sebagai class object (hanya metadata).
+                    if let (Some(iface_name), Some(inst_path)) =
+                        (iface_name, top.signals[parent_sig].class_name)
+                    {
+                        self.iface_alias_jobs.borrow_mut().push((
+                            *port_name,
+                            Symbol::intern(iface_name),
+                            inst_path,
+                        ));
                     }
                 }
             }
+        }
 
-            // Allocate parent signal IDs for unmapped child signals (internal signals)
-            for (i, sig) in child.signals.iter().enumerate() {
-                if sig_remap[i].is_none() {
-                    let new_id = next_parent_id;
-                    next_parent_id += 1;
-                    sig_remap[i] = Some(new_id);
-                    top.signals.push(SignalInfo {
-                        name: Symbol::intern(&format!("{}.{}", inst.instance_name, sig.name)),
-                        width: sig.width,
-                        kind: sig.kind.clone(),
-                        net_type: sig.net_type,
-                        multi_driver: sig.multi_driver,
-                        init_val: sig.init_val.clone(),
-                        array_depth: sig.array_depth,
-                        elem_width: sig.elem_width,
-                        array_dims: sig.array_dims.clone(),
-                        class_name: sig.class_name,
-                        is_string: sig.is_string,
-                        is_mailbox: sig.is_mailbox,
-                        is_semaphore: sig.is_semaphore,
-                        is_real: sig.is_real,
-                        is_2state: sig.is_2state,
-                        is_dynamic: sig.is_dynamic,
-                        is_queue: sig.is_queue,
-                        is_associative: sig.is_associative,
-                        is_signed: sig.is_signed,
-                        is_const: sig.is_const,
-                        msb: sig.msb,
-                        lsb: sig.lsb,
-                        struct_fields: sig.struct_fields.clone(),
-                        packed_dims: sig.packed_dims.clone(),
-                        delay_rise: sig.delay_rise,
-                        delay_fall: sig.delay_fall,
-                        iface_type: None,
-                        iface_modport: None,
-                    });
-                    // Also add to hier_signal_map: internal signals already have the right name in flat list
-                    hier_signal_map.insert(Symbol::intern(&format!("{}.{}", inst.instance_name, sig.name)), new_id);
-                }
+        // Allocate parent signal IDs for unmapped child signals (internal signals)
+        for (i, sig) in child.signals.iter().enumerate() {
+            if sig_remap[i].is_none() {
+                let new_id = next_parent_id;
+                next_parent_id += 1;
+                sig_remap[i] = Some(new_id);
+                top.signals.push(SignalInfo {
+                    name: Symbol::intern(&format!("{}.{}", inst.instance_name, sig.name)),
+                    width: sig.width,
+                    kind: sig.kind.clone(),
+                    net_type: sig.net_type,
+                    multi_driver: sig.multi_driver,
+                    init_val: sig.init_val.clone(),
+                    array_depth: sig.array_depth,
+                    elem_width: sig.elem_width,
+                    array_dims: sig.array_dims.clone(),
+                    class_name: sig.class_name,
+                    is_string: sig.is_string,
+                    is_mailbox: sig.is_mailbox,
+                    is_semaphore: sig.is_semaphore,
+                    is_real: sig.is_real,
+                    is_2state: sig.is_2state,
+                    is_dynamic: sig.is_dynamic,
+                    is_queue: sig.is_queue,
+                    is_associative: sig.is_associative,
+                    is_signed: sig.is_signed,
+                    is_const: sig.is_const,
+                    msb: sig.msb,
+                    lsb: sig.lsb,
+                    struct_fields: sig.struct_fields.clone(),
+                    packed_dims: sig.packed_dims.clone(),
+                    delay_rise: sig.delay_rise,
+                    delay_fall: sig.delay_fall,
+                    iface_type: None,
+                    iface_modport: None,
+                });
+                // Also add to hier_signal_map: internal signals already have the right name in flat list
+                hier_signal_map.insert(
+                    Symbol::intern(&format!("{}.{}", inst.instance_name, sig.name)),
+                    new_id,
+                );
             }
+        }
 
-            let map_sig = |child_id: SignalId| -> SignalId {
-                sig_remap.get(child_id).and_then(|&v| v).unwrap_or(child_id)
-            };
+        let map_sig = |child_id: SignalId| -> SignalId {
+            sig_remap.get(child_id).and_then(|&v| v).unwrap_or(child_id)
+        };
 
-            for process in &child.processes {
-                let translated = self.translate_process(process, &map_sig)?;
-                top.processes.push(translated);
-            }
-            Ok(())
+        for process in &child.processes {
+            let translated = self.translate_process(process, &map_sig)?;
+            top.processes.push(translated);
+        }
+        Ok(())
     }
 
     fn translate_process(

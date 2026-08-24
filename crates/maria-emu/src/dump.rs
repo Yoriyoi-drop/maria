@@ -47,9 +47,18 @@ pub fn dump_mhir(mhir: &MhirDesign) -> String {
         if !m.resets.is_empty() {
             out.push_str("  Reset:\n");
             for r in &m.resets {
-                let pol = if r.polarity { "active-high" } else { "active-low" };
+                let pol = if r.polarity {
+                    "active-high"
+                } else {
+                    "active-low"
+                };
                 let sync = if r.async_ { "async" } else { "sync" };
-                out.push_str(&format!("    {:<20} {} ({})\n", r.signal.as_str(), pol, sync));
+                out.push_str(&format!(
+                    "    {:<20} {} ({})\n",
+                    r.signal.as_str(),
+                    pol,
+                    sync
+                ));
             }
         }
         if !m.registers.is_empty() {
@@ -89,13 +98,20 @@ pub fn dump_mhir(mhir: &MhirDesign) -> String {
                     .mmio
                     .map(|r| region_str(r.base, r.size))
                     .unwrap_or_else(|| "-".to_string());
-                let irq = d.irq.map(|i| i.to_string()).unwrap_or_else(|| "-".to_string());
+                let irq = d
+                    .irq
+                    .map(|i| i.to_string())
+                    .unwrap_or_else(|| "-".to_string());
                 let ports: Vec<String> = d
                     .ports
                     .iter()
                     .map(|p| format!("{} {}[{}]", p.name.as_str(), dir_str(p.direction), p.width))
                     .collect();
-                let port_str = if ports.is_empty() { String::new() } else { format!("  ({})", ports.join(", ")) };
+                let port_str = if ports.is_empty() {
+                    String::new()
+                } else {
+                    format!("  ({})", ports.join(", "))
+                };
                 out.push_str(&format!(
                     "    {:<20} {:<6} ({})  mmio={} irq={}  @{}{}\n",
                     d.name.as_str(),
@@ -108,8 +124,11 @@ pub fn dump_mhir(mhir: &MhirDesign) -> String {
                 ));
             }
         }
-        if m.clocks.is_empty() && m.resets.is_empty() && m.registers.is_empty()
-            && m.memories.is_empty() && m.devices.is_empty()
+        if m.clocks.is_empty()
+            && m.resets.is_empty()
+            && m.registers.is_empty()
+            && m.memories.is_empty()
+            && m.devices.is_empty()
         {
             out.push_str("    (tidak ada clock/reset/register/memory/device terdeteksi)\n");
         }
@@ -125,7 +144,12 @@ pub fn dump_memory_map(mhir: &MhirDesign) -> String {
         out.push_str("  (kosong — assign alamat via --addr NAME=BASE:SIZE atau [[devices]] di config .meu)\n");
     } else {
         for (name, r) in &mhir.address_map {
-            out.push_str(&format!("  0x{:08x}-0x{:08x}  {:<20}\n", r.base, r.base + r.size - 1, name.as_str()));
+            out.push_str(&format!(
+                "  0x{:08x}-0x{:08x}  {:<20}\n",
+                r.base,
+                r.base + r.size - 1,
+                name.as_str()
+            ));
         }
     }
 
@@ -133,8 +157,21 @@ pub fn dump_memory_map(mhir: &MhirDesign) -> String {
     let mut unassigned: Vec<String> = Vec::new();
     for m in &mhir.modules {
         for mem in &m.memories {
-            if !mhir.address_map.iter().any(|(n, _)| n.as_str() == mem.name.as_str()) {
-                unassigned.push(format!("{} [{}] x {} ({})", mem.name.as_str(), mem.elem_width, mem.depth, match mem.kind { MemoryKind::Ram => "ram", MemoryKind::Rom => "rom" }));
+            if !mhir
+                .address_map
+                .iter()
+                .any(|(n, _)| n.as_str() == mem.name.as_str())
+            {
+                unassigned.push(format!(
+                    "{} [{}] x {} ({})",
+                    mem.name.as_str(),
+                    mem.elem_width,
+                    mem.depth,
+                    match mem.kind {
+                        MemoryKind::Ram => "ram",
+                        MemoryKind::Rom => "rom",
+                    }
+                ));
             }
         }
         for d in &m.devices {
@@ -172,7 +209,11 @@ mod tests {
             edge: ClockEdgeKind::PosEdge,
             hier: None,
         });
-        top.resets.push(ResetDesc { signal: Symbol::intern("rst_n"), polarity: false, async_: true });
+        top.resets.push(ResetDesc {
+            signal: Symbol::intern("rst_n"),
+            polarity: false,
+            async_: true,
+        });
         top.registers.push(MhirRegister {
             name: Symbol::intern("pc"),
             width: 32,
@@ -193,17 +234,34 @@ mod tests {
             module: Symbol::intern("uart"),
             kind: DeviceKind::Uart,
             ports: vec![
-                PortDesc { name: Symbol::intern("clk"), direction: PortDir::Input, width: 1 },
-                PortDesc { name: Symbol::intern("tx"), direction: PortDir::Output, width: 1 },
+                PortDesc {
+                    name: Symbol::intern("clk"),
+                    direction: PortDir::Input,
+                    width: 1,
+                },
+                PortDesc {
+                    name: Symbol::intern("tx"),
+                    direction: PortDir::Output,
+                    width: 1,
+                },
             ],
-            mmio: Some(AddressRegion { base: 0x1000_0000, size: 0x1000 }),
+            mmio: Some(AddressRegion {
+                base: 0x1000_0000,
+                size: 0x1000,
+            }),
             irq: Some(5),
             back: BackPointer::known(None, 55, 2),
         });
         MhirDesign {
             top: Symbol::intern("soc"),
             modules: vec![top],
-            address_map: vec![(Symbol::intern("u_uart"), AddressRegion { base: 0x1000_0000, size: 0x1000 })],
+            address_map: vec![(
+                Symbol::intern("u_uart"),
+                AddressRegion {
+                    base: 0x1000_0000,
+                    size: 0x1000,
+                },
+            )],
             source_file: None,
         }
     }
@@ -221,7 +279,10 @@ mod tests {
         assert!(out.contains("u_uart") && out.contains("uart"));
         assert!(out.contains("0x10000000-0x10000fff"));
         assert!(out.contains("irq=5"));
-        assert!(out.contains("cpu_core.sv:12:3"), "back-pointer file:line:col");
+        assert!(
+            out.contains("cpu_core.sv:12:3"),
+            "back-pointer file:line:col"
+        );
     }
 
     #[test]

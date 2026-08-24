@@ -104,7 +104,9 @@ pub fn start_cosim_server(port: u16, signal_count: usize) -> Option<Arc<Mutex<Co
         match listener.accept() {
             Ok((mut stream, addr)) => {
                 eprintln!("Co-simulation connection from {}", addr);
-                if let Err(e) = server::handle_cosim_connection(&mut stream, &state_clone, signal_count) {
+                if let Err(e) =
+                    server::handle_cosim_connection(&mut stream, &state_clone, signal_count)
+                {
                     eprintln!("Co-simulation error: {}", e);
                 }
             }

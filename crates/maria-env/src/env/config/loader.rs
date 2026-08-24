@@ -39,8 +39,8 @@ pub fn detect_format(path: &Path) -> Result<ConfigFileFormat, String> {
 
 /// Muat config dari file (TOML atau JSON, sesuai ekstensi).
 pub fn load_from_path(path: &Path) -> Result<MariaConfig, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("config '{}': {}", path.display(), e))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("config '{}': {}", path.display(), e))?;
     load_from_str(&content, detect_format(path)?)
         .map_err(|e| format!("config '{}': {}", path.display(), e))
 }
@@ -63,8 +63,14 @@ mod tests {
 
     #[test]
     fn test_detect_format() {
-        assert_eq!(detect_format(Path::new("a.toml")).unwrap(), ConfigFileFormat::Toml);
-        assert_eq!(detect_format(Path::new("a.json")).unwrap(), ConfigFileFormat::Json);
+        assert_eq!(
+            detect_format(Path::new("a.toml")).unwrap(),
+            ConfigFileFormat::Toml
+        );
+        assert_eq!(
+            detect_format(Path::new("a.json")).unwrap(),
+            ConfigFileFormat::Json
+        );
         assert!(detect_format(Path::new("a.yaml")).is_err());
         assert!(detect_format(Path::new("a")).is_err());
     }

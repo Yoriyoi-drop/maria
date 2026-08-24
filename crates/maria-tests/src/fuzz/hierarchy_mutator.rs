@@ -1,8 +1,10 @@
 //! Hierarchy-Aware Mutator — memutasi subtree modul tertentu tanpa merusak project.
 
-use super::semantic_mutator::{GenerateBlock, GenerateKind, InstanceInfo, ModuleContext, SignalInfo, SignalKind, WidthKind};
-use super::expr::{Expr, BinOp};
+use super::expr::{BinOp, Expr};
 use super::gen::GenInput;
+use super::semantic_mutator::{
+    GenerateBlock, GenerateKind, InstanceInfo, ModuleContext, SignalInfo, SignalKind, WidthKind,
+};
 use fastrand::Rng;
 
 #[derive(Debug, Clone)]
@@ -169,7 +171,9 @@ impl HierarchyMutator {
                     }
                     WidthKind::Parameterized(name) => {
                         if rng.f32() < 0.5 {
-                            signal.width = WidthKind::Expression(Expr::Var(name.chars().next().unwrap_or('p')));
+                            signal.width = WidthKind::Expression(Expr::Var(
+                                name.chars().next().unwrap_or('p'),
+                            ));
                         }
                     }
                     WidthKind::Expression(_) => {}
@@ -205,7 +209,12 @@ impl HierarchyMutator {
 
     fn mutate_port_directions(&self, ctx: &mut ModuleContext, rng: &mut Rng) {
         for signal in &mut ctx.signals {
-            if rng.f32() < 0.3 && matches!(signal.kind, SignalKind::Input | SignalKind::Output | SignalKind::Inout) {
+            if rng.f32() < 0.3
+                && matches!(
+                    signal.kind,
+                    SignalKind::Input | SignalKind::Output | SignalKind::Inout
+                )
+            {
                 signal.kind = match signal.kind {
                     SignalKind::Input => SignalKind::Output,
                     SignalKind::Output => SignalKind::Inout,
@@ -230,12 +239,7 @@ impl HierarchyMutator {
     fn gen_boundary_condition(&self, rng: &mut Rng) -> Expr {
         let boundaries = [1, 2, 4, 8, 16, 31, 32, 33, 64, 128, 255, 256, 512, 1024];
         let bound = boundaries[rng.usize(0..boundaries.len())];
-        let op_choices = [
-            BinOp::Lt,
-            BinOp::Gt,
-            BinOp::Eq,
-            BinOp::Ne,
-        ];
+        let op_choices = [BinOp::Lt, BinOp::Gt, BinOp::Eq, BinOp::Ne];
         let op = op_choices[rng.usize(0..op_choices.len())];
         Expr::Bin(op, Box::new(Expr::Var('i')), Box::new(Expr::Lit(bound)))
     }
@@ -252,10 +256,14 @@ impl HierarchyMutator {
         let node = self.hierarchy.as_ref()?.find_subtree(target_path)?;
         let module = &node.module;
 
-        let w = module.signals.first().map(|s| match &s.width {
-            WidthKind::Fixed(w) => *w,
-            _ => 16,
-        }).unwrap_or(16);
+        let w = module
+            .signals
+            .first()
+            .map(|s| match &s.width {
+                WidthKind::Fixed(w) => *w,
+                _ => 16,
+            })
+            .unwrap_or(16);
 
         let mut rng = Rng::with_seed(self.rng.u64(..));
         let mask = if w >= 64 { u64::MAX } else { (1u64 << w) - 1 };

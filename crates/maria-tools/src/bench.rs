@@ -5,9 +5,9 @@
 
 use std::time::Instant;
 
-use maria_core::error::SimError;
+use crate::{collect_targets, human_bytes, kv, make_session_config_with_mv, section};
 use maria_compiler::frontend::CompileSession;
-use crate::{collect_targets, human_bytes, make_session_config_with_mv, section, kv};
+use maria_core::error::SimError;
 
 /// Opsi mbench.
 pub struct BenchArgs<'a> {
@@ -107,7 +107,10 @@ pub fn run(args: &BenchArgs) -> Result<(), SimError> {
     } else {
         0
     };
-    kv("throughput", format!("{} file/s, {} lines/s", files_per_sec, lines_per_sec));
+    kv(
+        "throughput",
+        format!("{} file/s, {} lines/s", files_per_sec, lines_per_sec),
+    );
 
     // Cache hit
     let processed_total: usize = results.iter().map(|r| r.processed).sum();
@@ -121,7 +124,11 @@ pub fn run(args: &BenchArgs) -> Result<(), SimError> {
     match rss {
         Some(kb) => {
             kv("peak RSS", human_bytes(kb * 1024));
-            let mem_per_mb = if avg > 0 { (kb * 1024) as f64 / (avg as f64 / 1000.0) / 1_048_576.0 } else { 0.0 };
+            let mem_per_mb = if avg > 0 {
+                (kb * 1024) as f64 / (avg as f64 / 1000.0) / 1_048_576.0
+            } else {
+                0.0
+            };
             kv("rate", format!("{:.2} MB/s", mem_per_mb));
         }
         None => kv("peak RSS", "tidak tersedia"),

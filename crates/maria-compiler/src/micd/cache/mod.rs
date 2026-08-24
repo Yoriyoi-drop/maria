@@ -122,7 +122,10 @@ impl CacheLayer {
     }
 
     pub fn contains(&self, cat: CacheCategory, key: &str) -> bool {
-        self.stores.get(&cat).map(|s| s.contains(key)).unwrap_or(false)
+        self.stores
+            .get(&cat)
+            .map(|s| s.contains(key))
+            .unwrap_or(false)
     }
 
     pub fn remove(&mut self, cat: CacheCategory, key: &str) -> bool {
@@ -212,7 +215,12 @@ impl CacheLayer {
         }
         // Parent `cache/` kosong → buang juga.
         let parent = db_root.join(DIR_CACHE);
-        if parent.is_dir() && parent.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
+        if parent.is_dir()
+            && parent
+                .read_dir()
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false)
+        {
             let _ = std::fs::remove_dir(&parent);
         }
         Ok(())
@@ -246,11 +254,8 @@ mod tests {
     use super::*;
 
     fn test_root(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "maria_cache_layer_{}_{}",
-            std::process::id(),
-            name
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("maria_cache_layer_{}_{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -268,7 +273,9 @@ mod tests {
         // Struktur seragam per kategori.
         for cat in CacheCategory::ALL {
             let d = layer.category_dir(cat);
-            for sub in ["objects", "blobs", "temp", "journal", "stats", "lock", "index"] {
+            for sub in [
+                "objects", "blobs", "temp", "journal", "stats", "lock", "index",
+            ] {
                 assert!(d.join(sub).is_dir(), "{}/{}", cat.name(), sub);
             }
         }
@@ -281,9 +288,16 @@ mod tests {
         let db = root.join("db");
         std::fs::create_dir_all(&db).unwrap();
         let mut layer = CacheLayer::open(&db, "pid1", 0).unwrap();
-        layer.put(CacheCategory::Parser, "a.sv", b"ast-bytes").unwrap();
-        layer.put(CacheCategory::Preprocess, "a.sv", b"module a; endmodule").unwrap();
-        assert_eq!(layer.get(CacheCategory::Parser, "a.sv").unwrap(), b"ast-bytes");
+        layer
+            .put(CacheCategory::Parser, "a.sv", b"ast-bytes")
+            .unwrap();
+        layer
+            .put(CacheCategory::Preprocess, "a.sv", b"module a; endmodule")
+            .unwrap();
+        assert_eq!(
+            layer.get(CacheCategory::Parser, "a.sv").unwrap(),
+            b"ast-bytes"
+        );
         assert_eq!(
             layer.get(CacheCategory::Preprocess, "a.sv").unwrap(),
             b"module a; endmodule"
@@ -303,12 +317,17 @@ mod tests {
         std::fs::create_dir_all(&db).unwrap();
         {
             let mut layer = CacheLayer::open(&db, "pid1", 0).unwrap();
-            layer.put(CacheCategory::Semantic, "top", b"semantic").unwrap();
+            layer
+                .put(CacheCategory::Semantic, "top", b"semantic")
+                .unwrap();
             layer.save().unwrap();
         }
         {
             let mut layer = CacheLayer::open(&db, "pid1", 0).unwrap();
-            assert_eq!(layer.get(CacheCategory::Semantic, "top").unwrap(), b"semantic");
+            assert_eq!(
+                layer.get(CacheCategory::Semantic, "top").unwrap(),
+                b"semantic"
+            );
         }
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -324,7 +343,10 @@ mod tests {
             layer.save().unwrap();
         }
         let layer_b = CacheLayer::open(&db, "proj_b", 0).unwrap();
-        assert!(!layer_b.contains(CacheCategory::Type, "m"), "project lain terisolasi");
+        assert!(
+            !layer_b.contains(CacheCategory::Type, "m"),
+            "project lain terisolasi"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -382,8 +404,12 @@ mod tests {
         let mut layer = CacheLayer::open(&db, "pid1", 0).unwrap();
         // Isi melebihi budget kecil → GC buang.
         layer.store_mut(CacheCategory::Parser).unwrap().budget_bytes = 50;
-        layer.put(CacheCategory::Parser, "a", &vec![1u8; 40]).unwrap();
-        layer.put(CacheCategory::Parser, "b", &vec![2u8; 40]).unwrap();
+        layer
+            .put(CacheCategory::Parser, "a", &vec![1u8; 40])
+            .unwrap();
+        layer
+            .put(CacheCategory::Parser, "b", &vec![2u8; 40])
+            .unwrap();
         let removed = layer.run_gc();
         assert!(removed >= 1);
         assert!(layer.entry_count(CacheCategory::Parser) <= 1);

@@ -76,7 +76,9 @@ pub enum Expr {
     /// parameter/localparam serta inisialisasi. Sebelumnya pola bernama
     /// di-discard menjadi `FillLit(0)` — sekarang dipertahankan agar member
     /// access (`PartInfo[k].offset`) bisa di-const-eval.
-    StructLit { members: Vec<StructLitMember> },
+    StructLit {
+        members: Vec<StructLitMember>,
+    },
     Cast {
         dtype: Symbol,
         expr: Box<Expr>,

@@ -21,7 +21,10 @@ endmodule
 "#;
     match compile_str(source) {
         Ok(design) => {
-            if let Some(cls) = design.classes.get(&maria_core::intern::Symbol::intern("counter")) {
+            if let Some(cls) = design
+                .classes
+                .get(&maria_core::intern::Symbol::intern("counter"))
+            {
                 println!(
                     "Class 'counter': {} fields, {} methods",
                     cls.fields.len(),

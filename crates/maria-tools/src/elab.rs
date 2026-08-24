@@ -3,9 +3,9 @@
 //! Hanya melakukan: parameter resolve, generate expansion, hierarchy.
 //! Tidak menjalankan simulasi.
 
-use maria_elaboration::elaborator::ElaborateMode;
+use crate::{kv, open_elaborated, section};
 use maria_core::error::SimError;
-use crate::{open_elaborated, section, kv};
+use maria_elaboration::elaborator::ElaborateMode;
 
 /// Opsi melab.
 pub struct ElabArgs<'a> {
@@ -28,7 +28,13 @@ pub fn run(args: &ElabArgs) -> Result<(), SimError> {
         return run_from_cache(args);
     }
     // Use AnalysisRecovery mode for analysis tools (Rule 10)
-    let (session, design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::AnalysisRecovery)?;
+    let (session, design, ir) = open_elaborated(
+        args.files,
+        args.incdirs,
+        args.defines,
+        args.top,
+        ElaborateMode::AnalysisRecovery,
+    )?;
     let top_name = ir.top.name.as_str();
 
     section("Elaboration Result");
@@ -37,7 +43,13 @@ pub fn run(args: &ElabArgs) -> Result<(), SimError> {
     kv("signals (top)", ir.top.signals.len());
     kv("processes (top)", ir.top.processes.len());
     kv("classes", ir.classes.len());
-    kv("timescale", ir.timescale.as_ref().map(|t| format!("{}/{}", t.0, t.1)).unwrap_or_else(|| "-".into()));
+    kv(
+        "timescale",
+        ir.timescale
+            .as_ref()
+            .map(|t| format!("{}/{}", t.0, t.1))
+            .unwrap_or_else(|| "-".into()),
+    );
     kv("parse time", format!("{} ms", session.timing.parse_ms));
     kv("elab time", format!("{} ms", session.timing.elab_ms));
 
@@ -65,7 +77,11 @@ pub fn run(args: &ElabArgs) -> Result<(), SimError> {
             }
             println!("  {}", name);
             for p in params {
-                let kind = if p.is_localparam { "localparam" } else { "parameter" };
+                let kind = if p.is_localparam {
+                    "localparam"
+                } else {
+                    "parameter"
+                };
                 let default = p
                     .default
                     .as_ref()
@@ -111,7 +127,8 @@ pub fn run(args: &ElabArgs) -> Result<(), SimError> {
 fn print_tree(ir: &maria_ir::IrDesign) {
     section("Hierarchy Tree");
     println!("  └── {}", ir.top.name.as_str());
-    let mut visited: std::collections::HashSet<maria_core::intern::Symbol> = std::collections::HashSet::new();
+    let mut visited: std::collections::HashSet<maria_core::intern::Symbol> =
+        std::collections::HashSet::new();
     for inst in &ir.top.sub_instances {
         print_inst(inst, ir, &mut visited, 1);
     }
@@ -124,7 +141,12 @@ fn print_inst(
     depth: usize,
 ) {
     let prefix = "  ".repeat(depth + 1);
-    println!("{}{} ({}),", prefix, inst.instance_name.as_str(), inst.module_name.as_str());
+    println!(
+        "{}{} ({}),",
+        prefix,
+        inst.instance_name.as_str(),
+        inst.module_name.as_str()
+    );
     if visited.contains(&inst.module_name) {
         println!("{}^ cycle", prefix);
         return;

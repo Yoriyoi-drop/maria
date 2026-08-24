@@ -7,7 +7,8 @@ use std::sync::Arc;
 /// tidak boleh gagal (hasil dibuang, log ke stderr bila ada masalah).
 pub fn shutdown(env: &mut GlobalEnv) {
     // Telemetry: tutup dengan jejak akhir.
-    env.telemetry.trace("shutdown", &format!("uptime={:?}", env.uptime()));
+    env.telemetry
+        .trace("shutdown", &format!("uptime={:?}", env.uptime()));
 
     // Database: simpan perubahan (best-effort; hanya bila refcount = 1).
     if let Some(db) = Arc::get_mut(&mut env.database) {

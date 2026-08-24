@@ -155,10 +155,7 @@ pub fn cache_key_hash(key: &CacheKey) -> u64 {
             arg_hash,
             definition_hash,
         } => combine_checksum(
-            combine_checksums(
-                compute_checksum(name.as_str().as_bytes()),
-                *arg_hash,
-            ),
+            combine_checksums(compute_checksum(name.as_str().as_bytes()), *arg_hash),
             *definition_hash,
         ),
         CacheKey::Include {
@@ -319,7 +316,8 @@ impl RemoteCacheBackend for FilesystemCache {
         self.write_meta(key, data)?;
         self.stats_puts.fetch_add(1, Ordering::Relaxed);
         self.stats_entries.fetch_add(1, Ordering::Relaxed);
-        self.stats_size.fetch_add(data.len() as u64, Ordering::Relaxed);
+        self.stats_size
+            .fetch_add(data.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 
@@ -390,8 +388,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let dir = std::env::temp_dir()
-            .join(format!("maria_cache_test_{}_{:?}_{}", pid, tid, ts));
+        let dir = std::env::temp_dir().join(format!("maria_cache_test_{}_{:?}_{}", pid, tid, ts));
         let _ = std::fs::remove_dir_all(&dir);
         FilesystemCache::new(&dir).unwrap()
     }
@@ -499,7 +496,10 @@ mod tests {
             }),
             "hir"
         );
-        assert_eq!(cache_key_type_dir(&CacheKey::Package(Symbol::intern("p"))), "pkg");
+        assert_eq!(
+            cache_key_type_dir(&CacheKey::Package(Symbol::intern("p"))),
+            "pkg"
+        );
         assert_eq!(
             cache_key_type_dir(&CacheKey::Macro {
                 name: Symbol::intern("m"),
@@ -542,7 +542,9 @@ mod tests {
         // First instance: write
         {
             let cache = FilesystemCache::new(&dir).unwrap();
-            cache.put(&CacheKey::FileContent(500), b"persistent").unwrap();
+            cache
+                .put(&CacheKey::FileContent(500), b"persistent")
+                .unwrap();
         }
 
         // Second instance: read back

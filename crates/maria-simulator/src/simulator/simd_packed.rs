@@ -71,9 +71,13 @@ fn simd_dispatch_and(a: &[(u64, u64)], b: &[(u64, u64)], len: usize) -> Vec<(u64
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512f") {
-            unsafe { avx512_and(&ka, &va, &kb, &vb, &mut ok, &mut ov); }
+            unsafe {
+                avx512_and(&ka, &va, &kb, &vb, &mut ok, &mut ov);
+            }
         } else if is_x86_feature_detected!("avx2") {
-            unsafe { avx2_and(&ka, &va, &kb, &vb, &mut ok, &mut ov); }
+            unsafe {
+                avx2_and(&ka, &va, &kb, &vb, &mut ok, &mut ov);
+            }
         } else {
             scalar_and_arrays(&ka, &va, &kb, &vb, &mut ok, &mut ov);
         }
@@ -95,9 +99,13 @@ fn simd_dispatch_or(a: &[(u64, u64)], b: &[(u64, u64)], len: usize) -> Vec<(u64,
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512f") {
-            unsafe { avx512_or(&ka, &va, &kb, &vb, &mut ok, &mut ov); }
+            unsafe {
+                avx512_or(&ka, &va, &kb, &vb, &mut ok, &mut ov);
+            }
         } else if is_x86_feature_detected!("avx2") {
-            unsafe { avx2_or(&ka, &va, &kb, &vb, &mut ok, &mut ov); }
+            unsafe {
+                avx2_or(&ka, &va, &kb, &vb, &mut ok, &mut ov);
+            }
         } else {
             scalar_or_arrays(&ka, &va, &kb, &vb, &mut ok, &mut ov);
         }
@@ -119,9 +127,13 @@ fn simd_dispatch_xor(a: &[(u64, u64)], b: &[(u64, u64)], len: usize) -> Vec<(u64
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512f") {
-            unsafe { avx512_xor(&ka, &va, &kb, &vb, &mut ok, &mut ov); }
+            unsafe {
+                avx512_xor(&ka, &va, &kb, &vb, &mut ok, &mut ov);
+            }
         } else if is_x86_feature_detected!("avx2") {
-            unsafe { avx2_xor(&ka, &va, &kb, &vb, &mut ok, &mut ov); }
+            unsafe {
+                avx2_xor(&ka, &va, &kb, &vb, &mut ok, &mut ov);
+            }
         } else {
             scalar_xor_arrays(&ka, &va, &kb, &vb, &mut ok, &mut ov);
         }
@@ -142,9 +154,13 @@ fn simd_dispatch_not(a: &[(u64, u64)], len: usize) -> Vec<(u64, u64)> {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512f") {
-            unsafe { avx512_not(&ka, &va, &mut ok, &mut ov); }
+            unsafe {
+                avx512_not(&ka, &va, &mut ok, &mut ov);
+            }
         } else if is_x86_feature_detected!("avx2") {
-            unsafe { avx2_not(&ka, &va, &mut ok, &mut ov); }
+            unsafe {
+                avx2_not(&ka, &va, &mut ok, &mut ov);
+            }
         } else {
             scalar_not_arrays(&ka, &va, &mut ok, &mut ov);
         }
@@ -162,8 +178,12 @@ fn simd_dispatch_not(a: &[(u64, u64)], len: usize) -> Vec<(u64, u64)> {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 unsafe fn avx512_and(
-    ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64],
-    out_k: &mut [u64], out_v: &mut [u64],
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    out_k: &mut [u64],
+    out_v: &mut [u64],
 ) {
     let len = ka.len();
     let mut i = 0;
@@ -186,8 +206,10 @@ unsafe fn avx512_and(
         i += 8;
     }
     for j in i..len {
-        let a_is_0 = ka[j] & !va[j]; let b_is_0 = kb[j] & !vb[j];
-        let a_is_1 = ka[j] & va[j]; let b_is_1 = kb[j] & vb[j];
+        let a_is_0 = ka[j] & !va[j];
+        let b_is_0 = kb[j] & !vb[j];
+        let a_is_1 = ka[j] & va[j];
+        let b_is_1 = kb[j] & vb[j];
         out_k[j] = a_is_0 | b_is_0 | (a_is_1 & b_is_1);
         out_v[j] = a_is_1 & b_is_1;
     }
@@ -196,8 +218,12 @@ unsafe fn avx512_and(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 unsafe fn avx512_or(
-    ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64],
-    out_k: &mut [u64], out_v: &mut [u64],
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    out_k: &mut [u64],
+    out_v: &mut [u64],
 ) {
     let len = ka.len();
     let mut i = 0;
@@ -220,8 +246,10 @@ unsafe fn avx512_or(
         i += 8;
     }
     for j in i..len {
-        let a_is_0 = ka[j] & !va[j]; let b_is_0 = kb[j] & !vb[j];
-        let a_is_1 = ka[j] & va[j]; let b_is_1 = kb[j] & vb[j];
+        let a_is_0 = ka[j] & !va[j];
+        let b_is_0 = kb[j] & !vb[j];
+        let a_is_1 = ka[j] & va[j];
+        let b_is_1 = kb[j] & vb[j];
         out_k[j] = a_is_1 | b_is_1 | (a_is_0 & b_is_0);
         out_v[j] = a_is_1 | b_is_1;
     }
@@ -230,8 +258,12 @@ unsafe fn avx512_or(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 unsafe fn avx512_xor(
-    ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64],
-    out_k: &mut [u64], out_v: &mut [u64],
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    out_k: &mut [u64],
+    out_v: &mut [u64],
 ) {
     let len = ka.len();
     let mut i = 0;
@@ -256,9 +288,7 @@ unsafe fn avx512_xor(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
-unsafe fn avx512_not(
-    ka: &[u64], va: &[u64], out_k: &mut [u64], out_v: &mut [u64],
-) {
+unsafe fn avx512_not(ka: &[u64], va: &[u64], out_k: &mut [u64], out_v: &mut [u64]) {
     let len = ka.len();
     let mut i = 0;
     while i + 8 <= len {
@@ -283,8 +313,12 @@ unsafe fn avx512_not(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn avx2_and(
-    ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64],
-    out_k: &mut [u64], out_v: &mut [u64],
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    out_k: &mut [u64],
+    out_v: &mut [u64],
 ) {
     let len = ka.len();
     let mut i = 0;
@@ -307,8 +341,10 @@ unsafe fn avx2_and(
         i += 4;
     }
     for j in i..len {
-        let a_is_0 = ka[j] & !va[j]; let b_is_0 = kb[j] & !vb[j];
-        let a_is_1 = ka[j] & va[j]; let b_is_1 = kb[j] & vb[j];
+        let a_is_0 = ka[j] & !va[j];
+        let b_is_0 = kb[j] & !vb[j];
+        let a_is_1 = ka[j] & va[j];
+        let b_is_1 = kb[j] & vb[j];
         out_k[j] = a_is_0 | b_is_0 | (a_is_1 & b_is_1);
         out_v[j] = a_is_1 & b_is_1;
     }
@@ -317,8 +353,12 @@ unsafe fn avx2_and(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn avx2_or(
-    ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64],
-    out_k: &mut [u64], out_v: &mut [u64],
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    out_k: &mut [u64],
+    out_v: &mut [u64],
 ) {
     let len = ka.len();
     let mut i = 0;
@@ -341,8 +381,10 @@ unsafe fn avx2_or(
         i += 4;
     }
     for j in i..len {
-        let a_is_0 = ka[j] & !va[j]; let b_is_0 = kb[j] & !vb[j];
-        let a_is_1 = ka[j] & va[j]; let b_is_1 = kb[j] & vb[j];
+        let a_is_0 = ka[j] & !va[j];
+        let b_is_0 = kb[j] & !vb[j];
+        let a_is_1 = ka[j] & va[j];
+        let b_is_1 = kb[j] & vb[j];
         out_k[j] = a_is_1 | b_is_1 | (a_is_0 & b_is_0);
         out_v[j] = a_is_1 | b_is_1;
     }
@@ -351,8 +393,12 @@ unsafe fn avx2_or(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn avx2_xor(
-    ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64],
-    out_k: &mut [u64], out_v: &mut [u64],
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    out_k: &mut [u64],
+    out_v: &mut [u64],
 ) {
     let len = ka.len();
     let mut i = 0;
@@ -377,9 +423,7 @@ unsafe fn avx2_xor(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn avx2_not(
-    ka: &[u64], va: &[u64], out_k: &mut [u64], out_v: &mut [u64],
-) {
+unsafe fn avx2_not(ka: &[u64], va: &[u64], out_k: &mut [u64], out_v: &mut [u64]) {
     let len = ka.len();
     let mut i = 0;
     while i + 4 <= len {
@@ -406,8 +450,10 @@ fn scalar_and(a: &[(u64, u64)], b: &[(u64, u64)]) -> Vec<(u64, u64)> {
     for i in 0..len {
         let (ak, av) = a.get(i).copied().unwrap_or((0, 0));
         let (bk, bv) = b.get(i).copied().unwrap_or((0, 0));
-        let a0 = ak & !av; let b0 = bk & !bv;
-        let a1 = ak & av; let b1 = bk & bv;
+        let a0 = ak & !av;
+        let b0 = bk & !bv;
+        let a1 = ak & av;
+        let b1 = bk & bv;
         out.push((a0 | b0 | (a1 & b1), a1 & b1));
     }
     out
@@ -419,8 +465,10 @@ fn scalar_or(a: &[(u64, u64)], b: &[(u64, u64)]) -> Vec<(u64, u64)> {
     for i in 0..len {
         let (ak, av) = a.get(i).copied().unwrap_or((0, 0));
         let (bk, bv) = b.get(i).copied().unwrap_or((0, 0));
-        let a0 = ak & !av; let b0 = bk & !bv;
-        let a1 = ak & av; let b1 = bk & bv;
+        let a0 = ak & !av;
+        let b0 = bk & !bv;
+        let a1 = ak & av;
+        let b1 = bk & bv;
         out.push((a1 | b1 | (a0 & b0), a1 | b1));
     }
     out
@@ -468,25 +516,50 @@ fn interleave(k: &[u64], v: &[u64]) -> Vec<(u64, u64)> {
 
 // ─── Scalar Array Ops (untuk SIMD fallback) ───
 
-fn scalar_and_arrays(ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64], ok: &mut [u64], ov: &mut [u64]) {
+fn scalar_and_arrays(
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    ok: &mut [u64],
+    ov: &mut [u64],
+) {
     for i in 0..ka.len() {
-        let a0 = ka[i] & !va[i]; let b0 = kb[i] & !vb[i];
-        let a1 = ka[i] & va[i]; let b1 = kb[i] & vb[i];
+        let a0 = ka[i] & !va[i];
+        let b0 = kb[i] & !vb[i];
+        let a1 = ka[i] & va[i];
+        let b1 = kb[i] & vb[i];
         ok[i] = a0 | b0 | (a1 & b1);
         ov[i] = a1 & b1;
     }
 }
 
-fn scalar_or_arrays(ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64], ok: &mut [u64], ov: &mut [u64]) {
+fn scalar_or_arrays(
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    ok: &mut [u64],
+    ov: &mut [u64],
+) {
     for i in 0..ka.len() {
-        let a0 = ka[i] & !va[i]; let b0 = kb[i] & !vb[i];
-        let a1 = ka[i] & va[i]; let b1 = kb[i] & vb[i];
+        let a0 = ka[i] & !va[i];
+        let b0 = kb[i] & !vb[i];
+        let a1 = ka[i] & va[i];
+        let b1 = kb[i] & vb[i];
         ok[i] = a1 | b1 | (a0 & b0);
         ov[i] = a1 | b1;
     }
 }
 
-fn scalar_xor_arrays(ka: &[u64], va: &[u64], kb: &[u64], vb: &[u64], ok: &mut [u64], ov: &mut [u64]) {
+fn scalar_xor_arrays(
+    ka: &[u64],
+    va: &[u64],
+    kb: &[u64],
+    vb: &[u64],
+    ok: &mut [u64],
+    ov: &mut [u64],
+) {
     for i in 0..ka.len() {
         ok[i] = ka[i] & kb[i];
         ov[i] = (va[i] ^ vb[i]) & ok[i];
@@ -516,20 +589,20 @@ mod tests {
 
     #[test]
     fn test_simd_and_small() {
-        let a = make_chunks(&[(0xFF, 0xFF)]);   // 11111111 (all known 1s)
-        let b = make_chunks(&[(0xFF, 0x0F)]);   // 00001111 (lower 4=1, upper 4=0)
+        let a = make_chunks(&[(0xFF, 0xFF)]); // 11111111 (all known 1s)
+        let b = make_chunks(&[(0xFF, 0x0F)]); // 00001111 (lower 4=1, upper 4=0)
         let r = simd_and(&a, &b);
         assert_eq!(r.len(), 1);
         // AND: 1&1=1, 1&0=0 — both inputs fully known, so all result bits known
         // known=0xFF (all bits determined), value=0x0F (lower 4 bits = 1)
         assert_eq!(r[0], (0xFF, 0x0F));
-        assert_eq!(r[0].0 & r[0].1, 0x0F);  // to_u64 equivalent
+        assert_eq!(r[0].0 & r[0].1, 0x0F); // to_u64 equivalent
     }
 
     #[test]
     fn test_simd_and_with_x() {
-        let a = make_chunks(&[(0, 0)]);          // XXXXXXXX
-        let b = make_chunks(&[(0xFF, 0xFF)]);    // 11111111
+        let a = make_chunks(&[(0, 0)]); // XXXXXXXX
+        let b = make_chunks(&[(0xFF, 0xFF)]); // 11111111
         let r = simd_and(&a, &b);
         // X AND 1 = X → known=0, value=0
         assert_eq!(r[0], (0, 0));
@@ -537,8 +610,8 @@ mod tests {
 
     #[test]
     fn test_simd_and_zero_dominates() {
-        let a = make_chunks(&[(0xFF, 0x00)]);    // 00000000
-        let b = make_chunks(&[(0, 0)]);          // XXXXXXXX
+        let a = make_chunks(&[(0xFF, 0x00)]); // 00000000
+        let b = make_chunks(&[(0, 0)]); // XXXXXXXX
         let r = simd_and(&a, &b);
         // 0 AND X = 0 → known=1, value=0
         assert_eq!(r[0], (0xFF, 0x00));
@@ -547,8 +620,8 @@ mod tests {
     #[test]
     fn test_simd_and_multi_chunk() {
         let chunks = 16; // 1024 bit signal — triggers SIMD path (len >= 8)
-        let a = make_chunks(&vec![(!0u64, !0u64); chunks]);  // all 1s
-        let b = make_chunks(&vec![(!0u64, 0xAAAAAAAAAAAAAAAA); chunks]);  // alternating bits
+        let a = make_chunks(&vec![(!0u64, !0u64); chunks]); // all 1s
+        let b = make_chunks(&vec![(!0u64, 0xAAAAAAAAAAAAAAAA); chunks]); // alternating bits
         let r = simd_and(&a, &b);
         assert_eq!(r.len(), chunks);
         // 1 AND alternating = alternating, all bits known
@@ -624,8 +697,8 @@ mod tests {
     #[test]
     fn test_simd_or_large_mixed() {
         let chunks = 32;
-        let a = make_chunks(&vec![(0xFF, 0x00); chunks]);  // all 0
-        let b = make_chunks(&vec![(0xFF, 0xFF); chunks]);  // all 1
+        let a = make_chunks(&vec![(0xFF, 0x00); chunks]); // all 0
+        let b = make_chunks(&vec![(0xFF, 0xFF); chunks]); // all 1
         let r = simd_or(&a, &b);
         // 0 OR 1 = 1
         assert!(r.iter().all(|&(k, v)| k == 0xFF && v == 0xFF));

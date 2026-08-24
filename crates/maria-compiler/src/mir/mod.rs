@@ -1,13 +1,13 @@
 //! Mid-Level IR — simulation-optimized intermediate representation.
 
-pub mod mir;
-pub mod lower;
-pub mod opt;
 #[cfg(feature = "jit")]
 pub mod jit;
+pub mod lower;
+pub mod mir;
+pub mod opt;
 
-pub use mir::*;
 pub use lower::lower_module;
+pub use mir::*;
 pub use opt::optimize_module;
 
 // MirJitCompiler fallback when jit feature is disabled
@@ -27,7 +27,15 @@ pub struct CompiledMirProcess {
 
 #[cfg(not(feature = "jit"))]
 impl MirJitCompiler {
-    pub fn new() -> Option<Self> { None }
-    pub fn compile_process(&mut self, _process: &crate::mir::MirProcess, _n_sigs: usize) -> Option<CompiledMirProcess> { None }
+    pub fn new() -> Option<Self> {
+        None
+    }
+    pub fn compile_process(
+        &mut self,
+        _process: &crate::mir::MirProcess,
+        _n_sigs: usize,
+    ) -> Option<CompiledMirProcess> {
+        None
+    }
     pub unsafe fn call_process(_code_ptr: *const u8, _signals: &[u64], _out: &mut [u64]) {}
 }

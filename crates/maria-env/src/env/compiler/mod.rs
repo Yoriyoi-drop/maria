@@ -17,6 +17,6 @@ pub use compiler::CompilerContext;
 pub use elaboration::elaborate;
 pub use hir::HirHandle;
 pub use lexer::{lex, lex_fast};
-pub use optimize::{OptimizeLevel, apply_optimizations};
+pub use optimize::{apply_optimizations, OptimizeLevel};
 pub use parser::{parse, parse_strict};
 pub use preprocess::{build_preprocessor, preprocess_file, preprocess_str};

@@ -5,15 +5,15 @@
 //! - publishDiagnostics via the existing parser
 //! - Initialize/shutdown lifecycle
 
+use lsp_types::notification::PublishDiagnostics;
+use lsp_types::{
+    Diagnostic, DiagnosticSeverity, InitializeParams, InitializeResult, Position,
+    PublishDiagnosticsParams, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind,
+};
 use maria_parser::lexer::Lexer;
 use maria_parser::preprocessor::Preprocessor;
 use maria_parser::Parser;
-use lsp_types::notification::PublishDiagnostics;
-use lsp_types::{
-    Diagnostic, DiagnosticSeverity, InitializeParams, InitializeResult,
-    Position, PublishDiagnosticsParams, Range, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, ServerInfo,
-};
 use tower_lsp::jsonrpc::Result as JsonRpcResult;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -39,8 +39,14 @@ impl LspBackend {
             Err(e) => {
                 diagnostics.push(Diagnostic {
                     range: Range {
-                        start: Position { line: 0, character: 0 },
-                        end: Position { line: 0, character: 0 },
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 0,
+                        },
                     },
                     severity: Some(DiagnosticSeverity::ERROR),
                     source: Some("maria".to_string()),
@@ -92,8 +98,14 @@ impl LspBackend {
 
             diagnostics.push(Diagnostic {
                 range: Range {
-                    start: Position { line, character: col },
-                    end: Position { line, character: col + 1 },
+                    start: Position {
+                        line,
+                        character: col,
+                    },
+                    end: Position {
+                        line,
+                        character: col + 1,
+                    },
                 },
                 severity: Some(severity),
                 source: Some("maria".to_string()),
@@ -112,9 +124,9 @@ impl LanguageServer for LspBackend {
     async fn initialize(&self, _params: InitializeParams) -> JsonRpcResult<InitializeResult> {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                text_document_sync: Some(    TextDocumentSyncCapability::Kind(
-        TextDocumentSyncKind::FULL,
-    )),
+                text_document_sync: Some(TextDocumentSyncCapability::Kind(
+                    TextDocumentSyncKind::FULL,
+                )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -191,7 +203,5 @@ pub async fn run_lsp_server() {
     let stdout = tokio::io::stdout();
 
     let (service, messages) = LspService::new(LspBackend::new);
-    Server::new(stdin, stdout, messages)
-        .serve(service)
-        .await;
+    Server::new(stdin, stdout, messages).serve(service).await;
 }

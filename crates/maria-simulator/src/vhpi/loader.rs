@@ -18,24 +18,35 @@ pub struct LoadedVhpi {
 
 impl std::fmt::Debug for LoadedVhpi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "LoadedVhpi {{ path: {:?}, abi: {:?} }}", self.path, self.abi)
+        write!(
+            f,
+            "LoadedVhpi {{ path: {:?}, abi: {:?} }}",
+            self.path, self.abi
+        )
     }
 }
 
 /// Cari + muat library VHPI. `name` bisa path penuh atau nama (`libfoo.so`).
 #[cfg(feature = "dpi")]
 pub fn load_vhpi_library(name: &str) -> Result<LoadedVhpi, String> {
-    use crate::foreign::loader::{load_library, find_library, current_abi};
+    use crate::foreign::loader::{current_abi, find_library, load_library};
     let search = crate::foreign::loader::default_search_paths();
     let path = find_library(name, &search)
         .ok_or_else(|| format!("VHPI library '{}' not found in search paths", name))?;
     let library = load_library(&path)?;
-    Ok(LoadedVhpi { path, abi: current_abi(), library })
+    Ok(LoadedVhpi {
+        path,
+        abi: current_abi(),
+        library,
+    })
 }
 
 #[cfg(not(feature = "dpi"))]
 pub fn load_vhpi_library(name: &str) -> Result<LoadedVhpi, String> {
-    Err(format!("VHPI library '{}' loading requires feature \"dpi\"", name))
+    Err(format!(
+        "VHPI library '{}' loading requires feature \"dpi\"",
+        name
+    ))
 }
 
 /// Panggil entry point init library (jika ada): `vhpi_startup` biasa
@@ -44,7 +55,9 @@ pub fn load_vhpi_library(name: &str) -> Result<LoadedVhpi, String> {
 #[cfg(feature = "dpi")]
 pub fn call_vhpi_startup(vhpi: &LoadedVhpi) -> Result<(), String> {
     type InitFn = unsafe extern "C" fn() -> i32;
-    if let Some(init) = crate::foreign::loader::resolve_symbol::<InitFn>(&vhpi.library, "vhpi_startup") {
+    if let Some(init) =
+        crate::foreign::loader::resolve_symbol::<InitFn>(&vhpi.library, "vhpi_startup")
+    {
         let rc = unsafe { init() };
         if rc != 0 {
             return Err(format!("vhpi_startup returned {}", rc));

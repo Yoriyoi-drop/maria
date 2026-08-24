@@ -11,10 +11,10 @@
 //! 1 file = 1 tanggung jawab: hanya uvm_root.
 
 use super::super::SimulationEngine;
+use crate::simulator::util::logicvec_to_string;
+use maria_compiler::hir::{LogicVec, ObjId};
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
-use crate::simulator::util::logicvec_to_string;
 
 impl SimulationEngine {
     /// Method `uvm_root` — singleton root + top-level component (non-block).
@@ -43,10 +43,7 @@ impl SimulationEngine {
             )),
             // Varian class-method run_test("name") — sama dgn bare run_test.
             "run_test" => {
-                let test_name = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let test_name = args.first().map(logicvec_to_string).unwrap_or_default();
                 self.run_uvm_test(&test_name)?;
                 Ok(LogicVec::from_u64(1, 1))
             }

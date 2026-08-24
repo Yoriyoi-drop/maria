@@ -16,7 +16,9 @@ impl std::fmt::Debug for IncrementalHandle {
 
 impl IncrementalHandle {
     pub fn new() -> Self {
-        IncrementalHandle { inner: IncrementalTracker::new() }
+        IncrementalHandle {
+            inner: IncrementalTracker::new(),
+        }
     }
 
     pub fn register_file(&self, path: &Path, modules: Vec<NodeId>, checksum: u64) {

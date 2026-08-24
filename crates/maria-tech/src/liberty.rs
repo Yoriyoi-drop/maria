@@ -214,16 +214,15 @@ fn tokenize(text: &str) -> Result<Vec<Tok>, String> {
                     i += 1;
                 }
                 let s: String = chars[start..i].iter().collect();
-                let v: f64 = s
-                    .parse()
-                    .map_err(|_| format!("angka tak valid: {s}"))?;
+                let v: f64 = s.parse().map_err(|_| format!("angka tak valid: {s}"))?;
                 toks.push(Tok::Num(v));
             }
             c if c.is_alphanumeric() || c == '_' || c == '/' || c == '\\' || c == ':' => {
                 // ident (bisa berisi / seperti nama sel skylake_stdcell)
                 let start = i;
                 while i < n
-                    && (chars[i].is_alphanumeric() || matches!(chars[i], '_' | '/' | '\\' | ':' | '-' | '+' | '.'))
+                    && (chars[i].is_alphanumeric()
+                        || matches!(chars[i], '_' | '/' | '\\' | ':' | '-' | '+' | '.'))
                 {
                     i += 1;
                 }
@@ -363,7 +362,11 @@ fn parse_body(p: &mut Parser) -> Result<Vec<Item>, String> {
                     // grup tanpa args `name { ... }`? Liberty selalu pakai ().
                     Some(Tok::LBrace) => {
                         let body = parse_body(p)?;
-                        items.push(Item::Group { name, args: vec![], body });
+                        items.push(Item::Group {
+                            name,
+                            args: vec![],
+                            body,
+                        });
                     }
                     _ => {
                         // toleran: skip sampai `;`
@@ -495,9 +498,7 @@ fn build_library(name: String, body: &[Item]) -> Result<LibertyLibrary, String> 
             }
             Item::Group { name: gn, body, .. } => {
                 if gn == "cell" {
-                    let cell_name = item
-                        .args_str()
-                        .unwrap_or_default();
+                    let cell_name = item.args_str().unwrap_or_default();
                     if let Some(c) = build_cell(&cell_name, body)? {
                         lib.cells.push(c);
                     }
@@ -572,29 +573,24 @@ fn build_pin(name: &str, body: &[Item]) -> Result<Option<LibertyPin>, String> {
     };
     for item in body {
         match item {
-            Item::Attr(n, v) => {
-                match n.as_str() {
-                    "direction" => {
-                        let d = v.trim_matches('"');
-                        pin.direction = match d {
-                            "input" => PinDir::Input,
-                            "output" => PinDir::Output,
-                            "inout" => PinDir::Inout,
-                            other => return Err(format!("direction tak dikenal: {other}")),
-                        };
-                    }
-                    "capacitance" => {
-                        pin.capacitance = v
-                            .trim()
-                            .parse::<f64>()
-                            .unwrap_or(0.0);
-                    }
-                    "function" => {
-                        pin.function = Some(v.trim().to_string());
-                    }
-                    _ => {}
+            Item::Attr(n, v) => match n.as_str() {
+                "direction" => {
+                    let d = v.trim_matches('"');
+                    pin.direction = match d {
+                        "input" => PinDir::Input,
+                        "output" => PinDir::Output,
+                        "inout" => PinDir::Inout,
+                        other => return Err(format!("direction tak dikenal: {other}")),
+                    };
                 }
-            }
+                "capacitance" => {
+                    pin.capacitance = v.trim().parse::<f64>().unwrap_or(0.0);
+                }
+                "function" => {
+                    pin.function = Some(v.trim().to_string());
+                }
+                _ => {}
+            },
             Item::Group { name: gn, body, .. } => {
                 if gn == "timing" {
                     if let Some(arc) = build_timing(body) {
@@ -906,7 +902,11 @@ library (generic) {
     fn parse_cell_area_and_pins() {
         let lib = parse_liberty(SAMPLE).expect("parse");
         let nand = lib.cell("NAND2_X1").expect("cell NAND2_X1");
-        assert!((nand.area - 1.2).abs() < 1e-9, "area = 1.2, dapat {}", nand.area);
+        assert!(
+            (nand.area - 1.2).abs() < 1e-9,
+            "area = 1.2, dapat {}",
+            nand.area
+        );
         assert_eq!(nand.footprint.as_deref(), Some("nand2"));
         assert_eq!(nand.pins.len(), 3);
         let a = nand.pin("A").expect("pin A");

@@ -14,12 +14,15 @@ impl std::fmt::Debug for HirHandle {
 
 impl HirHandle {
     pub fn new() -> Self {
-        HirHandle { inner: LazyElaborator::new() }
+        HirHandle {
+            inner: LazyElaborator::new(),
+        }
     }
 
     /// Daftarkan module dengan sinyal port-nya (param/statement di-resolve on-demand).
     pub fn register_module(&mut self, name: maria_core::intern::Symbol, signals: Vec<HirSignal>) {
-        self.inner.elaborate_with_data(name, vec![], signals, vec![]);
+        self.inner
+            .elaborate_with_data(name, vec![], signals, vec![]);
     }
 
     pub fn inner(&self) -> &LazyElaborator {
@@ -34,8 +37,8 @@ impl HirHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maria_core::intern::Symbol;
     use maria_compiler::hir::HirType;
+    use maria_core::intern::Symbol;
 
     #[test]
     fn test_hir_handle() {

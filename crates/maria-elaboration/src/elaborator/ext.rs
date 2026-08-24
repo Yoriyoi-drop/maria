@@ -102,12 +102,9 @@ impl Elaborator {
     /// `test_elab_err_func_not_found_*`).
     pub(crate) fn design_has_dpi_imports(&self) -> bool {
         self.design.modules.iter().any(|m| {
-            m.items.iter().any(|item| {
-                matches!(
-                    item,
-                    ModuleItem::DpiImport(_) | ModuleItem::DpiExport(_)
-                )
-            })
+            m.items
+                .iter()
+                .any(|item| matches!(item, ModuleItem::DpiImport(_) | ModuleItem::DpiExport(_)))
         })
     }
 

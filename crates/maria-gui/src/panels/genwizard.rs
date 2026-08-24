@@ -83,7 +83,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                                 super::super::semantic::FONT_SIZE,
                             ))),
                     );
-                    if ui.small_button("✕").on_hover_text("Hapus parameter").clicked() {
+                    if ui
+                        .small_button("✕")
+                        .on_hover_text("Hapus parameter")
+                        .clicked()
+                    {
                         remove_param = Some(i);
                     }
                 });
@@ -243,7 +247,12 @@ fn create_file(state: &mut GuiState) {
             state.gen_error.clear();
             state.gen_open = false;
             state.open_file(path.clone());
-            state.log(format!("✨ {} '{}' dibuat → {}", label, name, path.display()));
+            state.log(format!(
+                "✨ {} '{}' dibuat → {}",
+                label,
+                name,
+                path.display()
+            ));
         }
         Err(e) => {
             state.gen_error = format!("Gagal menulis {}: {}", path.display(), e);
@@ -272,7 +281,11 @@ pub fn gen_module_source(
     } else {
         s.push_str(&format!("module {} #(\n", name));
         for (i, p) in params.iter().enumerate() {
-            let ty = if p.ty.is_empty() { "int" } else { p.ty.as_str() };
+            let ty = if p.ty.is_empty() {
+                "int"
+            } else {
+                p.ty.as_str()
+            };
             let comma = if i + 1 == params.len() { "" } else { "," };
             let default = if p.default.is_empty() {
                 String::new()
@@ -320,11 +333,7 @@ pub fn gen_module_source(
             (format!("{} {}", p.dir, tr), p.name.clone())
         })
         .collect();
-    let max_pre = rendered
-        .iter()
-        .map(|(pre, _)| pre.len())
-        .max()
-        .unwrap_or(0);
+    let max_pre = rendered.iter().map(|(pre, _)| pre.len()).max().unwrap_or(0);
 
     for (i, (pre, nm)) in rendered.iter().enumerate() {
         let comma = if i + 1 == rendered.len() { "" } else { "," };
@@ -363,7 +372,11 @@ pub fn gen_interface_source(name: &str, params: &[GenParam], ports: &[GenPort]) 
     } else {
         s.push_str(&format!("interface {} #(\n", name));
         for (i, p) in params.iter().enumerate() {
-            let ty = if p.ty.is_empty() { "int" } else { p.ty.as_str() };
+            let ty = if p.ty.is_empty() {
+                "int"
+            } else {
+                p.ty.as_str()
+            };
             let comma = if i + 1 == params.len() { "" } else { "," };
             let default = if p.default.is_empty() {
                 String::new()
@@ -389,11 +402,7 @@ pub fn gen_interface_source(name: &str, params: &[GenParam], ports: &[GenPort]) 
             (format!("{} {}", p.dir, tr), p.name.clone())
         })
         .collect();
-    let max_pre = rendered
-        .iter()
-        .map(|(pre, _)| pre.len())
-        .max()
-        .unwrap_or(0);
+    let max_pre = rendered.iter().map(|(pre, _)| pre.len()).max().unwrap_or(0);
     for (i, (pre, nm)) in rendered.iter().enumerate() {
         let comma = if i + 1 == rendered.len() { "" } else { "," };
         let pad = " ".repeat(max_pre.saturating_sub(pre.len()));
@@ -501,13 +510,32 @@ mod tests {
         let src = gen_module_source(
             "cache_ctrl",
             &[param("WIDTH", "int", "32")],
-            &[port("input", "data_in", "WIDTH-1:0"), port("output", "data_out", "WIDTH-1:0")],
+            &[
+                port("input", "data_in", "WIDTH-1:0"),
+                port("output", "data_out", "WIDTH-1:0"),
+            ],
             false,
         );
-        assert!(src.contains("module cache_ctrl #("), "header parameter:\n{}", src);
-        assert!(src.contains("parameter int WIDTH = 32"), "parameter:\n{}", src);
-        assert!(has_line_tokens(&src, &["input", "logic", "[WIDTH-1:0]", "data_in,"]), "input port:\n{}", src);
-        assert!(has_line_tokens(&src, &["output", "logic", "[WIDTH-1:0]", "data_out"]), "output port:\n{}", src);
+        assert!(
+            src.contains("module cache_ctrl #("),
+            "header parameter:\n{}",
+            src
+        );
+        assert!(
+            src.contains("parameter int WIDTH = 32"),
+            "parameter:\n{}",
+            src
+        );
+        assert!(
+            has_line_tokens(&src, &["input", "logic", "[WIDTH-1:0]", "data_in,"]),
+            "input port:\n{}",
+            src
+        );
+        assert!(
+            has_line_tokens(&src, &["output", "logic", "[WIDTH-1:0]", "data_out"]),
+            "output port:\n{}",
+            src
+        );
         assert!(src.contains("endmodule : cache_ctrl"), "footer:\n{}", src);
     }
 
@@ -515,8 +543,16 @@ mod tests {
     fn module_clk_rst_inserted_first() {
         let src = gen_module_source("top", &[], &[port("output", "done", "")], true);
         assert!(src.contains("module top ("), "tanpa parameter:\n{}", src);
-        assert!(has_line_tokens(&src, &["input", "logic", "clk,"]), "clk otomatis:\n{}", src);
-        assert!(has_line_tokens(&src, &["input", "logic", "rst_n,"]), "rst_n otomatis:\n{}", src);
+        assert!(
+            has_line_tokens(&src, &["input", "logic", "clk,"]),
+            "clk otomatis:\n{}",
+            src
+        );
+        assert!(
+            has_line_tokens(&src, &["input", "logic", "rst_n,"]),
+            "rst_n otomatis:\n{}",
+            src
+        );
         // clk harus mendahului port user.
         let clk_pos = src.find("clk").unwrap();
         let done_pos = src.find("done").unwrap();
@@ -528,11 +564,22 @@ mod tests {
         let src = gen_interface_source(
             "bus_if",
             &[param("WIDTH", "int", "32")],
-            &[port("input", "data_in", "WIDTH-1:0"), port("output", "data_out", "WIDTH-1:0")],
+            &[
+                port("input", "data_in", "WIDTH-1:0"),
+                port("output", "data_out", "WIDTH-1:0"),
+            ],
         );
         assert!(src.contains("interface bus_if #("), "header:\n{}", src);
-        assert!(has_line_tokens(&src, &["modport", "master", "("]), "modport master:\n{}", src);
-        assert!(has_line_tokens(&src, &["modport", "slave", "("]), "modport slave:\n{}", src);
+        assert!(
+            has_line_tokens(&src, &["modport", "master", "("]),
+            "modport master:\n{}",
+            src
+        );
+        assert!(
+            has_line_tokens(&src, &["modport", "slave", "("]),
+            "modport slave:\n{}",
+            src
+        );
         assert!(src.contains("endinterface : bus_if"), "footer:\n{}", src);
     }
 
@@ -552,6 +599,10 @@ mod tests {
         st.gen_kind = GenKind::Interface;
         st.gen_name = "my_if".into();
         let src = gen_source(&st);
-        assert!(src.contains("interface my_if"), "interface dipilih:\n{}", src);
+        assert!(
+            src.contains("interface my_if"),
+            "interface dipilih:\n{}",
+            src
+        );
     }
 }

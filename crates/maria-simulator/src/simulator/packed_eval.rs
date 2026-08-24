@@ -28,7 +28,11 @@ pub fn eval_unary_packed(op: &UnaryIrOp, val: &PackedLogicVec) -> Option<PackedL
 
 /// Evaluate a binary operation using packed representation.
 /// Returns None if the operation cannot be evaluated in packed form.
-pub fn eval_binary_packed(op: &BinaryIrOp, lhs: &PackedLogicVec, rhs: &PackedLogicVec) -> Option<PackedLogicVec> {
+pub fn eval_binary_packed(
+    op: &BinaryIrOp,
+    lhs: &PackedLogicVec,
+    rhs: &PackedLogicVec,
+) -> Option<PackedLogicVec> {
     match op {
         BinaryIrOp::BitAnd => Some(lhs.bitwise_and(rhs)),
         BinaryIrOp::BitOr => Some(lhs.bitwise_or(rhs)),
@@ -38,19 +42,24 @@ pub fn eval_binary_packed(op: &BinaryIrOp, lhs: &PackedLogicVec, rhs: &PackedLog
         // for correct 1-bit width handling and X/Z semantics.
         _ => None,
     }
-}    /// Check if a binary operation can be accelerated by packed eval.
-    /// Only true bitwise ops benefit from SIMD bitmask acceleration.
-    /// Comparison ops are handled by JIT or interpreted for correct width/XZ semantics.
-    pub fn is_packable_binary_op(op: &BinaryIrOp) -> bool {
-        matches!(
-            op,
-            BinaryIrOp::BitAnd | BinaryIrOp::BitOr | BinaryIrOp::BitXor | BinaryIrOp::BitXnor
-        )
-    }
+}
+/// Check if a binary operation can be accelerated by packed eval.
+/// Only true bitwise ops benefit from SIMD bitmask acceleration.
+/// Comparison ops are handled by JIT or interpreted for correct width/XZ semantics.
+pub fn is_packable_binary_op(op: &BinaryIrOp) -> bool {
+    matches!(
+        op,
+        BinaryIrOp::BitAnd | BinaryIrOp::BitOr | BinaryIrOp::BitXor | BinaryIrOp::BitXnor
+    )
+}
 
 /// Extended packed binary evaluator dengan width extension.
 /// Fallback ke LogicVec untuk operasi non-bitwise.
-pub fn eval_binary_packed_extended(op: &BinaryIrOp, lhs: &PackedLogicVec, rhs: &PackedLogicVec) -> PackedLogicVec {
+pub fn eval_binary_packed_extended(
+    op: &BinaryIrOp,
+    lhs: &PackedLogicVec,
+    rhs: &PackedLogicVec,
+) -> PackedLogicVec {
     if let Some(result) = eval_binary_packed(op, lhs, rhs) {
         return result;
     }
@@ -120,7 +129,12 @@ mod tests {
     #[test]
     fn test_fill_single_bit() {
         let pv = PackedLogicVec::fill(LogicVal::One, 1);
-        assert_eq!(pv.to_u64(), 1, "fill(One, 1).to_u64() should be 1, got {}", pv.to_u64());
+        assert_eq!(
+            pv.to_u64(),
+            1,
+            "fill(One, 1).to_u64() should be 1, got {}",
+            pv.to_u64()
+        );
     }
 
     #[test]
@@ -140,7 +154,10 @@ mod tests {
 
     #[test]
     fn test_to_logicvec_with_xz() {
-        let lv = LogicVec { bits: vec![LogicVal::X, LogicVal::Z, LogicVal::Zero, LogicVal::One], width: 4 };
+        let lv = LogicVec {
+            bits: vec![LogicVal::X, LogicVal::Z, LogicVal::Zero, LogicVal::One],
+            width: 4,
+        };
         let packed = PackedLogicVec::from_logicvec(&lv);
         let recovered = packed.to_logicvec();
         assert_eq!(lv, recovered);
@@ -195,7 +212,11 @@ mod tests {
         let zero_packed = PackedLogicVec::fill(LogicVal::Zero, 4);
         let r = x_packed.bitwise_and(&zero_packed);
         let lv = r.to_logicvec();
-        assert!(lv.bits.iter().all(|b| *b == LogicVal::Zero), "X & 0 should be 0, got {}", r);
+        assert!(
+            lv.bits.iter().all(|b| *b == LogicVal::Zero),
+            "X & 0 should be 0, got {}",
+            r
+        );
     }
 
     #[test]
@@ -214,7 +235,11 @@ mod tests {
         let one_packed = PackedLogicVec::fill(LogicVal::One, 4);
         let r = x_packed.bitwise_or(&one_packed);
         let lv = r.to_logicvec();
-        assert!(lv.bits.iter().all(|b| *b == LogicVal::One), "X | 1 should be 1, got {}", r);
+        assert!(
+            lv.bits.iter().all(|b| *b == LogicVal::One),
+            "X | 1 should be 1, got {}",
+            r
+        );
     }
 
     #[test]
@@ -232,7 +257,12 @@ mod tests {
     fn test_red_and_all_ones() {
         let pv = PackedLogicVec::fill(LogicVal::One, 8);
         let r = pv.red_and();
-        assert_eq!(r.to_u64(), 1, "red_and all ones should be 1, got {}", r.to_u64());
+        assert_eq!(
+            r.to_u64(),
+            1,
+            "red_and all ones should be 1, got {}",
+            r.to_u64()
+        );
     }
 
     #[test]
@@ -253,7 +283,12 @@ mod tests {
     fn test_red_or_has_one() {
         let pv = PackedLogicVec::from_u64(0b0010, 4);
         let r = pv.red_or();
-        assert_eq!(r.to_u64(), 1, "red_or with bit=1 should be 1, got {}", r.to_u64());
+        assert_eq!(
+            r.to_u64(),
+            1,
+            "red_or with bit=1 should be 1, got {}",
+            r.to_u64()
+        );
     }
 
     #[test]
@@ -269,7 +304,12 @@ mod tests {
         let pv = PackedLogicVec::from_u64(0b1101, 4);
         let r = pv.red_xor();
         // 1 xor 1 xor 0 xor 1 = 1
-        assert_eq!(r.to_u64(), 1, "red_xor of 1101 should be 1, got {}", r.to_u64());
+        assert_eq!(
+            r.to_u64(),
+            1,
+            "red_xor of 1101 should be 1, got {}",
+            r.to_u64()
+        );
     }
 
     #[test]
@@ -348,11 +388,11 @@ mod tests {
         let x1 = PackedLogicVec::fill(LogicVal::X, 4);
         let x2 = PackedLogicVec::fill(LogicVal::X, 4);
         assert_eq!(x1.eq(&x2).to_u64(), 1, "X === X should be 1");
-        
+
         let z1 = PackedLogicVec::fill(LogicVal::Z, 4);
         let z2 = PackedLogicVec::fill(LogicVal::Z, 4);
         assert_eq!(z1.eq(&z2).to_u64(), 1, "Z === Z should be 1");
-        
+
         let r = x1.eq(&z1);
         assert_eq!(r.to_u64(), 0, "X === Z should be 0");
     }
@@ -410,10 +450,12 @@ mod tests {
     fn test_resize_extend() {
         let pv = PackedLogicVec::from_u64(0b1111, 4);
         let r = pv.resize(8);
-        // Extended bits should be X (unknown)
+        // Extend = ZERO-extend (konsisten dgn LogicVec::resize + semantik
+        // assignment Verilog: bit baru bernilai 0, known=1).
         assert_eq!(r.to_u64(), 0b1111);
         let lv = r.to_logicvec();
-        assert_eq!(lv.bits[4], LogicVal::X);
+        assert_eq!(lv.bits[4], LogicVal::Zero);
+        assert_eq!(lv.bits[7], LogicVal::Zero);
     }
 
     // ─── Display Tests ───
@@ -464,7 +506,12 @@ mod tests {
     fn test_eval_unary_packed_red_and() {
         let a = PackedLogicVec::fill(LogicVal::One, 8);
         let r = eval_unary_packed(&UnaryIrOp::RedAnd, &a).unwrap();
-        assert_eq!(r.to_u64(), 1, "red_and all ones via eval should be 1, got {}", r.to_u64());
+        assert_eq!(
+            r.to_u64(),
+            1,
+            "red_and all ones via eval should be 1, got {}",
+            r.to_u64()
+        );
     }
 
     #[test]
@@ -506,10 +553,10 @@ mod tests {
         let b_lv = LogicVec::from_u64(0xDEF, 12);
         let a_pv = PackedLogicVec::from_logicvec(&a_lv);
         let b_pv = PackedLogicVec::from_logicvec(&b_lv);
-        
+
         let lv_result = crate::simulator::value::eval_binary(op.clone(), &a_lv, &b_lv);
         let pv_result = eval_binary_packed_extended(&op, &a_pv, &b_pv).to_logicvec();
-        
+
         assert_eq!(lv_result, pv_result, "Mismatch for op {:?}", op);
     }
 
@@ -547,10 +594,12 @@ mod tests {
     fn test_cross_validate_bitwise_not() {
         let lv = LogicVec::from_u64(0xACE, 12);
         let pv = PackedLogicVec::from_logicvec(&lv);
-        
+
         let lv_result = crate::simulator::value::eval_unary(UnaryIrOp::BitNot, &lv);
-        let pv_result = eval_unary_packed(&UnaryIrOp::BitNot, &pv).unwrap().to_logicvec();
-        
+        let pv_result = eval_unary_packed(&UnaryIrOp::BitNot, &pv)
+            .unwrap()
+            .to_logicvec();
+
         assert_eq!(lv_result, pv_result);
     }
 
@@ -558,21 +607,29 @@ mod tests {
     fn test_cross_validate_red_and() {
         let lv = LogicVec::from_u64(0xFF, 8);
         let pv = PackedLogicVec::from_logicvec(&lv);
-        
+
         let lv_result = crate::simulator::value::eval_unary(UnaryIrOp::RedAnd, &lv);
-        let pv_result = eval_unary_packed(&UnaryIrOp::RedAnd, &pv).unwrap().to_logicvec();
-        
-        assert_eq!(lv_result, pv_result, "red_and cross: LV={:?}, PV={:?}", lv_result, pv_result);
+        let pv_result = eval_unary_packed(&UnaryIrOp::RedAnd, &pv)
+            .unwrap()
+            .to_logicvec();
+
+        assert_eq!(
+            lv_result, pv_result,
+            "red_and cross: LV={:?}, PV={:?}",
+            lv_result, pv_result
+        );
     }
 
     #[test]
     fn test_cross_validate_red_or() {
         let lv = LogicVec::from_u64(0xF0, 8);
         let pv = PackedLogicVec::from_logicvec(&lv);
-        
+
         let lv_result = crate::simulator::value::eval_unary(UnaryIrOp::RedOr, &lv);
-        let pv_result = eval_unary_packed(&UnaryIrOp::RedOr, &pv).unwrap().to_logicvec();
-        
+        let pv_result = eval_unary_packed(&UnaryIrOp::RedOr, &pv)
+            .unwrap()
+            .to_logicvec();
+
         assert_eq!(lv_result, pv_result);
     }
 
@@ -580,10 +637,12 @@ mod tests {
     fn test_cross_validate_red_xor() {
         let lv = LogicVec::from_u64(0xAA, 8);
         let pv = PackedLogicVec::from_logicvec(&lv);
-        
+
         let lv_result = crate::simulator::value::eval_unary(UnaryIrOp::RedXor, &lv);
-        let pv_result = eval_unary_packed(&UnaryIrOp::RedXor, &pv).unwrap().to_logicvec();
-        
+        let pv_result = eval_unary_packed(&UnaryIrOp::RedXor, &pv)
+            .unwrap()
+            .to_logicvec();
+
         assert_eq!(lv_result, pv_result);
     }
 
@@ -594,10 +653,10 @@ mod tests {
         let lv_b = LogicVec::from_u64(0xDEAD_BEEF, 128);
         let pv_a = PackedLogicVec::from_logicvec(&lv_a);
         let pv_b = PackedLogicVec::from_logicvec(&lv_b);
-        
+
         let lv_result = crate::simulator::value::eval_binary(BinaryIrOp::BitXor, &lv_a, &lv_b);
         let pv_result = pv_a.bitwise_xor(&pv_b).to_logicvec();
-        
+
         assert_eq!(lv_result.width, pv_result.width);
         assert_eq!(lv_result, pv_result);
     }
@@ -621,7 +680,7 @@ mod tests {
     fn test_to_bool_known() {
         let pv = PackedLogicVec::from_u64(1, 1);
         assert_eq!(pv.to_bool(), Some(true));
-        
+
         let pv = PackedLogicVec::from_u64(0, 1);
         assert_eq!(pv.to_bool(), Some(false));
     }
@@ -749,8 +808,8 @@ module top;
     end
 endmodule
 "#;
-        use crate::test_util::compile_str;
         use crate::simulator::SimulationEngine;
+        use crate::test_util::compile_str;
 
         let design = compile_str(source).unwrap();
 

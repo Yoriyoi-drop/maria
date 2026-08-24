@@ -184,7 +184,10 @@ impl Preprocessor {
                             Ok(p) => p,
                             Err(e) => {
                                 if !self.quiet {
-                                    self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{}", e)));
+                                    self.warnings.push(Diagnostic::warning(
+                                        DiagCode::InvalidSyntax,
+                                        format!("{}", e),
+                                    ));
                                 }
                                 i += 1;
                                 continue;
@@ -209,14 +212,19 @@ impl Preprocessor {
                                 self.resolved_includes.insert(resolved.clone());
                                 self.warned_includes.remove(&inc_path);
                                 let inc_result = (|| -> Result<(), SimError> {
-                                    let inc_source = fs::read_to_string(&resolved)
-                                        .map_err(|e| SimError::preprocessor(format!("cannot read include '{}': {}", resolved.display(), e)))?;
+                                    let inc_source =
+                                        fs::read_to_string(&resolved).map_err(|e| {
+                                            SimError::preprocessor(format!(
+                                                "cannot read include '{}': {}",
+                                                resolved.display(),
+                                                e
+                                            ))
+                                        })?;
                                     let inc_dir = resolved.parent().map(|p| p.to_path_buf());
-                                    output.push_str(&format!(
-                                        "`line 1 \"{}\"\n",
-                                        resolved.display()
-                                    ));
-                                    let processed = self.preprocess(&inc_source, inc_dir.as_ref())?;
+                                    output
+                                        .push_str(&format!("`line 1 \"{}\"\n", resolved.display()));
+                                    let processed =
+                                        self.preprocess(&inc_source, inc_dir.as_ref())?;
                                     output.push_str(&processed);
                                     if !processed.ends_with('\n') {
                                         output.push('\n');
@@ -229,13 +237,19 @@ impl Preprocessor {
                                 }
                                 if let Err(e) = inc_result {
                                     if !self.quiet {
-                                        self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{}", e)));
+                                        self.warnings.push(Diagnostic::warning(
+                                            DiagCode::InvalidSyntax,
+                                            format!("{}", e),
+                                        ));
                                     }
                                 }
                             }
                             Err(e) => {
                                 if !self.quiet && self.warned_includes.insert(inc_path.clone()) {
-                                    self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{}", e)));
+                                    self.warnings.push(Diagnostic::warning(
+                                        DiagCode::InvalidSyntax,
+                                        format!("{}", e),
+                                    ));
                                 }
                             }
                         }
@@ -392,7 +406,14 @@ impl Preprocessor {
                     .and_then(|d| d.file_name())
                     .map(|n| format!(" in '{}'", n.to_string_lossy()))
                     .unwrap_or_default();
-                self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{} open `ifdef/`ifndef block(s) at end of file{} (auto-closed)", cond_stack.len(), file_hint)));
+                self.warnings.push(Diagnostic::warning(
+                    DiagCode::InvalidSyntax,
+                    format!(
+                        "{} open `ifdef/`ifndef block(s) at end of file{} (auto-closed)",
+                        cond_stack.len(),
+                        file_hint
+                    ),
+                ));
             }
             // Auto-close remaining conditionals so they don't corrupt subsequent files
             while let Some(_frame) = cond_stack.pop() {
@@ -534,8 +555,7 @@ impl Preprocessor {
             return left || right;
         }
         if let Some((a, b)) = expr.split_once("&&") {
-            return self.defines.contains_key(a.trim())
-                && self.defines.contains_key(b.trim());
+            return self.defines.contains_key(a.trim()) && self.defines.contains_key(b.trim());
         }
         self.defines.contains_key(expr)
     }
@@ -623,7 +643,10 @@ impl Preprocessor {
                             // (`PRIM_STRINGIFY(__name)` = `` `"__name`" ``) meninggalkan
                             // backtick literal di output → "expected expression, found
                             // End" saat parse blok `else begin ... end` dari ASSERT_I.
-                            if val_bytes[pos] == b'`' && pos + 1 < val_bytes.len() && val_bytes[pos + 1] == b'"' {
+                            if val_bytes[pos] == b'`'
+                                && pos + 1 < val_bytes.len()
+                                && val_bytes[pos + 1] == b'"'
+                            {
                                 let qpos = pos + 2;
                                 for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
                                     if !param.is_empty()
@@ -655,7 +678,8 @@ impl Preprocessor {
                                 }
                             }
                             for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
-                                if !param.is_empty() && pos + param.len() <= val_bytes.len()
+                                if !param.is_empty()
+                                    && pos + param.len() <= val_bytes.len()
                                     && &val_bytes[pos..pos + param.len()] == param.as_bytes()
                                 {
                                     expanded.push_str(arg);

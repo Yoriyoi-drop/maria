@@ -24,12 +24,18 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // ── Max time ──
             ui.label("T=");
-            ui.add(egui::DragValue::new(&mut state.max_time).range(1..=100_000_000).speed(100));
+            ui.add(
+                egui::DragValue::new(&mut state.max_time)
+                    .range(1..=100_000_000)
+                    .speed(100),
+            );
 
             // ── Run / Stop ──
             if state.is_running {
                 if ui
-                    .button(egui::RichText::new("⏹ Stop").color(egui::Color32::from_rgb(239, 68, 68)))
+                    .button(
+                        egui::RichText::new("⏹ Stop").color(egui::Color32::from_rgb(239, 68, 68)),
+                    )
                     .on_hover_text("Stop (F5)")
                     .clicked()
                 {
@@ -37,7 +43,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 }
             } else {
                 if ui
-                    .button(egui::RichText::new("▶ Run").color(egui::Color32::from_rgb(34, 197, 94)))
+                    .button(
+                        egui::RichText::new("▶ Run").color(egui::Color32::from_rgb(34, 197, 94)),
+                    )
                     .on_hover_text("Run simulation (F5)")
                     .clicked()
                 {

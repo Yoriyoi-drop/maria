@@ -16,7 +16,9 @@ impl std::fmt::Debug for ProfilerHandle {
 
 impl ProfilerHandle {
     pub fn new() -> Self {
-        ProfilerHandle { inner: Some(Profiler::new()) }
+        ProfilerHandle {
+            inner: Some(Profiler::new()),
+        }
     }
 
     /// Profiler nonaktif (operasi no-op).

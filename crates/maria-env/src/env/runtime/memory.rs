@@ -9,7 +9,10 @@ pub struct MemoryInfo {
 impl MemoryInfo {
     pub fn read() -> Self {
         let Ok(text) = std::fs::read_to_string("/proc/meminfo") else {
-            return MemoryInfo { total_bytes: 0, available_bytes: 0 };
+            return MemoryInfo {
+                total_bytes: 0,
+                available_bytes: 0,
+            };
         };
         let mut total = 0u64;
         let mut available = 0u64;
@@ -20,7 +23,10 @@ impl MemoryInfo {
                 available = parse_kb(v);
             }
         }
-        MemoryInfo { total_bytes: total, available_bytes: available }
+        MemoryInfo {
+            total_bytes: total,
+            available_bytes: available,
+        }
     }
 
     pub fn total_mib(&self) -> u64 {

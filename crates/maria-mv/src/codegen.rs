@@ -55,7 +55,8 @@ fn header(base: &str) -> String {
 /// file tersebut (lihat src/tools/gen.rs).
 fn generate_svh(file: &MvFile, base: &str, header: &str) -> String {
     // Definisi bersama = typedef level file + package + interface (F26).
-    let has_shared = !file.typedefs.is_empty() || !file.packages.is_empty() || !file.interfaces.is_empty();
+    let has_shared =
+        !file.typedefs.is_empty() || !file.packages.is_empty() || !file.interfaces.is_empty();
     if !has_shared {
         return String::new();
     }
@@ -99,7 +100,11 @@ fn emit_interface(out: &mut String, indent: usize, ifc: &Interface) {
         }
     }
     for (names, ty, ..) in &ifc.sigs {
-        line(out, indent + 1, &format!("{} {};", emit_type(ty), names.join(", ")));
+        line(
+            out,
+            indent + 1,
+            &format!("{} {};", emit_type(ty), names.join(", ")),
+        );
     }
     for mp in &ifc.modports {
         let parts: Vec<String> = mp
@@ -114,7 +119,11 @@ fn emit_interface(out: &mut String, indent: usize, ifc: &Interface) {
                 format!("{d} {}", names.join(", "))
             })
             .collect();
-        line(out, indent + 1, &format!("modport {} ({});", mp.name, parts.join(", ")));
+        line(
+            out,
+            indent + 1,
+            &format!("modport {} ({});", mp.name, parts.join(", ")),
+        );
     }
     line(out, indent, "endinterface");
 }
@@ -125,8 +134,15 @@ fn emit_package(out: &mut String, indent: usize, pkg: &Package) {
         emit_typedef(out, indent + 1, td);
     }
     for (name, ty, value) in &pkg.consts {
-        let ty_s = ty.as_ref().map(|t| format!("{} ", emit_type(t))).unwrap_or_default();
-        line(out, indent + 1, &format!("localparam {ty_s}{name} = {};", emit_expr(value)));
+        let ty_s = ty
+            .as_ref()
+            .map(|t| format!("{} ", emit_type(t)))
+            .unwrap_or_default();
+        line(
+            out,
+            indent + 1,
+            &format!("localparam {ty_s}{name} = {};", emit_expr(value)),
+        );
     }
     line(out, indent, "endpackage");
 }
@@ -136,7 +152,12 @@ fn emit_typedef(out: &mut String, indent: usize, td: &Typedef) {
         Typedef::Alias { name, ty, .. } => {
             line(out, indent, &format!("typedef {} {name};", emit_type(ty)));
         }
-        Typedef::Struct { name, packed, fields, .. } => {
+        Typedef::Struct {
+            name,
+            packed,
+            fields,
+            ..
+        } => {
             let pk = if *packed { " packed" } else { "" };
             line(out, indent, &format!("typedef struct{pk} {{"));
             for f in fields {
@@ -146,7 +167,12 @@ fn emit_typedef(out: &mut String, indent: usize, td: &Typedef) {
             }
             line(out, indent, &format!("}} {name};"));
         }
-        Typedef::Union { name, packed, fields, .. } => {
+        Typedef::Union {
+            name,
+            packed,
+            fields,
+            ..
+        } => {
             let pk = if *packed { " packed" } else { "" };
             line(out, indent, &format!("typedef union{pk} {{"));
             for f in fields {
@@ -156,7 +182,12 @@ fn emit_typedef(out: &mut String, indent: usize, td: &Typedef) {
             }
             line(out, indent, &format!("}} {name};"));
         }
-        Typedef::Enum { name, width, members, .. } => {
+        Typedef::Enum {
+            name,
+            width,
+            members,
+            ..
+        } => {
             let w = match width {
                 // `enum(N)` = N bit → `[N-1:0]`
                 Some(Expr::Int(n)) => format!("{}", n - 1),
@@ -171,7 +202,11 @@ fn emit_typedef(out: &mut String, indent: usize, td: &Typedef) {
                 })
                 .collect();
             let joined = members_s.join(", ");
-            line(out, indent, &format!("typedef enum logic [{w}:0] {{ {joined} }} {name};"));
+            line(
+                out,
+                indent,
+                &format!("typedef enum logic [{w}:0] {{ {joined} }} {name};"),
+            );
         }
     }
 }
@@ -206,7 +241,8 @@ fn generate_sv(file: &MvFile, base: &str, header: &str, iface_names: &[&str]) ->
     out.push_str(header);
     out.push('\n');
 
-    let has_shared = !file.typedefs.is_empty() || !file.packages.is_empty() || !file.interfaces.is_empty();
+    let has_shared =
+        !file.typedefs.is_empty() || !file.packages.is_empty() || !file.interfaces.is_empty();
     if has_shared {
         out.push_str(&format!("`include \"{base}.svh\"\n"));
     }
@@ -258,11 +294,24 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                     // F32: type param (marker `T : type = ...` ATAU bentuk kata
                     // kunci `type T = ...` — ty=None, type_default terisi).
                     // Default adalah TIPE (`parameter type T = logic [7:0]`).
-                    format!("parameter type {} = {}", p.name, p.type_default.as_ref().map(emit_type).unwrap_or_default())
+                    format!(
+                        "parameter type {} = {}",
+                        p.name,
+                        p.type_default.as_ref().map(emit_type).unwrap_or_default()
+                    )
                 } else if let Some(t) = &p.ty {
-                    format!("parameter {} {} = {}", emit_type(t), p.name, p.default.as_ref().map(emit_expr).unwrap_or_default())
+                    format!(
+                        "parameter {} {} = {}",
+                        emit_type(t),
+                        p.name,
+                        p.default.as_ref().map(emit_expr).unwrap_or_default()
+                    )
                 } else {
-                    format!("parameter {} = {}", p.name, p.default.as_ref().map(emit_expr).unwrap_or_default())
+                    format!(
+                        "parameter {} = {}",
+                        p.name,
+                        p.default.as_ref().map(emit_expr).unwrap_or_default()
+                    )
                 };
                 format!("    {ty}")
             })
@@ -276,7 +325,8 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
     for item in &m.items {
         if let MItem::Port(p) = item {
             let ty = emit_type(&p.ty);
-            let is_iface = matches!(&p.ty, MvType::Named(n, ..) if iface_names.contains(&n.as_str()));
+            let is_iface =
+                matches!(&p.ty, MvType::Named(n, ..) if iface_names.contains(&n.as_str()));
             for n in &p.names {
                 if is_iface {
                     // Port interface: `axi_lite axi_if` — tanpa arah (F26)
@@ -312,8 +362,14 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
     for item in &m.items {
         match item {
             MItem::Port(_) => {}
-            MItem::Sig { names, ty, init, .. } => {
-                let fresh: Vec<String> = names.iter().filter(|n| !port_names.contains(n)).cloned().collect();
+            MItem::Sig {
+                names, ty, init, ..
+            } => {
+                let fresh: Vec<String> = names
+                    .iter()
+                    .filter(|n| !port_names.contains(n))
+                    .cloned()
+                    .collect();
                 if !fresh.is_empty() {
                     // F28: `sig x : iface` = instance interface → emit dgn paren
                     // kosong (`axi_lite bus();`) — bukan deklarasi vif variabel
@@ -327,21 +383,50 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                             line(out, 1, &format!("{} {}();", emit_type(ty), nm));
                         }
                     } else {
-                        let init_s = init.as_ref().map(|e| format!(" = {}", emit_expr(e))).unwrap_or_default();
-                        line(out, 1, &format!("{} {}{};", emit_type(ty), fresh.join(", "), init_s));
+                        let init_s = init
+                            .as_ref()
+                            .map(|e| format!(" = {}", emit_expr(e)))
+                            .unwrap_or_default();
+                        line(
+                            out,
+                            1,
+                            &format!("{} {}{};", emit_type(ty), fresh.join(", "), init_s),
+                        );
                     }
                 }
             }
-            MItem::Reg { names, ty, init, .. } => {
-                let fresh: Vec<String> = names.iter().filter(|n| !port_names.contains(n)).cloned().collect();
+            MItem::Reg {
+                names, ty, init, ..
+            } => {
+                let fresh: Vec<String> = names
+                    .iter()
+                    .filter(|n| !port_names.contains(n))
+                    .cloned()
+                    .collect();
                 if !fresh.is_empty() {
-                    let init_s = init.as_ref().map(|e| format!(" = {}", emit_expr(e))).unwrap_or_default();
-                    line(out, 1, &format!("{} {}{};", emit_type(ty), fresh.join(", "), init_s));
+                    let init_s = init
+                        .as_ref()
+                        .map(|e| format!(" = {}", emit_expr(e)))
+                        .unwrap_or_default();
+                    line(
+                        out,
+                        1,
+                        &format!("{} {}{};", emit_type(ty), fresh.join(", "), init_s),
+                    );
                 }
             }
-            MItem::Const { name, ty, value, .. } => {
-                let ty_s = ty.as_ref().map(|t| format!("{} ", emit_type(t))).unwrap_or_default();
-                line(out, 1, &format!("localparam {ty_s}{name} = {};", emit_expr(value)));
+            MItem::Const {
+                name, ty, value, ..
+            } => {
+                let ty_s = ty
+                    .as_ref()
+                    .map(|t| format!("{} ", emit_type(t)))
+                    .unwrap_or_default();
+                line(
+                    out,
+                    1,
+                    &format!("localparam {ty_s}{name} = {};", emit_expr(value)),
+                );
             }
             MItem::Use { pkg, item } => {
                 line(out, 1, &format!("import {pkg}::{item};"));
@@ -386,17 +471,33 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                 emit_body(out, 2, body);
                 line(out, 1, "end");
             }
-            MItem::Inst { module, name, dims, params, conns, .. } => {
+            MItem::Inst {
+                module,
+                name,
+                dims,
+                params,
+                conns,
+                ..
+            } => {
                 line(out, 0, "");
                 emit_inst(out, 1, module, name, dims, params, conns);
             }
-            MItem::GenFor { var, from, to, body } => {
+            MItem::GenFor {
+                var,
+                from,
+                to,
+                body,
+            } => {
                 line(out, 0, "");
                 line(out, 0, "generate");
                 line(
                     out,
                     1,
-                    &format!("for (genvar {var} = {}; {var} < {}; {var} = {var} + 1) begin : gen_{var}", emit_expr(from), emit_expr(to)),
+                    &format!(
+                        "for (genvar {var} = {}; {var} < {}; {var} = {var} + 1) begin : gen_{var}",
+                        emit_expr(from),
+                        emit_expr(to)
+                    ),
                 );
                 for item in body {
                     emit_module_item_at(out, 2, item, iface_names);
@@ -407,7 +508,11 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
             MItem::GenIf { cond, then, els } => {
                 line(out, 0, "");
                 line(out, 0, "generate");
-                line(out, 1, &format!("if ({}) begin : gen_cond", emit_expr(cond)));
+                line(
+                    out,
+                    1,
+                    &format!("if ({}) begin : gen_cond", emit_expr(cond)),
+                );
                 for item in then {
                     emit_module_item_at(out, 2, item, iface_names);
                 }
@@ -435,7 +540,9 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
 fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_names: &[&str]) {
     match item {
         MItem::Port(_) => {} // port hanya valid di header module
-        MItem::Sig { names, ty, init, .. } => {
+        MItem::Sig {
+            names, ty, init, ..
+        } => {
             // F28: `sig x : iface` = instance interface (lihat emit_module_kw).
             let is_iface = match ty {
                 MvType::Named(n, ..) => iface_names.contains(&n.as_str()),
@@ -446,17 +553,42 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
                     line(out, indent, &format!("{} {}();", emit_type(ty), nm));
                 }
             } else {
-                let init_s = init.as_ref().map(|e| format!(" = {}", emit_expr(e))).unwrap_or_default();
-                line(out, indent, &format!("{} {}{};", emit_type(ty), names.join(", "), init_s));
+                let init_s = init
+                    .as_ref()
+                    .map(|e| format!(" = {}", emit_expr(e)))
+                    .unwrap_or_default();
+                line(
+                    out,
+                    indent,
+                    &format!("{} {}{};", emit_type(ty), names.join(", "), init_s),
+                );
             }
         }
-        MItem::Reg { names, ty, init, .. } => {
-            let init_s = init.as_ref().map(|e| format!(" = {}", emit_expr(e))).unwrap_or_default();
-            line(out, indent, &format!("{} {}{};", emit_type(ty), names.join(", "), init_s));
+        MItem::Reg {
+            names, ty, init, ..
+        } => {
+            let init_s = init
+                .as_ref()
+                .map(|e| format!(" = {}", emit_expr(e)))
+                .unwrap_or_default();
+            line(
+                out,
+                indent,
+                &format!("{} {}{};", emit_type(ty), names.join(", "), init_s),
+            );
         }
-        MItem::Const { name, ty, value, .. } => {
-            let ty_s = ty.as_ref().map(|t| format!("{} ", emit_type(t))).unwrap_or_default();
-            line(out, indent, &format!("localparam {ty_s}{name} = {};", emit_expr(value)));
+        MItem::Const {
+            name, ty, value, ..
+        } => {
+            let ty_s = ty
+                .as_ref()
+                .map(|t| format!("{} ", emit_type(t)))
+                .unwrap_or_default();
+            line(
+                out,
+                indent,
+                &format!("localparam {ty_s}{name} = {};", emit_expr(value)),
+            );
         }
         MItem::Use { pkg, item } => {
             line(out, indent, &format!("import {pkg}::{item};"));
@@ -487,15 +619,31 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
             emit_body(out, indent + 1, body);
             line(out, indent, "end");
         }
-        MItem::Inst { module, name, dims, params, conns, .. } => {
+        MItem::Inst {
+            module,
+            name,
+            dims,
+            params,
+            conns,
+            ..
+        } => {
             emit_inst(out, indent, module, name, dims, params, conns);
         }
-        MItem::GenFor { var, from, to, body } => {
+        MItem::GenFor {
+            var,
+            from,
+            to,
+            body,
+        } => {
             line(out, indent, "generate");
             line(
                 out,
                 indent + 1,
-                &format!("for (genvar {var} = {}; {var} < {}; {var} = {var} + 1) begin : gen_{var}", emit_expr(from), emit_expr(to)),
+                &format!(
+                    "for (genvar {var} = {}; {var} < {}; {var} = {var} + 1) begin : gen_{var}",
+                    emit_expr(from),
+                    emit_expr(to)
+                ),
             );
             for i in body {
                 emit_module_item_at(out, indent + 2, i, iface_names);
@@ -505,7 +653,11 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
         }
         MItem::GenIf { cond, then, els } => {
             line(out, indent, "generate");
-            line(out, indent + 1, &format!("if ({}) begin : gen_cond", emit_expr(cond)));
+            line(
+                out,
+                indent + 1,
+                &format!("if ({}) begin : gen_cond", emit_expr(cond)),
+            );
             for i in then {
                 emit_module_item_at(out, indent + 2, i, iface_names);
             }
@@ -549,10 +701,16 @@ fn emit_inst(
     params: &[(String, Expr)],
     conns: &[Conn],
 ) {
-    let dims_s = dims.as_ref().map(|d| format!("[{}]", emit_expr(d))).unwrap_or_default();
+    let dims_s = dims
+        .as_ref()
+        .map(|d| format!("[{}]", emit_expr(d)))
+        .unwrap_or_default();
     let mut head = format!("{module} {name}{dims_s}");
     if !params.is_empty() {
-        let ps: Vec<String> = params.iter().map(|(n, e)| format!(".{n}({})", emit_expr(e))).collect();
+        let ps: Vec<String> = params
+            .iter()
+            .map(|(n, e)| format!(".{n}({})", emit_expr(e)))
+            .collect();
         head.push_str(&format!(" #({})", ps.join(", ")));
     }
     if conns.is_empty() {
@@ -560,7 +718,10 @@ fn emit_inst(
         return;
     }
     // named: rata kiri nama port
-    let named: Vec<&Conn> = conns.iter().filter(|c| matches!(c, Conn::Named { .. })).collect();
+    let named: Vec<&Conn> = conns
+        .iter()
+        .filter(|c| matches!(c, Conn::Named { .. }))
+        .collect();
     let max_len = named
         .iter()
         .map(|c| match c {
@@ -578,10 +739,18 @@ fn emit_inst(
         match c {
             Conn::Named { port, expr } => {
                 let e = expr.as_ref().map(emit_expr).unwrap_or_else(|| port.clone());
-                line(out, indent + 1, &format!(".{port}{}({e}){sep}", " ".repeat(max_len - port.len() + 1)));
+                line(
+                    out,
+                    indent + 1,
+                    &format!(".{port}{}({e}){sep}", " ".repeat(max_len - port.len() + 1)),
+                );
             }
             Conn::Positional(e) => {
-                line(out, indent + 1, &format!("{}({}){sep}", " ".repeat(max_len), emit_expr(e)));
+                line(
+                    out,
+                    indent + 1,
+                    &format!("{}({}){sep}", " ".repeat(max_len), emit_expr(e)),
+                );
             }
         }
     }
@@ -589,9 +758,17 @@ fn emit_inst(
 }
 
 fn emit_func(out: &mut String, f: &MFunc) {
-    let ret = f.ret.as_ref().map(emit_type).unwrap_or_else(|| "void".into());
+    let ret = f
+        .ret
+        .as_ref()
+        .map(emit_type)
+        .unwrap_or_else(|| "void".into());
     let args = emit_args(&f.args, false);
-    line(out, 0, &format!("function {ret} {}({});", f.name, args.join(", ")));
+    line(
+        out,
+        0,
+        &format!("function {ret} {}({});", f.name, args.join(", ")),
+    );
     for s in &f.body {
         emit_stmt(out, 1, s);
     }
@@ -647,7 +824,11 @@ fn emit_constraint_items(out: &mut String, indent: usize, items: &[ConstraintIte
                 }
             }
             ConstraintItem::Solve { var, before, .. } => {
-                line(out, indent, &format!("solve {var} before {};", before.join(", ")));
+                line(
+                    out,
+                    indent,
+                    &format!("solve {var} before {};", before.join(", ")),
+                );
             }
         }
     }
@@ -655,7 +836,11 @@ fn emit_constraint_items(out: &mut String, indent: usize, items: &[ConstraintIte
 
 /// Emit class SV (MARIA-HDL.md §8): `class Name extends Base; ... endclass`.
 fn emit_class(out: &mut String, c: &MClass) {
-    let ext = c.extends.as_ref().map(|b| format!(" extends {b}")).unwrap_or_default();
+    let ext = c
+        .extends
+        .as_ref()
+        .map(|b| format!(" extends {b}"))
+        .unwrap_or_default();
     line(out, 0, &format!("class {}{};", c.name, ext));
 
     // field (nama member; padding tipe agar kolom nama rapi)
@@ -679,10 +864,20 @@ fn emit_class(out: &mut String, c: &MClass) {
         let ret = if f.name == "new" {
             String::new()
         } else {
-            format!("{} ", f.ret.as_ref().map(emit_type).unwrap_or_else(|| "void".into()))
+            format!(
+                "{} ",
+                f.ret
+                    .as_ref()
+                    .map(emit_type)
+                    .unwrap_or_else(|| "void".into())
+            )
         };
         let args = emit_args(&f.args, false);
-        line(out, 1, &format!("function {ret}{}({});", f.name, args.join(", ")));
+        line(
+            out,
+            1,
+            &format!("function {ret}{}({});", f.name, args.join(", ")),
+        );
         for s in &f.body {
             emit_stmt(out, 2, s);
         }
@@ -713,11 +908,19 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
         }
         Stmt::Assign { lhs, rhs, nba, .. } => {
             let op = if *nba { "<=" } else { "=" };
-            line(out, indent, &format!("{} {op} {};", emit_expr(lhs), emit_expr(rhs)));
+            line(
+                out,
+                indent,
+                &format!("{} {op} {};", emit_expr(lhs), emit_expr(rhs)),
+            );
         }
         // F36/F37: compound assignment `lhs += rhs` / increment `lhs++` / `++lhs`.
         Stmt::CompoundAssign { lhs, op, rhs, .. } => {
-            line(out, indent, &format!("{} {op} {};", emit_expr(lhs), emit_expr(rhs)));
+            line(
+                out,
+                indent,
+                &format!("{} {op} {};", emit_expr(lhs), emit_expr(rhs)),
+            );
         }
         Stmt::IncDec { lhs, inc, pre, .. } => {
             let op = if *inc { "++" } else { "--" };
@@ -765,11 +968,20 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             }
             line(out, indent, "endcase");
         }
-        Stmt::For { var, from, to, body } => {
+        Stmt::For {
+            var,
+            from,
+            to,
+            body,
+        } => {
             line(
                 out,
                 indent,
-                &format!("for (int {var} = {}; {var} < {}; {var} = {var} + 1) begin", emit_expr(from), emit_expr(to)),
+                &format!(
+                    "for (int {var} = {}; {var} < {}; {var} = {var} + 1) begin",
+                    emit_expr(from),
+                    emit_expr(to)
+                ),
             );
             emit_body(out, indent + 1, body);
             line(out, indent, "end");
@@ -864,8 +1076,15 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
         Stmt::Break => line(out, indent, "break;"),
         Stmt::Continue => line(out, indent, "continue;"),
         Stmt::VarDecl { names, ty, init } => {
-            let init_s = init.as_ref().map(|e| format!(" = {}", emit_expr(e))).unwrap_or_default();
-            line(out, indent, &format!("{} {}{};", emit_type(ty), names.join(", "), init_s));
+            let init_s = init
+                .as_ref()
+                .map(|e| format!(" = {}", emit_expr(e)))
+                .unwrap_or_default();
+            line(
+                out,
+                indent,
+                &format!("{} {}{};", emit_type(ty), names.join(", "), init_s),
+            );
         }
         Stmt::Assert { cond, pass, fail } => {
             // Satu baris bila pass/fail statement call-like (pola testbench
@@ -915,11 +1134,17 @@ fn single_line_stmt(stmt: &Stmt) -> Option<String> {
         }
         Stmt::ExprStmt(e) => Some(format!("{};", emit_expr(e))),
         // F38: body `do {...} while`/event trigger compact utk `@(...)`/`#amt`.
-        Stmt::DoWhile { cond, body } => single_line_stmt(body).map(|s| format!("do {s} while ({});", emit_expr(cond))),
+        Stmt::DoWhile { cond, body } => {
+            single_line_stmt(body).map(|s| format!("do {s} while ({});", emit_expr(cond)))
+        }
         Stmt::EventTrigger(ev) => Some(format!("-> {};", emit_expr(ev))),
         Stmt::AssertProperty(raw) => Some(format!("assert property {raw};")),
-        Stmt::Event { expr, body } => single_line_stmt(body).map(|s| format!("@({}) {s}", emit_expr(expr))),
-        Stmt::Delay { amt, body } => single_line_stmt(body).map(|s| format!("#{} {s}", emit_expr(amt))),
+        Stmt::Event { expr, body } => {
+            single_line_stmt(body).map(|s| format!("@({}) {s}", emit_expr(expr)))
+        }
+        Stmt::Delay { amt, body } => {
+            single_line_stmt(body).map(|s| format!("#{} {s}", emit_expr(amt)))
+        }
         Stmt::Assert { cond, pass, fail } => {
             // Compact HANYA bila pass/fail call-like (`$info(...)` = subroutine
             // call — idiom SVA universal; atau assert property / assert nested).
@@ -965,7 +1190,11 @@ fn assert_branch_stmt(stmt: &Stmt) -> Option<String> {
 fn emit_else_chain(out: &mut String, indent: usize, els: Option<&Stmt>) {
     match els {
         Some(Stmt::If { cond, then, els }) => {
-            line(out, indent, &format!("end else if ({}) begin", emit_expr(cond)));
+            line(
+                out,
+                indent,
+                &format!("end else if ({}) begin", emit_expr(cond)),
+            );
             emit_body(out, indent + 1, then);
             emit_else_chain(out, indent, els.as_deref());
         }
@@ -1174,7 +1403,9 @@ module counter #(WIDTH = 8) {
         assert!(out.sv.contains("parameter WIDTH = 8"));
         assert!(out.sv.contains("input  bit clk"));
         assert!(out.sv.contains("output logic [WIDTH - 1:0] count"));
-        assert!(out.sv.contains("always_ff @(posedge clk or negedge rst_n) begin"));
+        assert!(out
+            .sv
+            .contains("always_ff @(posedge clk or negedge rst_n) begin"));
         assert!(out.sv.contains("count <= '0;"));
         assert!(out.sv.contains("count <= count + 1;"));
         assert!(out.sv.contains("endmodule"));
@@ -1224,7 +1455,9 @@ module traffic #(GREEN_T = 30, YELLOW_T = 5) {
         let out = generate(&file, "traffic");
         // .svh: package + enum
         assert!(out.svh.contains("package traffic_pkg;"));
-        assert!(out.svh.contains("typedef enum logic [1:0] { RED, GREEN, YELLOW } State;"));
+        assert!(out
+            .svh
+            .contains("typedef enum logic [1:0] { RED, GREEN, YELLOW } State;"));
         assert!(out.svh.contains("`endif"));
         // .sv: import + ports
         assert!(out.sv.contains("`include \"traffic.svh\""));
@@ -1257,7 +1490,9 @@ module shiftreg #(N : int = 8) {
         let file = parse(src).unwrap();
         let out = generate(&file, "shiftreg");
         assert!(out.sv.contains("parameter int N = 8"));
-        assert!(out.sv.contains("for (genvar i = 1; i < N; i = i + 1) begin : gen_i"));
+        assert!(out
+            .sv
+            .contains("for (genvar i = 1; i < N; i = i + 1) begin : gen_i"));
         assert!(out.sv.contains("q[i] <= q[i - 1];"));
         assert!(out.sv.contains("counter_small u_small ("));
         assert!(out.sv.contains(".clk   (clk),"));
@@ -1280,7 +1515,9 @@ enum(3) Color { RED = 0, GREEN = 2, BLUE = 4 }
         let out = generate(&file, "types");
         assert!(out.svh.contains("typedef logic [15:0] Addr;"));
         assert!(out.svh.contains("typedef struct packed {"));
-        assert!(out.svh.contains("typedef enum logic [2:0] { RED = 0, GREEN = 2, BLUE = 4 } Color;"));
+        assert!(out
+            .svh
+            .contains("typedef enum logic [2:0] { RED = 0, GREEN = 2, BLUE = 4 } Color;"));
     }
 
     #[test]
@@ -1305,7 +1542,9 @@ task send(data : logic[7:0], out ok : bit) {
         assert!(out.sv.contains("function int clog2(input int x);"));
         assert!(out.sv.contains("int r = 0;"));
         assert!(out.sv.contains("return r;"));
-        assert!(out.sv.contains("task send(inout logic [7:0] data, output bit ok);"));
+        assert!(out
+            .sv
+            .contains("task send(inout logic [7:0] data, output bit ok);"));
         // Body `#10` + assignment tunggal → satu baris (polesan F6)
         assert!(out.sv.contains("#10 ok = 1;"));
         assert!(!out.sv.contains("#10 begin"));
@@ -1327,7 +1566,8 @@ module m {
         let file = parse(src).unwrap();
         let out = generate(&file, "m");
         assert!(
-            out.sv.contains("assert property (@(posedge clk) enable |-> count == $past(count) + 1);"),
+            out.sv
+                .contains("assert property (@(posedge clk) enable |-> count == $past(count) + 1);"),
             "sv: {}",
             out.sv
         );
@@ -1379,9 +1619,9 @@ module tb_counter {
         // delay + assignment tunggal → satu baris
         assert!(out.sv.contains("forever #5 clk = ~clk;"));
         // assert immediate → satu baris dengan $info/$fatal
-        assert!(out.sv.contains(
-            "assert (count > 0) $info(\"counter ok\") else $fatal(\"counter stuck\");"
-        ));
+        assert!(out
+            .sv
+            .contains("assert (count > 0) $info(\"counter ok\") else $fatal(\"counter stuck\");"));
     }
 
     #[test]
@@ -1439,7 +1679,9 @@ class my_test extends uvm_test {
         assert!(out.sv.contains("function new(input string name);"));
         assert!(out.sv.contains("super.new(name);"));
         // static call scoped + method call + delay-only
-        assert!(out.sv.contains("uvm_config_db::set(this, \"*.agent\", \"count\", count);"));
+        assert!(out
+            .sv
+            .contains("uvm_config_db::set(this, \"*.agent\", \"count\", count);"));
         assert!(out.sv.contains("function void build_phase();"));
         assert!(out.sv.contains("task run_phase();"));
         assert!(out.sv.contains("uvm_sequencer seqr;"));
@@ -1559,7 +1801,9 @@ module dut {
         // .svh: interface + modport + guard
         assert!(out.svh.contains("interface axi_lite;"));
         assert!(out.svh.contains("logic [31:0] awaddr;"));
-        assert!(out.svh.contains("modport slave (input awaddr, awvalid, output awready);"));
+        assert!(out
+            .svh
+            .contains("modport slave (input awaddr, awvalid, output awready);"));
         assert!(out.svh.contains("endinterface"));
         // .sv: include svh + port interface tanpa arah + seq clock via field
         assert!(out.sv.contains("`include \"axi.svh\""));
@@ -1567,7 +1811,9 @@ module dut {
         assert!(out.sv.contains("    axi_lite axi_if,"), "sv: {}", out.sv);
         assert!(out.sv.contains("output bit done"));
         assert!(out.sv.contains("always_ff @(posedge axi_if.clk) begin"));
-        assert!(out.sv.contains("if (axi_if.awvalid && axi_if.awready) begin"));
+        assert!(out
+            .sv
+            .contains("if (axi_if.awvalid && axi_if.awready) begin"));
     }
 
     #[test]
@@ -1624,7 +1870,10 @@ module tb {
         // File B: port interface TANPA arah (meski bus tak ada di file B)
         let ob = generate_with_ifaces(&fb, "dut", &ifaces);
         assert!(ob.sv.contains("    bus b,"), "sv: {}", ob.sv);
-        assert!(!ob.sv.contains("input bus b"), "port interface tidak boleh ada arah");
+        assert!(
+            !ob.sv.contains("input bus b"),
+            "port interface tidak boleh ada arah"
+        );
         // Mode satu-file (generate biasa, iface kosong) → tetap berkualitas:
         // port di-emit dgn arah (fallback aman, bukan interface port)
         let oc = generate(&fb, "dut");
@@ -1645,19 +1894,33 @@ module tb {
         // Tanpa package/typedef → `.svh` kosong & `.sv` tidak include `.svh`.
         let src = "module a { in clk : bit\n out y : logic[7:0]\n comb { y = clk } }";
         let out = generate(&parse(src).unwrap(), "a");
-        assert!(out.svh.is_empty(), "svh harus kosong tanpa shared defs: {}", out.svh);
+        assert!(
+            out.svh.is_empty(),
+            "svh harus kosong tanpa shared defs: {}",
+            out.svh
+        );
         assert!(!out.sv.contains("`include"), "sv tidak boleh include svh");
 
         // Dengan package → `.svh` berisi package & `.sv` meng-include.
         let src2 = "package pkg { const N = 4 }\nmodule b { in clk : bit\n out y : logic[3:0]\n comb { y = clk } }";
         let out2 = generate(&parse(src2).unwrap(), "b");
-        assert!(out2.svh.contains("package pkg;"), "svh harus berisi package");
-        assert!(out2.sv.contains("`include \"b.svh\""), "sv harus include svh");
+        assert!(
+            out2.svh.contains("package pkg;"),
+            "svh harus berisi package"
+        );
+        assert!(
+            out2.sv.contains("`include \"b.svh\""),
+            "sv harus include svh"
+        );
 
         // Dengan typedef level file → `.svh` terisi.
-        let src3 = "type Addr = logic[15:0]\nmodule c { in a : Addr\n out y : bit\n comb { y = a[0] } }";
+        let src3 =
+            "type Addr = logic[15:0]\nmodule c { in a : Addr\n out y : bit\n comb { y = a[0] } }";
         let out3 = generate(&parse(src3).unwrap(), "c");
-        assert!(out3.svh.contains("typedef logic [15:0] Addr;"), "svh harus berisi typedef");
+        assert!(
+            out3.svh.contains("typedef logic [15:0] Addr;"),
+            "svh harus berisi typedef"
+        );
         assert!(out3.sv.contains("`include \"c.svh\""));
     }
 
@@ -1667,7 +1930,11 @@ module tb {
         // `parameter type T = logic [7:0]`; port bertipe T tetap `T d`.
         let src = "module m #(T : type = logic[7:0], N = 2) {\n    in  d : T\n    out q : T\n}\n";
         let out = generate(&parse(src).unwrap(), "m");
-        assert!(out.sv.contains("parameter type T = logic [7:0]"), "sv: {}", out.sv);
+        assert!(
+            out.sv.contains("parameter type T = logic [7:0]"),
+            "sv: {}",
+            out.sv
+        );
         assert!(out.sv.contains("parameter N = 2"), "sv: {}", out.sv);
         assert!(out.sv.contains("input  T d"), "sv: {}", out.sv);
         assert!(out.sv.contains("output T q"), "sv: {}", out.sv);
@@ -1679,7 +1946,11 @@ module tb {
         // → emit `parameter type T = logic [15:0]`.
         let src = "module m #(type T = logic[15:0]) {\n    sig x : T\n}\n";
         let out = generate(&parse(src).unwrap(), "m");
-        assert!(out.sv.contains("parameter type T = logic [15:0]"), "sv: {}", out.sv);
+        assert!(
+            out.sv.contains("parameter type T = logic [15:0]"),
+            "sv: {}",
+            out.sv
+        );
         assert!(out.sv.contains("T x;"), "sv: {}", out.sv);
     }
 

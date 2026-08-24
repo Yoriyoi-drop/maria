@@ -30,10 +30,7 @@ pub fn combine_checksum(a: u64, b: u64) -> u64 {
 
 /// Compute checksum of multiple values (fold).
 pub fn checksum_fold(checksums: &[u64]) -> u64 {
-    checksums
-        .iter()
-        .copied()
-        .fold(0u64, combine_checksum)
+    checksums.iter().copied().fold(0u64, combine_checksum)
 }
 
 // ─── Tests ───

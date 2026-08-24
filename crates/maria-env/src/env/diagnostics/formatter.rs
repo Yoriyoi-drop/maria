@@ -1,6 +1,6 @@
 //! Formatter diagnostik — membungkus `format_diagnostic` untuk output konsisten.
 
-use maria_core::diagnostics::{Diagnostic, format_diagnostic};
+use maria_core::diagnostics::{format_diagnostic, Diagnostic};
 
 /// Format satu diagnostic menjadi string (untuk CLI/JSON/GUI).
 pub fn format(diag: &Diagnostic) -> String {
@@ -9,7 +9,11 @@ pub fn format(diag: &Diagnostic) -> String {
 
 /// Format daftar diagnostic, dipisah newline.
 pub fn format_all(diags: &[Diagnostic]) -> String {
-    diags.iter().map(format_diagnostic).collect::<Vec<_>>().join("\n")
+    diags
+        .iter()
+        .map(format_diagnostic)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

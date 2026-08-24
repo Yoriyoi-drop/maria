@@ -156,10 +156,22 @@ mod tests {
 
         let mut ff = CellInstance::new(Symbol::intern("u0"), crate::cell::CellKind::Dff, 8);
         ff.inputs = vec![
-            crate::cell::PinConn { net: clk, pin: "c".into(), bit: None },
-            crate::cell::PinConn { net: d, pin: "d".into(), bit: None },
+            crate::cell::PinConn {
+                net: clk,
+                pin: "c".into(),
+                bit: None,
+            },
+            crate::cell::PinConn {
+                net: d,
+                pin: "d".into(),
+                bit: None,
+            },
         ];
-        ff.outputs = vec![crate::cell::PinConn { net: q, pin: "q".into(), bit: None }];
+        ff.outputs = vec![crate::cell::PinConn {
+            net: q,
+            pin: "q".into(),
+            bit: None,
+        }];
         nl.add_cell(ff);
         nl
     }
@@ -182,9 +194,17 @@ mod tests {
         let mut nl = Netlist::new(Symbol::intern("top"));
         let n = nl.add_net(Symbol::intern("x"), 1);
         let mut c1 = CellInstance::new(Symbol::intern("u0"), crate::cell::CellKind::Buffer, 1);
-        c1.outputs = vec![crate::cell::PinConn { net: n, pin: "y".into(), bit: None }];
+        c1.outputs = vec![crate::cell::PinConn {
+            net: n,
+            pin: "y".into(),
+            bit: None,
+        }];
         let mut c2 = CellInstance::new(Symbol::intern("u1"), crate::cell::CellKind::Buffer, 1);
-        c2.outputs = vec![crate::cell::PinConn { net: n, pin: "y".into(), bit: None }];
+        c2.outputs = vec![crate::cell::PinConn {
+            net: n,
+            pin: "y".into(),
+            bit: None,
+        }];
         nl.add_cell(c1);
         nl.add_cell(c2); // panic: net x punya 2 driver
     }

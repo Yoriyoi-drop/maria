@@ -47,8 +47,7 @@ impl CacheManifest {
     /// simulator berubah) → seluruh kategori cache dibangun ulang, mencegah
     /// restore hasil lama dari binary baru.
     pub fn valid(&self) -> bool {
-        self.schema_version == CACHE_SCHEMA_VERSION
-            && self.compiler_version == COMPILER_VERSION
+        self.schema_version == CACHE_SCHEMA_VERSION && self.compiler_version == COMPILER_VERSION
     }
 }
 

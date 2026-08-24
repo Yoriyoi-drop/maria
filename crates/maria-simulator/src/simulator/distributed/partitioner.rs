@@ -20,9 +20,9 @@
 //! Semua signal global (clock, reset) tetap di semua partition.
 //! Cross-partition signal di-exchange via distributed protocol.
 
-use std::collections::{HashMap, HashSet};
-use maria_ir::*;
 use maria_core::Symbol;
+use maria_ir::*;
+use std::collections::{HashMap, HashSet};
 
 /// Information about a signal that crosses partition boundaries.
 #[derive(Debug, Clone)]
@@ -167,19 +167,22 @@ impl DesignPartitioner {
 
         // Detect cross-partition signals by analyzing instance port maps
         for inst in instances {
-            let src_part = instance_to_partition.get(&inst.instance_name).copied().unwrap_or(0);
+            let src_part = instance_to_partition
+                .get(&inst.instance_name)
+                .copied()
+                .unwrap_or(0);
             for (_port_name, sig_id) in inst.port_map.iter() {
                 let dst_opt = signal_to_partition.get(sig_id).copied();
                 if let Some(dst_part) = dst_opt {
                     if src_part != dst_part {
                         let key = format!("{}:{}", sig_id, src_part);
                         if cross_set.insert(key) {
-                            let signal_name = top.signals.get(*sig_id)
+                            let signal_name = top
+                                .signals
+                                .get(*sig_id)
                                 .map(|si| si.name.as_str().to_string())
                                 .unwrap_or_else(|| format!("sig_{}", sig_id));
-                            let width = top.signals.get(*sig_id)
-                                .map(|si| si.width)
-                                .unwrap_or(1);
+                            let width = top.signals.get(*sig_id).map(|si| si.width).unwrap_or(1);
 
                             cross_signals.push(PartitionSignal {
                                 signal_id: *sig_id,
@@ -197,7 +200,8 @@ impl DesignPartitioner {
 
         // Populate partition info
         for p in &mut partitions {
-            p.instance_names = instances.iter()
+            p.instance_names = instances
+                .iter()
                 .enumerate()
                 .filter(|(i, _)| i % num_partitions == p.id)
                 .map(|(_, inst)| inst.instance_name.as_str().to_string())
@@ -232,7 +236,11 @@ impl DesignPartitioner {
     /// Extract a sub-design for a specific partition.
     /// Creates a minimal IrDesign containing only the signals and processes
     /// assigned to the given partition, plus cross-partition signals as inputs/outputs.
-    pub fn extract_partition_design(design: &IrDesign, partition_id: usize, partition: &Partition) -> IrDesign {
+    pub fn extract_partition_design(
+        design: &IrDesign,
+        partition_id: usize,
+        partition: &Partition,
+    ) -> IrDesign {
         let partition_info = &partition.partitions[partition_id];
         let top = &design.top;
         let mut sub_signals: Vec<SignalInfo> = Vec::new();
@@ -267,7 +275,9 @@ impl DesignPartitioner {
                     sub_sig.name = Symbol::intern(&format!("__cross_{}", sig.name.as_str()));
                     sub_signals.push(sub_sig);
                     // Cross-partition signals that are read by this partition become inputs
-                    if cs.dest_partitions.contains(&partition_id) && cs.source_partition != partition_id {
+                    if cs.dest_partitions.contains(&partition_id)
+                        && cs.source_partition != partition_id
+                    {
                         sub_inputs.push(new_id);
                     }
                     // Cross-partition signals that are driven by this partition become outputs
@@ -287,7 +297,11 @@ impl DesignPartitioner {
 
         // 4. Build sub-module
         let sub_module = IrModule {
-            name: Symbol::intern(&format!("{}__partition_{}", design.top.name.as_str(), partition_id)),
+            name: Symbol::intern(&format!(
+                "{}__partition_{}",
+                design.top.name.as_str(),
+                partition_id
+            )),
             signals: sub_signals,
             inputs: sub_inputs,
             outputs: sub_outputs,
@@ -323,12 +337,22 @@ impl DesignPartitioner {
     /// Generate a summary of the partitioning.
     pub fn partition_summary(partition: &Partition) -> String {
         let mut s = String::new();
-        s.push_str(&format!("═══ Design Partition: {} partitions ═══\n\n", partition.num_partitions));
-        s.push_str(&format!("Total cross-partition signals: {}\n\n", partition.cross_signals.len()));
+        s.push_str(&format!(
+            "═══ Design Partition: {} partitions ═══\n\n",
+            partition.num_partitions
+        ));
+        s.push_str(&format!(
+            "Total cross-partition signals: {}\n\n",
+            partition.cross_signals.len()
+        ));
 
         for p in &partition.partitions {
-            s.push_str(&format!("Partition {}: {} instances, ~{} processes\n",
-                p.id, p.instance_names.len(), p.load));
+            s.push_str(&format!(
+                "Partition {}: {} instances, ~{} processes\n",
+                p.id,
+                p.instance_names.len(),
+                p.load
+            ));
             if !p.instance_names.is_empty() {
                 s.push_str("  Instances: ");
                 for name in &p.instance_names {
@@ -346,8 +370,10 @@ impl DesignPartitioner {
         if !partition.cross_signals.is_empty() {
             s.push_str("Cross-partition signals:\n");
             for cs in &partition.cross_signals {
-                s.push_str(&format!("  {} ({} bits): Partition {} → {:?}\n",
-                    cs.signal_name, cs.width, cs.source_partition, cs.dest_partitions));
+                s.push_str(&format!(
+                    "  {} ({} bits): Partition {} → {:?}\n",
+                    cs.signal_name, cs.width, cs.source_partition, cs.dest_partitions
+                ));
             }
         }
 
@@ -467,12 +493,10 @@ mod tests {
             top: IrModule {
                 name: Symbol::intern("top"),
                 signals: vec![make_signal("clk", 1)],
-                processes: vec![
-                    Process::Initial {
-                        name: Symbol::intern("init"),
-                        body: vec![],
-                    },
-                ],
+                processes: vec![Process::Initial {
+                    name: Symbol::intern("init"),
+                    body: vec![],
+                }],
                 sub_instances: vec![],
                 ..Default::default()
             },

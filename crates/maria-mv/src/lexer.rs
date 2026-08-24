@@ -283,7 +283,9 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
         // ── Identifier / keyword ──
         if c.is_alphabetic() || c == '_' || c == '$' {
             let start = i;
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '$') {
+            while i < chars.len()
+                && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '$')
+            {
                 i += 1;
                 col += 1;
             }
@@ -306,7 +308,11 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
                 col += 1;
             }
             // Real: digits '.' digits
-            if i < chars.len() && chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+            if i < chars.len()
+                && chars[i] == '.'
+                && i + 1 < chars.len()
+                && chars[i + 1].is_ascii_digit()
+            {
                 i += 1;
                 col += 1;
                 while i < chars.len() && chars[i].is_ascii_digit() {
@@ -316,7 +322,13 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
                 let text: String = chars[start..i].iter().collect();
                 match text.parse::<f64>() {
                     Ok(v) => out.push((Tok::Real(v), tok_line, tok_col)),
-                    Err(_) => return Err(err(tok_line, tok_col, format!("real tidak valid: '{}'", text))),
+                    Err(_) => {
+                        return Err(err(
+                            tok_line,
+                            tok_col,
+                            format!("real tidak valid: '{}'", text),
+                        ))
+                    }
                 }
                 continue;
             }
@@ -330,11 +342,19 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
                 i += 1;
                 col += 1;
                 if i >= chars.len() {
-                    return Err(err(tok_line, tok_col, "literal bertipe tidak lengkap".to_string()));
+                    return Err(err(
+                        tok_line,
+                        tok_col,
+                        "literal bertipe tidak lengkap".to_string(),
+                    ));
                 }
                 let base = chars[i].to_ascii_lowercase();
                 if !matches!(base, 'b' | 'o' | 'd' | 'h') {
-                    return Err(err(tok_line, tok_col, format!("base literal tidak dikenal: '{}'", base)));
+                    return Err(err(
+                        tok_line,
+                        tok_col,
+                        format!("base literal tidak dikenal: '{}'", base),
+                    ));
                 }
                 i += 1;
                 col += 1;
@@ -355,17 +375,22 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
                 continue;
             }
             let text: String = chars[start..i].iter().collect();
-            let v = text
-                .parse::<i64>()
-                .map_err(|_| err(tok_line, tok_col, format!("integer tidak valid: '{}'", text)))?;
+            let v = text.parse::<i64>().map_err(|_| {
+                err(
+                    tok_line,
+                    tok_col,
+                    format!("integer tidak valid: '{}'", text),
+                )
+            })?;
             out.push((Tok::Int(v), tok_line, tok_col));
             continue;
         }
 
         // ── Fill literal `'0` `'1` `'x` `'z` ──
-        if c == '\'' {                if i + 1 >= chars.len() {
-                    return Err(err(tok_line, tok_col, "' tanpa isi".to_string()));
-                }
+        if c == '\'' {
+            if i + 1 >= chars.len() {
+                return Err(err(tok_line, tok_col, "' tanpa isi".to_string()));
+            }
             let n = chars[i + 1];
             if matches!(n, '0' | '1' | 'x' | 'z') {
                 // Pastikan bukan awal literal bertipe unsized `'b101`
@@ -607,7 +632,11 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
                 }
             }
             _ => {
-                return Err(err(tok_line, tok_col, format!("karakter tidak dikenal: '{}'", c)));
+                return Err(err(
+                    tok_line,
+                    tok_col,
+                    format!("karakter tidak dikenal: '{}'", c),
+                ));
             }
         };
         out.push((tok, tok_line, tok_col));
@@ -632,7 +661,11 @@ mod tests {
     use super::*;
 
     fn toks(src: &str) -> Vec<Tok> {
-        tokenize(src).unwrap().into_iter().map(|(t, _, _)| t).collect()
+        tokenize(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _, _)| t)
+            .collect()
     }
 
     #[test]

@@ -18,8 +18,12 @@ pub struct FmtArgs<'a> {
 pub fn run(args: &FmtArgs) -> Result<(), SimError> {
     let mut changed_any = false;
     for f in args.files {
-        let src = std::fs::read_to_string(f)
-            .map_err(|e| SimError::with_diag(maria_core::diagnostics::DiagCode::IoError, format!("{}: {}", f, e)))?;
+        let src = std::fs::read_to_string(f).map_err(|e| {
+            SimError::with_diag(
+                maria_core::diagnostics::DiagCode::IoError,
+                format!("{}: {}", f, e),
+            )
+        })?;
         let formatted = format_source(&src, args.indent);
 
         if args.check {
@@ -31,8 +35,12 @@ pub fn run(args: &FmtArgs) -> Result<(), SimError> {
             }
         } else if args.inplace {
             if formatted != src {
-                std::fs::write(f, &formatted)
-                    .map_err(|e| SimError::with_diag(maria_core::diagnostics::DiagCode::IoError, format!("{}: {}", f, e)))?;
+                std::fs::write(f, &formatted).map_err(|e| {
+                    SimError::with_diag(
+                        maria_core::diagnostics::DiagCode::IoError,
+                        format!("{}: {}", f, e),
+                    )
+                })?;
                 println!("  formatted {}", f);
                 changed_any = true;
             } else {
@@ -172,7 +180,8 @@ fn is_dedent_kw(tok: &Token) -> bool {
             | Token::EndProgram
             | Token::EndConfig
             | Token::Endcase
-            | Token::EndGenerate            | Token::End
+            | Token::EndGenerate
+            | Token::End
             | Token::Join
             | Token::JoinAny
             | Token::JoinNone
@@ -226,31 +235,113 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
 
     // Keyword kontrol/tipe diikuti `(`/`[`/`@` — spasi (if (x), reg [3:0],
     // always_ff @(posedge)
-    if matches!(prev, If | While | Case | CaseX | CaseZ | Repeat | For | Function | Task | Module | Interface | Always | AlwaysFF | AlwaysComb | AlwaysLatch | Initial | Wire | Reg | Logic | Int | Integer | Bit | Byte | Shortint | Longint | Parameter | LocalParam | Const | Var | Output | Input | Inout | PosEdge | NegEdge | Wait | Fork | Unique | Priority | Rand | RandC | Assert | Assume | Cover | Covergroup | Property | Sequence)
-        && matches!(cur, LParen | LBrack | At)
+    if matches!(
+        prev,
+        If | While
+            | Case
+            | CaseX
+            | CaseZ
+            | Repeat
+            | For
+            | Function
+            | Task
+            | Module
+            | Interface
+            | Always
+            | AlwaysFF
+            | AlwaysComb
+            | AlwaysLatch
+            | Initial
+            | Wire
+            | Reg
+            | Logic
+            | Int
+            | Integer
+            | Bit
+            | Byte
+            | Shortint
+            | Longint
+            | Parameter
+            | LocalParam
+            | Const
+            | Var
+            | Output
+            | Input
+            | Inout
+            | PosEdge
+            | NegEdge
+            | Wait
+            | Fork
+            | Unique
+            | Priority
+            | Rand
+            | RandC
+            | Assert
+            | Assume
+            | Cover
+            | Covergroup
+            | Property
+            | Sequence
+    ) && matches!(cur, LParen | LBrack | At)
     {
         return true;
     }
     // Tidak ada spasi di sekitar delimiter buka/tutup
-    if matches!(cur, LParen | LBrack | LBrace | Dot | Scope | Comma | Semi | Colon) {
+    if matches!(
+        cur,
+        LParen | LBrack | LBrace | Dot | Scope | Comma | Semi | Colon
+    ) {
         return false;
     }
-    if matches!(prev, LParen | LBrack | LBrace | Dot | Scope | Comma | Semi | Hash | At | Dollar) {
+    if matches!(
+        prev,
+        LParen | LBrack | LBrace | Dot | Scope | Comma | Semi | Hash | At | Dollar
+    ) {
         return false;
     }
     if matches!(prev, RParen | RBrack | RBrace) {
         // `)` diikuti `(` = panggilan; sisanya beri spasi
-        return !matches!(cur, LParen | Semi | Comma | RParen | RBrack | RBrace | Dot | Colon | Question | LBrack);
+        return !matches!(
+            cur,
+            LParen | Semi | Comma | RParen | RBrack | RBrace | Dot | Colon | Question | LBrack
+        );
     }
 
     // Unary +,-,~,! di depan operand → tanpa spasi sebelum
     if matches!(cur, Plus | Minus | Tilde | Not) {
         let prev_is_op = matches!(
             prev,
-            Plus | Minus | Tilde | Not | Star | Slash | Percent | Amp | Pipe | Caret
-                | AmpAmp | PipePipe | Eq | Neq | Lt | Le | Gt | Ge | AssignOp | PlusAssign
-                | MinusAssign | MulAssign | DivAssign | BlockingAssign | NonBlockingAssign
-                | Colon | Comma | Question | Increment | Decrement | Shl | Shr
+            Plus | Minus
+                | Tilde
+                | Not
+                | Star
+                | Slash
+                | Percent
+                | Amp
+                | Pipe
+                | Caret
+                | AmpAmp
+                | PipePipe
+                | Eq
+                | Neq
+                | Lt
+                | Le
+                | Gt
+                | Ge
+                | AssignOp
+                | PlusAssign
+                | MinusAssign
+                | MulAssign
+                | DivAssign
+                | BlockingAssign
+                | NonBlockingAssign
+                | Colon
+                | Comma
+                | Question
+                | Increment
+                | Decrement
+                | Shl
+                | Shr
         );
         let prev_is_open = matches!(prev, LParen | LBrack | LBrace | Hash | At | Return | Wait);
         if prev_is_op || prev_is_open {
@@ -318,8 +409,10 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
     }
 
     // Keyword `if`/`while`/`case` diikuti `(` — spasi
-    if matches!(prev, If | While | Case | CaseX | CaseZ | Repeat | For | Function | Task | Module | Interface)
-        && matches!(cur, LParen)
+    if matches!(
+        prev,
+        If | While | Case | CaseX | CaseZ | Repeat | For | Function | Task | Module | Interface
+    ) && matches!(cur, LParen)
     {
         return true;
     }
@@ -388,23 +481,163 @@ fn is_keyword(tok: &Token) -> bool {
     use Token::*;
     matches!(
         tok,
-        Module | Endmodule | Input | Output | Inout | Ref | Wire | Reg | Logic | Int | Integer
-            | Signed | Unsigned | Wand | Wor | Tri | Tri0 | Tri1 | TriAnd | TriOr | Supply0 | Supply1
-            | Always | AlwaysComb | AlwaysFF | AlwaysLatch | Initial | Final | Assign | Begin | End
-            | If | Else | Case | CaseX | CaseZ | Endcase | For | While | Do | Repeat | Forever
-            | PosEdge | NegEdge | Or | Param | Parameter | LocalParam | GenVar | Generate | EndGenerate
-            | Function | EndFunction | Task | EndTask | Foreach | Auto | Static | Real | WReal | Time
-            | RealTime | String | Class | EndClass | Virtual | Extends | This | New | Void | Break
-            | Continue | Default | Disable | Force | Release | Deassign | Return | Wait | Null | None
-            | Some_ | And | Xor | Nand | Nor | Buf | NotGate | Module_ | Interface | EndInterface
-            | ModPort | Program | EndProgram | Fork | Join | JoinAny | JoinNone | Bit | Enum | Typedef
-            | Byte | Shortint | Longint | Struct | Union | EndEnum | Inside | Unique | Priority | Unique0
-            | Rand | RandC | Constraint | Const | Var | Solve | Assert | Assume | Cover | Expect
-            | WaitOrder | Property | Sequence | EndSequence | Package | EndPackage | Import | Export
-            | Mailbox | Semaphore | Bind | Specify | EndSpecify | SpecParam | Clocking | EndClocking
-            | Config | EndConfig | Design | Liblist | Cell | Use | Instance | Covergroup | EndGroup
-            | Coverpoint | Cross | Bins | IllegalBins | IgnoreBins | Option_ | Primitive | EndPrimitive
-            | Table | EndTable | Type
+        Module
+            | Endmodule
+            | Input
+            | Output
+            | Inout
+            | Ref
+            | Wire
+            | Reg
+            | Logic
+            | Int
+            | Integer
+            | Signed
+            | Unsigned
+            | Wand
+            | Wor
+            | Tri
+            | Tri0
+            | Tri1
+            | TriAnd
+            | TriOr
+            | Supply0
+            | Supply1
+            | Always
+            | AlwaysComb
+            | AlwaysFF
+            | AlwaysLatch
+            | Initial
+            | Final
+            | Assign
+            | Begin
+            | End
+            | If
+            | Else
+            | Case
+            | CaseX
+            | CaseZ
+            | Endcase
+            | For
+            | While
+            | Do
+            | Repeat
+            | Forever
+            | PosEdge
+            | NegEdge
+            | Or
+            | Param
+            | Parameter
+            | LocalParam
+            | GenVar
+            | Generate
+            | EndGenerate
+            | Function
+            | EndFunction
+            | Task
+            | EndTask
+            | Foreach
+            | Auto
+            | Static
+            | Real
+            | WReal
+            | Time
+            | RealTime
+            | String
+            | Class
+            | EndClass
+            | Virtual
+            | Extends
+            | This
+            | New
+            | Void
+            | Break
+            | Continue
+            | Default
+            | Disable
+            | Force
+            | Release
+            | Deassign
+            | Return
+            | Wait
+            | Null
+            | None
+            | Some_
+            | And
+            | Xor
+            | Nand
+            | Nor
+            | Buf
+            | NotGate
+            | Module_
+            | Interface
+            | EndInterface
+            | ModPort
+            | Program
+            | EndProgram
+            | Fork
+            | Join
+            | JoinAny
+            | JoinNone
+            | Bit
+            | Enum
+            | Typedef
+            | Byte
+            | Shortint
+            | Longint
+            | Struct
+            | Union
+            | EndEnum
+            | Inside
+            | Unique
+            | Priority
+            | Unique0
+            | Rand
+            | RandC
+            | Constraint
+            | Const
+            | Var
+            | Solve
+            | Assert
+            | Assume
+            | Cover
+            | Expect
+            | WaitOrder
+            | Property
+            | Sequence
+            | EndSequence
+            | Package
+            | EndPackage
+            | Import
+            | Export
+            | Mailbox
+            | Semaphore
+            | Bind
+            | Specify
+            | EndSpecify
+            | SpecParam
+            | Clocking
+            | EndClocking
+            | Config
+            | EndConfig
+            | Design
+            | Liblist
+            | Cell
+            | Use
+            | Instance
+            | Covergroup
+            | EndGroup
+            | Coverpoint
+            | Cross
+            | Bins
+            | IllegalBins
+            | IgnoreBins
+            | Option_
+            | Primitive
+            | EndPrimitive
+            | Table
+            | EndTable
+            | Type
     )
 }
 
@@ -439,12 +672,15 @@ fn token_text(tok: &Token) -> String {
         }
         Token::RealNum(s) => s.as_str().to_string(),
         Token::StringLit(s) => s.as_str().to_string(),
-        Token::FillLit(v) => format!("'{}", match v {
-            maria_ir::LogicVal::Zero => "0",
-            maria_ir::LogicVal::One => "1",
-            maria_ir::LogicVal::X => "x",
-            maria_ir::LogicVal::Z => "z",
-        }),
+        Token::FillLit(v) => format!(
+            "'{}",
+            match v {
+                maria_ir::LogicVal::Zero => "0",
+                maria_ir::LogicVal::One => "1",
+                maria_ir::LogicVal::X => "x",
+                maria_ir::LogicVal::Z => "z",
+            }
+        ),
         Token::LParen => "(".into(),
         Token::RParen => ")".into(),
         Token::LBrace => "{".into(),

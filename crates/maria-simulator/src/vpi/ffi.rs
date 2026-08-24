@@ -3,12 +3,12 @@
 //! These functions are callable from C code linked against Maria.
 //! They match the IEEE 1800-2012 VPI standard API exactly.
 
-use super::types::*;
-use super::handle;
-use super::value;
-use super::control;
 use super::callback;
+use super::control;
+use super::handle;
 use super::systf;
+use super::types::*;
+use super::value;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 

@@ -19,9 +19,9 @@
 
 mod backend;
 
-pub use backend::LspBackend;
 pub use backend::run_lsp_server;
+pub use backend::LspBackend;
 
+pub use lsp_types;
 /// Re-export tower-lsp for convenience
 pub use tower_lsp;
-pub use lsp_types;

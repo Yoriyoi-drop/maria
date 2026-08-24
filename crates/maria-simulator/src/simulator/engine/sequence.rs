@@ -17,7 +17,12 @@ impl SimulationEngine {
     ///   saat elapsed == 0 (expr menempati 0 cycle)
     /// - `Delay(n)`: true jika elapsed == n
     /// - `Concat(A, B)`: split pada k, A di (k, depth), B di (elapsed-k, depth-k)
-    pub(crate) fn eval_sequence_depth(&mut self, seq: &IrSequence, elapsed: u64, depth: u64) -> Result<bool, SimError> {
+    pub(crate) fn eval_sequence_depth(
+        &mut self,
+        seq: &IrSequence,
+        elapsed: u64,
+        depth: u64,
+    ) -> Result<bool, SimError> {
         match seq {
             IrSequence::Expr(expr) => {
                 if elapsed == 0 {
@@ -57,7 +62,11 @@ impl SimulationEngine {
                 for k in 0..=elapsed {
                     if self.eval_sequence_depth(seq, k, depth)? {
                         let remaining = IrSequence::Repeat(Box::new((**seq).clone()), n - 1);
-                        if self.eval_sequence_depth(&remaining, elapsed - k, depth.saturating_sub(k))? {
+                        if self.eval_sequence_depth(
+                            &remaining,
+                            elapsed - k,
+                            depth.saturating_sub(k),
+                        )? {
                             return Ok(true);
                         }
                     }
@@ -86,7 +95,11 @@ impl SimulationEngine {
 
     /// Evaluator lama — wrapper untuk backward compatibility.
     #[allow(dead_code)]
-    pub(crate) fn eval_sequence_at_cycle(&mut self, seq: &IrSequence, cycles: u64) -> Result<bool, SimError> {
+    pub(crate) fn eval_sequence_at_cycle(
+        &mut self,
+        seq: &IrSequence,
+        cycles: u64,
+    ) -> Result<bool, SimError> {
         self.eval_sequence_depth(seq, cycles, cycles)
     }
 
@@ -138,7 +151,6 @@ impl SimulationEngine {
             .collect();
         std::mem::swap(&mut self.signal_snapshot, &mut self.preponed_snapshot);
 
-
         let seqs: Vec<(Box<IrSequence>, u64)> = self
             .sequence_attempts
             .iter()
@@ -181,7 +193,11 @@ impl SimulationEngine {
                 Some(a) => (
                     a.line,
                     a.col,
-                    if success { a.pass_stmt.clone() } else { a.fail_stmt.clone() },
+                    if success {
+                        a.pass_stmt.clone()
+                    } else {
+                        a.fail_stmt.clone()
+                    },
                 ),
                 None => (0, 0, Vec::new()),
             };

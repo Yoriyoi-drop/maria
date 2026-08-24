@@ -1,11 +1,11 @@
+use crate::simulator::types::CoverageType;
+use crate::simulator::util::*;
 /// Coverage tracking and reporting for SimulationEngine.
 /// Manages covergroup sampling, coverage reporting, and UCIS XML export.
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
-use maria_ir::*;
-use crate::simulator::types::CoverageType;
-use crate::simulator::util::*;
 use maria_core::Symbol;
+use maria_ir::*;
 use std::collections::{HashMap, HashSet};
 
 use super::SimulationEngine;
@@ -56,7 +56,8 @@ impl SimulationEngine {
     /// Bit-0=line, bit-1=toggle, bit-2=branch, bit-3=FSM, bit-4=covergroup.
     /// Nilai 0 → semua nonaktif; nilai ~0 (semua bit set) → semua aktif.
     pub(crate) fn apply_coverage_control(&mut self, bitmask: u64) {
-        self.coverage_options.insert("control".to_string(), bitmask.to_string());
+        self.coverage_options
+            .insert("control".to_string(), bitmask.to_string());
         self.coverage_enabled_types.clear();
         const ALL_TYPES: u64 = 0x1F; // 5 tipe coverage yang didukung
         if bitmask == 0 {
@@ -88,8 +89,7 @@ impl SimulationEngine {
     /// Set kosong (coverage_enabled_types) berarti semua tipe aktif.
     fn coverage_type_enabled(&self, t: CoverageType) -> bool {
         self.coverage_enabled
-            && (self.coverage_enabled_types.is_empty()
-                || self.coverage_enabled_types.contains(&t))
+            && (self.coverage_enabled_types.is_empty() || self.coverage_enabled_types.contains(&t))
     }
 
     // ─── Line Coverage ─────────────────────────────────────────────
@@ -123,7 +123,11 @@ impl SimulationEngine {
         if !self.coverage_type_enabled(CoverageType::Line) {
             return;
         }
-        let key = Symbol::intern(&format!("{}.{:?}", process_name, std::mem::discriminant(stmt)));
+        let key = Symbol::intern(&format!(
+            "{}.{:?}",
+            process_name,
+            std::mem::discriminant(stmt)
+        ));
         // SIM-29: statement pada baris dalam `` `coverage_off ``/`` `coverage_on ``
         // TIDAK dihitung line coverage-nya. Baris statement di-lookup dari
         // side-table `stmt_lines` (key SAMA dengan cover_line) — di-populate
@@ -144,11 +148,7 @@ impl SimulationEngine {
     }
 
     /// Record a branch being taken (branch coverage).
-    pub(crate) fn record_branch_hit(
-        &mut self,
-        branch_key: Symbol,
-        label: &str,
-    ) {
+    pub(crate) fn record_branch_hit(&mut self, branch_key: Symbol, label: &str) {
         if !self.coverage_type_enabled(CoverageType::Branch) {
             return;
         }
@@ -192,7 +192,8 @@ impl SimulationEngine {
             return;
         }
         eprintln!("\n=== Line Coverage ===");
-        let mut sorted: Vec<(&str, u64)> = self.cover_line
+        let mut sorted: Vec<(&str, u64)> = self
+            .cover_line
             .iter()
             .map(|(k, v)| (k.as_str(), *v))
             .collect();
@@ -210,7 +211,11 @@ impl SimulationEngine {
         }
         eprintln!("\n=== Toggle Coverage ===");
         for (sig_id, toggles) in &self.cover_toggle {
-            let sig_name = self.design.top.signals.get(*sig_id)
+            let sig_name = self
+                .design
+                .top
+                .signals
+                .get(*sig_id)
                 .map(|s| s.name.as_str())
                 .unwrap_or("<unknown>");
             eprintln!("  {}: {} transitions", sig_name, toggles.len());
@@ -219,7 +224,11 @@ impl SimulationEngine {
             }
         }
         let total_signals = self.design.top.signals.len();
-        eprintln!("  {} signals with toggles / {} total", self.cover_toggle.len(), total_signals);
+        eprintln!(
+            "  {} signals with toggles / {} total",
+            self.cover_toggle.len(),
+            total_signals
+        );
     }
 
     /// Print branch coverage report.
@@ -232,8 +241,16 @@ impl SimulationEngine {
             eprintln!("  {}:", key.as_str());
             let total: u64 = branches.values().sum();
             for (label, count) in branches {
-                eprintln!("    {}: {} hits ({:.1}%)", label.as_str(), count, 
-                    if total > 0 { *count as f64 / total as f64 * 100.0 } else { 0.0 });
+                eprintln!(
+                    "    {}: {} hits ({:.1}%)",
+                    label.as_str(),
+                    count,
+                    if total > 0 {
+                        *count as f64 / total as f64 * 100.0
+                    } else {
+                        0.0
+                    }
+                );
             }
         }
     }
@@ -245,12 +262,21 @@ impl SimulationEngine {
         }
         eprintln!("\n=== FSM Coverage ===");
         for (sig_id, states) in &self.cover_fsm {
-            let sig_name = self.design.top.signals.get(*sig_id)
+            let sig_name = self
+                .design
+                .top
+                .signals
+                .get(*sig_id)
                 .map(|s| s.name.as_str())
                 .unwrap_or("<unknown>");
             let mut sorted_states: Vec<u64> = states.iter().copied().collect();
             sorted_states.sort();
-            eprintln!("  {}: {} states visited: {:?}", sig_name, states.len(), sorted_states);
+            eprintln!(
+                "  {}: {} states visited: {:?}",
+                sig_name,
+                states.len(),
+                sorted_states
+            );
         }
     }
 
@@ -261,19 +287,20 @@ impl SimulationEngine {
             return;
         }
         eprintln!("\n=== Assertion Coverage ===");
-        let mut entries: Vec<((usize, usize), (u64, u64))> = self
-            .assertion_stats
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let mut entries: Vec<((usize, usize), (u64, u64))> =
+            self.assertion_stats.iter().map(|(k, v)| (*k, *v)).collect();
         entries.sort_by_key(|(k, _)| *k);
         for ((line, col), (p, f)) in entries {
             eprintln!("  line {}:{} — {} pass / {} fail", line, col, p, f);
         }
         let total_pass: u64 = self.assertion_stats.values().map(|(p, _)| *p).sum();
         let total_fail: u64 = self.assertion_stats.values().map(|(_, f)| *f).sum();
-        eprintln!("  ({} assertions evaluated: {} pass, {} fail)",
-            total_pass + total_fail, total_pass, total_fail);
+        eprintln!(
+            "  ({} assertions evaluated: {} pass, {} fail)",
+            total_pass + total_fail,
+            total_pass,
+            total_fail
+        );
     }
 
     /// VERIF-26: coverage gap analysis — daftar item coverage yang TIDAK
@@ -333,7 +360,10 @@ impl SimulationEngine {
                     never_toggled += 1;
                     // Batasi noise utk design besar — gap utama sudah terlihat.
                     if never_toggled >= 20 {
-                        gaps.push(format!("... ({} sinyal tidak pernah toggle, dibatasi)", never_toggled));
+                        gaps.push(format!(
+                            "... ({} sinyal tidak pernah toggle, dibatasi)",
+                            never_toggled
+                        ));
                         break;
                     }
                 }
@@ -364,15 +394,19 @@ impl SimulationEngine {
         eprintln!("\n═══════════════════════════════════════");
         eprintln!("   COVERAGE SUMMARY REPORT");
         eprintln!("═══════════════════════════════════════");
-        
+
         // Line coverage percentage
         if !self.cover_line.is_empty() {
             let total_line_hits: u64 = self.cover_line.values().sum();
-            eprintln!("  Line:     {} unique items, {} total hits", self.cover_line.len(), total_line_hits);
+            eprintln!(
+                "  Line:     {} unique items, {} total hits",
+                self.cover_line.len(),
+                total_line_hits
+            );
         } else {
             eprintln!("  Line:     (no line data)");
         }
-        
+
         // Toggle coverage percentage
         if !self.cover_toggle.is_empty() {
             let mut total_signal_bits = 0usize;
@@ -388,11 +422,15 @@ impl SimulationEngine {
             } else {
                 0.0
             };
-            eprintln!("  Toggle:   {} signals tracked, ~{:.1}% coverage", self.cover_toggle.len(), pct);
+            eprintln!(
+                "  Toggle:   {} signals tracked, ~{:.1}% coverage",
+                self.cover_toggle.len(),
+                pct
+            );
         } else {
             eprintln!("  Toggle:   (no toggle data)");
         }
-        
+
         // Branch coverage percentage
         if !self.cover_branches.is_empty() {
             let mut total_branches = 0u64;
@@ -410,22 +448,29 @@ impl SimulationEngine {
             } else {
                 0.0
             };
-            eprintln!("  Branch:   {}/{} branches covered ({:.1}%)", covered_branches, total_branches, pct);
+            eprintln!(
+                "  Branch:   {}/{} branches covered ({:.1}%)",
+                covered_branches, total_branches, pct
+            );
         } else {
             eprintln!("  Branch:   (no branch data)");
         }
-        
+
         // FSM coverage percentage
         if !self.cover_fsm.is_empty() {
             let mut total_states = 0usize;
             for states in self.cover_fsm.values() {
                 total_states += states.len();
             }
-            eprintln!("  FSM:      {} states visited across {} signals", total_states, self.cover_fsm.len());
+            eprintln!(
+                "  FSM:      {} states visited across {} signals",
+                total_states,
+                self.cover_fsm.len()
+            );
         } else {
             eprintln!("  FSM:      (no FSM data)");
         }
-        
+
         // VERIF-27: assertion coverage metrics (pass/fail per assertion).
         if !self.assertion_stats.is_empty() {
             let total_pass: u64 = self.assertion_stats.values().map(|(p, _)| *p).sum();
@@ -435,14 +480,19 @@ impl SimulationEngine {
             } else {
                 0.0
             };
-            eprintln!("  Assert:   {} evaluated ({} pass / {} fail) {:.1}% pass rate",
-                total_pass + total_fail, total_pass, total_fail, pct);
+            eprintln!(
+                "  Assert:   {} evaluated ({} pass / {} fail) {:.1}% pass rate",
+                total_pass + total_fail,
+                total_pass,
+                total_fail,
+                pct
+            );
         } else {
             eprintln!("  Assert:   (no assertion data)");
         }
-        
+
         eprintln!("═══════════════════════════════════════\n");
-        
+
         self.report_line_coverage();
         self.report_toggle_coverage();
         self.report_branch_coverage();
@@ -455,19 +505,19 @@ impl SimulationEngine {
     /// Return coverage statistics as structured data (useful for CLI/JSON output).
     pub fn coverage_stats(&self) -> HashMap<String, f64> {
         let mut stats = HashMap::new();
-        
+
         // Line coverage
         let line_items = self.cover_line.len() as f64;
         let line_hits: f64 = self.cover_line.values().sum::<u64>() as f64;
         stats.insert("line_items".to_string(), line_items);
         stats.insert("line_total_hits".to_string(), line_hits);
-        
+
         // Toggle coverage
         let toggle_signals = self.cover_toggle.len() as f64;
         let toggle_transitions: f64 = self.cover_toggle.values().map(|s| s.len() as f64).sum();
         stats.insert("toggle_signals".to_string(), toggle_signals);
         stats.insert("toggle_transitions".to_string(), toggle_transitions);
-        
+
         // Branch coverage
         let mut total_branches = 0u64;
         let mut covered_branches = 0u64;
@@ -487,13 +537,13 @@ impl SimulationEngine {
         stats.insert("branch_total".to_string(), total_branches as f64);
         stats.insert("branch_covered".to_string(), covered_branches as f64);
         stats.insert("branch_percent".to_string(), branch_pct);
-        
+
         // FSM coverage
         let fsm_signals = self.cover_fsm.len() as f64;
         let fsm_states: f64 = self.cover_fsm.values().map(|s| s.len() as f64).sum();
         stats.insert("fsm_signals".to_string(), fsm_signals);
         stats.insert("fsm_states".to_string(), fsm_states);
-        
+
         stats
     }
 
@@ -506,7 +556,8 @@ impl SimulationEngine {
         // Clone snapshot and current values to avoid double borrow of self.
         // Pakai coverage_snapshot (capture di awal time step) — signal_snapshot
         // di-refresh tiap delta cycle sehingga diff selalu kosong (fix SIM-30).
-        let old_vals: Vec<LogicVec> = self.coverage_snapshot
+        let old_vals: Vec<LogicVec> = self
+            .coverage_snapshot
             .as_ref()
             .map(|snap| snap.clone())
             .unwrap_or_default();
@@ -693,10 +744,7 @@ impl SimulationEngine {
                 }
                 let bin_key = parts.join(" x ");
                 let bin_key_sym = Symbol::intern(&bin_key);
-                let bins = self
-                    .cover_bins
-                    .entry(key_sym)
-                    .or_default();
+                let bins = self.cover_bins.entry(key_sym).or_default();
                 if bins.contains_key(&bin_key_sym) {
                     *bins.get_mut(&bin_key_sym).unwrap() += 1;
                 } else if bins.len() < MAX_DEFAULT_BINS {
@@ -752,12 +800,20 @@ impl SimulationEngine {
             let mut item_count = 0.0;
             for cp in &cg.coverpoints {
                 let (total, hits) = self.cg_item_stats(cg, cp.name.as_str());
-                item_sum += if total > 0 { hits as f64 / total as f64 } else { 0.0 };
+                item_sum += if total > 0 {
+                    hits as f64 / total as f64
+                } else {
+                    0.0
+                };
                 item_count += 1.0;
             }
             for cross in &cg.crosses {
                 let (total, hits) = self.cg_item_stats(cg, cross.name.as_str());
-                item_sum += if total > 0 { hits as f64 / total as f64 } else { 0.0 };
+                item_sum += if total > 0 {
+                    hits as f64 / total as f64
+                } else {
+                    0.0
+                };
                 item_count += 1.0;
             }
             if item_count > 0.0 {
@@ -810,7 +866,10 @@ impl SimulationEngine {
             );
         }
         // VERIF-28: functional coverage keseluruhan tertimbang.
-        eprintln!("  Functional: {:.1}% (weighted by type_option.weight)", self.functional_coverage_percent());
+        eprintln!(
+            "  Functional: {:.1}% (weighted by type_option.weight)",
+            self.functional_coverage_percent()
+        );
     }
 
     /// Export all coverage data to UCIS XML format (IEEE 1800 UCIS schema).
@@ -828,14 +887,21 @@ impl SimulationEngine {
         if !self.design.covergroups.is_empty() {
             xml.push_str("    <functionalCoverage>\n");
             for cg in &self.design.covergroups {
-                xml.push_str(&format!("      <covergroup name=\"{}\">\n", escape_xml(cg.name.as_str())));
+                xml.push_str(&format!(
+                    "      <covergroup name=\"{}\">\n",
+                    escape_xml(cg.name.as_str())
+                ));
 
                 for cp in &cg.coverpoints {
                     let key = format!("{}.{}", cg.name, cp.name);
                     let key_sym = Symbol::intern(&key);
                     let total = self.cover_total.get(&key_sym).copied().unwrap_or(0);
                     let hits = self.cover_hits.get(&key_sym).copied().unwrap_or(0);
-                    let pct = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
+                    let pct = if total > 0 {
+                        (hits as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
 
                     xml.push_str(&format!(
                         "        <coverpoint name=\"{}\" total=\"{}\" hits=\"{}\" coverage=\"{:.1}\">\n",
@@ -846,7 +912,8 @@ impl SimulationEngine {
                         for (bin_key, count) in bins.iter() {
                             xml.push_str(&format!(
                                 "          <bin name=\"{}\" hits=\"{}\"/>\n",
-                                escape_xml(bin_key.as_str()), count
+                                escape_xml(bin_key.as_str()),
+                                count
                             ));
                         }
                     }
@@ -859,18 +926,26 @@ impl SimulationEngine {
                     let key_sym = Symbol::intern(&key);
                     let total = self.cover_total.get(&key_sym).copied().unwrap_or(0);
                     let hits = self.cover_hits.get(&key_sym).copied().unwrap_or(0);
-                    let pct = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
+                    let pct = if total > 0 {
+                        (hits as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
 
                     xml.push_str(&format!(
                         "        <cross name=\"{}\" total=\"{}\" hits=\"{}\" coverage=\"{:.1}\">\n",
-                        escape_xml(cross.name.as_str()), total, hits, pct
+                        escape_xml(cross.name.as_str()),
+                        total,
+                        hits,
+                        pct
                     ));
 
                     if let Some(bins) = self.cover_bins.get(&key_sym) {
                         for (bin_key, count) in bins.iter() {
                             xml.push_str(&format!(
                                 "          <bin name=\"{}\" hits=\"{}\"/>\n",
-                                escape_xml(bin_key.as_str()), count
+                                escape_xml(bin_key.as_str()),
+                                count
                             ));
                         }
                     }
@@ -886,7 +961,9 @@ impl SimulationEngine {
         // ── Line Coverage ──
         if !self.cover_line.is_empty() {
             xml.push_str("    <lineCoverage>\n");
-            let mut sorted_line: Vec<(&str, &u64)> = self.cover_line.iter()
+            let mut sorted_line: Vec<(&str, &u64)> = self
+                .cover_line
+                .iter()
                 .map(|(k, v)| (k.as_str(), v))
                 .collect();
             sorted_line.sort_by(|a, b| b.1.cmp(a.1));
@@ -898,7 +975,8 @@ impl SimulationEngine {
             for (key, hits) in sorted_line {
                 xml.push_str(&format!(
                     "      <lineItem key=\"{}\" hits=\"{}\"/>\n",
-                    escape_xml(key), hits
+                    escape_xml(key),
+                    hits
                 ));
             }
             xml.push_str("    </lineCoverage>\n");
@@ -907,23 +985,31 @@ impl SimulationEngine {
         // ── Toggle Coverage ──
         if !self.cover_toggle.is_empty() {
             xml.push_str("    <toggleCoverage>\n");
-            let mut sorted_toggle: Vec<(&usize, &HashSet<(LogicVal, LogicVal)>)> = self.cover_toggle.iter().collect();
+            let mut sorted_toggle: Vec<(&usize, &HashSet<(LogicVal, LogicVal)>)> =
+                self.cover_toggle.iter().collect();
             sorted_toggle.sort_by_key(|(id, _)| *id);
             xml.push_str(&format!(
                 "      <summary totalSignals=\"{}\"/>\n",
                 self.cover_toggle.len()
             ));
             for (sig_id, transitions) in sorted_toggle {
-                let sig_name = self.design.top.signals.get(*sig_id)
+                let sig_name = self
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
                     .map(|s| s.name.as_str())
                     .unwrap_or("<unknown>");
                 xml.push_str(&format!(
                     "      <signal id=\"{}\" name=\"{}\" transitions=\"{}\">\n",
-                    sig_id, escape_xml(sig_name), transitions.len()
+                    sig_id,
+                    escape_xml(sig_name),
+                    transitions.len()
                 ));
                 for (from, to) in transitions.iter() {
                     xml.push_str(&format!(
-                        "        <transition from=\"{:?}\" to=\"{:?}\"/>\n", from, to
+                        "        <transition from=\"{:?}\" to=\"{:?}\"/>\n",
+                        from, to
                     ));
                 }
                 xml.push_str("      </signal>\n");
@@ -939,27 +1025,33 @@ impl SimulationEngine {
             for branches in self.cover_branches.values() {
                 for count in branches.values() {
                     total_br += 1;
-                    if *count > 0 { covered_br += 1; }
+                    if *count > 0 {
+                        covered_br += 1;
+                    }
                 }
             }
-            let br_pct = if total_br > 0 { (covered_br as f64 / total_br as f64) * 100.0 } else { 0.0 };
+            let br_pct = if total_br > 0 {
+                (covered_br as f64 / total_br as f64) * 100.0
+            } else {
+                0.0
+            };
             xml.push_str(&format!(
                 "      <summary totalBranches=\"{}\" coveredBranches=\"{}\" coverage=\"{:.1}\"/>\n",
                 total_br, covered_br, br_pct
             ));
-            let mut sorted_branch: Vec<(&str, &HashMap<Symbol, u64>)> = self.cover_branches.iter()
+            let mut sorted_branch: Vec<(&str, &HashMap<Symbol, u64>)> = self
+                .cover_branches
+                .iter()
                 .map(|(k, v)| (k.as_str(), v))
                 .collect();
             sorted_branch.sort_by(|a, b| a.0.cmp(b.0));
             for (key, branches) in sorted_branch {
-                xml.push_str(&format!(
-                    "      <branchItem key=\"{}\">\n",
-                    escape_xml(key)
-                ));
+                xml.push_str(&format!("      <branchItem key=\"{}\">\n", escape_xml(key)));
                 for (label, count) in branches {
                     xml.push_str(&format!(
                         "        <branch label=\"{}\" hits=\"{}\"/>\n",
-                        escape_xml(label.as_str()), count
+                        escape_xml(label.as_str()),
+                        count
                     ));
                 }
                 xml.push_str("      </branchItem>\n");
@@ -978,19 +1070,23 @@ impl SimulationEngine {
             let mut sorted_fsm: Vec<(&usize, &HashSet<u64>)> = self.cover_fsm.iter().collect();
             sorted_fsm.sort_by_key(|(id, _)| *id);
             for (sig_id, states) in sorted_fsm {
-                let sig_name = self.design.top.signals.get(*sig_id)
+                let sig_name = self
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
                     .map(|s| s.name.as_str())
                     .unwrap_or("<unknown>");
                 let mut sorted_states: Vec<u64> = states.iter().copied().collect();
                 sorted_states.sort();
                 xml.push_str(&format!(
                     "      <signal id=\"{}\" name=\"{}\" states=\"{}\">\n",
-                    sig_id, escape_xml(sig_name), states.len()
+                    sig_id,
+                    escape_xml(sig_name),
+                    states.len()
                 ));
                 for state in &sorted_states {
-                    xml.push_str(&format!(
-                        "        <state value=\"{}\"/>\n", state
-                    ));
+                    xml.push_str(&format!("        <state value=\"{}\"/>\n", state));
                 }
                 xml.push_str("      </signal>\n");
             }
@@ -1000,8 +1096,12 @@ impl SimulationEngine {
         xml.push_str("  </design>\n");
         xml.push_str("</coverageDatabase>\n");
 
-        std::fs::write(path, xml)
-            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("cannot write UCIS file '{}': {}", path, e)))?;
+        std::fs::write(path, xml).map_err(|e| {
+            SimError::with_diag(
+                DiagCode::IoError,
+                format!("cannot write UCIS file '{}': {}", path, e),
+            )
+        })?;
 
         // Print summary to stderr
         let line_count = self.cover_line.len();
@@ -1009,8 +1109,10 @@ impl SimulationEngine {
         let branch_count = self.cover_branches.len();
         let fsm_count = self.cover_fsm.len();
         let cg_count = self.design.covergroups.len();
-        eprintln!("UCIS exported: covergroups={} line={} toggle={} branch={} fsm={}",
-            cg_count, line_count, toggle_count, branch_count, fsm_count);
+        eprintln!(
+            "UCIS exported: covergroups={} line={} toggle={} branch={} fsm={}",
+            cg_count, line_count, toggle_count, branch_count, fsm_count
+        );
 
         Ok(())
     }

@@ -12,12 +12,12 @@
 //! 1 file = 1 tanggung jawab: hanya transaction recording.
 
 use super::super::SimulationEngine;
-use maria_core::Symbol;
-use maria_core::diagnostics::DiagCode;
-use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
 use crate::simulator::types::UvmTrRecord;
 use crate::simulator::util::logicvec_to_string;
+use maria_compiler::hir::{LogicVec, ObjId};
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
+use maria_core::Symbol;
 
 impl SimulationEngine {
     /// VERIF-18: stream obj id untuk nama (create kalau belum ada) + reverse map.
@@ -120,24 +120,15 @@ impl SimulationEngine {
             }
             // VERIF-18: get_stream(name) — create/reuse stream obj id.
             "get_stream" => {
-                let stream_name = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let stream_name = args.first().map(logicvec_to_string).unwrap_or_default();
                 let id = self.tr_stream_get(&stream_name);
                 Ok(LogicVec::from_u64(id as u64, 64))
             }
             // VERIF-18: get_tr_count() — jumlah record (semua stream).
-            "get_tr_count" => Ok(LogicVec::from_u64(
-                self.tr_records.len() as u64,
-                64,
-            )),
+            "get_tr_count" => Ok(LogicVec::from_u64(self.tr_records.len() as u64, 64)),
             // VERIF-18: set_stream(name) — stream default db utk begin_tr baru.
             "set_stream" => {
-                let stream_name = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let stream_name = args.first().map(logicvec_to_string).unwrap_or_default();
                 self.tr_stream_get(&stream_name);
                 self.tr_db_default_stream = Some(stream_name);
                 Ok(LogicVec::from_u64(0, 64))
@@ -207,7 +198,11 @@ impl SimulationEngine {
     pub(crate) fn report_tr_records(&self) -> String {
         let mut out = String::new();
         let total = self.tr_records.len();
-        let open = self.tr_records.iter().filter(|r| r.end_time.is_none()).count();
+        let open = self
+            .tr_records
+            .iter()
+            .filter(|r| r.end_time.is_none())
+            .count();
         out.push_str(&format!(
             "Transactions: {} recorded ({} open)\n",
             total, open

@@ -122,17 +122,36 @@ impl SemanticMutator {
     fn mutate_width(&mut self, input: &mut GenInput) {
         let w = input.w;
         let new_w = match w {
-            1 => { let choices = [1, 2, 4]; choices[self.rng.usize(0..choices.len())] },
-            2 => { let choices = [1, 2, 4]; choices[self.rng.usize(0..choices.len())] },
-            4 => { let choices = [2, 4, 8, 16]; choices[self.rng.usize(0..choices.len())] },
-            8 => { let choices = [4, 8, 16, 32]; choices[self.rng.usize(0..choices.len())] },
-            16 => { let choices = [8, 16, 32]; choices[self.rng.usize(0..choices.len())] },
+            1 => {
+                let choices = [1, 2, 4];
+                choices[self.rng.usize(0..choices.len())]
+            }
+            2 => {
+                let choices = [1, 2, 4];
+                choices[self.rng.usize(0..choices.len())]
+            }
+            4 => {
+                let choices = [2, 4, 8, 16];
+                choices[self.rng.usize(0..choices.len())]
+            }
+            8 => {
+                let choices = [4, 8, 16, 32];
+                choices[self.rng.usize(0..choices.len())]
+            }
+            16 => {
+                let choices = [8, 16, 32];
+                choices[self.rng.usize(0..choices.len())]
+            }
             _ => w,
         };
 
         if new_w != w {
             input.w = new_w as u32;
-            let mask = if new_w >= 64 { u64::MAX } else { (1u64 << new_w) - 1 };
+            let mask = if new_w >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << new_w) - 1
+            };
             input.a &= mask;
             input.b &= mask;
             input.expr = self.rescale_expr_width(&input.expr, w, new_w);
@@ -141,9 +160,17 @@ impl SemanticMutator {
 
     fn rescale_expr_width(&self, expr: &Expr, old_w: u32, new_w: u32) -> Expr {
         match expr {
-            Expr::Lit(v) => Expr::Lit(v & if new_w >= 64 { u64::MAX } else { (1u64 << new_w) - 1 }),
+            Expr::Lit(v) => Expr::Lit(
+                v & if new_w >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << new_w) - 1
+                },
+            ),
             Expr::Var(c) => Expr::Var(*c),
-            Expr::Un(op, inner) => Expr::Un(*op, Box::new(self.rescale_expr_width(inner, old_w, new_w))),
+            Expr::Un(op, inner) => {
+                Expr::Un(*op, Box::new(self.rescale_expr_width(inner, old_w, new_w)))
+            }
             Expr::Bin(op, lhs, rhs) => Expr::Bin(
                 *op,
                 Box::new(self.rescale_expr_width(lhs, old_w, new_w)),
@@ -159,7 +186,9 @@ impl SemanticMutator {
     fn inject_signed_cast(&mut self, expr: &Expr) -> Expr {
         if self.rng.f32() < 0.3 {
             match expr {
-                Expr::Bin(op, lhs, rhs) if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Eq | BinOp::Ne) => {
+                Expr::Bin(op, lhs, rhs)
+                    if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Eq | BinOp::Ne) =>
+                {
                     Expr::Bin(
                         *op,
                         Box::new(Expr::Un(UnOp::Neg, Box::new(*lhs.clone()))),
@@ -221,13 +250,29 @@ impl SemanticMutator {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                 vec![BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Mod]
             }
-            BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Xnor => vec![BinOp::And, BinOp::Or, BinOp::Xor, BinOp::Xnor],
+            BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Xnor => {
+                vec![BinOp::And, BinOp::Or, BinOp::Xor, BinOp::Xnor]
+            }
             BinOp::Shl | BinOp::Shr | BinOp::Sshl | BinOp::Sshr => {
                 vec![BinOp::Shl, BinOp::Shr, BinOp::Sshl, BinOp::Sshr]
             }
-            BinOp::Eq | BinOp::Ne => vec![BinOp::Eq, BinOp::Ne, BinOp::Lt, BinOp::Gt, BinOp::Le, BinOp::Ge],
+            BinOp::Eq | BinOp::Ne => vec![
+                BinOp::Eq,
+                BinOp::Ne,
+                BinOp::Lt,
+                BinOp::Gt,
+                BinOp::Le,
+                BinOp::Ge,
+            ],
             BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-                vec![BinOp::Lt, BinOp::Gt, BinOp::Le, BinOp::Ge, BinOp::Eq, BinOp::Ne]
+                vec![
+                    BinOp::Lt,
+                    BinOp::Gt,
+                    BinOp::Le,
+                    BinOp::Ge,
+                    BinOp::Eq,
+                    BinOp::Ne,
+                ]
             }
             BinOp::LogicAnd | BinOp::LogicOr => vec![BinOp::LogicAnd, BinOp::LogicOr],
             BinOp::CaseEq | BinOp::CaseNeq => {
@@ -254,7 +299,11 @@ impl SemanticMutator {
         let boundaries = [1u32, 2, 4, 8, 16, 31, 32, 33, 64, 128, 255, 256, 512, 1024];
         let boundary = boundaries[self.rng.usize(0..boundaries.len())];
         input.w = boundary;
-        let mask = if boundary >= 64 { u64::MAX } else { (1u64 << boundary) - 1 };
+        let mask = if boundary >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << boundary) - 1
+        };
         input.a = self.rng.u64(..) & mask;
         input.b = self.rng.u64(..) & mask;
         input.expr = super::expr::gen_node(boundary, &mut self.rng, 0);

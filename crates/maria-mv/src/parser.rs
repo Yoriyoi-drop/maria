@@ -83,7 +83,11 @@ impl Parser {
             }
             _ => {
                 let (l, c) = self.pos_line();
-                Err(MvError::new(l, c, format!("diharapkan identifier, ditemukan {:?}", self.peek())))
+                Err(MvError::new(
+                    l,
+                    c,
+                    format!("diharapkan identifier, ditemukan {:?}", self.peek()),
+                ))
             }
         }
     }
@@ -162,11 +166,19 @@ impl Parser {
                     // `type NAME = ...` boleh juga tanpa keyword `type`? Tidak —
                     // alias wajib `type`. Ident di level file = error.
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, format!("konstruk tidak dikenal di level file: {:?}", self.peek())));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        format!("konstruk tidak dikenal di level file: {:?}", self.peek()),
+                    ));
                 }
                 _ => {
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, format!("konstruk tidak dikenal: {:?}", self.peek())));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        format!("konstruk tidak dikenal: {:?}", self.peek()),
+                    ));
                 }
             }
         }
@@ -181,7 +193,12 @@ impl Parser {
         let name = self.expect_ident()?;
         self.expect(&Tok::BlockingAssign)?;
         let ty = self.parse_type()?;
-        Ok(Typedef::Alias { name, ty, line: l, col: c })
+        Ok(Typedef::Alias {
+            name,
+            ty,
+            line: l,
+            col: c,
+        })
     }
 
     fn parse_typedef(&mut self) -> Result<Typedef, MvError> {
@@ -197,7 +214,13 @@ impl Parser {
                     fields.push(self.parse_field()?);
                     self.eat(&Tok::Comma);
                 }
-                Ok(Typedef::Struct { name, packed, fields, line: l, col: c })
+                Ok(Typedef::Struct {
+                    name,
+                    packed,
+                    fields,
+                    line: l,
+                    col: c,
+                })
             }
             Tok::Enum => {
                 self.expect(&Tok::Enum)?;
@@ -220,10 +243,21 @@ impl Parser {
                     } else {
                         None
                     };
-                    members.push(EnumMember { name: mname, value, line: ml, col: mc });
+                    members.push(EnumMember {
+                        name: mname,
+                        value,
+                        line: ml,
+                        col: mc,
+                    });
                     self.eat(&Tok::Comma);
                 }
-                Ok(Typedef::Enum { name, width, members, line: l, col: c })
+                Ok(Typedef::Enum {
+                    name,
+                    width,
+                    members,
+                    line: l,
+                    col: c,
+                })
             }
             Tok::Union => {
                 self.expect(&Tok::Union)?;
@@ -235,7 +269,13 @@ impl Parser {
                     fields.push(self.parse_field()?);
                     self.eat(&Tok::Comma);
                 }
-                Ok(Typedef::Union { name, packed: true, fields, line: l, col: c })
+                Ok(Typedef::Union {
+                    name,
+                    packed: true,
+                    fields,
+                    line: l,
+                    col: c,
+                })
             }
             _ => {
                 let (l, c) = self.pos_line();
@@ -252,7 +292,12 @@ impl Parser {
         }
         self.expect(&Tok::Colon)?;
         let ty = self.parse_type()?;
-        Ok(Field { names, ty, line: l, col: c })
+        Ok(Field {
+            names,
+            ty,
+            line: l,
+            col: c,
+        })
     }
 
     // ── Package ──
@@ -271,25 +316,45 @@ impl Parser {
                 }
                 Tok::Eof => {
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, "package tidak ditutup dengan '}'".to_string()));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        "package tidak ditutup dengan '}'".to_string(),
+                    ));
                 }
                 Tok::Type => typedefs.push(self.parse_typedef_alias()?),
-                Tok::Packed | Tok::Struct | Tok::Enum | Tok::Union => typedefs.push(self.parse_typedef()?),
+                Tok::Packed | Tok::Struct | Tok::Enum | Tok::Union => {
+                    typedefs.push(self.parse_typedef()?)
+                }
                 Tok::Const => {
                     self.expect(&Tok::Const)?;
                     let cname = self.expect_ident()?;
-                    let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
+                    let ty = if self.eat(&Tok::Colon) {
+                        Some(self.parse_type()?)
+                    } else {
+                        None
+                    };
                     self.expect(&Tok::BlockingAssign)?;
                     let value = self.parse_expr()?;
                     consts.push((cname, ty, value));
                 }
                 _ => {
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, format!("item package tidak dikenal: {:?}", self.peek())));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        format!("item package tidak dikenal: {:?}", self.peek()),
+                    ));
                 }
             }
         }
-        Ok(Package { name, typedefs, consts, line: l, col: c })
+        Ok(Package {
+            name,
+            typedefs,
+            consts,
+            line: l,
+            col: c,
+        })
     }
 
     // ── Interface (MARIA-HDL.md §6.10) ──
@@ -313,7 +378,11 @@ impl Parser {
                 }
                 Tok::Eof => {
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, "interface tidak ditutup dengan '}'".to_string()));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        "interface tidak ditutup dengan '}'".to_string(),
+                    ));
                 }
                 Tok::In | Tok::Out | Tok::Inout => {
                     let (pl, pc) = self.pos_line();
@@ -329,7 +398,13 @@ impl Parser {
                     }
                     self.expect(&Tok::Colon)?;
                     let ty = self.parse_type()?;
-                    ports.push(Port { dir, names, ty, line: pl, col: pc });
+                    ports.push(Port {
+                        dir,
+                        names,
+                        ty,
+                        line: pl,
+                        col: pc,
+                    });
                 }
                 Tok::Sig => {
                     let (sl, sc) = self.pos_line();
@@ -420,7 +495,11 @@ impl Parser {
                 }
                 Tok::Eof => {
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, "program tidak ditutup dengan '}'".to_string()));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        "program tidak ditutup dengan '}'".to_string(),
+                    ));
                 }
                 _ => items.push(self.parse_module_item()?),
             }
@@ -463,7 +542,11 @@ impl Parser {
                 }
                 Tok::Eof => {
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, "class tidak ditutup dengan '}'".to_string()));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        "class tidak ditutup dengan '}'".to_string(),
+                    ));
                 }
                 Tok::Func => cls.funcs.push(self.parse_func()?),
                 Tok::Task => cls.tasks.push(self.parse_task()?),
@@ -496,7 +579,11 @@ impl Parser {
                 }
                 _ => {
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, format!("item class tidak dikenal: {:?}", self.peek())));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        format!("item class tidak dikenal: {:?}", self.peek()),
+                    ));
                 }
             }
         }
@@ -528,12 +615,22 @@ impl Parser {
                 }
                 Tok::Eof => {
                     let (l, c) = self.pos_line();
-                    return Err(MvError::new(l, c, "module tidak ditutup dengan '}'".to_string()));
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        "module tidak ditutup dengan '}'".to_string(),
+                    ));
                 }
                 _ => items.push(self.parse_module_item()?),
             }
         }
-        Ok(Module { name, params, items, line: l, col: c })
+        Ok(Module {
+            name,
+            params,
+            items,
+            line: l,
+            col: c,
+        })
     }
 
     fn parse_param(&mut self) -> Result<Param, MvError> {
@@ -566,7 +663,14 @@ impl Parser {
         } else {
             (None, None)
         };
-        Ok(Param { name, ty, default, type_default, line: l, col: c })
+        Ok(Param {
+            name,
+            ty,
+            default,
+            type_default,
+            line: l,
+            col: c,
+        })
     }
 
     fn parse_module_item(&mut self) -> Result<MItem, MvError> {
@@ -585,7 +689,13 @@ impl Parser {
                 }
                 self.expect(&Tok::Colon)?;
                 let ty = self.parse_type()?;
-                Ok(MItem::Port(Port { dir, names, ty, line: l, col: c }))
+                Ok(MItem::Port(Port {
+                    dir,
+                    names,
+                    ty,
+                    line: l,
+                    col: c,
+                }))
             }
             Tok::Sig | Tok::Reg => {
                 let (l, c) = self.pos_line();
@@ -603,19 +713,41 @@ impl Parser {
                     None
                 };
                 if is_reg {
-                    Ok(MItem::Reg { names, ty, init, line: l, col: c })
+                    Ok(MItem::Reg {
+                        names,
+                        ty,
+                        init,
+                        line: l,
+                        col: c,
+                    })
                 } else {
-                    Ok(MItem::Sig { names, ty, init, line: l, col: c })
+                    Ok(MItem::Sig {
+                        names,
+                        ty,
+                        init,
+                        line: l,
+                        col: c,
+                    })
                 }
             }
             Tok::Const => {
                 let (l, c) = self.pos_line();
                 self.advance();
                 let name = self.expect_ident()?;
-                let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
+                let ty = if self.eat(&Tok::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
                 self.expect(&Tok::BlockingAssign)?;
                 let value = self.parse_expr()?;
-                Ok(MItem::Const { name, ty, value, line: l, col: c })
+                Ok(MItem::Const {
+                    name,
+                    ty,
+                    value,
+                    line: l,
+                    col: c,
+                })
             }
             Tok::Use => {
                 self.advance();
@@ -659,7 +791,12 @@ impl Parser {
                 self.expect(&Tok::DotDot)?;
                 let to = self.parse_expr()?;
                 let body = self.parse_module_item_block()?;
-                Ok(MItem::GenFor { var, from, to, body })
+                Ok(MItem::GenFor {
+                    var,
+                    from,
+                    to,
+                    body,
+                })
             }
             Tok::If => {
                 // generate if
@@ -679,7 +816,11 @@ impl Parser {
             Tok::Task => Ok(MItem::Task(self.parse_task()?)),
             _ => {
                 let (l, c) = self.pos_line();
-                Err(MvError::new(l, c, format!("item module tidak dikenal: {:?}", self.peek())))
+                Err(MvError::new(
+                    l,
+                    c,
+                    format!("item module tidak dikenal: {:?}", self.peek()),
+                ))
             }
         }
     }
@@ -733,7 +874,13 @@ impl Parser {
             reset = Some((rname, active_low, sync));
         }
         self.expect(&Tok::RParen)?;
-        Ok(SeqSpec { clk, neg_edge, reset, line: l, col: c })
+        Ok(SeqSpec {
+            clk,
+            neg_edge,
+            reset,
+            line: l,
+            col: c,
+        })
     }
 
     fn parse_inst(&mut self) -> Result<MItem, MvError> {
@@ -782,7 +929,15 @@ impl Parser {
                 self.eat(&Tok::Comma);
             }
         }
-        Ok(MItem::Inst { module, name, dims, params, conns, line, col })
+        Ok(MItem::Inst {
+            module,
+            name,
+            dims,
+            params,
+            conns,
+            line,
+            col,
+        })
     }
 
     // ── Function / Task ──
@@ -797,7 +952,14 @@ impl Parser {
             None
         };
         let body = self.parse_stmt_block()?;
-        Ok(MFunc { name, args, ret, body, line: l, col: c })
+        Ok(MFunc {
+            name,
+            args,
+            ret,
+            body,
+            line: l,
+            col: c,
+        })
     }
 
     fn parse_task(&mut self) -> Result<MTask, MvError> {
@@ -806,7 +968,13 @@ impl Parser {
         let name = self.expect_ident()?;
         let args = self.parse_arg_list()?;
         let body = self.parse_stmt_block()?;
-        Ok(MTask { name, args, body, line: l, col: c })
+        Ok(MTask {
+            name,
+            args,
+            body,
+            line: l,
+            col: c,
+        })
     }
 
     fn parse_arg_list(&mut self) -> Result<Vec<(String, MvType, Option<Dir>)>, MvError> {
@@ -840,11 +1008,7 @@ impl Parser {
     /// F26: parse body `case (...)` setelah keyword — items `val: stmt`,
     /// `a, b: stmt`, dan `default: stmt`. `qual` = priority/unique/unique0
     /// (None utk biasa), `kind` = "case"/"casez"/"casex".
-    fn parse_case_body(
-        &mut self,
-        qual: Option<String>,
-        kind: String,
-    ) -> Result<Stmt, MvError> {
+    fn parse_case_body(&mut self, qual: Option<String>, kind: String) -> Result<Stmt, MvError> {
         self.expect(&Tok::LParen)?;
         let expr = self.parse_expr()?;
         self.expect(&Tok::RParen)?;
@@ -901,7 +1065,11 @@ impl Parser {
                 } else {
                     None
                 };
-                Ok(Stmt::If { cond, then: Box::new(then), els })
+                Ok(Stmt::If {
+                    cond,
+                    then: Box::new(then),
+                    els,
+                })
             }
             // F26: case qualifier + casez/casex — `priority case (...)`,
             // `unique casez (...)`, `casex (...)`. Qualifier/kind dibaca dulu,
@@ -952,7 +1120,12 @@ impl Parser {
                 self.expect(&Tok::DotDot)?;
                 let to = self.parse_expr()?;
                 let body = self.parse_stmt()?;
-                Ok(Stmt::For { var, from, to, body: Box::new(body) })
+                Ok(Stmt::For {
+                    var,
+                    from,
+                    to,
+                    body: Box::new(body),
+                })
             }
             Tok::While => {
                 self.advance();
@@ -960,7 +1133,10 @@ impl Parser {
                 let cond = self.parse_expr()?;
                 self.expect(&Tok::RParen)?;
                 let body = self.parse_stmt()?;
-                Ok(Stmt::While { cond, body: Box::new(body) })
+                Ok(Stmt::While {
+                    cond,
+                    body: Box::new(body),
+                })
             }
             // F38: `do { body } while (cond)` — loop post-test.
             Tok::Do => {
@@ -971,7 +1147,10 @@ impl Parser {
                 let cond = self.parse_expr()?;
                 self.expect(&Tok::RParen)?;
                 self.eat(&Tok::Semi);
-                Ok(Stmt::DoWhile { cond, body: Box::new(body) })
+                Ok(Stmt::DoWhile {
+                    cond,
+                    body: Box::new(body),
+                })
             }
             // F38: event trigger `->ev` — memicu event named (emisi `-> ev;`).
             // Target HANYA ident: parser SV `Stmt::EventTrigger` menerima nama
@@ -1025,7 +1204,8 @@ impl Parser {
                         return Err(MvError::new(
                             l,
                             c,
-                            "diharapkan 'join' / 'join_any' / 'join_none' setelah blok fork".to_string(),
+                            "diharapkan 'join' / 'join_any' / 'join_none' setelah blok fork"
+                                .to_string(),
                         ));
                     }
                 };
@@ -1037,7 +1217,10 @@ impl Parser {
                 let count = self.parse_expr()?;
                 self.expect(&Tok::RParen)?;
                 let body = self.parse_stmt()?;
-                Ok(Stmt::Repeat { count, body: Box::new(body) })
+                Ok(Stmt::Repeat {
+                    count,
+                    body: Box::new(body),
+                })
             }
             Tok::Forever => {
                 self.advance();
@@ -1050,7 +1233,10 @@ impl Parser {
                 let cond = self.parse_expr()?;
                 self.expect(&Tok::RParen)?;
                 let body = self.parse_stmt()?;
-                Ok(Stmt::Wait { cond, body: Box::new(body) })
+                Ok(Stmt::Wait {
+                    cond,
+                    body: Box::new(body),
+                })
             }
             Tok::At => {
                 self.advance();
@@ -1058,7 +1244,10 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 self.expect(&Tok::RParen)?;
                 let body = self.parse_stmt()?;
-                Ok(Stmt::Event { expr, body: Box::new(body) })
+                Ok(Stmt::Event {
+                    expr,
+                    body: Box::new(body),
+                })
             }
             Tok::Hash => {
                 self.advance();
@@ -1069,7 +1258,10 @@ impl Parser {
                 } else {
                     self.parse_stmt()?
                 };
-                Ok(Stmt::Delay { amt, body: Box::new(body) })
+                Ok(Stmt::Delay {
+                    amt,
+                    body: Box::new(body),
+                })
             }
             Tok::Return => {
                 self.advance();
@@ -1120,7 +1312,11 @@ impl Parser {
                         match self.peek() {
                             Tok::Eof => {
                                 let (l, c) = self.pos_line();
-                                return Err(MvError::new(l, c, "assert property tidak ditutup".to_string()));
+                                return Err(MvError::new(
+                                    l,
+                                    c,
+                                    "assert property tidak ditutup".to_string(),
+                                ));
                             }
                             Tok::LParen => {
                                 depth += 1;
@@ -1144,7 +1340,8 @@ impl Parser {
                 self.expect(&Tok::LParen)?;
                 let cond = self.parse_expr()?;
                 self.expect(&Tok::RParen)?;
-                let pass = if matches!(self.peek(), Tok::Else) || matches!(self.peek(), Tok::RBrace) {
+                let pass = if matches!(self.peek(), Tok::Else) || matches!(self.peek(), Tok::RBrace)
+                {
                     None
                 } else {
                     Some(Box::new(self.parse_stmt()?))
@@ -1163,7 +1360,13 @@ impl Parser {
                 let (l, c) = self.pos_line();
                 self.advance();
                 let lhs = self.parse_postfix_expr()?;
-                Ok(Stmt::IncDec { lhs, inc, pre: true, line: l, col: c })
+                Ok(Stmt::IncDec {
+                    lhs,
+                    inc,
+                    pre: true,
+                    line: l,
+                    col: c,
+                })
             }
             _ => self.parse_assign_or_expr(),
         }
@@ -1191,19 +1394,32 @@ impl Parser {
                 Tok::BlockingAssign => {
                     self.advance();
                     let rhs = self.parse_expr()?;
-                    return Ok(Stmt::Assign { lhs, rhs, nba: false, line: l, col: c });
+                    return Ok(Stmt::Assign {
+                        lhs,
+                        rhs,
+                        nba: false,
+                        line: l,
+                        col: c,
+                    });
                 }
                 Tok::NonBlockingAssign => {
                     self.advance();
                     let rhs = self.parse_expr()?;
-                    return Ok(Stmt::Assign { lhs, rhs, nba: true, line: l, col: c });
+                    return Ok(Stmt::Assign {
+                        lhs,
+                        rhs,
+                        nba: true,
+                        line: l,
+                        col: c,
+                    });
                 }
                 // F36: postfix `lhs++` / `lhs--`
                 Tok::PlusPlus | Tok::MinusMinus => {
                     // F37 fix: guard baris — `++`/`--` di baris BERBEDA dari
                     // akhir lhs = statement prefix baru (`--i` setelah
                     // `$display(...)`), bukan postfix dari statement ini.
-                    let end_line = self.toks[(self.pos.saturating_sub(1)).min(self.toks.len() - 1)].1;
+                    let end_line =
+                        self.toks[(self.pos.saturating_sub(1)).min(self.toks.len() - 1)].1;
                     if self.toks[self.pos].1 != end_line {
                         self.pos = save;
                         let e = self.parse_expr()?;
@@ -1211,7 +1427,13 @@ impl Parser {
                     }
                     let inc = matches!(self.peek(), Tok::PlusPlus);
                     self.advance();
-                    return Ok(Stmt::IncDec { lhs, inc, pre: false, line: l, col: c });
+                    return Ok(Stmt::IncDec {
+                        lhs,
+                        inc,
+                        pre: false,
+                        line: l,
+                        col: c,
+                    });
                 }
                 // F36: compound `lhs += rhs` dst.
                 Tok::PlusEq
@@ -1239,7 +1461,13 @@ impl Parser {
                     };
                     self.advance();
                     let rhs = self.parse_expr()?;
-                    return Ok(Stmt::CompoundAssign { lhs, rhs, op, line: l, col: c });
+                    return Ok(Stmt::CompoundAssign {
+                        lhs,
+                        rhs,
+                        op,
+                        line: l,
+                        col: c,
+                    });
                 }
                 _ => {
                     self.pos = save;
@@ -1331,7 +1559,11 @@ impl Parser {
             }
             _ => {
                 let (l, c) = self.pos_line();
-                Err(MvError::new(l, c, format!("tipe tidak dikenal: {:?}", self.peek())))
+                Err(MvError::new(
+                    l,
+                    c,
+                    format!("tipe tidak dikenal: {:?}", self.peek()),
+                ))
             }
         }
     }
@@ -1575,7 +1807,11 @@ impl Parser {
                 let inc = matches!(self.peek(), Tok::PlusPlus);
                 self.advance();
                 let e = self.parse_postfix_expr()?;
-                Ok(Expr::IncDec { inc, pre: true, expr: Box::new(e) })
+                Ok(Expr::IncDec {
+                    inc,
+                    pre: true,
+                    expr: Box::new(e),
+                })
             }
             _ => self.parse_postfix_expr(),
         }
@@ -1626,19 +1862,17 @@ impl Parser {
                         Expr::Ident(name, ..) => e = Expr::Call(name, args),
                         Expr::Scoped(p, i, ..) => e = Expr::Call(format!("{}::{}", p, i), args),
                         // method call `obj.method(args)` — termasuk `this`/`super`
-                        Expr::Member(obj, method, ..) => {
-                            e = Expr::MethodCall {
-                                obj,
-                                method,
-                                args,
-                            }
-                        }
+                        Expr::Member(obj, method, ..) => e = Expr::MethodCall { obj, method, args },
                         Expr::MethodCall { obj, method, .. } => {
                             e = Expr::MethodCall { obj, method, args }
                         }
                         _ => {
                             let (l, c) = self.pos_line();
-                            return Err(MvError::new(l, c, "hanya fungsi yang bisa dipanggil".to_string()));
+                            return Err(MvError::new(
+                                l,
+                                c,
+                                "hanya fungsi yang bisa dipanggil".to_string(),
+                            ));
                         }
                     }
                 }
@@ -1648,7 +1882,8 @@ impl Parser {
                     // ekspresi = statement prefix baru (`++i` setelah
                     // `$display(...)`), bukan postfix — break biar statement
                     // berikutnya yang menanganinya.
-                    let end_line = self.toks[(self.pos.saturating_sub(1)).min(self.toks.len() - 1)].1;
+                    let end_line =
+                        self.toks[(self.pos.saturating_sub(1)).min(self.toks.len() - 1)].1;
                     if self.toks[self.pos].1 != end_line {
                         break;
                     }
@@ -1661,7 +1896,11 @@ impl Parser {
                     // dalam ekspresi tidak bisa diwakili SV) — error jelas di
                     // level .mv, bukan menghasilkan SV invalid.
                     let (l, c) = self.pos_line();
-                    let op = if matches!(self.peek(), Tok::PlusPlus) { "++" } else { "--" };
+                    let op = if matches!(self.peek(), Tok::PlusPlus) {
+                        "++"
+                    } else {
+                        "--"
+                    };
                     return Err(MvError::new(
                         l,
                         c,
@@ -1760,7 +1999,11 @@ impl Parser {
             }
             _ => {
                 let (l, c) = self.pos_line();
-                Err(MvError::new(l, c, format!("ekspresi tidak valid: {:?}", self.peek())))
+                Err(MvError::new(
+                    l,
+                    c,
+                    format!("ekspresi tidak valid: {:?}", self.peek()),
+                ))
             }
         }
     }
@@ -1860,7 +2103,10 @@ package counter_pkg {
         let pkg = &f.packages[0];
         assert_eq!(pkg.typedefs.len(), 3);
         assert!(matches!(pkg.typedefs[0], Typedef::Alias { name: ref n, .. } if n == "Addr"));
-        assert!(matches!(pkg.typedefs[1], Typedef::Struct { packed: true, .. }));
+        assert!(matches!(
+            pkg.typedefs[1],
+            Typedef::Struct { packed: true, .. }
+        ));
         assert!(matches!(pkg.typedefs[2], Typedef::Enum { name: ref n, .. } if n == "Color"));
     }
 
@@ -1913,7 +2159,11 @@ module traffic #(GREEN_T = 30) {
             .filter(|i| matches!(i, MItem::Seq(..)))
             .count();
         assert_eq!(seq_count, 1);
-        let comb_count = m.items.iter().filter(|i| matches!(i, MItem::Comb(..))).count();
+        let comb_count = m
+            .items
+            .iter()
+            .filter(|i| matches!(i, MItem::Comb(..)))
+            .count();
         assert_eq!(comb_count, 1);
     }
 
@@ -1933,7 +2183,9 @@ module top {
             .items
             .iter()
             .filter_map(|i| match i {
-                MItem::Inst { name, dims, conns, .. } => Some((name.as_str(), dims.is_some(), conns.len())),
+                MItem::Inst {
+                    name, dims, conns, ..
+                } => Some((name.as_str(), dims.is_some(), conns.len())),
                 _ => None,
             })
             .collect();
@@ -2035,8 +2287,7 @@ module m {
         for s in stmts {
             if let Stmt::AssertProperty(raw) = s {
                 assert_eq!(
-                    raw,
-                    "(@(posedge clk) enable |-> count == $past(count) + 1)",
+                    raw, "(@(posedge clk) enable |-> count == $past(count) + 1)",
                     "raw harus persis (termasuk parens): {raw}"
                 );
                 found = true;
@@ -2210,7 +2461,10 @@ class item extends uvm_sequence_item {
         assert_eq!(name, "c_adv");
         assert_eq!(items.len(), 4);
         // 1) inside (dengan range + nilai tunggal, urutan dijaga 1:1)
-        assert!(matches!(items[0], ConstraintItem::Expr(Expr::Inside { .. })));
+        assert!(matches!(
+            items[0],
+            ConstraintItem::Expr(Expr::Inside { .. })
+        ));
         if let ConstraintItem::Expr(Expr::Inside { items: ins, .. }) = &items[0] {
             assert_eq!(ins.len(), 3);
             assert!(matches!(ins[0], InsideItem::Range(_, _))); // [1:10]

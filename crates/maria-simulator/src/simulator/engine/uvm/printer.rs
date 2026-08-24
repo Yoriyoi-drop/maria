@@ -6,9 +6,9 @@
 //! https://verificationacademy.com/verification-methodology-reference/uvm-methodology-reference/uvm_printer/
 
 use super::super::SimulationEngine;
+use crate::simulator::util::*;
 use maria_core::error::SimError;
 use maria_ir::*;
-use crate::simulator::util::*;
 
 impl SimulationEngine {
     /// Execute uvm_printer / uvm_table_printer method.
@@ -28,9 +28,10 @@ impl SimulationEngine {
                 } else {
                     String::new()
                 };
-                self.uvm_object_data.insert(obj_id, crate::simulator::types::UvmObjectData {
-                    name: name.clone(),
-                });
+                self.uvm_object_data.insert(
+                    obj_id,
+                    crate::simulator::types::UvmObjectData { name: name.clone() },
+                );
                 Ok(LogicVec::from_u64(1, 1))
             }
             // print_object(uvm_object obj) → String (format tabel).

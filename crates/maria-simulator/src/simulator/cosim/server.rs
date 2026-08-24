@@ -31,8 +31,15 @@ pub fn handle_cosim_connection(
         None => return Ok(()),
     };
     if msg_type != CosimMessageType::Connect {
-        write_message(stream, CosimMessageType::Error, &encode_error("expected Connect"))?;
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "expected Connect"));
+        write_message(
+            stream,
+            CosimMessageType::Error,
+            &encode_error("expected Connect"),
+        )?;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "expected Connect",
+        ));
     }
 
     // Set read timeout to avoid blocking forever if external simulator stalls
@@ -41,14 +48,25 @@ pub fn handle_cosim_connection(
     let signals = match decode_connect(&payload) {
         Ok(s) => s,
         Err(e) => {
-            write_message(stream, CosimMessageType::Error, &encode_error(&format!("invalid connect: {}", e)))?;
+            write_message(
+                stream,
+                CosimMessageType::Error,
+                &encode_error(&format!("invalid connect: {}", e)),
+            )?;
             return Err(e);
         }
     };
 
     if signals.is_empty() {
-        write_message(stream, CosimMessageType::Error, &encode_error("no signals in connect"))?;
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "no signals"));
+        write_message(
+            stream,
+            CosimMessageType::Error,
+            &encode_error("no signals in connect"),
+        )?;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "no signals",
+        ));
     }
 
     eprintln!("Co-simulation connected with {} signals", signals.len());

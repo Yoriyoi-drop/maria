@@ -34,23 +34,46 @@ pub enum MirSignalKind {
 #[derive(Debug, Clone)]
 pub enum MirInstr {
     /// Load constant
-    Const { dest: usize, value: u64, width: usize },
+    Const {
+        dest: usize,
+        value: u64,
+        width: usize,
+    },
     /// Load signal value
     Load { dest: usize, signal: usize },
     /// Store to signal
     Store { signal: usize, src: usize },
     /// Binary operation
-    Binary { op: MirBinOp, dest: usize, lhs: usize, rhs: usize, width: usize },
+    Binary {
+        op: MirBinOp,
+        dest: usize,
+        lhs: usize,
+        rhs: usize,
+        width: usize,
+    },
     /// Unary operation
-    Unary { op: MirUnOp, dest: usize, operand: usize, width: usize },
+    Unary {
+        op: MirUnOp,
+        dest: usize,
+        operand: usize,
+        width: usize,
+    },
     /// Conditional branch
-    Branch { cond: usize, then_label: usize, else_label: usize },
+    Branch {
+        cond: usize,
+        then_label: usize,
+        else_label: usize,
+    },
     /// Unconditional jump
     Jump { label: usize },
     /// Label target
     Label(usize),
     /// Non-blocking assignment (scheduled)
-    NonBlocking { signal: usize, src: usize, delay: Option<u64> },
+    NonBlocking {
+        signal: usize,
+        src: usize,
+        delay: Option<u64>,
+    },
     /// Display/debug
     Display { args: Vec<MirDisplayArg> },
     /// Finish simulation
@@ -68,16 +91,30 @@ pub enum MirDisplayArg {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirBinOp {
-    Add, Sub, Mul, Div, Mod,
-    And, Or, Xor,
-    Eq, Ne, Lt, Le, Gt, Ge,
-    Shl, Shr,
-    LogicalAnd, LogicalOr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    And,
+    Or,
+    Xor,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Shl,
+    Shr,
+    LogicalAnd,
+    LogicalOr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirUnOp {
-    Not, Neg,
+    Not,
+    Neg,
 }
 
 /// MIR process — collection of instructions for a block.

@@ -8,11 +8,11 @@
 //! 1 file = 1 tanggung jawab: FIFO TLM.
 
 use super::super::SimulationEngine;
-use maria_core::diagnostics::DiagCode;
-use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
 use crate::simulator::types::*;
 use crate::simulator::util::*;
+use maria_compiler::hir::{LogicVec, ObjId};
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
 use maria_core::Symbol;
 
 impl SimulationEngine {
@@ -42,9 +42,11 @@ impl SimulationEngine {
                 // → put. Objek `__uvm_fifo_export` dgn parent fifo.
                 let export_id = self.state.alloc_object(Symbol::intern("__uvm_fifo_export"));
                 self.uvm_fifo_export_data.insert(export_id, obj_id);
-                self.uvm_object_data.entry(export_id).or_insert_with(|| UvmObjectData {
-                    name: format!("{}_export", fd.name),
-                });
+                self.uvm_object_data
+                    .entry(export_id)
+                    .or_insert_with(|| UvmObjectData {
+                        name: format!("{}_export", fd.name),
+                    });
                 fd.export_id = Some(export_id);
                 self.uvm_tlm_fifo_data.insert(obj_id, fd);
                 if let Some(obj) = self.state.get_object_mut(obj_id) {
@@ -184,16 +186,10 @@ impl SimulationEngine {
         match method {
             "write" => {
                 let item = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                let fifo_id = self
-                    .uvm_fifo_export_data
-                    .get(&obj_id)
-                    .copied()
-                    .unwrap_or(0);
+                let fifo_id = self.uvm_fifo_export_data.get(&obj_id).copied().unwrap_or(0);
                 if fifo_id != 0 {
-                    let err = SimError::with_diag(
-                        DiagCode::NullHandle,
-                        "uvm_tlm_fifo not initialized",
-                    );
+                    let err =
+                        SimError::with_diag(DiagCode::NullHandle, "uvm_tlm_fifo not initialized");
                     let fd = self
                         .uvm_tlm_fifo_data
                         .get_mut(&fifo_id)
@@ -250,13 +246,16 @@ impl SimulationEngine {
         } else {
             return Ok(false);
         }
-        self.uvm_sync_waiters.entry(obj_id).or_default().push(UvmSyncWaiter {
-            continuation,
-            fork_id,
-            this,
-            method: method_opt,
-            wait_label: method.to_string(),
-        });
+        self.uvm_sync_waiters
+            .entry(obj_id)
+            .or_default()
+            .push(UvmSyncWaiter {
+                continuation,
+                fork_id,
+                this,
+                method: method_opt,
+                wait_label: method.to_string(),
+            });
         Ok(true)
     }
 
@@ -285,12 +284,7 @@ impl SimulationEngine {
                 t,
                 RegionEvent {
                     region: EventRegion::Active,
-                    event: EventKind::ContinueAstBlock(
-                        w.continuation,
-                        w.fork_id,
-                        w.this,
-                        w.method,
-                    ),
+                    event: EventKind::ContinueAstBlock(w.continuation, w.fork_id, w.this, w.method),
                 },
             );
         }

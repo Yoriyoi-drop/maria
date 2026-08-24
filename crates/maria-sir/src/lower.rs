@@ -115,9 +115,7 @@ impl<'a> Builder<'a> {
         self.module.wires[wid].is_io = true;
         // src_map.
         if let Some(file) = &self.ir.source_file {
-            self.module
-                .src_map
-                .insert(s.name, (file.clone(), 0, 0));
+            self.module.src_map.insert(s.name, (file.clone(), 0, 0));
         }
         pid
     }
@@ -168,7 +166,9 @@ impl<'a> Builder<'a> {
                 }
                 // Kontrol register (clock/reset/enable) — dihitung sekali.
                 let clk_val = match clock {
-                    ClockEdge::PosEdge(id) | ClockEdge::NegEdge(id) => self.signal_value[*id].unwrap_or(0),
+                    ClockEdge::PosEdge(id) | ClockEdge::NegEdge(id) => {
+                        self.signal_value[*id].unwrap_or(0)
+                    }
                     // Clock hierarkis tak ter-resolve fase 1 → net 0.
                     _ => 0,
                 };
@@ -284,8 +284,9 @@ impl<'a> Builder<'a> {
                     default,
                 } => {
                     if matches!(case_type, maria_ir::CaseType::Inside) {
-                        self.skipped
-                            .push("case inside (label rentang [lo:hi]) belum didukung SIR fase 1".into());
+                        self.skipped.push(
+                            "case inside (label rentang [lo:hi]) belum didukung SIR fase 1".into(),
+                        );
                     }
                     let sel = self.lower_expr(expr);
                     let mut cur = self.lower_stmts(default, holds, &out, is_seq);
@@ -303,9 +304,9 @@ impl<'a> Builder<'a> {
                 // Null/Break/Continue aman diabaikan (break/continue sudah
                 // di-unroll elaborator); statement lain dicatat jujur.
                 IrStmt::Null | IrStmt::Break | IrStmt::Continue => {}
-                other => self.skipped.push(format!(
-                    "statement tidak didukung SIR fase 1: {other:?}"
-                )),
+                other => self
+                    .skipped
+                    .push(format!("statement tidak didukung SIR fase 1: {other:?}")),
             }
         }
         out
@@ -549,7 +550,11 @@ impl<'a> Builder<'a> {
             SirValue::Const(lv) => lv,
             _ => return v,
         };
-        let mask = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+        let mask = if width >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << width) - 1
+        };
         let val = lv.to_u64() & mask;
         self.module
             .add_value(SirValue::Const(LogicVec::from_u64(val, width.max(1))))
@@ -557,11 +562,7 @@ impl<'a> Builder<'a> {
 
     fn slice_of(&mut self, base: ValueId, msb: usize, lsb: usize) -> ValueId {
         let w = msb.saturating_sub(lsb) + 1;
-        self.node(
-            SirNodeKind::Slice { msb, lsb },
-            vec![base],
-            w,
-        )
+        self.node(SirNodeKind::Slice { msb, lsb }, vec![base], w)
     }
 
     /// Konstanta nol (di-cache per lebar).
@@ -978,6 +979,9 @@ mod tests {
             iff: None,
         });
         let out = lower(&ir);
-        assert!(!out.skipped.is_empty(), "method call harus dilaporkan skipped");
+        assert!(
+            !out.skipped.is_empty(),
+            "method call harus dilaporkan skipped"
+        );
     }
 }

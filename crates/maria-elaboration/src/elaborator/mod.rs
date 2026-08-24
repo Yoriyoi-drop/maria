@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
 use super::util::*;
-use maria_ast::types::const_eval_with_params;
 use maria_ast::const_eval_ext::{eval_cval_full, eval_param_default_full, CVal, SField};
+use maria_ast::types::const_eval_with_params;
 use maria_ast::*;
-use maria_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, DiagSink, RuntimeContext, SourceSnippet};
+use maria_core::diagnostics::diagnostic::{
+    DiagCode, DiagLevel, DiagSink, Diagnostic, RuntimeContext, SourceSnippet,
+};
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 pub mod ext;
@@ -34,8 +36,10 @@ fn format_sym(prefix: &[u8], n: usize) -> Symbol {
 }
 pub mod always;
 pub mod classes;
-pub mod stmt;
 pub mod expr;
+pub mod stmt;
+
+use stmt::{lvalue_signal_id, propagate_context_width};
 pub mod types;
 use maria_ir::*;
 
@@ -47,7 +51,11 @@ fn collect_inst_names(item: &ModuleItem, out: &mut Vec<Symbol>) {
         ModuleItem::Generate(GenerateBlock { items }) => {
             for gi in items {
                 match gi {
-                    GenerateItem::If { true_items, false_items, .. } => {
+                    GenerateItem::If {
+                        true_items,
+                        false_items,
+                        ..
+                    } => {
                         for it in true_items.iter().chain(false_items.iter()) {
                             collect_inst_names(it, out);
                         }
@@ -124,7 +132,11 @@ fn module_cone_size(start: Symbol, graph: &HashMap<Symbol, Vec<Symbol>>) -> usiz
 fn score_auto_top(name: Symbol, cone: usize) -> i64 {
     let lower = name.as_str().to_ascii_lowercase();
     let mut s = (cone as i64) * 20;
-    if lower.contains("verilator") || lower.contains("_sim") || lower.starts_with("tb") || lower.contains("_tb") {
+    if lower.contains("verilator")
+        || lower.contains("_sim")
+        || lower.starts_with("tb")
+        || lower.contains("_tb")
+    {
         s += 100;
     }
     if lower.contains("chip") {
@@ -133,7 +145,10 @@ fn score_auto_top(name: Symbol, cone: usize) -> i64 {
     if lower.contains("_asic") || lower.contains("_cw") || lower.contains("fpga") {
         s -= 300;
     }
-    if lower.contains("_bind") || lower.contains("_fpv") || lower.contains("_sva") || lower.contains("_assert")
+    if lower.contains("_bind")
+        || lower.contains("_fpv")
+        || lower.contains("_sva")
+        || lower.contains("_assert")
         || lower.contains("_sca_wrapper")
     {
         s -= 500;
@@ -298,7 +313,8 @@ pub struct Elaborator {
     /// Peta (nama function → package asal) untuk fungsi package yang disalin ke
     /// body module via `import pkg::func`. Dipakai resolve fungsi saudara yang
     /// dipanggil di dalam body function yang di-inline (AST inline pass).
-    pub func_source_pkg: HashMap<Symbol, HashMap<Symbol, Symbol>>,    pub source_lines: Vec<String>,
+    pub func_source_pkg: HashMap<Symbol, HashMap<Symbol, Symbol>>,
+    pub source_lines: Vec<String>,
     pub source_file: String,
     /// Cache hasil `find_name_in_source` per nama (pure function dari
     /// source_lines). Nama yang sama di-query berkali-kali (mis. pesan error
@@ -318,7 +334,8 @@ pub struct Elaborator {
     /// Set module reachable dari top (F38). Error elaborasi di module yang
     /// TIDAK ada di set ini (TB/DV terpisah, dependensi hilang) di-downgrade
     /// ke warning agar tidak memblokir cone RTL yang valid.
-    pub reachable: std::collections::HashSet<Symbol>,    /// Top-level tidak bisa di-resolve secara unik (multiple candidate tops,
+    pub reachable: std::collections::HashSet<Symbol>,
+    /// Top-level tidak bisa di-resolve secara unik (multiple candidate tops,
     /// circular hierarchy, atau root module tidak ada) dan fallback recovery
     /// terpaksa dipakai. Dipakai main.rs untuk menonaktifkan simulasi/VCD:
     /// mode analisis berhasil (diagnostik dilaporkan), tapi desain tidak
@@ -487,7 +504,9 @@ impl Elaborator {
                     // Field level-1 saja (key nested `base.sub.field` tidak
                     // menghasilkan pseudo-field).
                     if !base.is_empty() && !field.is_empty() && !field.contains('.') {
-                        let entry = pkg_struct_ref_index.entry(Symbol::intern(base)).or_default();
+                        let entry = pkg_struct_ref_index
+                            .entry(Symbol::intern(base))
+                            .or_default();
                         if !entry
                             .iter()
                             .any(|f| f.name.map(|n| n.as_str() == field).unwrap_or(false))
@@ -507,12 +526,23 @@ impl Elaborator {
         if std::env::var("DBG_ELAB").is_ok() {
             let mut pi_keys: Vec<&str> = pkg_const_scalars
                 .keys()
-                .filter(|k| k.as_str().contains("PartInfo") || k.as_str().contains("PartInfoDefault"))
+                .filter(|k| {
+                    k.as_str().contains("PartInfo") || k.as_str().contains("PartInfoDefault")
+                })
                 .map(|k| k.as_str())
                 .collect();
             pi_keys.sort();
-            eprintln!("[DBG-ELAB] pkg_const_scalars keys with PartInfo ({}): {:?}", pi_keys.len(), &pi_keys[..pi_keys.len().min(12)]);
-            eprintln!("[DBG-ELAB] pkg_struct_ref_index len={} has PartInfo[0]={} has PartInfoDefault={}", pkg_struct_ref_index.len(), pkg_struct_ref_index.contains_key(&Symbol::intern("PartInfo[0]")), pkg_struct_ref_index.contains_key(&Symbol::intern("PartInfoDefault")));
+            eprintln!(
+                "[DBG-ELAB] pkg_const_scalars keys with PartInfo ({}): {:?}",
+                pi_keys.len(),
+                &pi_keys[..pi_keys.len().min(12)]
+            );
+            eprintln!(
+                "[DBG-ELAB] pkg_struct_ref_index len={} has PartInfo[0]={} has PartInfoDefault={}",
+                pkg_struct_ref_index.len(),
+                pkg_struct_ref_index.contains_key(&Symbol::intern("PartInfo[0]")),
+                pkg_struct_ref_index.contains_key(&Symbol::intern("PartInfoDefault"))
+            );
         }
 
         Elaborator {
@@ -553,10 +583,17 @@ impl Elaborator {
         }
     }
 
-    pub fn elaborate(&mut self, top_module: Option<&str>, mode: ElaborateMode) -> Result<IrDesign, SimError> {
+    pub fn elaborate(
+        &mut self,
+        top_module: Option<&str>,
+        mode: ElaborateMode,
+    ) -> Result<IrDesign, SimError> {
         let elab_t0 = std::time::Instant::now();
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] elaborate() start (n_modules={})", self.design.modules.len());
+            eprintln!(
+                "[DBG-ELAB] elaborate() start (n_modules={})",
+                self.design.modules.len()
+            );
         }
         // Build global package param context ONCE — dipakai bersama oleh semua
         // module. Sebelumnya dihitung ulang per-modul (rescan semua package +
@@ -569,7 +606,9 @@ impl Elaborator {
         for module in &self.design.modules {
             for item in &module.items {
                 if let ModuleItem::Checker(cd) = item {
-                    self.checker_decls.entry(cd.name).or_insert_with(|| cd.clone());
+                    self.checker_decls
+                        .entry(cd.name)
+                        .or_insert_with(|| cd.clone());
                 } else if let ModuleItem::Class(cd) = item {
                     // Collect class declarations inside modules
                     self.checker_decls.entry(cd.name).or_insert_with(|| {
@@ -619,10 +658,7 @@ impl Elaborator {
                 for &idx in idxs {
                     let mut insts: Vec<Symbol> = Vec::new();
                     collect_instance_names(&self.design.modules[idx].items, &mut insts);
-                    let missing = insts
-                        .iter()
-                        .filter(|n| !all_names.contains(*n))
-                        .count();
+                    let missing = insts.iter().filter(|n| !all_names.contains(*n)).count();
                     // missing lebih kecil menang; tie (<=) → definisi terakhir
                     // (deterministik, konsisten urutan filelist).
                     if missing <= best_missing {
@@ -639,9 +675,7 @@ impl Elaborator {
             let removed = keep.iter().filter(|k| !**k).count();
             if removed > 0 {
                 let mut iter = keep.into_iter();
-                self.design
-                    .modules
-                    .retain(|_| iter.next().unwrap());
+                self.design.modules.retain(|_| iter.next().unwrap());
                 self.diag_sink.push(Diagnostic::new(
                     DiagLevel::Warning,
                     DiagCode::DuplicateDeclaration,
@@ -670,11 +704,12 @@ impl Elaborator {
                     .push(ModuleItem::Instance(bind.instance.clone()));
             } else {
                 let (file, dl) = self.resolve_source_location(bind.instance.line);
-                let source_line = if bind.instance.line > 0 && bind.instance.line <= self.source_lines.len() {
-                    Some(self.source_lines[bind.instance.line - 1].clone())
-                } else {
-                    None
-                };
+                let source_line =
+                    if bind.instance.line > 0 && bind.instance.line <= self.source_lines.len() {
+                        Some(self.source_lines[bind.instance.line - 1].clone())
+                    } else {
+                        None
+                    };
                 let mut diag = Diagnostic::new(
                     DiagLevel::Error,
                     DiagCode::ModuleNotFound,
@@ -682,14 +717,16 @@ impl Elaborator {
                 )
                 .with_code_context();
                 if let Some(snippet) = source_line {
-                    diag = diag.with_source_snippet(
-                        SourceSnippet::new(file, dl, bind.instance.col, &snippet),
-                    );
+                    diag = diag.with_source_snippet(SourceSnippet::new(
+                        file,
+                        dl,
+                        bind.instance.col,
+                        &snippet,
+                    ));
                 }
                 if let Some(ref mod_name) = self.current_module {
-                    diag = diag.with_runtime_context(
-                        RuntimeContext::new().with_module(mod_name.as_str()),
-                    );
+                    diag = diag
+                        .with_runtime_context(RuntimeContext::new().with_module(mod_name.as_str()));
                 }
                 self.diag_sink.push(diag);
             }
@@ -739,14 +776,16 @@ impl Elaborator {
                         if let Some(pkg_item) = pkg_items.get(&Symbol::intern(name)) {
                             match pkg_item {
                                 PackageItem::Function(f) => {
-                                    let entry = self.func_source_pkg.entry(module.name).or_default();
+                                    let entry =
+                                        self.func_source_pkg.entry(module.name).or_default();
                                     entry.insert(f.name, *package);
                                     if !module.items.iter().any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == f.name)) {
                                         module.items.push(ModuleItem::Func(f.clone()));
                                     }
                                 }
                                 PackageItem::Task(t) => {
-                                    let entry = self.func_source_pkg.entry(module.name).or_default();
+                                    let entry =
+                                        self.func_source_pkg.entry(module.name).or_default();
                                     entry.insert(t.name, *package);
                                     if !module.items.iter().any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == t.name)) {
                                         module.items.push(ModuleItem::Func(FunctionDecl {
@@ -761,11 +800,11 @@ impl Elaborator {
                                         }));
                                     }
                                 }
-_ => {}
-            }
-        }
-        // Resolve type parameter widths from module's param declarations and overrides
-        // moved to elaborate_module_with_params_and_type
+                                _ => {}
+                            }
+                        }
+                        // Resolve type parameter widths from module's param declarations and overrides
+                        // moved to elaborate_module_with_params_and_type
                     }
                 }
             }
@@ -800,7 +839,10 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] bind+import prepass done in {}us", elab_t0.elapsed().as_micros());
+            eprintln!(
+                "[DBG-ELAB] bind+import prepass done in {}us",
+                elab_t0.elapsed().as_micros()
+            );
         }
         // Inline function calls in all modules
         for module in &mut self.design.modules {
@@ -854,7 +896,10 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] inline done in {}us", elab_t0.elapsed().as_micros());
+            eprintln!(
+                "[DBG-ELAB] inline done in {}us",
+                elab_t0.elapsed().as_micros()
+            );
         }
         // Expand generates in all modules (with resolved params)
         for i in 0..self.design.modules.len() {
@@ -886,20 +931,41 @@ _ => {}
             let module_name = self.design.modules[i].name;
             self.current_module = Some(module_name);
             if std::env::var("DBG_ELAB").is_ok() {
-                eprintln!("[DBG-ELAB] expanding generates in module '{}' ({}/{}) ctx={}us resolve={}us", module_name.as_str(), i + 1, self.design.modules.len(), ctx_us, resolve_us);
+                eprintln!(
+                    "[DBG-ELAB] expanding generates in module '{}' ({}/{}) ctx={}us resolve={}us",
+                    module_name.as_str(),
+                    i + 1,
+                    self.design.modules.len(),
+                    ctx_us,
+                    resolve_us
+                );
             }
             // Process generate expansion in isolated block to release mutable borrow before elab_diag_at
             let gen_result = {
                 let module = &mut self.design.modules[i];
-                expand_all_generates(module, &param_vals, &self.diag_sink, &self.source_lines, &self.source_file)
+                expand_all_generates(
+                    module,
+                    &param_vals,
+                    &self.diag_sink,
+                    &self.source_lines,
+                    &self.source_file,
+                )
             };
             if let Err(e) = gen_result {
-                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("generate expansion failed in '{}': {}", module_name, e.msg), e.line, e.col));
+                return Err(self.elab_diag_at(
+                    DiagCode::ModuleNotFound,
+                    format!("generate expansion failed in '{}': {}", module_name, e.msg),
+                    e.line,
+                    e.col,
+                ));
             }
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] generate expansion done in {}us", elab_t0.elapsed().as_micros());
+            eprintln!(
+                "[DBG-ELAB] generate expansion done in {}us",
+                elab_t0.elapsed().as_micros()
+            );
         }
         // Dead module detection: find unreachable modules via reachability from top
         let top_sym = top_module.map(Symbol::intern);
@@ -926,7 +992,9 @@ _ => {}
                         .filter(|s| !s.is_empty())
                     {
                         let col = off + "module ".len() + 1;
-                        module_decl_lines.entry(Symbol::intern(name)).or_insert((i + 1, col));
+                        module_decl_lines
+                            .entry(Symbol::intern(name))
+                            .or_insert((i + 1, col));
                     }
                 }
             }
@@ -952,7 +1020,10 @@ _ => {}
                         instantiated.insert(mn);
                     }
                 }
-                self.design.modules.iter().find(|m| !instantiated.contains(&m.name))
+                self.design
+                    .modules
+                    .iter()
+                    .find(|m| !instantiated.contains(&m.name))
             } {
                 queue.push_back(cand.name);
                 reachable.insert(cand.name);
@@ -1000,7 +1071,8 @@ _ => {}
                     if let Some(&(ml, mc)) = module_decl_lines.get(&m.name) {
                         if ml > 0 && ml <= self.source_lines.len() {
                             let (file, dl) = self.resolve_source_location(ml);
-                            let snippet = SourceSnippet::new(file, dl, mc, &self.source_lines[ml - 1]);
+                            let snippet =
+                                SourceSnippet::new(file, dl, mc, &self.source_lines[ml - 1]);
                             diag = diag.with_source_snippet(snippet);
                         }
                     }
@@ -1012,7 +1084,11 @@ _ => {}
         self.reachable = reachable.clone();
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] dead-module detection done in {}us (reachable={})", elab_t0.elapsed().as_micros(), reachable.len());
+            eprintln!(
+                "[DBG-ELAB] dead-module detection done in {}us (reachable={})",
+                elab_t0.elapsed().as_micros(),
+                reachable.len()
+            );
         }
         // ── Incremental elaboration pass ──
         // 1. Compute structural checksums for all modules
@@ -1020,8 +1096,7 @@ _ => {}
         // 3. Compute dependency-aware signatures
         // 4. Check cache before each elaborate_module()
 
-        let module_names: Vec<Symbol> =
-            self.design.modules.iter().map(|m| m.name).collect();
+        let module_names: Vec<Symbol> = self.design.modules.iter().map(|m| m.name).collect();
 
         // Phase A: Compute structural checksums from design.modules directly (no clone needed)
         let mut struct_sigs: HashMap<Symbol, u64> = HashMap::new();
@@ -1041,7 +1116,11 @@ _ => {}
         let mut dep_sigs: HashMap<Symbol, u64> = HashMap::new();
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] checksums+topo done in {}us (topo_len={})", elab_t0.elapsed().as_micros(), topo_order.len());
+            eprintln!(
+                "[DBG-ELAB] checksums+topo done in {}us (topo_len={})",
+                elab_t0.elapsed().as_micros(),
+                topo_order.len()
+            );
         }
         // Bila `--top` diberikan: lewati elaborasi module yang tidak reachable
         // dari top (sudah diperingatkan sebagai unreachable di atas). Error di
@@ -1051,9 +1130,12 @@ _ => {}
             if prune_unreachable && !reachable.contains(&mod_name) {
                 continue;
             }
-            let module = snapshot_map.get(&mod_name)
-                .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound,
-                    format!("module '{}' not found in snapshot", mod_name)))?;
+            let module = snapshot_map.get(&mod_name).ok_or_else(|| {
+                self.elab_diag(
+                    DiagCode::ModuleNotFound,
+                    format!("module '{}' not found in snapshot", mod_name),
+                )
+            })?;
 
             let structural = struct_sigs.get(&mod_name).copied().unwrap_or(0);
 
@@ -1075,7 +1157,12 @@ _ => {}
             } else {
                 let mod_t0 = std::time::Instant::now();
                 if std::env::var("DBG_ELAB").is_ok() {
-                    eprintln!("[DBG-ELAB] >> elaborate module '{}' ({}/{})", mod_name.as_str(), self.cache_hits + self.cache_misses + 1, topo_order.len());
+                    eprintln!(
+                        "[DBG-ELAB] >> elaborate module '{}' ({}/{})",
+                        mod_name.as_str(),
+                        self.cache_hits + self.cache_misses + 1,
+                        topo_order.len()
+                    );
                 }
                 match self.elaborate_module(module, &module_names) {
                     Ok(ir) => {
@@ -1128,7 +1215,12 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] module elaboration loop done in {}us (hits={} misses={})", elab_t0.elapsed().as_micros(), self.cache_hits, self.cache_misses);
+            eprintln!(
+                "[DBG-ELAB] module elaboration loop done in {}us (hits={} misses={})",
+                elab_t0.elapsed().as_micros(),
+                self.cache_hits,
+                self.cache_misses
+            );
         }
         // Elaborate interfaces as modules (ports + decls + processes), so
         // interface initial/always/assign blocks actually run inside the
@@ -1215,7 +1307,10 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] interfaces done in {}us", elab_t0.elapsed().as_micros());
+            eprintln!(
+                "[DBG-ELAB] interfaces done in {}us",
+                elab_t0.elapsed().as_micros()
+            );
         }
         // Find top module
         let inst_graph = build_inst_graph(&self.design);
@@ -1225,12 +1320,15 @@ _ => {}
                 instantiated_modules.insert(*d);
             }
         }
-        let candidate_tops: Vec<Symbol> = self.design.modules.iter()
+        let candidate_tops: Vec<Symbol> = self
+            .design
+            .modules
+            .iter()
             .map(|m| m.name)
             .filter(|name| !instantiated_modules.contains(name))
             .collect();
 
-let top_name = match top_module {
+        let top_name = match top_module {
             Some(name) => {
                 let sym = Symbol::intern(name);
                 if !self.design.modules.iter().any(|m| m.name == sym) {
@@ -1259,11 +1357,16 @@ let top_name = match top_module {
                                 "Unable to determine top-level design.\n\
                                  Simulation cancelled.\n\n\
                                  Reason:\n\
-                                 • missing root module (no modules found in design)".to_string()
+                                 • missing root module (no modules found in design)"
+                                    .to_string(),
                             ));
                         }
                         self.recovered = true;
-                        self.design.modules.first().map(|m| m.name).unwrap_or(Symbol::EMPTY)
+                        self.design
+                            .modules
+                            .first()
+                            .map(|m| m.name)
+                            .unwrap_or(Symbol::EMPTY)
                     } else {
                         if mode == ElaborateMode::StrictSimulation {
                             return Err(self.elab_diag(
@@ -1271,11 +1374,16 @@ let top_name = match top_module {
                                 "Unable to determine top-level design.\n\
                                  Simulation cancelled.\n\n\
                                  Reason:\n\
-                                 • circular hierarchy (all modules are instantiated by others)".to_string()
+                                 • circular hierarchy (all modules are instantiated by others)"
+                                    .to_string(),
                             ));
                         }
                         self.recovered = true;
-                        self.design.modules.first().map(|m| m.name).unwrap_or(Symbol::EMPTY)
+                        self.design
+                            .modules
+                            .first()
+                            .map(|m| m.name)
+                            .unwrap_or(Symbol::EMPTY)
                     }
                 } else if candidate_tops.len() > 1 {
                     // Auto top resolution: pilih kandidat dengan skor unik
@@ -1288,9 +1396,8 @@ let top_name = match top_module {
                         .iter()
                         .map(|c| (score_auto_top(*c, module_cone_size(*c, &inst_graph)), *c))
                         .collect();
-                    scored.sort_by(|a, b| {
-                        b.0.cmp(&a.0).then_with(|| a.1.as_str().cmp(b.1.as_str()))
-                    });
+                    scored
+                        .sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.as_str().cmp(b.1.as_str())));
                     let unique_winner = scored.len() >= 2 && scored[0].0 > scored[1].0;
                     if unique_winner {
                         scored[0].1
@@ -1298,7 +1405,8 @@ let top_name = match top_module {
                         let mut reason = "Unable to determine top-level design.\n\
                                           Simulation cancelled.\n\n\
                                           Reason:\n\
-                                          • multiple candidate tops (auto-resolution tie):".to_string();
+                                          • multiple candidate tops (auto-resolution tie):"
+                            .to_string();
                         for cand in &candidate_tops {
                             reason.push_str(&format!("\n   - {}", cand.as_str()));
                         }
@@ -1313,7 +1421,7 @@ let top_name = match top_module {
             }
         };
 
-let mut top = match self.modules.remove(&top_name) {
+        let mut top = match self.modules.remove(&top_name) {
             Some(m) => m,
             None => {
                 if mode == ElaborateMode::StrictSimulation {
@@ -1325,7 +1433,7 @@ let mut top = match self.modules.remove(&top_name) {
                              Reason:\n\
                              • unresolved instantiation or compilation error in top module '{}'",
                             top_name.as_str()
-                        )
+                        ),
                     ));
                 }
 
@@ -1333,7 +1441,7 @@ let mut top = match self.modules.remove(&top_name) {
                 self.recovered = true;
                 let _total_modules = self.design.modules.len();
                 let _success_modules = self.modules.len();
-                
+
                 // Explicit Recovery Mode warning (Rule 4)
                 eprintln!(
                     "\nWARNING\n\n\
@@ -1344,7 +1452,7 @@ let mut top = match self.modules.remove(&top_name) {
                      Simulation disabled.\n",
                     top_name.as_str()
                 );
-                
+
                 let fallback = self
                     .design
                     .modules
@@ -1370,7 +1478,10 @@ let mut top = match self.modules.remove(&top_name) {
         };
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] top found in {}us", elab_t0.elapsed().as_micros());
+            eprintln!(
+                "[DBG-ELAB] top found in {}us",
+                elab_t0.elapsed().as_micros()
+            );
         }
         // Flatten instances: merge child module processes into the top module
         let hier_signal_map = self.flatten_instances(&mut top)?;
@@ -1388,7 +1499,12 @@ let mut top = match self.modules.remove(&top_name) {
         for (_, items) in &self.package_symbols {
             for item in items.values() {
                 if let PackageItem::Class(c) = item {
-                    if !self.design.classes.iter().any(|existing| existing.name == c.name) {
+                    if !self
+                        .design
+                        .classes
+                        .iter()
+                        .any(|existing| existing.name == c.name)
+                    {
                         self.design.classes.push(c.clone());
                     }
                 }
@@ -1417,7 +1533,9 @@ let mut top = match self.modules.remove(&top_name) {
                     Some("uvm_monitor") => cls.extends = Some(Symbol::intern("__uvm_monitor")),
                     Some("uvm_env") => cls.extends = Some(Symbol::intern("__uvm_env")),
                     Some("uvm_agent") => cls.extends = Some(Symbol::intern("__uvm_agent")),
-                    Some("uvm_scoreboard") => cls.extends = Some(Symbol::intern("__uvm_scoreboard")),
+                    Some("uvm_scoreboard") => {
+                        cls.extends = Some(Symbol::intern("__uvm_scoreboard"))
+                    }
                     Some("uvm_analysis_port") => {
                         cls.extends = Some(Symbol::intern("__uvm_analysis_port"))
                     }
@@ -1427,7 +1545,9 @@ let mut top = match self.modules.remove(&top_name) {
                     Some("uvm_analysis_export") => {
                         cls.extends = Some(Symbol::intern("__uvm_analysis_export"))
                     }
-                    Some("uvm_subscriber") => cls.extends = Some(Symbol::intern("__uvm_subscriber")),
+                    Some("uvm_subscriber") => {
+                        cls.extends = Some(Symbol::intern("__uvm_subscriber"))
+                    }
                     // VERIF-13: uvm_comparator / uvm_in_order_comparator.
                     Some("uvm_comparator") | Some("uvm_in_order_comparator") => {
                         cls.extends = Some(Symbol::intern("__uvm_comparator"))
@@ -1453,7 +1573,9 @@ let mut top = match self.modules.remove(&top_name) {
                         cls.extends = Some(Symbol::intern("__uvm_report_object"))
                     }
                     Some("uvm_factory") => cls.extends = Some(Symbol::intern("__uvm_factory")),
-                    Some("uvm_resource_db") => cls.extends = Some(Symbol::intern("__uvm_resource_db")),
+                    Some("uvm_resource_db") => {
+                        cls.extends = Some(Symbol::intern("__uvm_resource_db"))
+                    }
                     _ => {}
                 }
             }
@@ -1889,7 +2011,8 @@ let mut top = match self.modules.remove(&top_name) {
                 }
             }
         }
-        let covergroups = self.elaborate_covergroups(top_name.as_str(), &top_signal_map, &top.signals)?;
+        let covergroups =
+            self.elaborate_covergroups(top_name.as_str(), &top_signal_map, &top.signals)?;
         let dpi_imports = self.elaborate_dpi_imports()?;
 
         let mut specify_items = Vec::new();
@@ -1916,7 +2039,9 @@ let mut top = match self.modules.remove(&top_name) {
             for (name, item) in items {
                 if let PackageItem::Function(f) = item {
                     let qualified = Symbol::intern(&format!("{}::{}", pkg.as_str(), name.as_str()));
-                    module_functions.entry(qualified).or_insert_with(|| f.clone());
+                    module_functions
+                        .entry(qualified)
+                        .or_insert_with(|| f.clone());
                 }
             }
         }
@@ -1969,11 +2094,14 @@ let mut top = match self.modules.remove(&top_name) {
     /// ports, params, decls, always/initial/assign bodies, function bodies, etc.
     /// Dependency instance names are also included for topological signature combining.
     fn compute_module_checksum(&self, module: &Module) -> u64 {
-        use maria_core::checksum::{combine_checksum, compute_str_checksum, compute_checksum};
+        use maria_core::checksum::{combine_checksum, compute_checksum, compute_str_checksum};
 
         // Hash structural fields instead of Debug-formatting the entire AST
         let mut h = compute_str_checksum(module.name.as_str());
-        h = combine_checksum(h, compute_checksum(&(module.ports.len() as u64).to_le_bytes()));
+        h = combine_checksum(
+            h,
+            compute_checksum(&(module.ports.len() as u64).to_le_bytes()),
+        );
         for port in &module.ports {
             h = combine_checksum(h, compute_str_checksum(port.name.as_str()));
             h = combine_checksum(h, compute_checksum(&[(port.direction.clone() as u8)]));
@@ -1985,7 +2113,10 @@ let mut top = match self.modules.remove(&top_name) {
             match item {
                 ModuleItem::Instance(inst) => {
                     h = combine_checksum(h, compute_str_checksum(inst.module_name.as_str()));
-                    h = combine_checksum(h, compute_checksum(&(inst.port_conns.len() as u64).to_le_bytes()));
+                    h = combine_checksum(
+                        h,
+                        compute_checksum(&(inst.port_conns.len() as u64).to_le_bytes()),
+                    );
                 }
                 ModuleItem::Param(p) => {
                     h = combine_checksum(h, compute_str_checksum(p.name.as_str()));
@@ -1999,7 +2130,10 @@ let mut top = match self.modules.remove(&top_name) {
                     h = combine_checksum(h, compute_str_checksum(f.name.as_str()));
                 }
                 ModuleItem::Generate(g) => {
-                    h = combine_checksum(h, compute_checksum(&(g.items.len() as u64).to_le_bytes()));
+                    h = combine_checksum(
+                        h,
+                        compute_checksum(&(g.items.len() as u64).to_le_bytes()),
+                    );
                 }
                 ModuleItem::Import { package, item } => {
                     h = combine_checksum(h, compute_str_checksum(package.as_str()));
@@ -2026,7 +2160,10 @@ let mut top = match self.modules.remove(&top_name) {
                 if let ModuleItem::Instance(inst) = item {
                     if name_set.contains(&inst.module_name) {
                         // parent depends on child (child must be elaborated first)
-                        dependents.entry(inst.module_name).or_default().push(module.name);
+                        dependents
+                            .entry(inst.module_name)
+                            .or_default()
+                            .push(module.name);
                         *in_degree.entry(module.name).or_insert(0) += 1;
                     }
                 }
@@ -2132,7 +2269,9 @@ let mut top = match self.modules.remove(&top_name) {
             // Qualified names untuk SEMUA package (agar scoped reference resolve)
             for (pkg_name, items) in &self.package_symbols {
                 for (name, item) in items {
-                    let PackageItem::Param(p) = item else { continue };
+                    let PackageItem::Param(p) = item else {
+                        continue;
+                    };
                     let qualified = Symbol::intern(&format!("{}::{}", pkg_name, name));
                     if ctx.contains_key(&qualified) {
                         continue;
@@ -2244,8 +2383,10 @@ let mut top = match self.modules.remove(&top_name) {
             let mut pctx = base.clone();
             for _ in 0..64 {
                 let mut changed = false;
-                 for (_name, item) in items {
-                    let PackageItem::Param(p) = item else { continue };
+                for (_name, item) in items {
+                    let PackageItem::Param(p) = item else {
+                        continue;
+                    };
                     if pctx.contains_key(&p.name) {
                         continue;
                     }
@@ -2261,8 +2402,10 @@ let mut top = match self.modules.remove(&top_name) {
                 }
             }
             let mut plain: HashMap<Symbol, i64> = HashMap::new();
-                 for (name, item) in items {
-                    let PackageItem::Param(p) = item else { continue };
+            for (name, item) in items {
+                let PackageItem::Param(p) = item else {
+                    continue;
+                };
                 if let Some(&v) = pctx.get(&p.name) {
                     plain.insert(*name, v);
                 }
@@ -2291,7 +2434,11 @@ let mut top = match self.modules.remove(&top_name) {
             let gp = Symbol::intern("gpio_env_pkg");
             let gn = Symbol::intern("NUM_GPIOS");
             let plain_n = self.pkg_plain_params.get(&gp).map(|m| m.len()).unwrap_or(0);
-            let has_ng = self.pkg_plain_params.get(&gp).map(|m| m.contains_key(&gn)).unwrap_or(false);
+            let has_ng = self
+                .pkg_plain_params
+                .get(&gp)
+                .map(|m| m.contains_key(&gn))
+                .unwrap_or(false);
             let pkg_has = self.package_symbols.contains_key(&gp);
             eprintln!("[DBG-ELAB]   pkg_plain_params[gpio_env_pkg] len={} has_NUM_GPIOS={} pkg_present={}", plain_n, has_ng, pkg_has);
         }
@@ -2309,13 +2456,21 @@ let mut top = match self.modules.remove(&top_name) {
         let mut ctx: HashMap<Symbol, i64> = self.pkg_param_ctx.clone();
         let t1 = std::time::Instant::now();
         if dbg {
-            eprintln!("[DBG-ELAB]   collect clone pkg ctx: {}us (pkg_ctx={})", t1.duration_since(t0).as_micros(), self.pkg_param_ctx.len());
+            eprintln!(
+                "[DBG-ELAB]   collect clone pkg ctx: {}us (pkg_ctx={})",
+                t1.duration_since(t0).as_micros(),
+                self.pkg_param_ctx.len()
+            );
         }
         // Context $unit imports sudah di-precompute (konstan antar-module).
         ctx.extend(self.unit_import_ctx.iter().map(|(k, v)| (*k, *v)));
         let t2 = std::time::Instant::now();
         if dbg {
-            eprintln!("[DBG-ELAB]   collect extend unit ctx: {}us (unit_ctx={})", t2.duration_since(t1).as_micros(), self.unit_import_ctx.len());
+            eprintln!(
+                "[DBG-ELAB]   collect extend unit ctx: {}us (unit_ctx={})",
+                t2.duration_since(t1).as_micros(),
+                self.unit_import_ctx.len()
+            );
         }
         // Import set milik module itu sendiri (di luar $unit).
         let module_imports: Vec<(Symbol, Symbol)> = module
@@ -2388,7 +2543,12 @@ let mut top = match self.modules.remove(&top_name) {
             }
         }
         if dbg && tf.elapsed().as_micros() > 20_000 {
-            eprintln!("[DBG-ELAB]   collect fixed-point: {}us (module_imports={}, enums={})", tf.elapsed().as_micros(), module_imports.len(), module_enums.len());
+            eprintln!(
+                "[DBG-ELAB]   collect fixed-point: {}us (module_imports={}, enums={})",
+                tf.elapsed().as_micros(),
+                module_imports.len(),
+                module_enums.len()
+            );
         }
         // Merge konstanta package yang sudah dievaluasi penuh — hanya untuk
         // import set milik module ($unit sudah ada di unit_import_ctx).
@@ -2405,16 +2565,36 @@ let mut top = match self.modules.remove(&top_name) {
         if dbg && module.name.as_str() == "rv_core_ibex_peri" {
             let gn = Symbol::intern("NumRegions");
             let ga = Symbol::intern("NumAlerts");
-            eprintln!("[DBG-ELAB]   peri imports={:?}", module_imports.iter().map(|(p, i)| format!("{}::{}", p.as_str(), i.as_str())).collect::<Vec<_>>());
+            eprintln!(
+                "[DBG-ELAB]   peri imports={:?}",
+                module_imports
+                    .iter()
+                    .map(|(p, i)| format!("{}::{}", p.as_str(), i.as_str()))
+                    .collect::<Vec<_>>()
+            );
             eprintln!("[DBG-ELAB]   peri has_pkg_reg={} NumRegions_in_ctx={} NumAlerts_in_ctx={} ctx_len={}", self.package_symbols.contains_key(&Symbol::intern("rv_core_ibex_reg_pkg")), ctx.contains_key(&gn), ctx.contains_key(&ga), ctx.len());
-            eprintln!("[DBG-ELAB]   pkg_plain_params has reg_pkg={}", self.pkg_plain_params.contains_key(&Symbol::intern("rv_core_ibex_reg_pkg")));
+            eprintln!(
+                "[DBG-ELAB]   pkg_plain_params has reg_pkg={}",
+                self.pkg_plain_params
+                    .contains_key(&Symbol::intern("rv_core_ibex_reg_pkg"))
+            );
         }
         if dbg && module.name.as_str() == "tb" {
             let gn = Symbol::intern("NUM_GPIOS");
-            eprintln!("[DBG-ELAB]   tb imports={:?} NUM_GPIOS_in_ctx={}", module_imports.iter().map(|(p, i)| format!("{}::{}", p.as_str(), i.as_str())).collect::<Vec<_>>(), ctx.contains_key(&gn));
+            eprintln!(
+                "[DBG-ELAB]   tb imports={:?} NUM_GPIOS_in_ctx={}",
+                module_imports
+                    .iter()
+                    .map(|(p, i)| format!("{}::{}", p.as_str(), i.as_str()))
+                    .collect::<Vec<_>>(),
+                ctx.contains_key(&gn)
+            );
         }
         if dbg && tl.elapsed().as_micros() > 20_000 {
-            eprintln!("[DBG-ELAB]   collect flatten-module: {}us", tl.elapsed().as_micros());
+            eprintln!(
+                "[DBG-ELAB]   collect flatten-module: {}us",
+                tl.elapsed().as_micros()
+            );
         }
         if dbg && t0.elapsed().as_micros() > 50_000 {
             eprintln!("[DBG-ELAB]   collect total: {}us", t0.elapsed().as_micros());
@@ -2431,7 +2611,11 @@ let mut top = match self.modules.remove(&top_name) {
     /// The source_lines contain `` `line 1 "filename.sv" `` directives from preprocessing.
     /// Resolve nama file + baris relatif-file untuk posisi di merged source.
     fn resolve_source_location(&self, line: usize) -> (String, usize) {
-        maria_core::diagnostics::resolve_source_location(&self.source_lines, &self.source_file, line)
+        maria_core::diagnostics::resolve_source_location(
+            &self.source_lines,
+            &self.source_file,
+            line,
+        )
     }
 
     /// Cari posisi (baris, kolom) kemunculan pertama sebuah nama di merged
@@ -2491,7 +2675,13 @@ let mut top = match self.modules.remove(&top_name) {
     }
 
     /// Buat error diagnostic dengan posisi source.
-    fn elab_diag_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) -> SimError {
+    fn elab_diag_at(
+        &self,
+        code: DiagCode,
+        message: impl Into<String>,
+        line: usize,
+        col: usize,
+    ) -> SimError {
         let msg: String = message.into();
         let (line, col) = if line > 0 && col > 0 {
             (line, col)
@@ -2501,8 +2691,7 @@ let mut top = match self.modules.remove(&top_name) {
             // resolve_param_values yang tidak membawa lokasi).
             self.find_name_in_source(&msg)
         };
-        let mut diag = Diagnostic::new(DiagLevel::Error, code, msg)
-            .with_code_context();
+        let mut diag = Diagnostic::new(DiagLevel::Error, code, msg).with_code_context();
         if line > 0 && line <= self.source_lines.len() {
             let source_line = &self.source_lines[line - 1];
             let (file, display_line) = self.resolve_source_location(line);
@@ -2510,8 +2699,7 @@ let mut top = match self.modules.remove(&top_name) {
             diag = diag.with_source_snippet(snippet);
         }
         if let Some(ref mod_name) = self.current_module {
-            let ctx = RuntimeContext::new()
-                .with_module(mod_name.as_str());
+            let ctx = RuntimeContext::new().with_module(mod_name.as_str());
             diag = diag.with_runtime_context(ctx);
         }
         SimError::from_elab_diagnostic(diag)
@@ -2534,8 +2722,7 @@ let mut top = match self.modules.remove(&top_name) {
             // lokasi — posisi diambil dari baris pemakaian nama type.
             self.find_name_in_source(&msg)
         };
-        let mut diag = Diagnostic::new(DiagLevel::Warning, code, msg)
-            .with_code_context();
+        let mut diag = Diagnostic::new(DiagLevel::Warning, code, msg).with_code_context();
         if line > 0 && line <= self.source_lines.len() {
             let source_line = &self.source_lines[line - 1];
             let (file, display_line) = self.resolve_source_location(line);
@@ -2548,9 +2735,9 @@ let mut top = match self.modules.remove(&top_name) {
     /// Flush diagnostics from DiagSink and return them.
     pub fn flush_diagnostics(&self) -> Vec<Diagnostic> {
         self.diag_sink.diagnostics()
-}
+    }
 
-/// Prime the module cache from an existing cache (session-level persistence).
+    /// Prime the module cache from an existing cache (session-level persistence).
     pub fn set_cache(&mut self, cache: HashMap<u64, IrModule>) {
         self.module_cache = cache;
     }
@@ -2598,12 +2785,22 @@ impl Elaborator {
         let step_t0 = std::time::Instant::now();
         let step_ck = |name: &str, t0: &std::time::Instant| {
             if dbg_step {
-                eprintln!("[DBG-STEP] {}: {} in {}us", module.name.as_str(), name, t0.elapsed().as_micros());
+                eprintln!(
+                    "[DBG-STEP] {}: {} in {}us",
+                    module.name.as_str(),
+                    name,
+                    t0.elapsed().as_micros()
+                );
             }
         };
         let mut effective_params = param_vals.clone();
-        let module_idx: HashMap<Symbol, usize> =
-            self.design.modules.iter().enumerate().map(|(i, m)| (m.name, i)).collect();
+        let module_idx: HashMap<Symbol, usize> = self
+            .design
+            .modules
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.name, i))
+            .collect();
 
         // Process $unit parameters (top-level param declarations)
         for param in &self.design.unit_params {
@@ -2621,14 +2818,15 @@ impl Elaborator {
         // Vec<&str> lalu get-per-key = alokasi + hash lookup berlebih per module).
         for (package, import_item) in &self.design.unit_imports {
             if let Some(pkg_items) = self.package_symbols.get(package) {
-                let items: Box<dyn Iterator<Item = &PackageItem> + '_> = if import_item.as_str() == "*" {
-                    Box::new(pkg_items.values())
-                } else {
-                    match pkg_items.get(import_item) {
-                        Some(i) => Box::new(std::iter::once(i)),
-                        None => Box::new(std::iter::empty()),
-                    }
-                };
+                let items: Box<dyn Iterator<Item = &PackageItem> + '_> =
+                    if import_item.as_str() == "*" {
+                        Box::new(pkg_items.values())
+                    } else {
+                        match pkg_items.get(import_item) {
+                            Some(i) => Box::new(std::iter::once(i)),
+                            None => Box::new(std::iter::empty()),
+                        }
+                    };
                 for pkg_item in items {
                     if let PackageItem::Param(p) = pkg_item {
                         if !effective_params.contains_key(&p.name) {
@@ -2668,7 +2866,9 @@ impl Elaborator {
                                     PackageItem::Param(p) => {
                                         if !effective_params.contains_key(&p.name) {
                                             if let Some(expr) = &p.default {
-                                                if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                                                if let Ok(val) =
+                                                    const_eval_with_params(expr, &effective_params)
+                                                {
                                                     effective_params.insert(p.name, val);
                                                 } else {
                                                     // Default tidak bisa const-eval ke i64 (mis.
@@ -2697,7 +2897,11 @@ impl Elaborator {
                                                 (td.range.clone(), td.extra_packed_dims.clone()),
                                             );
                                         }
-                                        if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                                        if matches!(
+                                            &td.dtype,
+                                            DataType::StructType { .. }
+                                                | DataType::UnionType { .. }
+                                        ) {
                                             struct_imports.push((td.name, td.dtype.clone()));
                                         }
                                     }
@@ -2718,11 +2922,12 @@ impl Elaborator {
                         &effective_params,
                     );
                     self.typedef_map.insert(td.name, width);
-                    self.typedef_dims.insert(
-                        td.name,
-                        (td.range.clone(), td.extra_packed_dims.clone()),
-                    );
-                    if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                    self.typedef_dims
+                        .insert(td.name, (td.range.clone(), td.extra_packed_dims.clone()));
+                    if matches!(
+                        &td.dtype,
+                        DataType::StructType { .. } | DataType::UnionType { .. }
+                    ) {
                         self.store_typedef_fields(td.name, &td.dtype);
                     }
                 }
@@ -2737,7 +2942,8 @@ impl Elaborator {
                         &effective_params,
                     );
                     self.typedef_map.insert(nt.name, width);
-                    self.typedef_dims.insert(nt.name, (nt.range.clone(), vec![]));
+                    self.typedef_dims
+                        .insert(nt.name, (nt.range.clone(), vec![]));
                 }
                 _ => {}
             }
@@ -2768,10 +2974,8 @@ impl Elaborator {
                 &effective_params,
             );
             self.typedef_map.insert(td.name, width);
-            self.typedef_dims.insert(
-                td.name,
-                (td.range.clone(), td.extra_packed_dims.clone()),
-            );
+            self.typedef_dims
+                .insert(td.name, (td.range.clone(), td.extra_packed_dims.clone()));
             if matches!(
                 &td.dtype,
                 DataType::StructType { .. } | DataType::UnionType { .. }
@@ -2786,14 +2990,15 @@ impl Elaborator {
         // module (sebelumnya O(modules × typedef_package) di project besar).
         for (package, import_item) in &self.design.unit_imports {
             if let Some(pkg_items) = self.package_symbols.get(package) {
-                let items: Box<dyn Iterator<Item = &PackageItem> + '_> = if import_item.as_str() == "*" {
-                    Box::new(pkg_items.values())
-                } else {
-                    match pkg_items.get(import_item) {
-                        Some(i) => Box::new(std::iter::once(i)),
-                        None => Box::new(std::iter::empty()),
-                    }
-                };
+                let items: Box<dyn Iterator<Item = &PackageItem> + '_> =
+                    if import_item.as_str() == "*" {
+                        Box::new(pkg_items.values())
+                    } else {
+                        match pkg_items.get(import_item) {
+                            Some(i) => Box::new(std::iter::once(i)),
+                            None => Box::new(std::iter::empty()),
+                        }
+                    };
                 for pkg_item in items {
                     if let PackageItem::Typedef(td) = pkg_item {
                         if !self.typedef_map.contains_key(&td.name) {
@@ -2804,10 +3009,8 @@ impl Elaborator {
                                 &effective_params,
                             );
                             self.typedef_map.insert(td.name, width);
-                            self.typedef_dims.insert(
-                                td.name,
-                                (td.range.clone(), td.extra_packed_dims.clone()),
-                            );
+                            self.typedef_dims
+                                .insert(td.name, (td.range.clone(), td.extra_packed_dims.clone()));
                         }
                     }
                 }
@@ -2818,13 +3021,14 @@ impl Elaborator {
         let typedef_imports: Vec<(Symbol, DataType)> = unit_imports
             .iter()
             .filter_map(|(package, import_item)| {
-                self.package_symbols.get(package).and_then(|pkg_items| {                    let names: Vec<Symbol> = if import_item.as_str() == "*" {
-                            pkg_items.keys().copied().collect()
-                        } else {
-                            vec![*import_item]
-                        };
-                        names.iter().find_map(|name| {
-                            if let Some(PackageItem::Typedef(td)) = pkg_items.get(name) {
+                self.package_symbols.get(package).and_then(|pkg_items| {
+                    let names: Vec<Symbol> = if import_item.as_str() == "*" {
+                        pkg_items.keys().copied().collect()
+                    } else {
+                        vec![*import_item]
+                    };
+                    names.iter().find_map(|name| {
+                        if let Some(PackageItem::Typedef(td)) = pkg_items.get(name) {
                             if matches!(
                                 &td.dtype,
                                 DataType::StructType { .. } | DataType::UnionType { .. }
@@ -2941,7 +3145,11 @@ impl Elaborator {
                         const_eval_params(lsb, &effective_params),
                     ) {
                         (Ok(m), Ok(l)) => m.abs_diff(l) as usize + 1,
-                        _ => param.type_default.as_ref().map(|td| td.width()).unwrap_or(1),
+                        _ => param
+                            .type_default
+                            .as_ref()
+                            .map(|td| td.width())
+                            .unwrap_or(1),
                     }
                 } else if let Some(td) = &param.type_default {
                     // `parameter type T = int` → 32-bit; `T = logic` → 1-bit;
@@ -3032,40 +3240,47 @@ impl Elaborator {
             // range) di-lampiri nama port + lokasi fallback agar selalu punya
             // col & line (find_name_in_source mencari nama port di source).
             let port_name = port.name;
-            let pwa = |port: &Port, ep: &HashMap<Symbol, i64>, sm: &HashMap<Symbol, SignalId>, sg: &[SignalInfo]| {
-                self.port_width_aware(port, ep, sm, sg)
-                    .or_else(|e| {
-                        // Width port gagal di-resolve (mis. member access struct
-                        // `otp_lc_data_i.secrets_valid`, param package hilang,
-                        // virtual interface) → fallback lebar 1 + warning agar
-                        // modul tetap elaborate (bukan skip berantai). Port
-                        // bertipe interface tetap 64 (handle).
-                        let fb = if port.dtype_name.is_some() {
-                            let base = port
-                                .dtype_name
-                                .map(|tn| tn.as_str().split('.').next().unwrap_or(""))
-                                .unwrap_or("");
-                            if self.design.interfaces.iter().any(|i| i.name.as_str() == base) {
-                                64
-                            } else {
-                                1
-                            }
+            let pwa = |port: &Port,
+                       ep: &HashMap<Symbol, i64>,
+                       sm: &HashMap<Symbol, SignalId>,
+                       sg: &[SignalInfo]| {
+                self.port_width_aware(port, ep, sm, sg).or_else(|e| {
+                    // Width port gagal di-resolve (mis. member access struct
+                    // `otp_lc_data_i.secrets_valid`, param package hilang,
+                    // virtual interface) → fallback lebar 1 + warning agar
+                    // modul tetap elaborate (bukan skip berantai). Port
+                    // bertipe interface tetap 64 (handle).
+                    let fb = if port.dtype_name.is_some() {
+                        let base = port
+                            .dtype_name
+                            .map(|tn| tn.as_str().split('.').next().unwrap_or(""))
+                            .unwrap_or("");
+                        if self
+                            .design
+                            .interfaces
+                            .iter()
+                            .any(|i| i.name.as_str() == base)
+                        {
+                            64
                         } else {
                             1
-                        };
-                        self.elab_warn_at(
-                            DiagCode::SimulationError,
-                            format!(
-                                "width of port '{}' cannot be resolved ({}) — fallback lebar {}",
-                                port_name.as_str(),
-                                e,
-                                fb
-                            ),
-                            0,
-                            0,
-                        );
-                        Ok::<usize, String>(fb)
-                    })
+                        }
+                    } else {
+                        1
+                    };
+                    self.elab_warn_at(
+                        DiagCode::SimulationError,
+                        format!(
+                            "width of port '{}' cannot be resolved ({}) — fallback lebar {}",
+                            port_name.as_str(),
+                            e,
+                            fb
+                        ),
+                        0,
+                        0,
+                    );
+                    Ok::<usize, String>(fb)
+                })
             };
             // F27: port bertipe interface (`bus_if b` / `bus_if.m b`) — port
             // handle 64-bit (pola virtual interface). Field interface diakses
@@ -3119,17 +3334,17 @@ impl Elaborator {
                 _ => NetType::Wire,
             };
             // Unpacked array port: lipat dimensi array ke lebar total.
-            let (array_depth, total_width, port_msb, port_lsb) =
-                if let Some(ar) = &port.array_range {
-                    let depth = if ar.msb >= ar.lsb {
-                        ar.msb - ar.lsb + 1
-                    } else {
-                        ar.lsb - ar.msb + 1
-                    };
-                    (depth, width * depth, width * depth - 1, 0)
+            let (array_depth, total_width, port_msb, port_lsb) = if let Some(ar) = &port.array_range
+            {
+                let depth = if ar.msb >= ar.lsb {
+                    ar.msb - ar.lsb + 1
                 } else {
-                    (1, width, p_msb, p_lsb)
+                    ar.lsb - ar.msb + 1
                 };
+                (depth, width * depth, width * depth - 1, 0)
+            } else {
+                (1, width, p_msb, p_lsb)
+            };
             let sid = get_or_create_signal(
                 port.name,
                 total_width,
@@ -3377,10 +3592,7 @@ impl Elaborator {
             let mut stack: Vec<(String, &CVal)> = Vec::new();
             for f in fields {
                 if let Some(fname) = f.name {
-                    stack.push((
-                        format!("{}.{}", base.as_str(), fname.as_str()),
-                        &f.val,
-                    ));
+                    stack.push((format!("{}.{}", base.as_str(), fname.as_str()), &f.val));
                 }
             }
             while let Some((path, val)) = stack.pop() {
@@ -3399,10 +3611,7 @@ impl Elaborator {
                     CVal::Struct(fs) => {
                         for f in fs {
                             if let Some(fname) = f.name {
-                                stack.push((
-                                    format!("{}.{}", path, fname.as_str()),
-                                    &f.val,
-                                ));
+                                stack.push((format!("{}.{}", path, fname.as_str()), &f.val));
                             }
                         }
                     }
@@ -3457,31 +3666,35 @@ impl Elaborator {
             for item in &module.items {
                 match item {
                     ModuleItem::Generate(gen) => {
-                        let expanded =
-                            match expand_generate_block(gen, &effective_params, &self.diag_sink, &self.source_lines, &self.source_file)
-                            {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    // Sama seperti design-level pass
-                                    // (expand_all_generates): blok generate yang
-                                    // gagal diekspansi (limit for merujuk param
-                                    // yang tak bisa di-const-eval) dilewati
-                                    // dengan warning, bukan mematikan seluruh
-                                    // modul. Modul tetap elaborate tanpa blok
-                                    // ini — perilaku degrade konsisten global.
-                                    self.elab_warn_at(
-                                        DiagCode::InvalidSyntax,
-                                        format!(
-                                            "generate block expansion skipped in '{}': {}",
-                                            module.name.as_str(),
-                                            e.msg
-                                        ),
-                                        e.line,
-                                        e.col,
-                                    );
-                                    Vec::new()
-                                }
-                            };
+                        let expanded = match expand_generate_block(
+                            gen,
+                            &effective_params,
+                            &self.diag_sink,
+                            &self.source_lines,
+                            &self.source_file,
+                        ) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                // Sama seperti design-level pass
+                                // (expand_all_generates): blok generate yang
+                                // gagal diekspansi (limit for merujuk param
+                                // yang tak bisa di-const-eval) dilewati
+                                // dengan warning, bukan mematikan seluruh
+                                // modul. Modul tetap elaborate tanpa blok
+                                // ini — perilaku degrade konsisten global.
+                                self.elab_warn_at(
+                                    DiagCode::InvalidSyntax,
+                                    format!(
+                                        "generate block expansion skipped in '{}': {}",
+                                        module.name.as_str(),
+                                        e.msg
+                                    ),
+                                    e.line,
+                                    e.col,
+                                );
+                                Vec::new()
+                            }
+                        };
                         // Collect params from expanded generate items too
                         for ei in &expanded {
                             if let ModuleItem::Param(p) = ei {
@@ -3689,7 +3902,9 @@ impl Elaborator {
         // Process declarations with parameter-aware width resolution
         for decl in &all_decls {
             let class_name = match &decl.dtype {
-                DataType::UserDefined(cn) if cn.as_str() == "process" => Some("__process".to_string()),
+                DataType::UserDefined(cn) if cn.as_str() == "process" => {
+                    Some("__process".to_string())
+                }
                 DataType::UserDefined(cn) => Some(cn.as_str().to_string()),
                 _ => None,
             };
@@ -3735,7 +3950,15 @@ impl Elaborator {
                 if var.is_dynamic || var.is_queue {
                     let dtype_width = self.resolve_dtype_width(&decl.dtype, &type_param_widths)?;
                     let elem_width = dtype_width
-                        .max(self.var_resolved_width_aware(var, &effective_params, &signal_map, &signals).map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))?)
+                        .max(
+                            self.var_resolved_width_aware(
+                                var,
+                                &effective_params,
+                                &signal_map,
+                                &signals,
+                            )
+                            .map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))?,
+                        )
                         .max(decl.kind.default_width());
                     let sid = next_id;
                     next_id += 1;
@@ -3773,7 +3996,15 @@ impl Elaborator {
                 }
                 let dtype_width = self.resolve_dtype_width(&decl.dtype, &type_param_widths)?;
                 let elem_width = dtype_width
-                    .max(self.var_resolved_width_aware(var, &effective_params, &signal_map, &signals).map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))?)
+                    .max(
+                        self.var_resolved_width_aware(
+                            var,
+                            &effective_params,
+                            &signal_map,
+                            &signals,
+                        )
+                        .map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))?,
+                    )
                     .max(decl.kind.default_width());
                 let (kind, net_type) = match decl.kind {
                     DeclKind::Wire => (SignalKind::Wire, NetType::Wire),
@@ -3894,8 +4125,7 @@ impl Elaborator {
                         if let Ok(fw) = first_width {
                             let mut pd = vec![fw];
                             for (extra_er, _) in &var.extra_packed_dims {
-                                if let Ok(or) = resolve_expr_range(extra_er, &effective_params)
-                                {
+                                if let Ok(or) = resolve_expr_range(extra_er, &effective_params) {
                                     pd.push(or.width());
                                 }
                             }
@@ -3956,8 +4186,7 @@ impl Elaborator {
                             if let Ok(r) = resolve_expr_range(er, &effective_params) {
                                 let mut pd = vec![r.width()];
                                 for (extra_er, _) in &var.extra_packed_dims {
-                                    if let Ok(or) =
-                                        resolve_expr_range(extra_er, &effective_params)
+                                    if let Ok(or) = resolve_expr_range(extra_er, &effective_params)
                                     {
                                         pd.push(or.width());
                                     }
@@ -3995,8 +4224,7 @@ impl Elaborator {
                             match &decl.dtype {
                                 DataType::UnionType { members } => {
                                     for m in members {
-                                        sig.struct_fields
-                                            .push(self.struct_field_from_member(m, 0));
+                                        sig.struct_fields.push(self.struct_field_from_member(m, 0));
                                     }
                                 }
                                 _ => {
@@ -4054,7 +4282,9 @@ impl Elaborator {
                     p.name.as_str(),
                     p.is_localparam,
                     signal_map.contains_key(&p.name),
-                    p.default.as_ref().map(|e| format!("{:?}", e).chars().take(80).collect::<String>())
+                    p.default
+                        .as_ref()
+                        .map(|e| format!("{:?}", e).chars().take(80).collect::<String>())
                 );
             }
             if !p.is_localparam || signal_map.contains_key(&p.name) {
@@ -4064,7 +4294,9 @@ impl Elaborator {
                 eprintln!(
                     "[DBG-PARAMARR] {} default={:?}",
                     p.name.as_str(),
-                    p.default.as_ref().map(|e| format!("{:?}", e).chars().take(120).collect::<String>())
+                    p.default
+                        .as_ref()
+                        .map(|e| format!("{:?}", e).chars().take(120).collect::<String>())
                 );
             }
             if let Some(Expr::Concat(elems)) = &p.default {
@@ -4091,9 +4323,7 @@ impl Elaborator {
                             const_eval_params(msb, &effective_params),
                             const_eval_params(lsb, &effective_params),
                         ) {
-                            (Ok(m), Ok(l)) => {
-                                (m.max(l) - m.min(l)) as usize + 1
-                            }
+                            (Ok(m), Ok(l)) => (m.max(l) - m.min(l)) as usize + 1,
                             _ => 1,
                         }
                     } else if matches!(p.dtype, Some(DataType::Int) | Some(DataType::Integer)) {
@@ -4261,31 +4491,20 @@ impl Elaborator {
             };
             for (i, conn) in pre_inst.port_conns.iter().enumerate() {
                 let out_like: Option<(bool, &Expr)> = match conn {
-                    PortConnection::Positional(expr) => pre_tm
-                        .ports
-                        .get(i)
-                        .map(|p| {
+                    PortConnection::Positional(expr) => pre_tm.ports.get(i).map(|p| {
+                        (
+                            matches!(p.direction, PortDirection::Output | PortDirection::Inout),
+                            expr,
+                        )
+                    }),
+                    PortConnection::Named { port, expr } => {
+                        pre_tm.ports.iter().find(|p| p.name == *port).map(|p| {
                             (
-                                matches!(
-                                    p.direction,
-                                    PortDirection::Output | PortDirection::Inout
-                                ),
+                                matches!(p.direction, PortDirection::Output | PortDirection::Inout),
                                 expr,
                             )
-                        }),
-                    PortConnection::Named { port, expr } => pre_tm
-                        .ports
-                        .iter()
-                        .find(|p| p.name == *port)
-                        .map(|p| {
-                            (
-                                matches!(
-                                    p.direction,
-                                    PortDirection::Output | PortDirection::Inout
-                                ),
-                                expr,
-                            )
-                        }),
+                        })
+                    }
                     PortConnection::Unconnected { .. } => None,
                 };
                 if let Some((true, e)) = out_like {
@@ -4315,7 +4534,12 @@ impl Elaborator {
             let item_ck = |kind: &str, t0: &std::time::Instant| {
                 let e = t0.elapsed();
                 if dbg_step && e.as_micros() > 200_000 {
-                    eprintln!("[DBG-STEP] {}: item<{}> in {}us", module.name.as_str(), kind, e.as_micros());
+                    eprintln!(
+                        "[DBG-STEP] {}: item<{}> in {}us",
+                        module.name.as_str(),
+                        kind,
+                        e.as_micros()
+                    );
                 }
             };
             match item {
@@ -4554,7 +4778,31 @@ impl Elaborator {
                     let lhs_result = self.elaborate_lvalue(&assign.lhs, &signal_map, &signals);
                     let rhs_result = self.elaborate_expr(&assign.rhs, &signal_map, &signals);
                     match (lhs_result, rhs_result) {
-                        (Ok(lhs), Ok(rhs)) => {
+                        (Ok(lhs), Ok(mut rhs)) => {
+                            // Propagasi lebar konteks LHS → operand
+                            // context-determined RHS (LRM §11.8.1).
+                            let lhs_w = match &lhs {
+                                IrLValue::RangeSelect(_, hi, lo) => {
+                                    hi.saturating_sub(*lo).saturating_add(1)
+                                }
+                                _ => lvalue_signal_id(&lhs)
+                                    .and_then(|sid| signals.get(sid))
+                                    .map(|s| s.width)
+                                    .unwrap_or(0),
+                            };
+                            if lhs_w > 0 {
+                                // Whole-RHS konstanta → fold langsung pada
+                                // lebar konteks (hindari fold bertingkat pada
+                                // lebar self-determined yang salah untuk op
+                                // context-determined seperti unary minus).
+                                if let Some(c) =
+                                    try_fold_const_at_width(&assign.rhs, &self.param_vals, lhs_w)
+                                {
+                                    rhs = c;
+                                } else {
+                                    propagate_context_width(&mut rhs, lhs_w, &signals);
+                                }
+                            }
                             let stmts = vec![IrStmt::BlockingAssign {
                                 lhs,
                                 rhs,
@@ -4592,10 +4840,8 @@ impl Elaborator {
                         )
                     });
                     self.typedef_map.insert(td.name, width);
-                    self.typedef_dims.insert(
-                        td.name,
-                        (td.range.clone(), td.extra_packed_dims.clone()),
-                    );
+                    self.typedef_dims
+                        .insert(td.name, (td.range.clone(), td.extra_packed_dims.clone()));
                     // Store struct/union field info for member access
                     match &td.dtype {
                         DataType::StructType { members } | DataType::UnionType { members } => {
@@ -4651,10 +4897,13 @@ impl Elaborator {
                             sig_ids.push(sid);
                         }
                         if sig_ids.len() < 2 {
-                            return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
-                                "UDP '{}' requires at least 2 ports (1 output + 1+ inputs)",
-                                udp.name
-                            )));
+                            return Err(self.elab_diag(
+                                DiagCode::ParamMismatch,
+                                format!(
+                                    "UDP '{}' requires at least 2 ports (1 output + 1+ inputs)",
+                                    udp.name
+                                ),
+                            ));
                         }
                         let out_id = sig_ids[0];
                         let in_ids: Vec<SignalId> = sig_ids[1..].to_vec();
@@ -4664,13 +4913,18 @@ impl Elaborator {
                         if udp.is_sequential {
                             in_exprs.push(IrExpr::Signal(out_id, 0));
                         }
-                        let mut sensitivity: Vec<SignalSensitivity> =
-                            in_ids.iter().map(|&id| SignalSensitivity::whole(id)).collect();
+                        let mut sensitivity: Vec<SignalSensitivity> = in_ids
+                            .iter()
+                            .map(|&id| SignalSensitivity::whole(id))
+                            .collect();
                         if udp.is_sequential {
                             sensitivity.push(SignalSensitivity::whole(out_id));
                         }
                         let process = Process::Combinational {
-                            name: Symbol::intern(&format!("udp_{}_{}", udp.name, inst.instance_name)),
+                            name: Symbol::intern(&format!(
+                                "udp_{}_{}",
+                                udp.name, inst.instance_name
+                            )),
                             sensitivity: sensitivity.clone(),
                             body: vec![IrStmt::BlockingAssign {
                                 lhs: IrLValue::Signal(out_id, 0),
@@ -4690,7 +4944,10 @@ impl Elaborator {
                                 _ => LogicVec::fill(LogicVal::X, 1),
                             };
                             processes.push(Process::Initial {
-                                name: Symbol::intern(&format!("udp_init_{}_{}", udp.name, inst.instance_name)),
+                                name: Symbol::intern(&format!(
+                                    "udp_init_{}_{}",
+                                    udp.name, inst.instance_name
+                                )),
                                 body: vec![IrStmt::BlockingAssign {
                                     lhs: IrLValue::Signal(out_id, 0),
                                     rhs: IrExpr::Const(init_val),
@@ -4709,9 +4966,7 @@ impl Elaborator {
                                 PortConnection::Positional(e) => {
                                     (cd.ports.get(i).copied(), Some(e))
                                 }
-                                PortConnection::Named { port, expr } => {
-                                    (Some(*port), Some(expr))
-                                }
+                                PortConnection::Named { port, expr } => (Some(*port), Some(expr)),
                                 PortConnection::Unconnected { .. } => (None, None),
                             };
                             if let (Some(pname), Some(expr)) = (pname, expr) {
@@ -4781,13 +5036,18 @@ impl Elaborator {
                     } else {
                         // Regular module instance
                         if std::env::var("DBG_FLATTEN_PARAM").is_ok() {
-                            eprintln!("[DBG-INST] name={} mod={} param_assigns={} port_conns={}",
-                                inst.instance_name, inst.module_name,
-                                inst.param_assigns.len(), inst.port_conns.len());
+                            eprintln!(
+                                "[DBG-INST] name={} mod={} param_assigns={} port_conns={}",
+                                inst.instance_name,
+                                inst.module_name,
+                                inst.param_assigns.len(),
+                                inst.port_conns.len()
+                            );
                         }
                         let mut port_map = HashMap::new();
                         // Look up target module to get port order for positional connections
-                        let target_module: Option<&Module> = module_idx.get(&inst.module_name)
+                        let target_module: Option<&Module> = module_idx
+                            .get(&inst.module_name)
                             .and_then(|&i| self.design.modules.get(i));
                         for (i, conn) in inst.port_conns.iter().enumerate() {
                             match conn {
@@ -4827,11 +5087,7 @@ impl Elaborator {
                                     // Implicit net hanya untuk output/inout port
                                     // (aturan Verilog-2001).
                                     let is_output_like = target_module
-                                        .and_then(|tm| {
-                                            tm.ports
-                                                .iter()
-                                                .find(|p| p.name == *port)
-                                        })
+                                        .and_then(|tm| tm.ports.iter().find(|p| p.name == *port))
                                         .map(|p| {
                                             matches!(
                                                 p.direction,
@@ -4911,17 +5167,23 @@ impl Elaborator {
 
                         if let Some(range) = &inst.range {
                             let msb = const_eval_with_params(&range.msb, &effective_params)
-                                .map_err(|e| self.elab_diag_at(
-                                    DiagCode::SimulationError,
-                                    format!("instance range bound evaluation failed: {}", e),
-                                    inst.line, inst.col,
-                                ))?;
+                                .map_err(|e| {
+                                    self.elab_diag_at(
+                                        DiagCode::SimulationError,
+                                        format!("instance range bound evaluation failed: {}", e),
+                                        inst.line,
+                                        inst.col,
+                                    )
+                                })?;
                             let lsb = const_eval_with_params(&range.lsb, &effective_params)
-                                .map_err(|e| self.elab_diag_at(
-                                    DiagCode::SimulationError,
-                                    format!("instance range bound evaluation failed: {}", e),
-                                    inst.line, inst.col,
-                                ))?;
+                                .map_err(|e| {
+                                    self.elab_diag_at(
+                                        DiagCode::SimulationError,
+                                        format!("instance range bound evaluation failed: {}", e),
+                                        inst.line,
+                                        inst.col,
+                                    )
+                                })?;
                             let (start, end) = if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
                             let pm = std::sync::Arc::new(port_map);
                             let pam = std::sync::Arc::new(param_map);
@@ -4994,11 +5256,14 @@ impl Elaborator {
                 }
                 ModuleItem::Gate(gate) => {
                     if gate.ports.len() < 2 {
-                        return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
-                            "gate requires at least 2 ports (gate type: {:?}, got {} ports)",
-                            gate.gate_type,
-                            gate.ports.len()
-                        )));
+                        return Err(self.elab_diag(
+                            DiagCode::ParamMismatch,
+                            format!(
+                                "gate requires at least 2 ports (gate type: {:?}, got {} ports)",
+                                gate.gate_type,
+                                gate.ports.len()
+                            ),
+                        ));
                     }
                     // Port output harus signal; port input boleh ekspresi arbitrer
                     // (mis. `buf b0 (out, a && b);` — ekspresi di-elaborate ke IR).
@@ -5112,7 +5377,11 @@ impl Elaborator {
         // Process::Initial, setara deklarasi `reg b = 8'h2A;`.
         for (name, init_expr) in &port_inits {
             let lhs = self.elaborate_lvalue(
-                &Expr::Ident { name: *name, line: 0, col: 0 },
+                &Expr::Ident {
+                    name: *name,
+                    line: 0,
+                    col: 0,
+                },
                 &signal_map,
                 &signals,
             )?;
@@ -5133,11 +5402,31 @@ impl Elaborator {
             for var in &decl.names {
                 if let Some(init_expr) = &var.expr {
                     let lhs = self.elaborate_lvalue(
-                        &Expr::Ident { name: var.name, line: 0, col: 0 },
+                        &Expr::Ident {
+                            name: var.name,
+                            line: 0,
+                            col: 0,
+                        },
                         &signal_map,
                         &signals,
                     )?;
-                    let rhs = self.elaborate_expr(init_expr, &signal_map, &signals)?;
+                    let mut rhs = self.elaborate_expr(init_expr, &signal_map, &signals)?;
+                    // Lebar konteks untuk initializer deklarasi (LRM §11.8.1).
+                    {
+                        let lhs_w = lvalue_signal_id(&lhs)
+                            .and_then(|sid| signals.get(sid))
+                            .map(|s| s.width)
+                            .unwrap_or(0);
+                        if lhs_w > 0 {
+                            if let Some(c) =
+                                try_fold_const_at_width(init_expr, &self.param_vals, lhs_w)
+                            {
+                                rhs = c;
+                            } else {
+                                propagate_context_width(&mut rhs, lhs_w, &signals);
+                            }
+                        }
+                    }
                     if decl.kind.is_net() {
                         let sensitivity = collect_sensitivity(init_expr, &signal_map)
                             .into_iter()
@@ -5218,46 +5507,14 @@ pub(crate) fn collect_procedural_decls(stmts: &[Stmt], out: &mut Vec<Decl>) {
                     collect_procedural_decls(std::slice::from_ref(fb), out);
                 }
             }
-            Stmt::Case {
-                items,
-                default,
-                ..
-            }
-            | Stmt::CaseX {
-                items,
-                default,
-                ..
-            }
-            | Stmt::CaseZ {
-                items,
-                default,
-                ..
-            }
-            | Stmt::StmtCase {
-                items,
-                default,
-                ..
-            }
-            | Stmt::UniqueCase {
-                items,
-                default,
-                ..
-            }
-            | Stmt::PriorityCase {
-                items,
-                default,
-                ..
-            }
-            | Stmt::Unique0Case {
-                items,
-                default,
-                ..
-            }
-            | Stmt::CaseInside {
-                items,
-                default,
-                ..
-            } => {
+            Stmt::Case { items, default, .. }
+            | Stmt::CaseX { items, default, .. }
+            | Stmt::CaseZ { items, default, .. }
+            | Stmt::StmtCase { items, default, .. }
+            | Stmt::UniqueCase { items, default, .. }
+            | Stmt::PriorityCase { items, default, .. }
+            | Stmt::Unique0Case { items, default, .. }
+            | Stmt::CaseInside { items, default, .. } => {
                 for item in items {
                     collect_procedural_decls(std::slice::from_ref(&item.stmt), out);
                 }
@@ -5305,9 +5562,7 @@ pub(crate) fn collect_procedural_decls(stmts: &[Stmt], out: &mut Vec<Decl>) {
                     collect_procedural_decls(std::slice::from_ref(f), out);
                 }
             }
-            Stmt::Cover {
-                pass_stmt, ..
-            } => {
+            Stmt::Cover { pass_stmt, .. } => {
                 if let Some(p) = pass_stmt {
                     collect_procedural_decls(std::slice::from_ref(p), out);
                 }

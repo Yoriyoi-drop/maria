@@ -100,14 +100,19 @@ impl CacheIndex {
     }
 
     /// Simpan index ke file MDB (atomik, temp + rename).
-    pub fn save(&self, path: &Path, compression: super::super::format::Compression) -> io::Result<()> {
+    pub fn save(
+        &self,
+        path: &Path,
+        compression: super::super::format::Compression,
+    ) -> io::Result<()> {
         let mut w = MdbWriter::with_compression(compression);
         for (key, e) in &self.entries {
             let payload = bincode::serialize(&(key, e)).map_err(io::Error::other)?;
             w.put(Self::key_hash(key), KIND_STRING, payload);
         }
         w.write_to(path)
-    }}
+    }
+}
 
 // ─── Tests ───
 
@@ -153,10 +158,7 @@ mod tests {
 
     #[test]
     fn test_save_load_roundtrip() {
-        let dir = std::env::temp_dir().join(format!(
-            "maria_cache_index_{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("maria_cache_index_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("index.mdb");
         {
@@ -174,7 +176,8 @@ mod tests {
                     },
                 );
             }
-            idx.save(&path, crate::micd::format::Compression::Lz4).unwrap();
+            idx.save(&path, crate::micd::format::Compression::Lz4)
+                .unwrap();
         }
         let idx = CacheIndex::load(&path);
         assert_eq!(idx.len(), 50);
@@ -186,10 +189,8 @@ mod tests {
 
     #[test]
     fn test_load_corrupt_empty() {
-        let dir = std::env::temp_dir().join(format!(
-            "maria_cache_index_corrupt_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("maria_cache_index_corrupt_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("index.mdb");
         std::fs::write(&path, vec![0xFF; 64]).unwrap();

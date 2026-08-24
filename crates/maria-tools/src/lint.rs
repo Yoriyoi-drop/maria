@@ -5,12 +5,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::{open_project, section};
 use maria_ast::expr::Expr;
 use maria_ast::stmt::Stmt;
 use maria_ast::types::ModuleItem;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::{open_project, section};
 
 /// Opsi mlint.
 pub struct LintArgs<'a> {
@@ -49,7 +49,15 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
 
     let mut findings: Vec<Finding> = Vec::new();
     for module in &design.modules {
-        lint_module(module, do_unused, do_width, do_latch, do_loop, do_fsm, &mut findings);
+        lint_module(
+            module,
+            do_unused,
+            do_width,
+            do_latch,
+            do_loop,
+            do_fsm,
+            &mut findings,
+        );
     }
     // Interface juga di-lint (items = ModuleItem)
     for iface in &design.interfaces {
@@ -83,10 +91,7 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
         }
         println!(
             "  [{}] {:<10} {:<12} {}",
-            f.severity,
-            f.check,
-            f.module,
-            f.message
+            f.severity, f.check, f.module, f.message
         );
     }
     println!("\n  {} warning, {} error", n_warn, n_err);
@@ -157,11 +162,7 @@ fn lint_items(
     }
     let port_set: HashSet<Symbol> = ports.iter().map(|p| p.name).collect();
     for p in ports {
-        let w = p
-            .range
-            .as_ref()
-            .map(|r| r.width())
-            .unwrap_or(1);
+        let w = p.range.as_ref().map(|r| r.width()).unwrap_or(1);
         declared.insert(p.name, w);
     }
 
@@ -194,7 +195,15 @@ fn lint_items(
             }
             ModuleItem::Generate(g) => {
                 for gi in &g.items {
-                    walk_generate(gi, &mut reads, &mut writes, &mut always_blocks, do_width, &declared, out);
+                    walk_generate(
+                        gi,
+                        &mut reads,
+                        &mut writes,
+                        &mut always_blocks,
+                        do_width,
+                        &declared,
+                        out,
+                    );
                 }
             }
             _ => {}
@@ -222,7 +231,10 @@ fn lint_items(
                     module: scope.to_string(),
                     check: "unused",
                     severity: "W",
-                    message: format!("signal '{}' hanya ditulis, tidak pernah dibaca", name.as_str()),
+                    message: format!(
+                        "signal '{}' hanya ditulis, tidak pernah dibaca",
+                        name.as_str()
+                    ),
                 });
             }
         }
@@ -239,7 +251,10 @@ fn lint_items(
                 });
             }
             // always_comb dengan if tanpa else → potensi latch
-            if matches!(block.kind, maria_ast::stmt::AlwaysKind::AlwaysComb | maria_ast::stmt::AlwaysKind::AlwaysLatch) {
+            if matches!(
+                block.kind,
+                maria_ast::stmt::AlwaysKind::AlwaysComb | maria_ast::stmt::AlwaysKind::AlwaysLatch
+            ) {
                 find_incomplete_if(scope, &block.stmts, out);
             }
         }
@@ -289,17 +304,55 @@ fn walk_generate<'a>(
 ) {
     use maria_ast::types::GenerateItem;
     match gi {
-        GenerateItem::Items(items) => walk_items(items, reads, writes, always_blocks, do_width, declared, out),
-        GenerateItem::If { true_items, false_items, .. } => {
-            walk_items(true_items, reads, writes, always_blocks, do_width, declared, out);
-            walk_items(false_items, reads, writes, always_blocks, do_width, declared, out);
+        GenerateItem::Items(items) => {
+            walk_items(items, reads, writes, always_blocks, do_width, declared, out)
+        }
+        GenerateItem::If {
+            true_items,
+            false_items,
+            ..
+        } => {
+            walk_items(
+                true_items,
+                reads,
+                writes,
+                always_blocks,
+                do_width,
+                declared,
+                out,
+            );
+            walk_items(
+                false_items,
+                reads,
+                writes,
+                always_blocks,
+                do_width,
+                declared,
+                out,
+            );
         }
         GenerateItem::For { body_items, .. } => {
-            walk_items(body_items, reads, writes, always_blocks, do_width, declared, out);
+            walk_items(
+                body_items,
+                reads,
+                writes,
+                always_blocks,
+                do_width,
+                declared,
+                out,
+            );
         }
         GenerateItem::Case { items, default, .. } => {
             for ci in items {
-                walk_items(&ci.body, reads, writes, always_blocks, do_width, declared, out);
+                walk_items(
+                    &ci.body,
+                    reads,
+                    writes,
+                    always_blocks,
+                    do_width,
+                    declared,
+                    out,
+                );
             }
             if let Some(d) = default {
                 walk_items(d, reads, writes, always_blocks, do_width, declared, out);
@@ -376,8 +429,10 @@ fn expr_width(e: &Expr, declared: &HashMap<Symbol, usize>) -> Option<usize> {
         Expr::BitSelect { expr: _, .. } => Some(1),
         Expr::RangeSelect { expr, msb, lsb, .. } => {
             // width = |msb - lsb| + 1 jika keduanya konstanta
-            if let (Expr::Value(maria_ast::expr::Value::Decimal(m)), Expr::Value(maria_ast::expr::Value::Decimal(l))) =
-                (&**msb, &**lsb)
+            if let (
+                Expr::Value(maria_ast::expr::Value::Decimal(m)),
+                Expr::Value(maria_ast::expr::Value::Decimal(l)),
+            ) = (&**msb, &**lsb)
             {
                 Some(m.abs_diff(*l) as usize + 1)
             } else {
@@ -402,7 +457,11 @@ fn expr_width(e: &Expr, declared: &HashMap<Symbol, usize>) -> Option<usize> {
             }
         }
         Expr::UnaryOp { expr, .. } => expr_width(expr, declared),
-        Expr::TernaryOp { true_expr, false_expr, .. } => {
+        Expr::TernaryOp {
+            true_expr,
+            false_expr,
+            ..
+        } => {
             let t = expr_width(true_expr, declared)?;
             let f = expr_width(false_expr, declared)?;
             Some(t.max(f))
@@ -423,17 +482,18 @@ fn check_width(
     declared: &HashMap<Symbol, usize>,
     out: &mut Vec<Finding>,
 ) {
-    let Some(lw) = expr_width(lhs, declared) else { return };
-    let Some(rw) = expr_width(rhs, declared) else { return };
+    let Some(lw) = expr_width(lhs, declared) else {
+        return;
+    };
+    let Some(rw) = expr_width(rhs, declared) else {
+        return;
+    };
     if lw != rw {
         out.push(Finding {
             module: scope.to_string(),
             check: "width",
             severity: "W",
-            message: format!(
-                "width mismatch: lhs {} bit vs rhs {} bit",
-                lw, rw
-            ),
+            message: format!("width mismatch: lhs {} bit vs rhs {} bit", lw, rw),
         });
     }
 }
@@ -443,16 +503,20 @@ fn check_width(
 fn lvalue_root(e: &Expr) -> Option<Symbol> {
     match e {
         Expr::Ident { name, .. } => Some(*name),
-        Expr::BitSelect { expr, .. } | Expr::RangeSelect { expr, .. } | Expr::PartSelect { expr, .. } => {
-            lvalue_root(expr)
-        }
+        Expr::BitSelect { expr, .. }
+        | Expr::RangeSelect { expr, .. }
+        | Expr::PartSelect { expr, .. } => lvalue_root(expr),
         Expr::MemberAccess { obj, .. } => lvalue_root(obj),
         Expr::Concat(parts) => parts.iter().find_map(lvalue_root),
         _ => None,
     }
 }
 
-fn scan_sequence_reads(seq: &maria_ast::types::Sequence, reads: &mut HashSet<Symbol>, writes: &mut HashSet<Symbol>) {
+fn scan_sequence_reads(
+    seq: &maria_ast::types::Sequence,
+    reads: &mut HashSet<Symbol>,
+    writes: &mut HashSet<Symbol>,
+) {
     use maria_ast::types::Sequence;
     match seq {
         Sequence::Expr(e) => scan_expr_reads(e, reads, writes),
@@ -513,13 +577,22 @@ fn scan_expr_reads(e: &Expr, reads: &mut HashSet<Symbol>, writes: &mut HashSet<S
             scan_expr_reads(lhs, reads, writes);
             scan_expr_reads(rhs, reads, writes);
         }
-        Expr::TernaryOp { cond, true_expr, false_expr } => {
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
             scan_expr_reads(cond, reads, writes);
             scan_expr_reads(true_expr, reads, writes);
             scan_expr_reads(false_expr, reads, writes);
         }
         Expr::Paren(inner) => scan_expr_reads(inner, reads, writes),
-        Expr::MethodCall { obj, method, args, with_clause } => {
+        Expr::MethodCall {
+            obj,
+            method,
+            args,
+            with_clause,
+        } => {
             reads.insert(*method);
             scan_expr_reads(obj, reads, writes);
             for a in args {
@@ -539,7 +612,9 @@ fn scan_expr_reads(e: &Expr, reads: &mut HashSet<Symbol>, writes: &mut HashSet<S
                 scan_expr_reads(r, reads, writes);
             }
         }
-        Expr::StreamingConcat { slice_size, slices, .. } => {
+        Expr::StreamingConcat {
+            slice_size, slices, ..
+        } => {
             if let Some(s) = slice_size {
                 scan_expr_reads(s, reads, writes);
             }
@@ -584,24 +659,62 @@ fn scan_expr_reads(e: &Expr, reads: &mut HashSet<Symbol>, writes: &mut HashSet<S
 fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut HashSet<Symbol>) {
     for stmt in stmts {
         match stmt {
-            Stmt::Block { stmts } | Stmt::LoopForever { stmts } | Stmt::NamedBlock { stmts, .. } => {
+            Stmt::Block { stmts }
+            | Stmt::LoopForever { stmts }
+            | Stmt::NamedBlock { stmts, .. } => {
                 scan_stmt_reads(stmts, reads, writes);
             }
-            Stmt::IfElse { cond, true_branch, false_branch } => {
+            Stmt::IfElse {
+                cond,
+                true_branch,
+                false_branch,
+            } => {
                 scan_expr_reads(cond, reads, writes);
                 scan_stmt_reads(std::slice::from_ref(true_branch), reads, writes);
                 if let Some(fb) = false_branch {
                     scan_stmt_reads(std::slice::from_ref(fb), reads, writes);
                 }
             }
-            Stmt::Case { expr, items, default }
-            | Stmt::CaseX { expr, items, default }
-            | Stmt::CaseZ { expr, items, default }
-            | Stmt::StmtCase { expr, items, default }
-            | Stmt::UniqueCase { expr, items, default }
-            | Stmt::PriorityCase { expr, items, default }
-            | Stmt::Unique0Case { expr, items, default }
-            | Stmt::CaseInside { expr, items, default } => {
+            Stmt::Case {
+                expr,
+                items,
+                default,
+            }
+            | Stmt::CaseX {
+                expr,
+                items,
+                default,
+            }
+            | Stmt::CaseZ {
+                expr,
+                items,
+                default,
+            }
+            | Stmt::StmtCase {
+                expr,
+                items,
+                default,
+            }
+            | Stmt::UniqueCase {
+                expr,
+                items,
+                default,
+            }
+            | Stmt::PriorityCase {
+                expr,
+                items,
+                default,
+            }
+            | Stmt::Unique0Case {
+                expr,
+                items,
+                default,
+            }
+            | Stmt::CaseInside {
+                expr,
+                items,
+                default,
+            } => {
                 scan_expr_reads(expr, reads, writes);
                 for ci in items {
                     for l in &ci.labels {
@@ -613,11 +726,18 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
                     scan_stmt_reads(std::slice::from_ref(d), reads, writes);
                 }
             }
-            Stmt::LoopWhile { cond, stmts } | Stmt::Repeat { count: cond, stmts } | Stmt::DoWhile { cond, stmts } => {
+            Stmt::LoopWhile { cond, stmts }
+            | Stmt::Repeat { count: cond, stmts }
+            | Stmt::DoWhile { cond, stmts } => {
                 scan_expr_reads(cond, reads, writes);
                 scan_stmt_reads(stmts, reads, writes);
             }
-            Stmt::LoopFor { init, cond, step, stmts } => {
+            Stmt::LoopFor {
+                init,
+                cond,
+                step,
+                stmts,
+            } => {
                 if let Some(i) = init {
                     scan_stmt_reads(std::slice::from_ref(i), reads, writes);
                 }
@@ -704,7 +824,9 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
                 scan_sequence_reads(sequence, reads, writes);
                 if let Some(ce) = clock_event {
                     let s = match ce {
-                        maria_ast::types::ClockEvent::Posedge(s) | maria_ast::types::ClockEvent::Negedge(s) | maria_ast::types::ClockEvent::Edge(s) => s,
+                        maria_ast::types::ClockEvent::Posedge(s)
+                        | maria_ast::types::ClockEvent::Negedge(s)
+                        | maria_ast::types::ClockEvent::Edge(s) => s,
                     };
                     reads.insert(*s);
                 }
@@ -735,7 +857,9 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
                 scan_expr_reads(cond, reads, writes);
                 if let Some(ce) = clock_event {
                     let s = match ce {
-                        maria_ast::types::ClockEvent::Posedge(s) | maria_ast::types::ClockEvent::Negedge(s) | maria_ast::types::ClockEvent::Edge(s) => s,
+                        maria_ast::types::ClockEvent::Posedge(s)
+                        | maria_ast::types::ClockEvent::Negedge(s)
+                        | maria_ast::types::ClockEvent::Edge(s) => s,
                     };
                     reads.insert(*s);
                 }
@@ -758,7 +882,9 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
                 scan_expr_reads(cond, reads, writes);
                 if let Some(ce) = clock_event {
                     let s = match ce {
-                        maria_ast::types::ClockEvent::Posedge(s) | maria_ast::types::ClockEvent::Negedge(s) | maria_ast::types::ClockEvent::Edge(s) => s,
+                        maria_ast::types::ClockEvent::Posedge(s)
+                        | maria_ast::types::ClockEvent::Negedge(s)
+                        | maria_ast::types::ClockEvent::Edge(s) => s,
                     };
                     reads.insert(*s);
                 }
@@ -790,8 +916,16 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
                     scan_stmt_reads(std::slice::from_ref(fs), reads, writes);
                 }
             }
-            Stmt::UniqueIf { cond, true_branch, false_branch }
-            | Stmt::PriorityIf { cond, true_branch, false_branch } => {
+            Stmt::UniqueIf {
+                cond,
+                true_branch,
+                false_branch,
+            }
+            | Stmt::PriorityIf {
+                cond,
+                true_branch,
+                false_branch,
+            } => {
                 scan_expr_reads(cond, reads, writes);
                 scan_stmt_reads(std::slice::from_ref(true_branch), reads, writes);
                 if let Some(fb) = false_branch {
@@ -822,7 +956,11 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
             Stmt::EventTrigger { name } => {
                 writes.insert(*name);
             }
-            Stmt::ForeachLoop { array_var, index_vars, stmts } => {
+            Stmt::ForeachLoop {
+                array_var,
+                index_vars,
+                stmts,
+            } => {
                 reads.insert(*array_var);
                 for iv in index_vars {
                     reads.insert(*iv);
@@ -847,13 +985,19 @@ fn find_incomplete_if(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
                     message: "if tanpa else di blok kombinasional → potensi latch".to_string(),
                 });
             }
-            Stmt::IfElse { true_branch, false_branch, .. } => {
+            Stmt::IfElse {
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 find_incomplete_if(scope, std::slice::from_ref(true_branch), out);
                 if let Some(fb) = false_branch {
                     find_incomplete_if(scope, std::slice::from_ref(fb), out);
                 }
             }
-            Stmt::Block { stmts } | Stmt::NamedBlock { stmts, .. } | Stmt::LoopForever { stmts } => {
+            Stmt::Block { stmts }
+            | Stmt::NamedBlock { stmts, .. }
+            | Stmt::LoopForever { stmts } => {
                 find_incomplete_if(scope, stmts, out);
             }
             _ => {}
@@ -888,10 +1032,16 @@ fn find_fsm(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
                     }
                 }
             }
-            Stmt::Block { stmts } | Stmt::NamedBlock { stmts, .. } | Stmt::LoopForever { stmts } => {
+            Stmt::Block { stmts }
+            | Stmt::NamedBlock { stmts, .. }
+            | Stmt::LoopForever { stmts } => {
                 find_fsm(scope, stmts, out);
             }
-            Stmt::IfElse { true_branch, false_branch, .. } => {
+            Stmt::IfElse {
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 find_fsm(scope, std::slice::from_ref(true_branch), out);
                 if let Some(fb) = false_branch {
                     find_fsm(scope, std::slice::from_ref(fb), out);

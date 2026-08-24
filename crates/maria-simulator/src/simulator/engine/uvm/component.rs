@@ -5,12 +5,12 @@
 //! objek dasar (uvm_object/report) di object.rs, register model di reg.rs.
 
 use super::super::SimulationEngine;
-use maria_core::diagnostics::DiagCode;
-use maria_core::error::SimError;
-use maria_ir::*;
-use maria_core::Symbol;
 use crate::simulator::types::*;
 use crate::simulator::util::*;
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
+use maria_core::Symbol;
+use maria_ir::*;
 
 impl SimulationEngine {
     pub(crate) fn execute_uvm_component_method(
@@ -85,10 +85,7 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(cid as u64, 64))
             }
             "has_child" => {
-                let name = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let name = args.first().map(logicvec_to_string).unwrap_or_default();
                 let found = self
                     .uvm_component_data
                     .get(&obj_id)
@@ -104,7 +101,10 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(if found { 1 } else { 0 }, 1))
             }
             "set_report_verbosity" => {
-                let level = args.first().map(|a| a.to_u64() as u32).unwrap_or(super::object::UVM_MEDIUM);
+                let level = args
+                    .first()
+                    .map(|a| a.to_u64() as u32)
+                    .unwrap_or(super::object::UVM_MEDIUM);
                 if let Some(d) = self.uvm_component_data.get_mut(&obj_id) {
                     d.report_verbosity = level;
                 }
@@ -264,10 +264,7 @@ impl SimulationEngine {
                 Ok(seqr_id)
             }
             "create" => {
-                let name = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let name = args.first().map(logicvec_to_string).unwrap_or_default();
                 // Create a new object of the sequence's type
                 let class_name = self
                     .state
@@ -333,10 +330,9 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_next_item" => {
-                let data = self
-                    .uvm_sequencer_data
-                    .get_mut(&obj_id)
-                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "sequencer not initialized"))?;
+                let data = self.uvm_sequencer_data.get_mut(&obj_id).ok_or_else(|| {
+                    SimError::with_diag(DiagCode::NullHandle, "sequencer not initialized")
+                })?;
                 let item = data.item_queue.first().copied().unwrap_or(0);
                 data.current_item = data.item_queue.first().copied();
                 Ok(LogicVec::from_u64(item as u64, 64))
@@ -346,18 +342,15 @@ impl SimulationEngine {
                 // double-pop: block.rs proceed path (get_next_item) sudah
                 // meng-pop item dari queue. Hanya pop bila item MASIH terdepan
                 // di queue (pola lama F17: builtin get_next_item tanpa pop).
-                let done_item = self
-                    .uvm_sequencer_data
-                    .get_mut(&obj_id)
-                    .and_then(|sd| {
-                        let item = sd.current_item.take();
-                        if let Some(it) = item {
-                            if sd.item_queue.first() == Some(&it) {
-                                sd.item_queue.remove(0);
-                            }
+                let done_item = self.uvm_sequencer_data.get_mut(&obj_id).and_then(|sd| {
+                    let item = sd.current_item.take();
+                    if let Some(it) = item {
+                        if sd.item_queue.first() == Some(&it) {
+                            sd.item_queue.remove(0);
                         }
-                        item
-                    });
+                    }
+                    item
+                });
                 if let Some(item_id) = done_item {
                     self.uvm_seq_release_finishers(obj_id, item_id)?;
                 }
@@ -412,10 +405,9 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_next_item" => {
-                let data = self
-                    .uvm_driver_data
-                    .get(&obj_id)
-                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "driver not initialized"))?;
+                let data = self.uvm_driver_data.get(&obj_id).ok_or_else(|| {
+                    SimError::with_diag(DiagCode::NullHandle, "driver not initialized")
+                })?;
                 let seqr_id = data.sequencer_id.unwrap_or(0);
                 if seqr_id != 0 {
                     self.execute_uvm_sequencer_method(seqr_id, "get_next_item", args)
@@ -424,10 +416,9 @@ impl SimulationEngine {
                 }
             }
             "item_done" => {
-                let data = self
-                    .uvm_driver_data
-                    .get(&obj_id)
-                    .ok_or_else(|| self.diag_error(DiagCode::NullHandle, "driver not initialized"))?;
+                let data = self.uvm_driver_data.get(&obj_id).ok_or_else(|| {
+                    self.diag_error(DiagCode::NullHandle, "driver not initialized")
+                })?;
                 let seqr_id = data.sequencer_id.unwrap_or(0);
                 if seqr_id != 0 {
                     self.execute_uvm_sequencer_method(seqr_id, "item_done", args)
@@ -603,7 +594,9 @@ impl SimulationEngine {
                 // Analysis-imp internal: alokasi objek `__uvm_analysis_imp`
                 // dengan parent = subscriber, simpan id di field analysis_imp.
                 let imp_name = format!("{}_imp", if name.is_empty() { "sub" } else { &name });
-                let imp_id = self.state.alloc_object(Symbol::intern("__uvm_analysis_imp"));
+                let imp_id = self
+                    .state
+                    .alloc_object(Symbol::intern("__uvm_analysis_imp"));
                 self.uvm_analysis_imp_data.insert(
                     imp_id,
                     UvmAnalysisImpData {

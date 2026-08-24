@@ -55,14 +55,24 @@ impl MariaApp {
                         // Graf dependensi berubah → buang cache layout lama
                         // (di-rebuild dengan kunci baru saat tab dibuka).
                         self.state.dep_graph = None;
-                        let m = self.state.compile_info.as_ref().map(|i| i.modules.len()).unwrap_or(0);
+                        let m = self
+                            .state
+                            .compile_info
+                            .as_ref()
+                            .map(|i| i.modules.len())
+                            .unwrap_or(0);
                         self.state.log(format!(
                             "✅ Compile + elaborate selesai ({} module, {:.2}ms)",
                             m,
-                            self.state.compile_info.as_ref().map(|i| i.total_time_ms).unwrap_or(0.0)
+                            self.state
+                                .compile_info
+                                .as_ref()
+                                .map(|i| i.total_time_ms)
+                                .unwrap_or(0.0)
                         ));
                         if !lint.is_empty() {
-                            self.state.log(format!("🔍 Lint: {} warning(s)", lint.len()));
+                            self.state
+                                .log(format!("🔍 Lint: {} warning(s)", lint.len()));
                             self.state.diagnostics.extend(lint);
                         }
                     }
@@ -81,13 +91,11 @@ impl MariaApp {
                     }
                 },
                 GuiEvent::TermOutput(text, is_err) => {
-                    self.state.term_lines.push(crate::state::TermLine {
-                        text,
-                        is_err,
-                    });
+                    self.state
+                        .term_lines
+                        .push(crate::state::TermLine { text, is_err });
                     if self.state.term_lines.len() > crate::state::MAX_TERM_LINES {
-                        let overflow =
-                            self.state.term_lines.len() - crate::state::MAX_TERM_LINES;
+                        let overflow = self.state.term_lines.len() - crate::state::MAX_TERM_LINES;
                         self.state.term_lines.drain(0..overflow);
                     }
                 }
@@ -302,14 +310,26 @@ pub fn trigger_generate(state: &mut GuiState) {
                 std::fs::write(&svh_path, &r.svh)
             };
             if let Err(e) = wsv {
-                state.log(format!("❌ Generate: gagal menulis {}: {}", sv_path.display(), e));
+                state.log(format!(
+                    "❌ Generate: gagal menulis {}: {}",
+                    sv_path.display(),
+                    e
+                ));
                 return;
             }
             if let Err(e) = wsvh {
-                state.log(format!("❌ Generate: gagal menulis {}: {}", svh_path.display(), e));
+                state.log(format!(
+                    "❌ Generate: gagal menulis {}: {}",
+                    svh_path.display(),
+                    e
+                ));
                 return;
             }
-            state.log(format!("✅ Generate: {} ({} baris)", sv_path.display(), sv_lines));
+            state.log(format!(
+                "✅ Generate: {} ({} baris)",
+                sv_path.display(),
+                sv_lines
+            ));
             if !r.svh.is_empty() {
                 state.log(format!("   + {} ({} baris)", svh_path.display(), svh_lines));
             }
@@ -334,7 +354,10 @@ pub fn trigger_generate_all(state: &mut GuiState) {
         state.log("⚠ Generate All: tidak ada file .mv di proyek");
         return;
     }
-    state.log(format!("⚙ Generate All: {} file .mv (konteks gabungan)...", mv_files.len()));
+    state.log(format!(
+        "⚙ Generate All: {} file .mv (konteks gabungan)...",
+        mv_files.len()
+    ));
     let mut items: Vec<(String, String)> = Vec::with_capacity(mv_files.len());
     let mut read_failed = None;
     for p in &mv_files {
@@ -369,7 +392,10 @@ pub fn trigger_generate_all(state: &mut GuiState) {
                         first_sv = Some(sv_path);
                     }
                 } else {
-                    state.log(format!("❌ Generate All: gagal menulis {}", sv_path.display()));
+                    state.log(format!(
+                        "❌ Generate All: gagal menulis {}",
+                        sv_path.display()
+                    ));
                 }
                 if !r.svh.is_empty() {
                     let _ = std::fs::write(&svh_path, &r.svh);
@@ -381,7 +407,10 @@ pub fn trigger_generate_all(state: &mut GuiState) {
             }
         }
         Err((i, e)) => {
-            let path = mv_files.get(i).map(|p| p.display().to_string()).unwrap_or_default();
+            let path = mv_files
+                .get(i)
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
             state.log(format!("❌ Generate All: {}: {}", path, e.format()));
         }
     }
@@ -516,7 +545,7 @@ impl eframe::App for MariaApp {
 
         // ── Bottom panel ──
         // Ukuran dipegang `GuiState::bottom_height`, diubah via splitter handle
-        // (`splitter::show_resizer` di dalam panel). `resizable(false)` + 
+        // (`splitter::show_resizer` di dalam panel). `resizable(false)` +
         // `exact_size` — resize sepenuhnya dikelola handle custom (constraint
         // min/max, kursor ns-resize, real-time drag).
         if self.state.show_bottom {

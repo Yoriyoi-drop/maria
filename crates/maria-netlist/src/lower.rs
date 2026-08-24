@@ -15,7 +15,7 @@ use maria_core::intern::Symbol;
 use maria_sir::{SirModule, SirNodeKind, SirValue};
 
 use crate::cell::{CellInstance, CellKind, PinConn};
-use crate::net::{Netlist, NetId, PortDir};
+use crate::net::{NetId, Netlist, PortDir};
 
 /// Lower seluruh modul SIR → netlist.
 pub fn lower_module(sir: &SirModule) -> Netlist {
@@ -93,11 +93,10 @@ pub fn lower_module(sir: &SirModule) -> Netlist {
             SirValue::Node(nid) => sir.nodes[*nid].output == vid,
             SirValue::Port(pid) => {
                 // vid kanonik port = `port.value` dari port input/inout.
-                let port_value = sir
-                    .inputs
-                    .iter()
-                    .chain(sir.outputs.iter())
-                    .find(|p| p.value == vid && matches!(&sir.values[p.value], SirValue::Port(pp) if *pp == *pid));
+                let port_value = sir.inputs.iter().chain(sir.outputs.iter()).find(|p| {
+                    p.value == vid
+                        && matches!(&sir.values[p.value], SirValue::Port(pp) if *pp == *pid)
+                });
                 port_value.is_some()
             }
             _ => true,
@@ -122,11 +121,10 @@ pub fn lower_module(sir: &SirModule) -> Netlist {
             }
             SirValue::Port(pid) => {
                 // Cari port input/inout yang berisi Port(pid) yang SAMA.
-                let canon = sir
-                    .inputs
-                    .iter()
-                    .chain(sir.outputs.iter())
-                    .find(|p| p.value != vid && matches!(&sir.values[p.value], SirValue::Port(pp) if *pp == *pid));
+                let canon = sir.inputs.iter().chain(sir.outputs.iter()).find(|p| {
+                    p.value != vid
+                        && matches!(&sir.values[p.value], SirValue::Port(pp) if *pp == *pid)
+                });
                 if let Some(p) = canon {
                     if let Some(net) = value_net[p.value] {
                         value_net[vid] = Some(net);
@@ -169,11 +167,8 @@ pub fn lower_module(sir: &SirModule) -> Netlist {
             continue;
         }
         let kind = map_kind(&n.kind);
-        let mut cell = CellInstance::new(
-            Symbol::intern(&format!("u{}", nid)),
-            kind.clone(),
-            n.width,
-        );
+        let mut cell =
+            CellInstance::new(Symbol::intern(&format!("u{}", nid)), kind.clone(), n.width);
         // in_width: operand data utama (Mux: t/f; lainnya: input pertama).
         let data_input = if matches!(kind, CellKind::Mux) { 1 } else { 0 };
         if let Some(&di) = n.inputs.get(data_input) {
@@ -292,9 +287,7 @@ fn make_value_net(
         SirValue::Node(nid) => Some(*nid),
         _ => None,
     };
-    let same_node = |target: usize| {
-        matches!(&sir.values[target], SirValue::Node(nid) if node_nid == Some(*nid))
-    };
+    let same_node = |target: usize| matches!(&sir.values[target], SirValue::Node(nid) if node_nid == Some(*nid));
     let wire = sir
         .wires
         .iter()
@@ -302,7 +295,9 @@ fn make_value_net(
         .or_else(|| {
             // Bila vid ini kanonik node (belum ada wire alias), cari wire
             // yang menunjuk vid lain yang berisi node yang sama.
-            sir.wires.iter().find(|w| w.value != vid && same_node(w.value))
+            sir.wires
+                .iter()
+                .find(|w| w.value != vid && same_node(w.value))
         });
     let port = sir
         .inputs
@@ -368,7 +363,10 @@ fn map_kind(k: &SirNodeKind) -> CellKind {
         SirNodeKind::ReduceOr => CellKind::ReduceOr,
         SirNodeKind::ReduceXor => CellKind::ReduceXor,
         SirNodeKind::Concat => CellKind::Concat,
-        SirNodeKind::Slice { msb, lsb } => CellKind::Slice { msb: *msb, lsb: *lsb },
+        SirNodeKind::Slice { msb, lsb } => CellKind::Slice {
+            msb: *msb,
+            lsb: *lsb,
+        },
         SirNodeKind::Buffer => CellKind::Buffer,
         SirNodeKind::TriState => CellKind::TriState,
     }
@@ -388,10 +386,10 @@ mod tests {
         let _ = m.add_value(SirValue::Port(1)); // 1
         let _ = m.add_value(SirValue::Reg(0)); // 2
         let _ = m.add_value(SirValue::Const(LogicVec::from_u64(1, 8))); // 3
-        // node ADD(count, 1) → output vid 4
+                                                                        // node ADD(count, 1) → output vid 4
         let n = m.add_node(SirNodeKind::Add, vec![2, 3], 8);
         let _ = m.add_value(SirValue::Node(n)); // 4
-        // register count: d=4, q=2, clk=0, rst=1
+                                                // register count: d=4, q=2, clk=0, rst=1
         let clk = 0;
         let d = 4;
         let q = 2;
@@ -421,7 +419,8 @@ mod tests {
         };
         m.inputs.push(mk("clk", maria_sir::PortDir::Input, 0, 1));
         m.inputs.push(mk("rst_n", maria_sir::PortDir::Input, 1, 1));
-        m.outputs.push(mk("count", maria_sir::PortDir::Output, 2, 8));
+        m.outputs
+            .push(mk("count", maria_sir::PortDir::Output, 2, 8));
         m
     }
 
@@ -478,7 +477,7 @@ mod tests {
         let n = m.add_node(SirNodeKind::And, vec![0, 1], 8);
         let out = m.nodes[n].output;
         let _ = m.add_value(SirValue::Node(n)); // out — kanonik
-        // Port output y → ALIAS node (slot berbeda berisi Node(n)).
+                                                // Port output y → ALIAS node (slot berbeda berisi Node(n)).
         let _ = m.add_value(SirValue::Node(n)); // alias
         let _ = m.add_wire(Symbol::intern("a"), 8, 0);
         let _ = m.add_wire(Symbol::intern("b"), 8, 1);
@@ -496,10 +495,21 @@ mod tests {
         m.outputs.push(mk("y", maria_sir::PortDir::Output, 3, 8));
         let nl = lower_module(&m);
         // Port a & b punya net bernama a/b, dan node output y juga net y.
-        let net_a = nl.nets.iter().find(|n| n.name.as_str() == "a").expect("net a");
+        let net_a = nl
+            .nets
+            .iter()
+            .find(|n| n.name.as_str() == "a")
+            .expect("net a");
         assert!(!net_a.loads.is_empty(), "net a harus punya load (AND.a)");
-        let net_y = nl.nets.iter().find(|n| n.name.as_str() == "y").expect("net y");
+        let net_y = nl
+            .nets
+            .iter()
+            .find(|n| n.name.as_str() == "y")
+            .expect("net y");
         assert!(net_y.driver.is_some(), "net y harus di-drive sel AND");
-        assert!(nl.cells.iter().any(|c| c.kind == CellKind::And), "ada sel AND");
+        assert!(
+            nl.cells.iter().any(|c| c.kind == CellKind::And),
+            "ada sel AND"
+        );
     }
 }

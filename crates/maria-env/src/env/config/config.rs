@@ -1,6 +1,6 @@
-use maria_core::config::MariaConfig;
 use crate::env::config::defaults;
 use crate::env::config::{environment, loader, validator};
+use maria_core::config::MariaConfig;
 use std::path::{Path, PathBuf};
 
 /// Asal config — untuk diagnostics/telemetry.
@@ -132,15 +132,24 @@ impl ConfigContext {
     }
 
     pub fn incremental(&self) -> bool {
-        self.inner.compiler.incremental.unwrap_or_else(defaults::default_incremental)
+        self.inner
+            .compiler
+            .incremental
+            .unwrap_or_else(defaults::default_incremental)
     }
 
     pub fn cache_enabled(&self) -> bool {
-        self.inner.compiler.cache.unwrap_or_else(defaults::default_cache)
+        self.inner
+            .compiler
+            .cache
+            .unwrap_or_else(defaults::default_cache)
     }
 
     pub fn opt_level(&self) -> u8 {
-        self.inner.compiler.opt_level.unwrap_or(defaults::DEFAULT_OPT_LEVEL)
+        self.inner
+            .compiler
+            .opt_level
+            .unwrap_or(defaults::DEFAULT_OPT_LEVEL)
     }
 
     pub fn fail_fast(&self) -> bool {
@@ -148,11 +157,19 @@ impl ConfigContext {
     }
 
     pub fn edition(&self) -> &str {
-        self.inner.compiler.edition.as_deref().unwrap_or(defaults::DEFAULT_EDITION)
+        self.inner
+            .compiler
+            .edition
+            .as_deref()
+            .unwrap_or(defaults::DEFAULT_EDITION)
     }
 
     pub fn target(&self) -> &str {
-        self.inner.compiler.target.as_deref().unwrap_or(defaults::DEFAULT_TARGET)
+        self.inner
+            .compiler
+            .target
+            .as_deref()
+            .unwrap_or(defaults::DEFAULT_TARGET)
     }
 
     /// Batas waktu simulasi (ns). None = unlimited (jalan sampai `$finish`).

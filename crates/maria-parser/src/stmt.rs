@@ -25,11 +25,11 @@
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
-use maria_ast::*;
+use crate::lexer::*;
 use maria_ast::types::const_eval_simple;
+use maria_ast::*;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::lexer::*;
 
 /// Helper: cek apakah expression adalah lvalue yang valid.
 fn is_valid_lvalue(expr: &Expr) -> bool {
@@ -91,13 +91,28 @@ impl Parser {
 
     pub(crate) fn parse_immediate_assertion(&mut self) -> Result<Stmt, SimError> {
         let kind = match self.peek() {
-            Token::Assert => { self.advance(); "assert" }
-            Token::Assume => { self.advance(); "assume" }
-            Token::Cover => { self.advance(); "cover" }
-            Token::Expect => { self.advance(); "expect" }
+            Token::Assert => {
+                self.advance();
+                "assert"
+            }
+            Token::Assume => {
+                self.advance();
+                "assume"
+            }
+            Token::Cover => {
+                self.advance();
+                "cover"
+            }
+            Token::Expect => {
+                self.advance();
+                "expect"
+            }
             // LANG-11: restrict property — properti constraint (asumsi),
             // diperlakukan seperti assume (violation → fail metric).
-            Token::Restrict => { self.advance(); "assume" }
+            Token::Restrict => {
+                self.advance();
+                "assume"
+            }
             _ => return Err(self.err("expected assert/assume/cover/expect")),
         };
         if self.peek() == &Token::Property {
@@ -107,10 +122,12 @@ impl Parser {
                 self.advance();
                 self.expect(Token::LParen)?;
                 let ce = if self.peek() == &Token::PosEdge {
-                    self.advance(); let sig = self.expect_ident()?;
+                    self.advance();
+                    let sig = self.expect_ident()?;
                     Some(ClockEvent::Posedge(sig))
                 } else if self.peek() == &Token::NegEdge {
-                    self.advance(); let sig = self.expect_ident()?;
+                    self.advance();
+                    let sig = self.expect_ident()?;
                     Some(ClockEvent::Negedge(sig))
                 } else {
                     let sig = self.expect_ident()?;
@@ -118,18 +135,24 @@ impl Parser {
                 };
                 self.expect(Token::RParen)?;
                 ce
-            } else { None };
+            } else {
+                None
+            };
             let disable_iff = if self.peek() == &Token::Disable {
                 self.advance();
                 match self.peek() {
-                    Token::Ident(s) if s == "iff" => { self.advance(); }
+                    Token::Ident(s) if s == "iff" => {
+                        self.advance();
+                    }
                     _ => return Err(self.err("expected 'iff' after 'disable'")),
                 }
                 self.expect(Token::LParen)?;
                 let expr = self.parse_expr(0)?;
                 self.expect(Token::RParen)?;
                 Some(Box::new(expr))
-            } else { None };
+            } else {
+                None
+            };
             // LANG-06 (SVA temporal): properti ber-urutan `a ##1 b` /
             // `a ##[2:5] b` / `##1 a` — parse sequence bila token berikutnya
             // adalah `##` (delay operator). Kalau tidak ada `##`, fallback ke
@@ -166,10 +189,7 @@ impl Parser {
                     self.advance(); // consume |->
                     let cons = self.parse_sequence_after_consequent()?;
                     let ante = super::types::Sequence::Expr(expr);
-                    let seq = super::types::Sequence::Implication(
-                        Box::new(ante),
-                        Box::new(cons),
-                    );
+                    let seq = super::types::Sequence::Implication(Box::new(ante), Box::new(cons));
                     sequence = Some(seq);
                 } else if self.peek() == &Token::HashHash {
                     // bentuk `expr ##N expr ...`
@@ -195,7 +215,9 @@ impl Parser {
             let fail_stmt = if self.peek() == &Token::Else {
                 self.advance();
                 Some(Box::new(self.parse_stmt()?))
-            } else { None };
+            } else {
+                None
+            };
             self.skip_semi();
             if let Some(seq) = sequence {
                 // assert/assume/cover temporal semuanya memakai PropertySeq
@@ -215,9 +237,26 @@ impl Parser {
                 false_expr: Box::new(Expr::Value(Value::Decimal(0))),
             };
             return match kind {
-                "assert" => Ok(Stmt::Assert { cond, pass_stmt: None, fail_stmt, clock_event, disable_iff }),
-                "assume" => Ok(Stmt::Assume { cond, pass_stmt: None, fail_stmt, clock_event, disable_iff }),
-                "cover" => Ok(Stmt::Cover { cond, pass_stmt: None, clock_event, disable_iff }),
+                "assert" => Ok(Stmt::Assert {
+                    cond,
+                    pass_stmt: None,
+                    fail_stmt,
+                    clock_event,
+                    disable_iff,
+                }),
+                "assume" => Ok(Stmt::Assume {
+                    cond,
+                    pass_stmt: None,
+                    fail_stmt,
+                    clock_event,
+                    disable_iff,
+                }),
+                "cover" => Ok(Stmt::Cover {
+                    cond,
+                    pass_stmt: None,
+                    clock_event,
+                    disable_iff,
+                }),
                 _ => unreachable!(),
             };
         }
@@ -239,10 +278,12 @@ impl Parser {
                 self.advance();
                 self.expect(Token::LParen)?;
                 let ce = if self.peek() == &Token::PosEdge {
-                    self.advance(); let sig = self.expect_ident()?;
+                    self.advance();
+                    let sig = self.expect_ident()?;
                     Some(ClockEvent::Posedge(sig))
                 } else if self.peek() == &Token::NegEdge {
-                    self.advance(); let sig = self.expect_ident()?;
+                    self.advance();
+                    let sig = self.expect_ident()?;
                     Some(ClockEvent::Negedge(sig))
                 } else {
                     let sig = self.expect_ident()?;
@@ -250,7 +291,9 @@ impl Parser {
                 };
                 self.expect(Token::RParen)?;
                 ce
-            } else { None };
+            } else {
+                None
+            };
             self.skip_semi();
             let body = if is_never {
                 Expr::UnaryOp {
@@ -276,21 +319,47 @@ impl Parser {
         self.expect(Token::LParen)?;
         let cond = self.parse_expr(0)?;
         self.expect(Token::RParen)?;
-        let pass_stmt = if kind == "cover" { None }
-            else if self.peek() != &Token::Semi && self.peek() != &Token::Else {
-                let stmt = self.parse_stmt()?;
-                Some(Box::new(stmt))
-            } else { None };
+        let pass_stmt = if kind == "cover" {
+            None
+        } else if self.peek() != &Token::Semi && self.peek() != &Token::Else {
+            let stmt = self.parse_stmt()?;
+            Some(Box::new(stmt))
+        } else {
+            None
+        };
         let fail_stmt = if self.peek() == &Token::Else {
             self.advance();
             Some(Box::new(self.parse_stmt()?))
-        } else { None };
+        } else {
+            None
+        };
         self.skip_semi();
         match kind {
-            "assert" => Ok(Stmt::Assert { cond, pass_stmt, fail_stmt, clock_event: None, disable_iff: None }),
-            "assume" => Ok(Stmt::Assume { cond, pass_stmt, fail_stmt, clock_event: None, disable_iff: None }),
-            "cover" => Ok(Stmt::Cover { cond, pass_stmt, clock_event: None, disable_iff: None }),
-            "expect" => Ok(Stmt::Expect { cond, pass_stmt, fail_stmt }),
+            "assert" => Ok(Stmt::Assert {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                clock_event: None,
+                disable_iff: None,
+            }),
+            "assume" => Ok(Stmt::Assume {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                clock_event: None,
+                disable_iff: None,
+            }),
+            "cover" => Ok(Stmt::Cover {
+                cond,
+                pass_stmt,
+                clock_event: None,
+                disable_iff: None,
+            }),
+            "expect" => Ok(Stmt::Expect {
+                cond,
+                pass_stmt,
+                fail_stmt,
+            }),
             _ => unreachable!(),
         }
     }
@@ -366,14 +435,20 @@ impl Parser {
         if self.peek() != &Token::RParen {
             loop {
                 events.push(self.expect_ident()?);
-                if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
         }
         self.expect(Token::RParen)?;
         let fail_stmt = if self.peek() == &Token::Else {
             self.advance();
             Some(Box::new(self.parse_stmt()?))
-        } else { None };
+        } else {
+            None
+        };
         self.skip_semi();
         Ok(Stmt::WaitOrder { events, fail_stmt })
     }
@@ -383,22 +458,39 @@ impl Parser {
         let name = self.expect_ident()?;
         let clocking_event = if self.peek() == &Token::At {
             Some(self.parse_clocking_event()?)
-        } else { None };
+        } else {
+            None
+        };
         if let Token::Ident(s) = self.peek() {
             if *s == Symbol::intern("with") {
                 self.advance();
                 let mut depth = 0;
                 loop {
                     match self.peek() {
-                        Token::Semi if depth == 0 => { self.advance(); break; }
-                        Token::LParen => { depth += 1; self.advance(); }
-                        Token::RParen if depth > 0 => { depth -= 1; self.advance(); }
+                        Token::Semi if depth == 0 => {
+                            self.advance();
+                            break;
+                        }
+                        Token::LParen => {
+                            depth += 1;
+                            self.advance();
+                        }
+                        Token::RParen if depth > 0 => {
+                            depth -= 1;
+                            self.advance();
+                        }
                         Token::Eof => break,
-                        _ => { self.advance(); }
+                        _ => {
+                            self.advance();
+                        }
                     }
                 }
-            } else { self.skip_semi(); }
-        } else { self.skip_semi(); }
+            } else {
+                self.skip_semi();
+            }
+        } else {
+            self.skip_semi();
+        }
         let mut coverpoints = Vec::new();
         let mut crosses = Vec::new();
         // VERIF-28: `type_option.weight = N` / `type_option.per_instance = 1`
@@ -412,7 +504,9 @@ impl Parser {
                     self.advance();
                     if self.peek() == &Token::Colon {
                         self.advance();
-                        if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
                     }
                     break;
                 }
@@ -457,8 +551,13 @@ impl Parser {
                                     self.advance();
                                     loop {
                                         match self.peek() {
-                                            Token::RBrace => { self.advance(); break; }
-                                            Token::Bins | Token::IllegalBins | Token::IgnoreBins => {
+                                            Token::RBrace => {
+                                                self.advance();
+                                                break;
+                                            }
+                                            Token::Bins
+                                            | Token::IllegalBins
+                                            | Token::IgnoreBins => {
                                                 let bin_type = match self.peek() {
                                                     Token::IllegalBins => BinType::Illegal,
                                                     Token::IgnoreBins => BinType::Ignore,
@@ -484,8 +583,10 @@ impl Parser {
                                                 let mut range_list: Vec<BinRange> = Vec::new();
                                                 let mut transitions: Vec<Vec<Expr>> = Vec::new();
                                                 // Cek apakah rhs adalah binsof(...) atau {range_list}
-                                                let is_binsof = if let Token::Ident(s) = self.peek() {
-                                                    s.as_str() == "binsof" || s.as_str() == "default"
+                                                let is_binsof = if let Token::Ident(s) = self.peek()
+                                                {
+                                                    s.as_str() == "binsof"
+                                                        || s.as_str() == "default"
                                                 } else {
                                                     false
                                                 };
@@ -496,11 +597,21 @@ impl Parser {
                                                     loop {
                                                         match self.peek() {
                                                             Token::Semi if depth == 0 => break,
-                                                            Token::LParen | Token::LBrace => { depth += 1; self.advance(); }
-                                                            Token::RParen | Token::RBrace if depth > 0 => { depth -= 1; self.advance(); }
+                                                            Token::LParen | Token::LBrace => {
+                                                                depth += 1;
+                                                                self.advance();
+                                                            }
+                                                            Token::RParen | Token::RBrace
+                                                                if depth > 0 =>
+                                                            {
+                                                                depth -= 1;
+                                                                self.advance();
+                                                            }
                                                             Token::RBrace if depth == 0 => break,
                                                             Token::Eof => break,
-                                                            _ => { self.advance(); }
+                                                            _ => {
+                                                                self.advance();
+                                                            }
                                                         }
                                                     }
                                                 } else if self.peek() == &Token::LParen {
@@ -530,26 +641,42 @@ impl Parser {
                                                 } else if self.peek() == &Token::LBrace {
                                                     self.advance();
                                                     loop {
-                                                        if self.peek() == &Token::RBrace { self.advance(); break; }
+                                                        if self.peek() == &Token::RBrace {
+                                                            self.advance();
+                                                            break;
+                                                        }
                                                         if self.peek() == &Token::LBrack {
                                                             self.advance();
                                                             let low = self.parse_expr(0)?;
                                                             self.expect(Token::Colon)?;
                                                             let high = self.parse_expr(0)?;
                                                             self.expect(Token::RBrack)?;
-                                                            range_list.push(BinRange { low, high: Some(high) });
+                                                            range_list.push(BinRange {
+                                                                low,
+                                                                high: Some(high),
+                                                            });
                                                         } else {
                                                             let low = self.parse_expr(0)?;
-                                                            range_list.push(BinRange { low, high: None });
+                                                            range_list
+                                                                .push(BinRange { low, high: None });
                                                         }
                                                         if self.peek() == &Token::Comma {
                                                             let ahead = self.peek_ahead(1).clone();
                                                             let is_new_port = ahead == Token::Input
                                                                 || ahead == Token::Output
                                                                 || ahead == Token::Inout
-                                                                || (matches!(&ahead, Token::Ident(_))
-                                                                    && matches!(self.peek_ahead(2), Token::Scope));
-                                                            if !is_new_port { self.advance(); } else { break; }
+                                                                || (matches!(
+                                                                    &ahead,
+                                                                    Token::Ident(_)
+                                                                ) && matches!(
+                                                                    self.peek_ahead(2),
+                                                                    Token::Scope
+                                                                ));
+                                                            if !is_new_port {
+                                                                self.advance();
+                                                            } else {
+                                                                break;
+                                                            }
                                                         } else {
                                                             // BUG VERIF-30: range-list `{...}` ditutup `}` — loop sebelumnya
                                                             // break TANPA mengonsumsi `}` sehingga skip_semi tidak melihat
@@ -563,7 +690,12 @@ impl Parser {
                                                     }
                                                 }
                                                 self.skip_semi();
-                                                bins.push(BinDef { name: bin_name, range_list, bin_type, transitions });
+                                                bins.push(BinDef {
+                                                    name: bin_name,
+                                                    range_list,
+                                                    bin_type,
+                                                    transitions,
+                                                });
                                             }
                                             // `default` bin — skip sampai ';'
                                             Token::Default => {
@@ -575,17 +707,28 @@ impl Parser {
                                     }
                                 }
                                 self.skip_semi();
-                                coverpoints.push(CoverpointDef { name: ident, expr, bins });
+                                coverpoints.push(CoverpointDef {
+                                    name: ident,
+                                    expr,
+                                    bins,
+                                });
                             }
                             Token::Cross => {
                                 self.advance();
                                 let mut cps = Vec::new();
                                 loop {
                                     cps.push(self.expect_ident()?);
-                                    if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                                    if self.peek() == &Token::Comma {
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
                                 }
                                 self.skip_semi();
-                                crosses.push(CrossDef { name: ident, coverpoints: cps });
+                                crosses.push(CrossDef {
+                                    name: ident,
+                                    coverpoints: cps,
+                                });
                             }
                             _ => {
                                 // Konstruk SV tidak dikenal setelah ':' — skip sampai ';'
@@ -631,50 +774,107 @@ impl Parser {
                     let mut depth = 0i32;
                     loop {
                         match self.peek() {
-                            Token::Semi if depth == 0 => { self.advance(); break; }
+                            Token::Semi if depth == 0 => {
+                                self.advance();
+                                break;
+                            }
                             Token::EndGroup | Token::Eof => break,
-                            Token::LBrace | Token::LParen => { depth += 1; self.advance(); }
-                            Token::RBrace if depth > 0 => { depth -= 1; self.advance(); }
+                            Token::LBrace | Token::LParen => {
+                                depth += 1;
+                                self.advance();
+                            }
+                            Token::RBrace if depth > 0 => {
+                                depth -= 1;
+                                self.advance();
+                            }
                             Token::RBrace if depth == 0 => break,
-                            Token::RParen if depth > 0 => { depth -= 1; self.advance(); }
-                            _ => { self.advance(); }
+                            Token::RParen if depth > 0 => {
+                                depth -= 1;
+                                self.advance();
+                            }
+                            _ => {
+                                self.advance();
+                            }
                         }
                     }
                 }
             }
         }
-        Ok(CovergroupDecl { name, clocking_event, coverpoints, crosses, weight: cg_weight, per_instance: cg_per_instance })
+        Ok(CovergroupDecl {
+            name,
+            clocking_event,
+            coverpoints,
+            crosses,
+            weight: cg_weight,
+            per_instance: cg_per_instance,
+        })
     }
 
     pub(crate) fn parse_dpi_import(&mut self) -> Result<DpiImport, SimError> {
         self.advance();
-        let is_task = if self.peek() == &Token::Task { self.advance(); true }
-            else if self.peek() == &Token::Function { self.advance(); false }
-            else { return Err(self.err("expected 'function' or 'task' after import \"DPI-C\"")); };
-        if matches!(self.peek(), Token::Auto | Token::Static) { self.advance(); }
-        let return_type = if is_task { None }
-            else if self.peek() == &Token::Void { self.advance(); None }
-            else if let Some(dt) = self.try_parse_dpi_type() { self.skip_dpi_range(); Some(Box::new(dt)) }
-            else { None };
+        let is_task = if self.peek() == &Token::Task {
+            self.advance();
+            true
+        } else if self.peek() == &Token::Function {
+            self.advance();
+            false
+        } else {
+            return Err(self.err("expected 'function' or 'task' after import \"DPI-C\""));
+        };
+        if matches!(self.peek(), Token::Auto | Token::Static) {
+            self.advance();
+        }
+        let return_type = if is_task {
+            None
+        } else if self.peek() == &Token::Void {
+            self.advance();
+            None
+        } else if let Some(dt) = self.try_parse_dpi_type() {
+            self.skip_dpi_range();
+            Some(Box::new(dt))
+        } else {
+            None
+        };
         let name = self.expect_ident()?;
         self.expect(Token::LParen)?;
         let mut args = Vec::new();
         if self.peek() != &Token::RParen {
             loop {
-                let direction = if self.peek() == &Token::Input { self.advance(); PortDirection::Input }
-                    else if self.peek() == &Token::Output { self.advance(); PortDirection::Output }
-                    else if self.peek() == &Token::Inout { self.advance(); PortDirection::Inout }
-                    else { PortDirection::Input };
+                let direction = if self.peek() == &Token::Input {
+                    self.advance();
+                    PortDirection::Input
+                } else if self.peek() == &Token::Output {
+                    self.advance();
+                    PortDirection::Output
+                } else if self.peek() == &Token::Inout {
+                    self.advance();
+                    PortDirection::Inout
+                } else {
+                    PortDirection::Input
+                };
                 let dtype = self.try_parse_dpi_type().unwrap_or(DataType::Logic);
                 self.skip_dpi_range();
                 let arg_name = self.expect_ident()?;
-                args.push(DpiArg { direction, dtype, name: arg_name });
-                if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                args.push(DpiArg {
+                    direction,
+                    dtype,
+                    name: arg_name,
+                });
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
         }
         self.expect(Token::RParen)?;
         self.skip_semi();
-        Ok(DpiImport { name, return_type, args, is_task })
+        Ok(DpiImport {
+            name,
+            return_type,
+            args,
+            is_task,
+        })
     }
 
     pub(crate) fn skip_dpi_range(&mut self) {
@@ -684,7 +884,13 @@ impl Parser {
             while depth > 0 && self.peek() != &Token::Eof {
                 match self.peek() {
                     Token::LBrack => depth += 1,
-                    Token::RBrack => { depth -= 1; if depth == 0 { self.advance(); break; } }
+                    Token::RBrack => {
+                        depth -= 1;
+                        if depth == 0 {
+                            self.advance();
+                            break;
+                        }
+                    }
                     _ => {}
                 }
                 self.advance();
@@ -694,17 +900,50 @@ impl Parser {
 
     pub(crate) fn try_parse_dpi_type(&mut self) -> Option<DataType> {
         let dt = match self.peek() {
-            Token::Byte => { self.advance(); DataType::Byte }
-            Token::Shortint => { self.advance(); DataType::Shortint }
-            Token::Int => { self.advance(); DataType::Int }
-            Token::Longint => { self.advance(); DataType::Longint }
-            Token::Integer => { self.advance(); DataType::Integer }
-            Token::Real => { self.advance(); DataType::Real }
-            Token::RealTime => { self.advance(); DataType::Realtime }
-            Token::Bit => { self.advance(); DataType::Bit }
-            Token::Logic => { self.advance(); DataType::Logic }
-            Token::String => { self.advance(); DataType::String }
-            Token::Ident(s) if s == "chandle" => { self.advance(); DataType::Longint }
+            Token::Byte => {
+                self.advance();
+                DataType::Byte
+            }
+            Token::Shortint => {
+                self.advance();
+                DataType::Shortint
+            }
+            Token::Int => {
+                self.advance();
+                DataType::Int
+            }
+            Token::Longint => {
+                self.advance();
+                DataType::Longint
+            }
+            Token::Integer => {
+                self.advance();
+                DataType::Integer
+            }
+            Token::Real => {
+                self.advance();
+                DataType::Real
+            }
+            Token::RealTime => {
+                self.advance();
+                DataType::Realtime
+            }
+            Token::Bit => {
+                self.advance();
+                DataType::Bit
+            }
+            Token::Logic => {
+                self.advance();
+                DataType::Logic
+            }
+            Token::String => {
+                self.advance();
+                DataType::String
+            }
+            Token::Ident(s) if s == "chandle" => {
+                self.advance();
+                DataType::Longint
+            }
             _ => return None,
         };
         Some(dt)
@@ -750,10 +989,7 @@ impl Parser {
             Token::Ident(_) => match self.peek_ahead(1) {
                 Token::Ident(_) => true,
                 // pkg::type varname;  (bukan pkg::func(...))
-                Token::Scope => matches!(
-                    self.peek_ahead(3),
-                    Token::Ident(_) | Token::LBrack
-                ),
+                Token::Scope => matches!(self.peek_ahead(3), Token::Ident(_) | Token::LBrack),
                 _ => false,
             },
             _ => false,
@@ -787,7 +1023,10 @@ impl Parser {
         // (`NumRounds` di otp_ctrl_scrmbl, pola `localparam` di dalam for-loop
         // body) menjadi "signal not found" (E2001). Nilai const dievaluasi
         // elaborator ke param context.
-        if matches!(self.peek(), Token::Param | Token::Parameter | Token::LocalParam) {
+        if matches!(
+            self.peek(),
+            Token::Param | Token::Parameter | Token::LocalParam
+        ) {
             return self.parse_procedural_localparam();
         }
         // Named assertion di level STATEMENT: `label: assert (prop);` —
@@ -809,7 +1048,9 @@ impl Parser {
             return self.parse_immediate_assertion();
         }
         match self.peek() {
-            Token::Assert | Token::Assume | Token::Cover | Token::Expect => self.parse_immediate_assertion(),
+            Token::Assert | Token::Assume | Token::Cover | Token::Expect => {
+                self.parse_immediate_assertion()
+            }
             Token::Unique | Token::Priority | Token::Unique0 => {
                 let qualifier = self.peek().clone();
                 self.advance();
@@ -817,20 +1058,80 @@ impl Parser {
                     Token::Case | Token::CaseX | Token::CaseZ => {
                         let stmt = self.parse_case_stmt()?;
                         match stmt {
-                            Stmt::Case { expr, items, default } => {
-                                if qualifier == Token::Unique0 { Ok(Stmt::Unique0Case { expr, items, default }) }
-                                else if qualifier == Token::Unique { Ok(Stmt::UniqueCase { expr, items, default }) }
-                                else { Ok(Stmt::PriorityCase { expr, items, default }) }
+                            Stmt::Case {
+                                expr,
+                                items,
+                                default,
+                            } => {
+                                if qualifier == Token::Unique0 {
+                                    Ok(Stmt::Unique0Case {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                } else if qualifier == Token::Unique {
+                                    Ok(Stmt::UniqueCase {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                } else {
+                                    Ok(Stmt::PriorityCase {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                }
                             }
-                            Stmt::CaseX { expr, items, default } => {
-                                if qualifier == Token::Unique0 { Ok(Stmt::Unique0Case { expr, items, default }) }
-                                else if qualifier == Token::Unique { Ok(Stmt::UniqueCase { expr, items, default }) }
-                                else { Ok(Stmt::PriorityCase { expr, items, default }) }
+                            Stmt::CaseX {
+                                expr,
+                                items,
+                                default,
+                            } => {
+                                if qualifier == Token::Unique0 {
+                                    Ok(Stmt::Unique0Case {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                } else if qualifier == Token::Unique {
+                                    Ok(Stmt::UniqueCase {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                } else {
+                                    Ok(Stmt::PriorityCase {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                }
                             }
-                            Stmt::CaseZ { expr, items, default } => {
-                                if qualifier == Token::Unique0 { Ok(Stmt::Unique0Case { expr, items, default }) }
-                                else if qualifier == Token::Unique { Ok(Stmt::UniqueCase { expr, items, default }) }
-                                else { Ok(Stmt::PriorityCase { expr, items, default }) }
+                            Stmt::CaseZ {
+                                expr,
+                                items,
+                                default,
+                            } => {
+                                if qualifier == Token::Unique0 {
+                                    Ok(Stmt::Unique0Case {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                } else if qualifier == Token::Unique {
+                                    Ok(Stmt::UniqueCase {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                } else {
+                                    Ok(Stmt::PriorityCase {
+                                        expr,
+                                        items,
+                                        default,
+                                    })
+                                }
                             }
                             _ => Ok(stmt),
                         }
@@ -838,9 +1139,15 @@ impl Parser {
                     Token::If => {
                         let stmt = self.parse_if_stmt()?;
                         match stmt {
-                            Stmt::IfElse { cond, true_branch, false_branch } => {
-                                Ok(Stmt::IfElse { cond, true_branch, false_branch })
-                            }
+                            Stmt::IfElse {
+                                cond,
+                                true_branch,
+                                false_branch,
+                            } => Ok(Stmt::IfElse {
+                                cond,
+                                true_branch,
+                                false_branch,
+                            }),
                             _ => Ok(stmt),
                         }
                     }
@@ -875,15 +1182,26 @@ impl Parser {
                     Ok(Stmt::Return(Some(Box::new(expr))))
                 }
             }
-            Token::Break => { self.advance(); self.skip_semi(); Ok(Stmt::Break) }
-            Token::Continue => { self.advance(); self.skip_semi(); Ok(Stmt::Continue) }
+            Token::Break => {
+                self.advance();
+                self.skip_semi();
+                Ok(Stmt::Break)
+            }
+            Token::Continue => {
+                self.advance();
+                self.skip_semi();
+                Ok(Stmt::Continue)
+            }
             Token::Disable => {
                 self.advance();
                 // `fork` adalah keyword (Token::Fork), bukan Ident — sama
                 // seperti `wait fork` (LANG-29).
                 if matches!(self.peek(), Token::Fork) {
-                    self.advance(); self.skip_semi();
-                    Ok(Stmt::Disable { name: Symbol::intern("fork") })
+                    self.advance();
+                    self.skip_semi();
+                    Ok(Stmt::Disable {
+                        name: Symbol::intern("fork"),
+                    })
                 } else {
                     let name = self.expect_ident()?;
                     self.skip_semi();
@@ -894,7 +1212,8 @@ impl Parser {
                 self.advance();
                 // `fork` adalah keyword (Token::Fork), bukan Ident.
                 if matches!(self.peek(), Token::Fork) {
-                    self.advance(); self.skip_semi();
+                    self.advance();
+                    self.skip_semi();
                     // LANG-29: `wait fork;` — varian khusus (bukan `wait (0)`
                     // yang juga menghasilkan Wait{cond:0,stmt:None}).
                     Ok(Stmt::WaitFork)
@@ -903,7 +1222,10 @@ impl Parser {
                     let cond = self.parse_expr(0)?;
                     self.expect(Token::RParen)?;
                     let single_stmt = self.parse_stmt_block()?.into_iter().next();
-                    Ok(Stmt::Wait { cond, stmt: single_stmt.map(Box::new) })
+                    Ok(Stmt::Wait {
+                        cond,
+                        stmt: single_stmt.map(Box::new),
+                    })
                 }
             }
             Token::Begin => {
@@ -924,7 +1246,9 @@ impl Parser {
                 self.skip_semi();
                 if let Expr::Ident { .. } = &expr {
                     Ok(Stmt::Release { expr })
-                } else { Err(self.err("expected signal name after release")) }
+                } else {
+                    Err(self.err("expected signal name after release"))
+                }
             }
             Token::Deassign => {
                 self.advance();
@@ -933,15 +1257,16 @@ impl Parser {
                 Ok(Stmt::Deassign { expr })
             }
 
-
-
             Token::At => {
                 self.advance();
                 self.expect(Token::LParen)?;
                 let events = self.parse_sensitivity_events()?;
                 self.expect(Token::RParen)?;
                 let stmt = self.parse_stmt()?;
-                Ok(Stmt::EventControl { events, stmt: Some(Box::new(stmt)) })
+                Ok(Stmt::EventControl {
+                    events,
+                    stmt: Some(Box::new(stmt)),
+                })
             }
 
             Token::Do => {
@@ -970,16 +1295,26 @@ impl Parser {
                                 self.advance();
                                 let second = self.parse_expr(0)?;
                                 self.expect(Token::RBrack)?;
-                                lhs = Expr::RangeSelect { expr: Box::new(lhs), msb: Box::new(first), lsb: Box::new(second) };
+                                lhs = Expr::RangeSelect {
+                                    expr: Box::new(lhs),
+                                    msb: Box::new(first),
+                                    lsb: Box::new(second),
+                                };
                             } else {
                                 self.expect(Token::RBrack)?;
-                                lhs = Expr::BitSelect { expr: Box::new(lhs), index: Box::new(first) };
+                                lhs = Expr::BitSelect {
+                                    expr: Box::new(lhs),
+                                    index: Box::new(first),
+                                };
                             }
                         }
                         Token::Dot => {
                             self.advance();
                             let member = self.expect_ident()?;
-                            lhs = Expr::MemberAccess { obj: Box::new(lhs), field: member };
+                            lhs = Expr::MemberAccess {
+                                obj: Box::new(lhs),
+                                field: member,
+                            };
                         }
                         _ => break,
                     }
@@ -990,18 +1325,31 @@ impl Parser {
                     lhs: Box::new(lhs.clone()),
                     rhs: Box::new(Expr::Value(Value::Decimal(1))),
                 };
-                Ok(Stmt::BlockingAssign { lhs, rhs, delay: None })
+                Ok(Stmt::BlockingAssign {
+                    lhs,
+                    rhs,
+                    delay: None,
+                })
             }
-            Token::Semi => { self.advance(); Ok(Stmt::Null) }
+            Token::Semi => {
+                self.advance();
+                Ok(Stmt::Null)
+            }
             Token::Hash => {
                 // Delay statement: #delay_stmt ... or #delay_val;
                 self.advance();
                 let delay = self.parse_expr(0)?;
                 let stmts = self.parse_stmt_block()?;
                 if stmts.len() == 1 {
-                    Ok(Stmt::Delay { delay, stmt: Box::new(stmts.into_iter().next().unwrap()) })
+                    Ok(Stmt::Delay {
+                        delay,
+                        stmt: Box::new(stmts.into_iter().next().unwrap()),
+                    })
                 } else {
-                    Ok(Stmt::Delay { delay, stmt: Box::new(Stmt::Block { stmts }) })
+                    Ok(Stmt::Delay {
+                        delay,
+                        stmt: Box::new(Stmt::Block { stmts }),
+                    })
                 }
             }
             Token::WaitOrder => self.parse_wait_order(),
@@ -1019,8 +1367,15 @@ impl Parser {
                     self.expect(Token::Colon)?;
                     let stmt = self.parse_stmt()?;
                     let w = const_eval_simple(&weight).unwrap_or(1) as u64;
-                    items.push(RandCaseItem { weight: w, stmt: Box::new(stmt) });
-                    if self.peek() == &Token::Semi { self.advance(); } else { break; }
+                    items.push(RandCaseItem {
+                        weight: w,
+                        stmt: Box::new(stmt),
+                    });
+                    if self.peek() == &Token::Semi {
+                        self.advance();
+                    } else {
+                        break;
+                    }
                 }
                 Ok(Stmt::RandCase { items })
             }
@@ -1030,7 +1385,9 @@ impl Parser {
                 loop {
                     let is_endseq = matches!(self.peek(), Token::Ident(s) if s == "endsequence");
                     if is_endseq || self.peek() == &Token::Eof {
-                        if matches!(self.peek(), Token::Ident(s) if s == "endsequence") { self.advance(); }
+                        if matches!(self.peek(), Token::Ident(s) if s == "endsequence") {
+                            self.advance();
+                        }
                         break;
                     }
                     let prod_name = self.expect_ident()?;
@@ -1042,12 +1399,24 @@ impl Parser {
                             self.advance();
                             let w_expr = self.parse_expr(0)?;
                             Some(const_eval_simple(&w_expr).unwrap_or(1) as u64)
-                        } else { None };
-                        items.push(RandSeqItem { value: Box::new(stmt), weight });
-                        if self.peek() == &Token::Pipe { self.advance(); } else { break; }
+                        } else {
+                            None
+                        };
+                        items.push(RandSeqItem {
+                            value: Box::new(stmt),
+                            weight,
+                        });
+                        if self.peek() == &Token::Pipe {
+                            self.advance();
+                        } else {
+                            break;
+                        }
                     }
                     self.skip_semi();
-                    productions.push(RandSeqProduction { name: prod_name, items });
+                    productions.push(RandSeqProduction {
+                        name: prod_name,
+                        items,
+                    });
                 }
                 Ok(Stmt::RandSequence { productions })
             }
@@ -1059,20 +1428,46 @@ impl Parser {
                             self.advance();
                             let first = self.parse_expr(0)?;
                             if self.peek() == &Token::Colon {
-                                self.advance(); let second = self.parse_expr(0)?;
+                                self.advance();
+                                let second = self.parse_expr(0)?;
                                 self.expect(Token::RBrack)?;
-                                lhs = Expr::RangeSelect { expr: Box::new(lhs), msb: Box::new(first), lsb: Box::new(second) };
+                                lhs = Expr::RangeSelect {
+                                    expr: Box::new(lhs),
+                                    msb: Box::new(first),
+                                    lsb: Box::new(second),
+                                };
                             } else if self.peek() == &Token::PlusColon {
-                                self.advance(); let width = self.parse_expr(0)?;
+                                self.advance();
+                                let width = self.parse_expr(0)?;
                                 self.expect(Token::RBrack)?;
-                                lhs = Expr::PartSelect { expr: Box::new(lhs), base: Box::new(first), width: Box::new(width) };
+                                lhs = Expr::PartSelect {
+                                    expr: Box::new(lhs),
+                                    base: Box::new(first),
+                                    width: Box::new(width),
+                                };
                             } else if self.peek() == &Token::MinusColon {
-                                self.advance(); let width = self.parse_expr(0)?;
+                                self.advance();
+                                let width = self.parse_expr(0)?;
                                 self.expect(Token::RBrack)?;
-                                lhs = Expr::PartSelect { expr: Box::new(lhs), base: Box::new(Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(first.clone()), rhs: Box::new(Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(width.clone()), rhs: Box::new(Expr::Value(Value::Decimal(1))) }) }), width: Box::new(width) };
+                                lhs = Expr::PartSelect {
+                                    expr: Box::new(lhs),
+                                    base: Box::new(Expr::BinaryOp {
+                                        op: BinaryOp::Sub,
+                                        lhs: Box::new(first.clone()),
+                                        rhs: Box::new(Expr::BinaryOp {
+                                            op: BinaryOp::Sub,
+                                            lhs: Box::new(width.clone()),
+                                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                                        }),
+                                    }),
+                                    width: Box::new(width),
+                                };
                             } else {
                                 self.expect(Token::RBrack)?;
-                                lhs = Expr::BitSelect { expr: Box::new(lhs), index: Box::new(first) };
+                                lhs = Expr::BitSelect {
+                                    expr: Box::new(lhs),
+                                    index: Box::new(first),
+                                };
                             }
                         }
                         Token::Dot => {
@@ -1086,16 +1481,33 @@ impl Parser {
                                         args.push(self.parse_expr(0)?);
                                         if self.peek() == &Token::Comma {
                                             let ahead = self.peek_ahead(1).clone();
-                                            let is_new_port = ahead == Token::Input || ahead == Token::Output
-                                                || ahead == Token::Inout || (matches!(&ahead, Token::Ident(_)) && matches!(self.peek_ahead(2), Token::Scope));
-                                            if !is_new_port { self.advance(); } else { break; }
-                                        } else { break; }
+                                            let is_new_port = ahead == Token::Input
+                                                || ahead == Token::Output
+                                                || ahead == Token::Inout
+                                                || (matches!(&ahead, Token::Ident(_))
+                                                    && matches!(self.peek_ahead(2), Token::Scope));
+                                            if !is_new_port {
+                                                self.advance();
+                                            } else {
+                                                break;
+                                            }
+                                        } else {
+                                            break;
+                                        }
                                     }
                                 }
                                 self.expect(Token::RParen)?;
-                                lhs = Expr::MethodCall { obj: Box::new(lhs), method: member, args, with_clause: None };
+                                lhs = Expr::MethodCall {
+                                    obj: Box::new(lhs),
+                                    method: member,
+                                    args,
+                                    with_clause: None,
+                                };
                             } else {
-                                lhs = Expr::MemberAccess { obj: Box::new(lhs), field: member };
+                                lhs = Expr::MemberAccess {
+                                    obj: Box::new(lhs),
+                                    field: member,
+                                };
                             }
                         }
                         _ => break,
@@ -1103,14 +1515,32 @@ impl Parser {
                 }
                 match self.peek() {
                     Token::Increment => {
-                        self.advance(); self.skip_semi();
-                        let rhs = Expr::BinaryOp { op: BinaryOp::Add, lhs: Box::new(lhs.clone()), rhs: Box::new(Expr::Value(Value::Decimal(1))) };
-                        Ok(Stmt::BlockingAssign { lhs, rhs, delay: None })
+                        self.advance();
+                        self.skip_semi();
+                        let rhs = Expr::BinaryOp {
+                            op: BinaryOp::Add,
+                            lhs: Box::new(lhs.clone()),
+                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                        };
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs,
+                            delay: None,
+                        })
                     }
                     Token::Decrement => {
-                        self.advance(); self.skip_semi();
-                        let rhs = Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(lhs.clone()), rhs: Box::new(Expr::Value(Value::Decimal(1))) };
-                        Ok(Stmt::BlockingAssign { lhs, rhs, delay: None })
+                        self.advance();
+                        self.skip_semi();
+                        let rhs = Expr::BinaryOp {
+                            op: BinaryOp::Sub,
+                            lhs: Box::new(lhs.clone()),
+                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                        };
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs,
+                            delay: None,
+                        })
                     }
                     Token::BlockingAssign => {
                         self.advance();
@@ -1130,70 +1560,169 @@ impl Parser {
                             self.advance();
                             let rhs = self.parse_expr(8)?;
                             self.skip_semi();
-                            Ok(Stmt::Expr { expr: Expr::BinaryOp { op: BinaryOp::Le, lhs: Box::new(lhs), rhs: Box::new(rhs) } })
+                            Ok(Stmt::Expr {
+                                expr: Expr::BinaryOp {
+                                    op: BinaryOp::Le,
+                                    lhs: Box::new(lhs),
+                                    rhs: Box::new(rhs),
+                                },
+                            })
                         }
                     }
                     Token::PlusAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Add, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::Add,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::MinusAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::Sub,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::XorAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::BitXor, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::BitXor,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::AndAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::BitAnd, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::BitAnd,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::OrAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::BitOr, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::BitOr,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::MulAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Mul, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::Mul,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::DivAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Div, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::Div,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::ModAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Mod, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::Mod,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::ShlAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Shl, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::Shl,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
                     Token::ShrAssign => {
                         self.advance();
-                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let rhs = self.parse_expr(0)?;
+                        self.skip_semi();
                         let lhs_copy = lhs.clone();
-                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Shr, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                        Ok(Stmt::BlockingAssign {
+                            lhs,
+                            rhs: Expr::BinaryOp {
+                                op: BinaryOp::Shr,
+                                lhs: Box::new(lhs_copy),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        })
                     }
-                    _ => { self.skip_semi(); Ok(Stmt::Expr { expr: lhs }) }
+                    _ => {
+                        self.skip_semi();
+                        Ok(Stmt::Expr { expr: lhs })
+                    }
                 }
             }
         }
@@ -1305,14 +1834,27 @@ impl Parser {
         let cond = self.parse_expr(0)?;
         self.expect(Token::RParen)?;
         let true_branch = self.parse_stmt_block()?;
-        let true_stmt = if true_branch.len() == 1 { true_branch.into_iter().next().unwrap() }
-            else { Stmt::Block { stmts: true_branch } };
+        let true_stmt = if true_branch.len() == 1 {
+            true_branch.into_iter().next().unwrap()
+        } else {
+            Stmt::Block { stmts: true_branch }
+        };
         let false_branch = if self.peek() == &Token::Else {
             self.advance();
             let fb = self.parse_stmt_block()?;
-            Some(Box::new(if fb.len() == 1 { fb.into_iter().next().unwrap() } else { Stmt::Block { stmts: fb } }))
-        } else { None };
-        Ok(Stmt::IfElse { cond, true_branch: Box::new(true_stmt), false_branch })
+            Some(Box::new(if fb.len() == 1 {
+                fb.into_iter().next().unwrap()
+            } else {
+                Stmt::Block { stmts: fb }
+            }))
+        } else {
+            None
+        };
+        Ok(Stmt::IfElse {
+            cond,
+            true_branch: Box::new(true_stmt),
+            false_branch,
+        })
     }
 
     pub(crate) fn parse_case_stmt(&mut self) -> Result<Stmt, SimError> {
@@ -1325,13 +1867,19 @@ impl Parser {
         // deteksi setelah `(expr)` menangkap SEMUA bentuk termasuk yang
         // di-qualifier `unique`/`priority` (mis. dm_csrs OpenTitan).
         let mut is_case_inside = if self.peek() == &Token::Case {
-            let saved = self.pos.get(); self.advance();
+            let saved = self.pos.get();
+            self.advance();
             let is_inside = self.peek() == &Token::Inside;
             self.pos.set(saved);
             is_inside
-        } else { false };
-        if is_case_inside { self.advance(); }
-        else { self.advance(); }
+        } else {
+            false
+        };
+        if is_case_inside {
+            self.advance();
+        } else {
+            self.advance();
+        }
         self.expect(Token::LParen)?;
         let expr = self.parse_expr(0)?;
         self.expect(Token::RParen)?;
@@ -1344,7 +1892,9 @@ impl Parser {
         let mut items = Vec::new();
         let mut default = None;
         loop {
-            if self.peek() == &Token::Endcase || self.peek() == &Token::Eof { break; }
+            if self.peek() == &Token::Endcase || self.peek() == &Token::Eof {
+                break;
+            }
             if self.peek() == &Token::Default {
                 self.advance();
                 self.expect(Token::Colon)?;
@@ -1371,67 +1921,184 @@ impl Parser {
                     } else {
                         labels.push(self.parse_expr(0)?);
                     }
-                    if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
                 }
                 self.expect(Token::Colon)?;
                 let stmts = self.parse_stmt_block()?;
-                items.push(CaseItem { labels, stmt: Box::new(Stmt::Block { stmts }) });
+                items.push(CaseItem {
+                    labels,
+                    stmt: Box::new(Stmt::Block { stmts }),
+                });
             }
         }
         self.expect(Token::Endcase)?;
-        if is_case_inside { Ok(Stmt::CaseInside { expr, items, default }) }
-        else if is_casex { Ok(Stmt::CaseX { expr, items, default }) }
-        else if is_casez { Ok(Stmt::CaseZ { expr, items, default }) }
-        else { Ok(Stmt::Case { expr, items, default }) }
+        if is_case_inside {
+            Ok(Stmt::CaseInside {
+                expr,
+                items,
+                default,
+            })
+        } else if is_casex {
+            Ok(Stmt::CaseX {
+                expr,
+                items,
+                default,
+            })
+        } else if is_casez {
+            Ok(Stmt::CaseZ {
+                expr,
+                items,
+                default,
+            })
+        } else {
+            Ok(Stmt::Case {
+                expr,
+                items,
+                default,
+            })
+        }
     }
 
     pub(crate) fn parse_for_stmt(&mut self) -> Result<Stmt, SimError> {
         self.advance();
         self.expect(Token::LParen)?;
         let init = if self.peek() != &Token::Semi {
-            if matches!(self.peek(), Token::Int | Token::Integer | Token::Bit | Token::Logic | Token::Reg) {
+            if matches!(
+                self.peek(),
+                Token::Int | Token::Integer | Token::Bit | Token::Logic | Token::Reg
+            ) {
                 self.advance();
-                if self.peek() == &Token::Signed { self.advance(); }
-                if self.peek() == &Token::Unsigned { self.advance(); }
+                if self.peek() == &Token::Signed {
+                    self.advance();
+                }
+                if self.peek() == &Token::Unsigned {
+                    self.advance();
+                }
                 let var = self.expect_ident()?;
-                let init_val = if self.peek() == &Token::BlockingAssign { self.advance(); Some(self.parse_expr(0)?) } else { None };
-                let stmt = if let Some(val) = init_val { Stmt::BlockingAssign { lhs: Expr::Ident { name: var, line: 0, col: 0 }, rhs: val, delay: None } } else { Stmt::Null };
+                let init_val = if self.peek() == &Token::BlockingAssign {
+                    self.advance();
+                    Some(self.parse_expr(0)?)
+                } else {
+                    None
+                };
+                let stmt = if let Some(val) = init_val {
+                    Stmt::BlockingAssign {
+                        lhs: Expr::Ident {
+                            name: var,
+                            line: 0,
+                            col: 0,
+                        },
+                        rhs: val,
+                        delay: None,
+                    }
+                } else {
+                    Stmt::Null
+                };
                 Some(Box::new(stmt))
             } else {
                 let expr = self.parse_expr(0)?;
                 let init_stmt = match self.peek() {
-                    Token::BlockingAssign => { self.advance(); let rhs = self.parse_expr(0)?; Stmt::BlockingAssign { lhs: expr, rhs, delay: None } }
+                    Token::BlockingAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?;
+                        Stmt::BlockingAssign {
+                            lhs: expr,
+                            rhs,
+                            delay: None,
+                        }
+                    }
                     _ => Stmt::Null,
                 };
                 Some(Box::new(init_stmt))
             }
-        } else { None };
+        } else {
+            None
+        };
         self.expect(Token::Semi)?;
-        let cond = if self.peek() != &Token::Semi { Some(self.parse_expr(0)?) } else { None };
+        let cond = if self.peek() != &Token::Semi {
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
         self.expect(Token::Semi)?;
         let step = if self.peek() != &Token::RParen {
             let expr = self.parse_expr(0)?;
             if self.peek() == &Token::Increment {
                 self.advance();
                 if let Expr::Ident { name: var, .. } = expr {
-                    Some(Box::new(Stmt::BlockingAssign { lhs: Expr::Ident { name: var, line: 0, col: 0 }, rhs: Expr::BinaryOp { op: BinaryOp::Add, lhs: Box::new(Expr::Ident { name: var, line: 0, col: 0 }), rhs: Box::new(Expr::Value(Value::Decimal(1))) }, delay: None }))
-                } else { None }
+                    Some(Box::new(Stmt::BlockingAssign {
+                        lhs: Expr::Ident {
+                            name: var,
+                            line: 0,
+                            col: 0,
+                        },
+                        rhs: Expr::BinaryOp {
+                            op: BinaryOp::Add,
+                            lhs: Box::new(Expr::Ident {
+                                name: var,
+                                line: 0,
+                                col: 0,
+                            }),
+                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                        },
+                        delay: None,
+                    }))
+                } else {
+                    None
+                }
             } else if self.peek() == &Token::Decrement {
                 self.advance();
                 if let Expr::Ident { name: var, .. } = expr {
-                    Some(Box::new(Stmt::BlockingAssign { lhs: Expr::Ident { name: var, line: 0, col: 0 }, rhs: Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(Expr::Ident { name: var, line: 0, col: 0 }), rhs: Box::new(Expr::Value(Value::Decimal(1))) }, delay: None }))
-                } else { None }
+                    Some(Box::new(Stmt::BlockingAssign {
+                        lhs: Expr::Ident {
+                            name: var,
+                            line: 0,
+                            col: 0,
+                        },
+                        rhs: Expr::BinaryOp {
+                            op: BinaryOp::Sub,
+                            lhs: Box::new(Expr::Ident {
+                                name: var,
+                                line: 0,
+                                col: 0,
+                            }),
+                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                        },
+                        delay: None,
+                    }))
+                } else {
+                    None
+                }
             } else {
                 let step_stmt = match self.peek() {
-                    Token::BlockingAssign => { self.advance(); let rhs = self.parse_expr(0)?; Stmt::BlockingAssign { lhs: expr, rhs, delay: None } }
+                    Token::BlockingAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?;
+                        Stmt::BlockingAssign {
+                            lhs: expr,
+                            rhs,
+                            delay: None,
+                        }
+                    }
                     _ => Stmt::Null,
                 };
                 Some(Box::new(step_stmt))
             }
-        } else { None };
+        } else {
+            None
+        };
         self.expect(Token::RParen)?;
         let stmts = self.parse_stmt_block()?;
-        Ok(Stmt::LoopFor { init, cond, step, stmts })
+        Ok(Stmt::LoopFor {
+            init,
+            cond,
+            step,
+            stmts,
+        })
     }
 
     pub(crate) fn parse_foreach_stmt(&mut self) -> Result<Stmt, SimError> {
@@ -1442,12 +2109,20 @@ impl Parser {
         let mut index_vars = Vec::new();
         loop {
             index_vars.push(self.expect_ident()?);
-            if self.peek() == &Token::Comma { self.advance(); } else { break; }
+            if self.peek() == &Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
         }
         self.expect(Token::RBrack)?;
         self.expect(Token::RParen)?;
         let stmts = self.parse_stmt_block()?;
-        Ok(Stmt::ForeachLoop { array_var, index_vars, stmts })
+        Ok(Stmt::ForeachLoop {
+            array_var,
+            index_vars,
+            stmts,
+        })
     }
 
     pub(crate) fn parse_while_stmt(&mut self) -> Result<Stmt, SimError> {
@@ -1479,11 +2154,31 @@ impl Parser {
         let mut processes = Vec::new();
         loop {
             match self.peek() {
-                Token::Join => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::Join }); }
-                Token::JoinAny => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::JoinAny }); }
-                Token::JoinNone => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::JoinNone }); }
+                Token::Join => {
+                    self.advance();
+                    return Ok(Stmt::Fork {
+                        processes,
+                        join_type: JoinType::Join,
+                    });
+                }
+                Token::JoinAny => {
+                    self.advance();
+                    return Ok(Stmt::Fork {
+                        processes,
+                        join_type: JoinType::JoinAny,
+                    });
+                }
+                Token::JoinNone => {
+                    self.advance();
+                    return Ok(Stmt::Fork {
+                        processes,
+                        join_type: JoinType::JoinNone,
+                    });
+                }
                 Token::Eof => return Err(self.err("unexpected EOF in fork block")),
-                _ => { processes.push(self.parse_stmt()?); }
+                _ => {
+                    processes.push(self.parse_stmt()?);
+                }
             }
         }
     }
@@ -1495,15 +2190,30 @@ impl Parser {
         self.advance();
         let name_tok = self.peek().clone();
         let name = match &name_tok {
-            Token::Ident(s) => { self.advance(); *s }
+            Token::Ident(s) => {
+                self.advance();
+                *s
+            }
             // Keyword tokens yang valid sebagai system call name ($assign, $deassign)
-            Token::Assign => { self.advance(); Symbol::intern("assign") }
-            Token::Deassign => { self.advance(); Symbol::intern("deassign") }
+            Token::Assign => {
+                self.advance();
+                Symbol::intern("assign")
+            }
+            Token::Deassign => {
+                self.advance();
+                Symbol::intern("deassign")
+            }
             _ => return Err(self.err("expected system call name after $")),
         };
         match name.as_str() {
             "finish" | "stop" => {
-                if self.peek() == &Token::LParen { self.advance(); if self.peek() != &Token::RParen { self.parse_expr(0)?; } self.expect(Token::RParen)?; }
+                if self.peek() == &Token::LParen {
+                    self.advance();
+                    if self.peek() != &Token::RParen {
+                        self.parse_expr(0)?;
+                    }
+                    self.expect(Token::RParen)?;
+                }
                 self.skip_semi();
                 Ok(Stmt::SysFinish)
             }
@@ -1524,9 +2234,19 @@ impl Parser {
                         }
                     }
                     self.expect(Token::RParen)?;
-                    Ok(Stmt::SysCall { name, args, line: sc_line, col: sc_col })
+                    Ok(Stmt::SysCall {
+                        name,
+                        args,
+                        line: sc_line,
+                        col: sc_col,
+                    })
                 } else {
-                    Ok(Stmt::SysCall { name, args: vec![], line: sc_line, col: sc_col })
+                    Ok(Stmt::SysCall {
+                        name,
+                        args: vec![],
+                        line: sc_line,
+                        col: sc_col,
+                    })
                 }
             }
             _ => {
@@ -1535,14 +2255,28 @@ impl Parser {
                 if self.peek() != &Token::RParen {
                     loop {
                         args.push(self.parse_expr(0)?);
-                        if self.peek() == &Token::Comma || matches!(self.peek(), Token::Input | Token::Output | Token::Inout | Token::Dot) {
-                            if self.peek() == &Token::Comma { self.advance(); }
-                        } else { break; }
+                        if self.peek() == &Token::Comma
+                            || matches!(
+                                self.peek(),
+                                Token::Input | Token::Output | Token::Inout | Token::Dot
+                            )
+                        {
+                            if self.peek() == &Token::Comma {
+                                self.advance();
+                            }
+                        } else {
+                            break;
+                        }
                     }
                 }
                 self.expect(Token::RParen)?;
                 self.skip_semi();
-                Ok(Stmt::SysCall { name, args, line: sc_line, col: sc_col })
+                Ok(Stmt::SysCall {
+                    name,
+                    args,
+                    line: sc_line,
+                    col: sc_col,
+                })
             }
         }
     }

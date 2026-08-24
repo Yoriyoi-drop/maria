@@ -15,4 +15,4 @@ pub use dpi::DpiInfo;
 pub use event_queue::EventQueueStats;
 pub use kernel::{KernelOptions, SimulationKernel};
 pub use simulation::SimulationContext;
-pub use waveform::{WaveformOptions, attach_waveforms};
+pub use waveform::{attach_waveforms, WaveformOptions};

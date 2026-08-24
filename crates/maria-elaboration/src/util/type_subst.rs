@@ -34,7 +34,11 @@ pub fn substitute_class_types(
             ClassMember::Task(td) => {
                 new_members.push(ClassMember::Task(td));
             }
-            ClassMember::Constraint { name, body, is_static } => {
+            ClassMember::Constraint {
+                name,
+                body,
+                is_static,
+            } => {
                 let new_body = body
                     .into_iter()
                     .map(|ci| substitute_constraint_item(ci, param_name, replacement))
@@ -131,7 +135,12 @@ pub fn substitute_expr_types(e: Expr, param_name: &str, replacement: &DataType) 
             true_expr: Box::new(substitute_expr_types(*true_expr, param_name, replacement)),
             false_expr: Box::new(substitute_expr_types(*false_expr, param_name, replacement)),
         },
-        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
+        Expr::FuncCall {
+            name,
+            args,
+            line,
+            col,
+        } => Expr::FuncCall {
             name,
             args: args
                 .into_iter()
@@ -153,10 +162,14 @@ fn substitute_constraint_item(
     replacement: &DataType,
 ) -> ConstraintItem {
     match ci {
-        ConstraintItem::Expr(e) => ConstraintItem::Expr(substitute_expr_types(e, param_name, replacement)),
+        ConstraintItem::Expr(e) => {
+            ConstraintItem::Expr(substitute_expr_types(e, param_name, replacement))
+        }
         ConstraintItem::SolveBefore { vars } => ConstraintItem::SolveBefore { vars },
         // LANG-31: `soft expr` — substitusi ekspresi di dalam soft constraint.
-        ConstraintItem::Soft(e) => ConstraintItem::Soft(substitute_expr_types(e, param_name, replacement)),
+        ConstraintItem::Soft(e) => {
+            ConstraintItem::Soft(substitute_expr_types(e, param_name, replacement))
+        }
         ConstraintItem::If { cond, then, els } => ConstraintItem::If {
             cond: substitute_expr_types(cond, param_name, replacement),
             then: then

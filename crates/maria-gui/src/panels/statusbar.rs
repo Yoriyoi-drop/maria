@@ -16,23 +16,22 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         } else if let Some(info) = &state.compile_info {
             if info.success {
                 ui.label(
-                    egui::RichText::new("● Compiled")
-                        .color(egui::Color32::from_rgb(34, 197, 94)),
+                    egui::RichText::new("● Compiled").color(egui::Color32::from_rgb(34, 197, 94)),
                 );
             }
         } else {
-            ui.label(
-                egui::RichText::new("○ Idle")
-                    .weak()
-                    .italics(),
-            );
+            ui.label(egui::RichText::new("○ Idle").weak().italics());
         }
 
         ui.separator();
 
         // ── Info proyek ──
         if !state.project_name.is_empty() {
-            let mods = state.compile_info.as_ref().map(|i| i.modules.len()).unwrap_or(0);
+            let mods = state
+                .compile_info
+                .as_ref()
+                .map(|i| i.modules.len())
+                .unwrap_or(0);
             ui.label(
                 egui::RichText::new(format!("{} · {} modules", state.project_name, mods))
                     .weak()
@@ -44,9 +43,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         // ── Simulasi ──
         if state.sim_time_ms > 0.0 {
             ui.label(
-                egui::RichText::new(format!("sim {:.1}ms @ t={}", state.sim_time_ms, state.cycles))
-                    .weak()
-                    .size(11.0),
+                egui::RichText::new(format!(
+                    "sim {:.1}ms @ t={}",
+                    state.sim_time_ms, state.cycles
+                ))
+                .weak()
+                .size(11.0),
             );
             ui.separator();
         }

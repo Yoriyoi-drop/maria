@@ -133,10 +133,18 @@ impl DeviceKind {
         let n = name.to_ascii_lowercase();
         if n.contains("uart") {
             DeviceKind::Uart
-        } else if n.contains("cpu") || n.contains("core") || n.contains("riscv")
-            || n.contains("picorv") || n.contains("ibex") || n.contains("cva6")
-            || n.contains("ariane") || n.contains("rv32") || n.contains("rv64")
-            || n.contains("c910") || n.contains("c906") || n.contains("rocket")
+        } else if n.contains("cpu")
+            || n.contains("core")
+            || n.contains("riscv")
+            || n.contains("picorv")
+            || n.contains("ibex")
+            || n.contains("cva6")
+            || n.contains("ariane")
+            || n.contains("rv32")
+            || n.contains("rv64")
+            || n.contains("c910")
+            || n.contains("c906")
+            || n.contains("rocket")
         {
             DeviceKind::Cpu
         } else if n.contains("clint") {
@@ -153,7 +161,11 @@ impl DeviceKind {
             DeviceKind::Virtio
         } else if n.contains("eth") || n.contains("mac") || n.contains("net") {
             DeviceKind::Network
-        } else if n.contains("sd") || n.contains("flash") || n.contains("block") || n.contains("mmc") {
+        } else if n.contains("sd")
+            || n.contains("flash")
+            || n.contains("block")
+            || n.contains("mmc")
+        {
             DeviceKind::Storage
         } else if n.contains("gpio") {
             DeviceKind::Gpio
@@ -242,8 +254,14 @@ mod tests {
     #[test]
     fn test_backpointer_display() {
         assert_eq!(BackPointer::default().display(), "-");
-        assert_eq!(BackPointer::known(Some("uart.sv".into()), 143, 5).display(), "uart.sv:143:5");
-        assert_eq!(BackPointer::known(Some("top.sv".into()), 12, 0).display(), "top.sv:12");
+        assert_eq!(
+            BackPointer::known(Some("uart.sv".into()), 143, 5).display(),
+            "uart.sv:143:5"
+        );
+        assert_eq!(
+            BackPointer::known(Some("top.sv".into()), 12, 0).display(),
+            "top.sv:12"
+        );
         assert_eq!(BackPointer::known(None, 7, 3).display(), "7:3");
     }
 
@@ -251,10 +269,19 @@ mod tests {
     fn test_device_kind_heuristics() {
         assert_eq!(DeviceKind::from_module_name("uart_16550"), DeviceKind::Uart);
         assert_eq!(DeviceKind::from_module_name("picorv32"), DeviceKind::Cpu);
-        assert_eq!(DeviceKind::from_module_name("rv_plic"), DeviceKind::InterruptController);
+        assert_eq!(
+            DeviceKind::from_module_name("rv_plic"),
+            DeviceKind::InterruptController
+        );
         assert_eq!(DeviceKind::from_module_name("clint"), DeviceKind::Clint);
-        assert_eq!(DeviceKind::from_module_name("virtio_mmio"), DeviceKind::Virtio);
+        assert_eq!(
+            DeviceKind::from_module_name("virtio_mmio"),
+            DeviceKind::Virtio
+        );
         assert_eq!(DeviceKind::from_module_name("spi_device"), DeviceKind::Spi);
-        assert_eq!(DeviceKind::from_module_name("weird_thing"), DeviceKind::Other);
+        assert_eq!(
+            DeviceKind::from_module_name("weird_thing"),
+            DeviceKind::Other
+        );
     }
 }

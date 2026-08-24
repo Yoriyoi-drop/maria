@@ -167,11 +167,7 @@ impl TypeSystem {
                 let fields: Vec<HirStructField> = members
                     .iter()
                     .map(|m| {
-                        let w = m
-                            .range
-                            .as_ref()
-                            .map(|r| r.width())
-                            .unwrap_or(1);
+                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                         HirStructField {
                             name: m.name,
                             dtype: HirType::BitVec { width: w },
@@ -220,11 +216,7 @@ impl TypeSystem {
     }
 
     /// Pre-populate cache with known type definitions from package items.
-    pub fn register_package_items(
-        &self,
-        pkg_name: Symbol,
-        items: &DashMap<Symbol, PackageItem>,
-    ) {
+    pub fn register_package_items(&self, pkg_name: Symbol, items: &DashMap<Symbol, PackageItem>) {
         for entry in items.iter() {
             let name = *entry.key();
             if let PackageItem::Typedef(td) = entry.value() {
@@ -329,18 +321,12 @@ mod tests {
             ts.ast_dtype_to_hir(&DataType::Longint, scope),
             HirType::Int { width: 64 }
         );
-        assert_eq!(
-            ts.ast_dtype_to_hir(&DataType::Real, scope),
-            HirType::Real
-        );
+        assert_eq!(ts.ast_dtype_to_hir(&DataType::Real, scope), HirType::Real);
         assert_eq!(
             ts.ast_dtype_to_hir(&DataType::String, scope),
             HirType::String
         );
-        assert_eq!(
-            ts.ast_dtype_to_hir(&DataType::Void, scope),
-            HirType::Void
-        );
+        assert_eq!(ts.ast_dtype_to_hir(&DataType::Void, scope), HirType::Void);
     }
 
     #[test]
@@ -351,8 +337,18 @@ mod tests {
         let enum_type = DataType::EnumType {
             base: Some(Box::new(DataType::Int)),
             members: vec![
-                (Symbol::intern("IDLE"), Some(maria_ast::expr::Expr::Value(maria_ast::expr::Value::Decimal(0)))),
-                (Symbol::intern("BUSY"), Some(maria_ast::expr::Expr::Value(maria_ast::expr::Value::Decimal(1)))),
+                (
+                    Symbol::intern("IDLE"),
+                    Some(maria_ast::expr::Expr::Value(
+                        maria_ast::expr::Value::Decimal(0),
+                    )),
+                ),
+                (
+                    Symbol::intern("BUSY"),
+                    Some(maria_ast::expr::Expr::Value(
+                        maria_ast::expr::Value::Decimal(1),
+                    )),
+                ),
                 (Symbol::intern("DONE"), None),
             ],
         };

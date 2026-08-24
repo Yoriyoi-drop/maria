@@ -1,10 +1,10 @@
-use maria_ast::Design;
-use maria_elaboration::ElaborateMode;
 use crate::env::config::ConfigContext;
 use crate::env::workspace::WorkspaceContext;
-use maria_core::error::SimError;
+use maria_ast::Design;
 use maria_compiler::frontend::compile_session::{CompileSession, SessionConfig, SessionTiming};
 use maria_compiler::frontend::module_index::ModuleIndex;
+use maria_core::error::SimError;
+use maria_elaboration::ElaborateMode;
 use maria_ir::IrDesign;
 
 /// CompilerContext — pintu pipeline compile+elaborate.
@@ -29,7 +29,9 @@ impl CompilerContext {
         sc.use_fast_lexer = true;
         let source_count = sc.sources.len();
         let elab_mode = match config.elab_mode() {
-            Some(m) if m.eq_ignore_ascii_case("analysisrecovery") => ElaborateMode::AnalysisRecovery,
+            Some(m) if m.eq_ignore_ascii_case("analysisrecovery") => {
+                ElaborateMode::AnalysisRecovery
+            }
             _ => ElaborateMode::StrictSimulation,
         };
         CompilerContext {
@@ -53,7 +55,10 @@ impl CompilerContext {
     }
 
     /// Parse + elaborate → (Design, IrDesign).
-    pub fn compile_and_elaborate(&mut self, top: Option<&str>) -> Result<(Design, IrDesign), SimError> {
+    pub fn compile_and_elaborate(
+        &mut self,
+        top: Option<&str>,
+    ) -> Result<(Design, IrDesign), SimError> {
         let mode = self.elab_mode;
         let (design, ir, _len) = self.session.compile_and_elaborate_with_mode(top, mode)?;
         Ok((design, ir))

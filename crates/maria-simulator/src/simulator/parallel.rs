@@ -1,7 +1,9 @@
-use maria_core::error::SimError;
-use maria_ir::{BinaryIrOp, CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec, SignalId, SignalInfo};
 use crate::simulator::util::{is_signed_expr, string_to_logicvec};
 use crate::simulator::value::*;
+use maria_core::error::SimError;
+use maria_ir::{
+    BinaryIrOp, CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec, SignalId, SignalInfo,
+};
 use std::sync::Arc;
 
 /// Pandangan sinyal untuk evaluasi paralel (SIM-28): base array + peta id
@@ -356,7 +358,12 @@ pub fn evaluate_stmt_block_parallel(
                             }
                         };
                         if eq {
-                            evaluate_stmt_block_parallel(&case_item.body, signals, writes, sig_info)?;
+                            evaluate_stmt_block_parallel(
+                                &case_item.body,
+                                signals,
+                                writes,
+                                sig_info,
+                            )?;
                             item_matched = true;
                             matched = true;
                             break;

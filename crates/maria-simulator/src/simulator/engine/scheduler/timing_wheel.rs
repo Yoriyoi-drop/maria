@@ -44,7 +44,7 @@ use crate::simulator::types::{EventKind, EventRegion, RegionEvent};
 const WHEEL_SIZE: usize = 256;
 
 /// Bit shift for each level.
-const LEVEL1_SHIFT: usize = 8;  // 2^8 = 256
+const LEVEL1_SHIFT: usize = 8; // 2^8 = 256
 const LEVEL2_SHIFT: usize = 16; // 2^16 = 65536
 
 /// Mask to extract bucket index within a level.
@@ -114,7 +114,9 @@ impl HierarchicalTimingWheel {
     pub fn add_event(&mut self, time: usize, region: EventRegion, event: EventKind) {
         if time < self.current_time {
             // Event in the past — schedule at current time
-            self.levels[0][0].events.push((0, RegionEvent { region, event }));
+            self.levels[0][0]
+                .events
+                .push((0, RegionEvent { region, event }));
             self.levels[0][0].populated = true;
             self.total_events += 1;
             return;
@@ -125,7 +127,9 @@ impl HierarchicalTimingWheel {
         if offset < WHEEL_SIZE {
             // Level 0: within next 256 time units
             let idx = offset & WHEEL_MASK;
-            self.levels[0][idx].events.push((0, RegionEvent { region, event }));
+            self.levels[0][idx]
+                .events
+                .push((0, RegionEvent { region, event }));
             self.levels[0][idx].populated = true;
         } else if offset < (WHEEL_SIZE * WHEEL_SIZE) {
             // Level 1: within next 65536 time units
@@ -134,7 +138,9 @@ impl HierarchicalTimingWheel {
             // Bucket 1 covers offsets [256, 512), bucket 2 covers [512, 768), etc.
             // The remainder `offset & 0xFF` preserves the exact position within the bucket.
             let remainder = (offset & WHEEL_MASK) as u32;
-            self.levels[1][idx].events.push((remainder, RegionEvent { region, event }));
+            self.levels[1][idx]
+                .events
+                .push((remainder, RegionEvent { region, event }));
             self.levels[1][idx].populated = true;
         } else {
             // Level 2: beyond 65536 time units
@@ -143,7 +149,9 @@ impl HierarchicalTimingWheel {
             // Level 2 bucket idx covers offsets [idx << 16, (idx+1) << 16).
             // The remainder `offset & 0xFFFF` preserves the exact position (16 bits).
             let remainder = (offset & 0xFFFF) as u32;
-            self.levels[2][idx].events.push((remainder, RegionEvent { region, event }));
+            self.levels[2][idx]
+                .events
+                .push((remainder, RegionEvent { region, event }));
             self.levels[2][idx].populated = true;
         }
 
@@ -297,7 +305,11 @@ impl HierarchicalTimingWheel {
 
     /// Number of populated buckets across all levels.
     pub fn populated_buckets(&self) -> usize {
-        self.levels.iter().flat_map(|level| level.iter()).filter(|b| b.populated).count()
+        self.levels
+            .iter()
+            .flat_map(|level| level.iter())
+            .filter(|b| b.populated)
+            .count()
     }
 }
 
@@ -441,7 +453,11 @@ mod tests {
             let _ = wheel.advance(t);
         }
         let events = wheel.advance(256); // drains bucket (256 & 0xFF = 0)
-        assert_eq!(events.len(), 1, "past event should fire at next wrap-around (bucket 0)");
+        assert_eq!(
+            events.len(),
+            1,
+            "past event should fire at next wrap-around (bucket 0)"
+        );
     }
 
     #[test]

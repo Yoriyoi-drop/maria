@@ -509,7 +509,10 @@ pub fn classify_file(path: &std::path::Path) -> FileCat {
     // Testbench: segmen direktori khas.
     let segs: Vec<&str> = lower_path.split(['/', '\\']).collect();
     if segs.iter().any(|s| {
-        matches!(*s, "tb" | "testbench" | "tests" | "verification" | "uvm" | "dv" | "sim")
+        matches!(
+            *s,
+            "tb" | "testbench" | "tests" | "verification" | "uvm" | "dv" | "sim"
+        )
     }) {
         return FileCat::Testbench;
     }
@@ -952,7 +955,10 @@ impl GuiState {
         if ok {
             self.log(format!("💡 Quick fix '{}' → {}:{}", fix.action, file, line));
         } else {
-            self.log(format!("⚠ Quick fix '{}' gagal menulis {}:{}", fix.action, file, line));
+            self.log(format!(
+                "⚠ Quick fix '{}' gagal menulis {}:{}",
+                fix.action, file, line
+            ));
         }
         ok
     }
@@ -964,11 +970,7 @@ impl GuiState {
                 if n.is_dir {
                     walk(&n.children, out);
                 } else {
-                    let ext = n
-                        .path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("");
+                    let ext = n.path.extension().and_then(|e| e.to_str()).unwrap_or("");
                     if ext == "sv" || ext == "svh" {
                         out.push(n.path.clone());
                     }
@@ -989,11 +991,7 @@ impl GuiState {
                 if n.is_dir {
                     walk(&n.children, out);
                 } else {
-                    let ext = n
-                        .path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("");
+                    let ext = n.path.extension().and_then(|e| e.to_str()).unwrap_or("");
                     if ext == "mv" {
                         out.push(n.path.clone());
                     }

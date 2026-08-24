@@ -59,12 +59,16 @@ pub fn vhpi_register_cb(cb_data_p: &t_vhpi_cb_data) -> VhpiHandle {
         id,
         data: cb_data_p.clone(),
     });
-    VhpiHandle { ptr: id as *mut std::ffi::c_void }
+    VhpiHandle {
+        ptr: id as *mut std::ffi::c_void,
+    }
 }
 
 /// vhpi_remove_cb(handle) — hapus callback by unique id.
 pub fn vhpi_remove_cb(handle: VhpiHandle) -> i32 {
-    if handle.is_null() { return 0; }
+    if handle.is_null() {
+        return 0;
+    }
     let id = handle.ptr as u64;
     let mut reg = vhpi_callbacks().lock().unwrap();
     if let Some(pos) = reg.iter().position(|c| c.id == id) {
@@ -88,7 +92,9 @@ pub fn dispatch_callback(reason: i32) {
     for data in snapshot {
         if let Some(cb) = data.cb_rtn {
             let mut d = data;
-            unsafe { cb(&mut d); }
+            unsafe {
+                cb(&mut d);
+            }
         }
     }
 }
@@ -157,7 +163,9 @@ pub fn fire_value_change_callbacks(
     };
     for mut data in matching {
         if let Some(cb) = data.cb_rtn {
-            unsafe { cb(&mut data); }
+            unsafe {
+                cb(&mut data);
+            }
         }
     }
 }
@@ -197,10 +205,18 @@ mod tests {
         let h = vhpi_register_cb(&make_cb(vhpiCbStartOfSimulation));
         assert!(h.is_valid());
         dispatch_start_of_simulation();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 1, "callback terpanggil sekali");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            1,
+            "callback terpanggil sekali"
+        );
         assert_eq!(vhpi_remove_cb(h), 1);
         dispatch_start_of_simulation();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 1, "setelah remove tidak terpanggil");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            1,
+            "setelah remove tidak terpanggil"
+        );
         clear_all_callbacks();
     }
 
@@ -211,7 +227,11 @@ mod tests {
         FIRED.store(0, Ordering::SeqCst);
         let h = vhpi_register_cb(&make_cb(vhpiCbEndOfSimulation));
         dispatch_start_of_simulation();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 0, "reason berbeda tak dipanggil");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            0,
+            "reason berbeda tak dipanggil"
+        );
         dispatch_end_of_simulation();
         assert_eq!(FIRED.load(Ordering::SeqCst), 1, "reason cocok dipanggil");
         assert_eq!(vhpi_remove_cb(h), 1);
@@ -233,7 +253,11 @@ mod tests {
         assert_eq!(vhpi_remove_cb(h1), 1);
         // h3 tetap valid → fire 1x (hanya h3)
         dispatch_synch();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 1, "h3 harus tetap valid setelah h1+h2 dihapus");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            1,
+            "h3 harus tetap valid setelah h1+h2 dihapus"
+        );
         assert_eq!(vhpi_remove_cb(h3), 1);
         clear_all_callbacks();
     }

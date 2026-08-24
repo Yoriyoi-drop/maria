@@ -11,10 +11,7 @@ use maria_ir::IrDesign;
 ///
 /// Membuat file .gtkw yang membuka file VCD atau FST dengan signal-signal
 /// yang terorganisir berdasarkan hierarki module.
-pub fn generate_gtkw(
-    waveform_path: &str,
-    design: &IrDesign,
-) -> String {
+pub fn generate_gtkw(waveform_path: &str, design: &IrDesign) -> String {
     let mut content = String::new();
 
     // ── Header ──
@@ -82,9 +79,7 @@ pub fn generate_gtkw(
         for (bare_name, _width) in sigs {
             content.push_str(&format!(
                 "    {} {}.{}\n",
-                signal_count,
-                full_scope_name,
-                bare_name
+                signal_count, full_scope_name, bare_name
             ));
             signal_count += 1;
         }
@@ -144,19 +139,31 @@ mod tests {
     fn test_gtkw_generate() {
         let design = make_test_design();
         let gtkw = generate_gtkw("output.fst", &design);
-        assert!(gtkw.contains("dumpfile=output.fst"), "should reference waveform file");
-        assert!(gtkw.contains("dumpfiletype=fst"), "should detect fst format");
+        assert!(
+            gtkw.contains("dumpfile=output.fst"),
+            "should reference waveform file"
+        );
+        assert!(
+            gtkw.contains("dumpfiletype=fst"),
+            "should detect fst format"
+        );
         assert!(gtkw.contains("clk"), "should include clk signal");
         assert!(gtkw.contains("rst_n"), "should include rst_n signal");
         assert!(gtkw.contains("count"), "should include count signal");
         assert!(gtkw.contains("test_top"), "should include top module name");
-        assert!(gtkw.starts_with("[awave]"), "should start with [awave] header");
+        assert!(
+            gtkw.starts_with("[awave]"),
+            "should start with [awave] header"
+        );
     }
 
     #[test]
     fn test_gtkw_vcd_detection() {
         let design = make_test_design();
         let gtkw = generate_gtkw("output.vcd", &design);
-        assert!(gtkw.contains("dumpfiletype=vcd"), "should detect vcd format");
+        assert!(
+            gtkw.contains("dumpfiletype=vcd"),
+            "should detect vcd format"
+        );
     }
 }

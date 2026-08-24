@@ -109,14 +109,22 @@ pub fn vhpi_handle_by_name(name: &str, _scope: VhpiHandle) -> VhpiHandle {
         // 2. Port (input/output/inout).
         for (sig_id, sig) in engine.design.top.signals.iter().enumerate() {
             if sig.name.as_str() == name
-                && matches!(sig.kind, maria_ir::SignalKind::Input | maria_ir::SignalKind::Output | maria_ir::SignalKind::Inout)
+                && matches!(
+                    sig.kind,
+                    maria_ir::SignalKind::Input
+                        | maria_ir::SignalKind::Output
+                        | maria_ir::SignalKind::Inout
+                )
             {
                 return super::handle::register_object(VhpiObjectKind::Port(sig_id, 0));
             }
         }
         // 3. Modul (design unit / instance).
         if engine.design.top.name.as_str() == name {
-            return super::handle::register_object(VhpiObjectKind::Module(0, engine.design.top.name));
+            return super::handle::register_object(VhpiObjectKind::Module(
+                0,
+                engine.design.top.name,
+            ));
         }
         VhpiHandle::NULL
     })
@@ -145,8 +153,14 @@ pub fn vhpi_get(property: i32, handle: VhpiHandle) -> i32 {
         vhpiSize => match &obj.kind {
             VhpiObjectKind::Signal(sig_id, _) | VhpiObjectKind::Port(sig_id, _) => {
                 with_vhpi_engine(|e| {
-                    e.design.top.signals.get(*sig_id).map(|s| s.width as i32).unwrap_or(0)
-                }).unwrap_or(0)
+                    e.design
+                        .top
+                        .signals
+                        .get(*sig_id)
+                        .map(|s| s.width as i32)
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0)
             }
             VhpiObjectKind::Module(_, _) => {
                 with_vhpi_engine(|e| e.design.top.signals.len() as i32).unwrap_or(0)
@@ -154,16 +168,20 @@ pub fn vhpi_get(property: i32, handle: VhpiHandle) -> i32 {
             _ => 0,
         },
         vhpiDirection => match &obj.kind {
-            VhpiObjectKind::Port(sig_id, _) => {
-                with_vhpi_engine(|e| {
-                    e.design.top.signals.get(*sig_id).map(|s| match s.kind {
+            VhpiObjectKind::Port(sig_id, _) => with_vhpi_engine(|e| {
+                e.design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| match s.kind {
                         maria_ir::SignalKind::Input => vhpiIn,
                         maria_ir::SignalKind::Output => vhpiOut,
                         maria_ir::SignalKind::Inout => vhpiInout,
                         _ => vhpiNoDirection,
-                    }).unwrap_or(vhpiNoDirection)
-                }).unwrap_or(vhpiNoDirection)
-            }
+                    })
+                    .unwrap_or(vhpiNoDirection)
+            })
+            .unwrap_or(vhpiNoDirection),
             _ => vhpiNoDirection,
         },
         _ => 0,
@@ -198,8 +216,14 @@ pub fn vhpi_get_str(property: i32, handle: VhpiHandle) -> *mut std::os::raw::c_c
             VhpiObjectKind::Module(_, name) => name.as_str().to_string(),
             VhpiObjectKind::Signal(sig_id, _) | VhpiObjectKind::Port(sig_id, _) => {
                 with_vhpi_engine(|e| {
-                    e.design.top.signals.get(*sig_id).map(|s| s.name.to_string())
-                }).flatten().unwrap_or_default()
+                    e.design
+                        .top
+                        .signals
+                        .get(*sig_id)
+                        .map(|s| s.name.to_string())
+                })
+                .flatten()
+                .unwrap_or_default()
             }
             VhpiObjectKind::Scope(name) => name.clone(),
             _ => String::new(),

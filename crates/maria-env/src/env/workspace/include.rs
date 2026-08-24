@@ -75,7 +75,11 @@ mod tests {
     #[test]
     fn test_extend_and_dedup() {
         let mut inc = IncludeDirs::new();
-        inc.extend(vec![PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("a")]);
+        inc.extend(vec![
+            PathBuf::from("a"),
+            PathBuf::from("b"),
+            PathBuf::from("a"),
+        ]);
         assert_eq!(inc.len(), 2);
         inc.dedup();
         assert_eq!(inc.len(), 2);
@@ -86,6 +90,9 @@ mod tests {
         let mut inc = IncludeDirs::new();
         inc.add("rtl");
         inc.add("tb");
-        assert_eq!(inc.to_search_paths(), vec!["rtl".to_string(), "tb".to_string()]);
+        assert_eq!(
+            inc.to_search_paths(),
+            vec!["rtl".to_string(), "tb".to_string()]
+        );
     }
 }

@@ -1,7 +1,7 @@
 use maria_compiler::scheduler::Task;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 /// Handle ke work-stealing scheduler (dependency-aware task scheduling).
 /// Compiler mengirim task tanpa tahu detail antrian/stealing.

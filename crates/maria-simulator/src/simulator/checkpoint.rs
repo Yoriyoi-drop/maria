@@ -87,7 +87,10 @@ fn read_logic_val<R: Read>(r: &mut R) -> io::Result<LogicVal> {
         1 => Ok(LogicVal::One),
         2 => Ok(LogicVal::X),
         3 => Ok(LogicVal::Z),
-        _ => Err(io::Error::new(io::ErrorKind::InvalidData, "invalid LogicVal byte")),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid LogicVal byte",
+        )),
     }
 }
 
@@ -129,8 +132,14 @@ fn read_obj_id<R: Read>(r: &mut R) -> io::Result<ObjId> {
     read_usize(r)
 }
 
-fn write_tuple_hashmap<K1: std::fmt::Display + std::hash::Hash + Eq, K2: std::fmt::Display + std::hash::Hash + Eq, V, W: Write>(
-    w: &mut W, map: &HashMap<(K1, K2), V>,
+fn write_tuple_hashmap<
+    K1: std::fmt::Display + std::hash::Hash + Eq,
+    K2: std::fmt::Display + std::hash::Hash + Eq,
+    V,
+    W: Write,
+>(
+    w: &mut W,
+    map: &HashMap<(K1, K2), V>,
     write_val: &impl Fn(&mut W, &V) -> io::Result<()>,
 ) -> io::Result<()> {
     write_usize(w, map.len())?;
@@ -142,8 +151,14 @@ fn write_tuple_hashmap<K1: std::fmt::Display + std::hash::Hash + Eq, K2: std::fm
     Ok(())
 }
 
-fn read_tuple_hashmap<K1: std::str::FromStr + std::hash::Hash + Eq, K2: std::str::FromStr + std::hash::Hash + Eq, V, R: Read>(
-    r: &mut R, read_val: &impl Fn(&mut R) -> io::Result<V>,
+fn read_tuple_hashmap<
+    K1: std::str::FromStr + std::hash::Hash + Eq,
+    K2: std::str::FromStr + std::hash::Hash + Eq,
+    V,
+    R: Read,
+>(
+    r: &mut R,
+    read_val: &impl Fn(&mut R) -> io::Result<V>,
 ) -> io::Result<HashMap<(K1, K2), V>> {
     let len = read_usize(r)?;
     let mut map = HashMap::with_capacity(len);
@@ -151,14 +166,22 @@ fn read_tuple_hashmap<K1: std::str::FromStr + std::hash::Hash + Eq, K2: std::str
         let k1_str = read_str(r)?;
         let k2_str = read_str(r)?;
         let v = read_val(r)?;
-        let k1: K1 = k1_str.parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "parse error"))?;
-        let k2: K2 = k2_str.parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "parse error"))?;
+        let k1: K1 = k1_str
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "parse error"))?;
+        let k2: K2 = k2_str
+            .parse()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "parse error"))?;
         map.insert((k1, k2), v);
     }
     Ok(map)
 }
 
-fn write_usize_hashmap<V, W: Write>(w: &mut W, map: &HashMap<usize, V>, write_val: &impl Fn(&mut W, &V) -> io::Result<()>) -> io::Result<()> {
+fn write_usize_hashmap<V, W: Write>(
+    w: &mut W,
+    map: &HashMap<usize, V>,
+    write_val: &impl Fn(&mut W, &V) -> io::Result<()>,
+) -> io::Result<()> {
     write_usize(w, map.len())?;
     for (k, v) in map {
         write_usize(w, *k)?;
@@ -167,7 +190,10 @@ fn write_usize_hashmap<V, W: Write>(w: &mut W, map: &HashMap<usize, V>, write_va
     Ok(())
 }
 
-fn read_usize_hashmap<V, R: Read>(r: &mut R, read_val: &impl Fn(&mut R) -> io::Result<V>) -> io::Result<HashMap<usize, V>> {
+fn read_usize_hashmap<V, R: Read>(
+    r: &mut R,
+    read_val: &impl Fn(&mut R) -> io::Result<V>,
+) -> io::Result<HashMap<usize, V>> {
     let len = read_usize(r)?;
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
@@ -178,7 +204,11 @@ fn read_usize_hashmap<V, R: Read>(r: &mut R, read_val: &impl Fn(&mut R) -> io::R
     Ok(map)
 }
 
-fn write_symbol_hashmap<V, W: Write>(w: &mut W, map: &HashMap<Symbol, V>, write_val: &impl Fn(&mut W, &V) -> io::Result<()>) -> io::Result<()> {
+fn write_symbol_hashmap<V, W: Write>(
+    w: &mut W,
+    map: &HashMap<Symbol, V>,
+    write_val: &impl Fn(&mut W, &V) -> io::Result<()>,
+) -> io::Result<()> {
     write_usize(w, map.len())?;
     for (k, v) in map {
         write_symbol(w, k)?;
@@ -187,7 +217,10 @@ fn write_symbol_hashmap<V, W: Write>(w: &mut W, map: &HashMap<Symbol, V>, write_
     Ok(())
 }
 
-fn read_symbol_hashmap<V, R: Read>(r: &mut R, read_val: &impl Fn(&mut R) -> io::Result<V>) -> io::Result<HashMap<Symbol, V>> {
+fn read_symbol_hashmap<V, R: Read>(
+    r: &mut R,
+    read_val: &impl Fn(&mut R) -> io::Result<V>,
+) -> io::Result<HashMap<Symbol, V>> {
     let len = read_usize(r)?;
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
@@ -332,8 +365,12 @@ impl SimCheckpoint {
         })?;
 
         // UVM config/resource DB
-        write_tuple_hashmap(w, &self.uvm_config_db_data, &|w, val| write_logic_vec(w, val))?;
-        write_tuple_hashmap(w, &self.uvm_resource_db_data, &|w, val| write_logic_vec(w, val))?;
+        write_tuple_hashmap(w, &self.uvm_config_db_data, &|w, val| {
+            write_logic_vec(w, val)
+        })?;
+        write_tuple_hashmap(w, &self.uvm_resource_db_data, &|w, val| {
+            write_logic_vec(w, val)
+        })?;
 
         // Mailbox queues
         write_usize_hashmap(w, &self.mailbox_queues, &|w, deque| {
@@ -377,7 +414,10 @@ impl SimCheckpoint {
         let mut magic = [0u8; 5];
         r.read_exact(&mut magic)?;
         if &magic != b"MCKPT" {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "bad checkpoint magic"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bad checkpoint magic",
+            ));
         }
         let _version = read_u32(r)?;
 
@@ -414,7 +454,11 @@ impl SimCheckpoint {
         // UVM component data
         let uvm_component_data = read_usize_hashmap(r, &|r| {
             let parent_id = read_obj_id(r)?;
-            let parent = if parent_id == 0 { None } else { Some(parent_id) };
+            let parent = if parent_id == 0 {
+                None
+            } else {
+                Some(parent_id)
+            };
             let child_len = read_usize(r)?;
             let mut children = Vec::with_capacity(child_len);
             for _ in 0..child_len {
@@ -524,7 +568,10 @@ impl crate::simulator::engine::SimulationEngine {
 
         // RNG: save current seed for StdRng::seed_from_u64
         // We use a deterministic seed derived from current time
-        let rng_seed = self.current_time.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let rng_seed = self
+            .current_time
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
 
         // UVM data
         let uvm_object_data = self.uvm_object_data.clone();
@@ -609,7 +656,8 @@ impl crate::simulator::engine::SimulationEngine {
         self.cover_bins = checkpoint.cover_bins;
 
         // Signal history (restore memory entries — disk spill file persists separately)
-        self.signal_history.restore_memory_entries(checkpoint.signal_history);
+        self.signal_history
+            .restore_memory_entries(checkpoint.signal_history);
 
         // Reset runtime state that should be fresh after restore
         self.events.clear();
@@ -679,11 +727,24 @@ mod tests {
     #[test]
     fn test_checkpoint_with_uvm_data() {
         let mut uvm_objects = HashMap::new();
-        uvm_objects.insert(1, UvmObjectData { name: "uvm_test_top".to_string() });
-        uvm_objects.insert(2, UvmObjectData { name: "my_driver".to_string() });
+        uvm_objects.insert(
+            1,
+            UvmObjectData {
+                name: "uvm_test_top".to_string(),
+            },
+        );
+        uvm_objects.insert(
+            2,
+            UvmObjectData {
+                name: "my_driver".to_string(),
+            },
+        );
 
         let mut config_db = HashMap::new();
-        config_db.insert(("uvm_test_top".to_string(), "count".to_string()), LogicVec::from_u64(100, 32));
+        config_db.insert(
+            ("uvm_test_top".to_string(), "count".to_string()),
+            LogicVec::from_u64(100, 32),
+        );
 
         let mut mailboxes = HashMap::new();
         let mut deque = VecDeque::new();
@@ -796,6 +857,9 @@ mod tests {
 
         let restored = SimCheckpoint::deserialize(&mut buf.as_slice()).unwrap();
         assert_eq!(restored.cover_hits[&Symbol::intern("line_10")], 3);
-        assert_eq!(restored.cover_bins[&Symbol::intern("my_coverpoint")][&Symbol::intern("bin_0")], 5);
+        assert_eq!(
+            restored.cover_bins[&Symbol::intern("my_coverpoint")][&Symbol::intern("bin_0")],
+            5
+        );
     }
 }

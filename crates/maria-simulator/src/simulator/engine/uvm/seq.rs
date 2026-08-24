@@ -11,10 +11,10 @@
 //! 1 file = 1 tanggung jawab: handshake sequence.
 
 use super::super::SimulationEngine;
-use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
 use crate::simulator::types::*;
 use crate::simulator::util::*;
+use maria_compiler::hir::{LogicVec, ObjId};
+use maria_core::error::SimError;
 use maria_core::Symbol;
 
 impl SimulationEngine {
@@ -116,16 +116,13 @@ impl SimulationEngine {
 
     /// Pop item terdepan dari queue sequencer + set current_item (grant).
     pub(crate) fn uvm_seq_pop(&mut self, seqr_id: ObjId) -> Option<ObjId> {
-        let popped = self
-            .uvm_sequencer_data
-            .get_mut(&seqr_id)
-            .and_then(|sd| {
-                let item = sd.item_queue.first().copied();
-                if item.is_some() {
-                    sd.item_queue.remove(0);
-                }
-                item
-            });
+        let popped = self.uvm_sequencer_data.get_mut(&seqr_id).and_then(|sd| {
+            let item = sd.item_queue.first().copied();
+            if item.is_some() {
+                sd.item_queue.remove(0);
+            }
+            item
+        });
         if let (Some(item), Some(sd)) = (popped, self.uvm_sequencer_data.get_mut(&seqr_id)) {
             sd.current_item = Some(item);
         }
@@ -170,13 +167,16 @@ impl SimulationEngine {
         this: Option<ObjId>,
         method_opt: Option<Symbol>,
     ) -> Result<(), SimError> {
-        self.uvm_sync_waiters.entry(seqr_id).or_default().push(UvmSyncWaiter {
-            continuation,
-            fork_id,
-            this,
-            method: method_opt,
-            wait_label: label,
-        });
+        self.uvm_sync_waiters
+            .entry(seqr_id)
+            .or_default()
+            .push(UvmSyncWaiter {
+                continuation,
+                fork_id,
+                this,
+                method: method_opt,
+                wait_label: label,
+            });
         Ok(())
     }
 
@@ -207,8 +207,9 @@ impl SimulationEngine {
         labels: &[&str],
     ) -> Result<(), SimError> {
         let all = self.uvm_sync_waiters.remove(&seqr_id).unwrap_or_default();
-        let (matched, rest): (Vec<_>, Vec<_>) =
-            all.into_iter().partition(|w| labels.contains(&w.wait_label.as_str()));
+        let (matched, rest): (Vec<_>, Vec<_>) = all
+            .into_iter()
+            .partition(|w| labels.contains(&w.wait_label.as_str()));
         if !rest.is_empty() {
             self.uvm_sync_waiters.insert(seqr_id, rest);
         }

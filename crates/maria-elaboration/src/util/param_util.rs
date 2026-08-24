@@ -160,7 +160,11 @@ pub fn resolve_param_values_with_ctx(
     let mut positional_overrides: Vec<i64> = Vec::new();
     for (name, val) in instance_overrides {
         if name.starts_with("__param") {
-            let idx: usize = name.as_str().trim_start_matches("__param").parse().unwrap_or(0);
+            let idx: usize = name
+                .as_str()
+                .trim_start_matches("__param")
+                .parse()
+                .unwrap_or(0);
             if idx >= positional_overrides.len() {
                 positional_overrides.resize(idx + 1, 0);
             }
@@ -345,7 +349,12 @@ pub fn resolve_param_values_with_ctx(
     }
 
     if std::env::var("DBG_ELAB").is_ok() {
-        eprintln!("[DBG-RESOLVE] module '{}' total={}us clone_vals={}us", module.name.as_str(), _t0.elapsed().as_micros(), _t_clone_vals.as_micros());
+        eprintln!(
+            "[DBG-RESOLVE] module '{}' total={}us clone_vals={}us",
+            module.name.as_str(),
+            _t0.elapsed().as_micros(),
+            _t_clone_vals.as_micros()
+        );
     }
     Ok(vals)
 }

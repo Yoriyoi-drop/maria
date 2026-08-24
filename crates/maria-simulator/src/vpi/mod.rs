@@ -13,13 +13,13 @@
 //! - vpi_control
 //! - vpi_free_object / vpi_chk_error
 
-pub mod ffi;
-pub mod handle;
-pub mod value;
 pub mod callback;
 pub mod control;
+pub mod ffi;
+pub mod handle;
 pub mod systf;
 pub mod types;
+pub mod value;
 
 use crate::simulator::engine::SimulationEngine;
 thread_local! {

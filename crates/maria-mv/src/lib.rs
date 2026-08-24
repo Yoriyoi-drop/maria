@@ -111,7 +111,9 @@ pub fn transpile_no_check(src: &str, base: &str) -> Result<TranspileResult, MvEr
 /// `items` = pasangan (sumber, base). Hasil sejajar dengan `items`. Error
 /// pertama di-return bersama indeks item asalnya — pemanggil menyertakan
 /// path-nya dalam pesan error.
-pub fn transpile_many(items: &[(String, String)]) -> Result<Vec<TranspileResult>, (usize, MvError)> {
+pub fn transpile_many(
+    items: &[(String, String)],
+) -> Result<Vec<TranspileResult>, (usize, MvError)> {
     let files = parse_all(items)?;
     let refs: Vec<&ast::MvFile> = files.iter().collect();
     check::check_many(&refs).map_err(|(i, e)| (i, e))?;
@@ -155,9 +157,16 @@ fn generate_all(
     Ok(out)
 }
 
-fn generate_from(file: &MvFile, base: &str, iface_names: &[&str]) -> Result<TranspileResult, MvError> {
+fn generate_from(
+    file: &MvFile,
+    base: &str,
+    iface_names: &[&str],
+) -> Result<TranspileResult, MvError> {
     let out = codegen::generate_with_ifaces(file, base, iface_names);
-    Ok(TranspileResult { sv: out.sv, svh: out.svh })
+    Ok(TranspileResult {
+        sv: out.sv,
+        svh: out.svh,
+    })
 }
 
 #[cfg(test)]
@@ -204,7 +213,10 @@ module counter #(WIDTH = 8) {
         let err = transpile(src, "m").unwrap_err();
         assert_eq!(err.line, 4);
         let rendered = format_error("counter.mv", src, &err);
-        assert!(rendered.contains("counter.mv: 4:16: [E2001]"), "got: {rendered}");
+        assert!(
+            rendered.contains("counter.mv: 4:16: [E2001]"),
+            "got: {rendered}"
+        );
         assert!(rendered.contains("comb { y = foo }"), "got: {rendered}");
         assert!(rendered.contains("^"), "caret harus ada: {rendered}");
         // Caret menunjuk kolom `foo` (16): baris caret = `     | ` (7 char)

@@ -56,7 +56,7 @@ impl FormalEngine {
                         let l = self.expr_to_z3_bool(lhs)?;
                         let r = self.expr_to_z3_bool(rhs)?;
                         Some(z3::ast::Bool::and(&[&l, &r]))
-// Note: Bool::and(&[&l, &r]) works because &T: Into<T> for T: Clone
+                        // Note: Bool::and(&[&l, &r]) works because &T: Into<T> for T: Clone
                     }
                     BinaryIrOp::LogicalOr => {
                         let l = self.expr_to_z3_bool(lhs)?;

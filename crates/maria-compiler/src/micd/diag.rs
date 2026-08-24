@@ -84,7 +84,13 @@ pub struct DiagEntry {
 
 impl DiagEntry {
     /// Point diagnostic sederhana (tanpa span/fixit/actions).
-    pub fn new(line: usize, col: usize, severity: DiagSeverity, message: String, code: String) -> Self {
+    pub fn new(
+        line: usize,
+        col: usize,
+        severity: DiagSeverity,
+        message: String,
+        code: String,
+    ) -> Self {
         DiagEntry {
             line,
             col,

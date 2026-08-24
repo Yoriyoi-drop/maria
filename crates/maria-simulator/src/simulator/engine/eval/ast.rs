@@ -1,30 +1,29 @@
 use super::super::SimulationEngine;
-use maria_core::error::SimError;
-use maria_core::diagnostics::DiagCode;
-use maria_ir::*;
-use maria_ast::*;
-use maria_core::Symbol;
 use crate::simulator::types::*;
 use crate::simulator::util::*;
 use crate::simulator::value::*;
+use maria_ast::*;
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
+use maria_core::Symbol;
+use maria_ir::*;
 use std::collections::HashMap;
 
 impl SimulationEngine {
     pub(crate) fn evaluate_ast_expr(&mut self, expr: &Expr) -> Result<LogicVec, SimError> {
         match expr {
-            Expr::Value(v) => match v {
-                Value::Decimal(i) => Ok(LogicVec::from_u64(*i as u64, 32)),
-                Value::Binary { bits, .. } => {
-                    LogicVec::from_bin(bits).map_err(|e| SimError::with_diag(DiagCode::DpiError, e))
+            Expr::Value(v) => {
+                match v {
+                    Value::Decimal(i) => Ok(LogicVec::from_u64(*i as u64, 32)),
+                    Value::Binary { bits, .. } => LogicVec::from_bin(bits)
+                        .map_err(|e| SimError::with_diag(DiagCode::DpiError, e)),
+                    Value::Hex { bits, .. } => LogicVec::from_hex(bits)
+                        .map_err(|e| SimError::with_diag(DiagCode::DpiError, e)),
+                    Value::Octal { bits, .. } => LogicVec::from_hex(bits)
+                        .map_err(|e| SimError::with_diag(DiagCode::DpiError, e)),
+                    Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
                 }
-                Value::Hex { bits, .. } => {
-                    LogicVec::from_hex(bits).map_err(|e| SimError::with_diag(DiagCode::DpiError, e))
-                }
-                Value::Octal { bits, .. } => {
-                    LogicVec::from_hex(bits).map_err(|e| SimError::with_diag(DiagCode::DpiError, e))
-                }
-                Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
-            },
+            }
             Expr::Ident { name, line, col } => {
                 // F20: catat posisi source terakhir yang diketahui agar
                 // warning/error runtime selalu punya file:line:col.
@@ -33,7 +32,12 @@ impl SimulationEngine {
                     if let Some(obj_id) = self.current_this {
                         return Ok(LogicVec::from_u64(obj_id as u64, 64));
                     } else {
-                        return Err(self.diag_error_at(DiagCode::NullHandle, "'this' used outside of class method", *line, *col));
+                        return Err(self.diag_error_at(
+                            DiagCode::NullHandle,
+                            "'this' used outside of class method",
+                            *line,
+                            *col,
+                        ));
                     }
                 }
                 // F18: `uvm_test_top` — handle global ke root test UVM (jalur
@@ -73,7 +77,10 @@ impl SimulationEngine {
                 // berjalan, bukan mematikan seluruh run.
                 self.diag_warn_at(
                     DiagCode::NullHandle,
-                    format!("cannot resolve identifier '{}' in method context ({}); using null default", name, ctx),
+                    format!(
+                        "cannot resolve identifier '{}' in method context ({}); using null default",
+                        name, ctx
+                    ),
                     *line,
                     *col,
                 );
@@ -264,7 +271,11 @@ impl SimulationEngine {
                     }
                 }
                 Ok(LogicVec::from_u64(
-                    if self.config_db_exists(&inst_name, &field_name) { 1 } else { 0 },
+                    if self.config_db_exists(&inst_name, &field_name) {
+                        1
+                    } else {
+                        0
+                    },
                     1,
                 ))
             }
@@ -287,7 +298,11 @@ impl SimulationEngine {
                     String::new()
                 };
                 Ok(LogicVec::from_u64(
-                    if self.config_db_exists(&inst_name, &field_name) { 1 } else { 0 },
+                    if self.config_db_exists(&inst_name, &field_name) {
+                        1
+                    } else {
+                        0
+                    },
                     1,
                 ))
             }
@@ -416,7 +431,11 @@ impl SimulationEngine {
                     String::new()
                 };
                 Ok(LogicVec::from_u64(
-                    if self.resource_db_exists(&scope, &rname) { 1 } else { 0 },
+                    if self.resource_db_exists(&scope, &rname) {
+                        1
+                    } else {
+                        0
+                    },
                     1,
                 ))
             }
@@ -444,7 +463,9 @@ impl SimulationEngine {
                 self.uvm_resource_db_data.insert((scope, rname), value);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            Expr::FuncCall { name, args, .. } if name == "uvm_factory::set_type_override_by_type" => {
+            Expr::FuncCall { name, args, .. }
+                if name == "uvm_factory::set_type_override_by_type" =>
+            {
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -462,7 +483,13 @@ impl SimulationEngine {
                 self.factory_type_overrides.insert(orig, override_type);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            Expr::FuncCall { name, args, line, col, .. } => {
+            Expr::FuncCall {
+                name,
+                args,
+                line,
+                col,
+                ..
+            } => {
                 // LANG-40: panggilan `let name(args)` di class — substitusi
                 // parameter dengan argumen lalu evaluasi body.
                 if let Some(ld) = self.class_let_decl(name).cloned() {
@@ -473,7 +500,8 @@ impl SimulationEngine {
                             .zip(args.iter())
                             .map(|(p, a)| (*p, a))
                             .collect();
-                        let body = maria_ast::inline_util::substitute_let_args(ld.expr.clone(), &map);
+                        let body =
+                            maria_ast::inline_util::substitute_let_args(ld.expr.clone(), &map);
                         return self.evaluate_ast_expr(&body);
                     }
                 }
@@ -615,14 +643,33 @@ impl SimulationEngine {
                 // `task get_next_item(output RSP item)`).
                 if matches!(
                     name.as_str(),
-                    "get_next_item" | "try_next_item" | "item_done" | "get_response" | "put_response"
-                    | "start_item" | "finish_item" | "set_sequencer" | "get_sequencer"
+                    "get_next_item"
+                        | "try_next_item"
+                        | "item_done"
+                        | "get_response"
+                        | "put_response"
+                        | "start_item"
+                        | "finish_item"
+                        | "set_sequencer"
+                        | "get_sequencer"
                 ) {
                     if let Some(obj_id) = self.current_this {
                         if let Some(obj) = self.state.get_object(obj_id) {
                             let cn = obj.class_name.as_str();
-                            if std::env::var("DBG_UVM").is_ok() && matches!(name.as_str(), "start_item" | "finish_item" | "set_sequencer") {
-                                eprintln!("[DBG-UVM] fallback dispatch {} cn={} drv={} seqr={} seq={}", name, cn, self.is_uvm_driver_hierarchy(cn), self.is_uvm_sequencer_hierarchy(cn), self.is_uvm_sequence_hierarchy(cn));
+                            if std::env::var("DBG_UVM").is_ok()
+                                && matches!(
+                                    name.as_str(),
+                                    "start_item" | "finish_item" | "set_sequencer"
+                                )
+                            {
+                                eprintln!(
+                                    "[DBG-UVM] fallback dispatch {} cn={} drv={} seqr={} seq={}",
+                                    name,
+                                    cn,
+                                    self.is_uvm_driver_hierarchy(cn),
+                                    self.is_uvm_sequencer_hierarchy(cn),
+                                    self.is_uvm_sequence_hierarchy(cn)
+                                );
                             }
                             if self.is_uvm_driver_hierarchy(cn)
                                 || self.is_uvm_sequencer_hierarchy(cn)
@@ -630,12 +677,21 @@ impl SimulationEngine {
                                 || (self.is_uvm_sequence_hierarchy(cn)
                                     && matches!(
                                         name.as_str(),
-                                        "start_item" | "finish_item" | "set_sequencer" | "get_sequencer"
+                                        "start_item"
+                                            | "finish_item"
+                                            | "set_sequencer"
+                                            | "get_sequencer"
                                     ))
                             {
                                 let r = self.execute_method(obj_id, name.as_str(), &arg_vals)?;
                                 if std::env::var("DBG_UVM").is_ok() {
-                                    eprintln!("[DBG-UVM] {} on {} -> r={} width={}", name, cn, r.to_u64(), r.width);
+                                    eprintln!(
+                                        "[DBG-UVM] {} on {} -> r={} width={}",
+                                        name,
+                                        cn,
+                                        r.to_u64(),
+                                        r.width
+                                    );
                                 }
                                 if matches!(name.as_str(), "get_next_item" | "try_next_item") {
                                     if let Some(Expr::Ident { name: var, .. }) = args.first() {
@@ -655,10 +711,17 @@ impl SimulationEngine {
                 // report builtin → emit_severity (counter + fatal_hit).
                 if matches!(
                     name.as_str(),
-                    "uvm_report_info" | "uvm_report_warning" | "uvm_report_error" | "uvm_report_fatal"
+                    "uvm_report_info"
+                        | "uvm_report_warning"
+                        | "uvm_report_error"
+                        | "uvm_report_fatal"
                 ) {
                     if let Some(obj_id) = self.current_this {
-                        return self.execute_uvm_report_object_method(obj_id, name.as_str(), &arg_vals);
+                        return self.execute_uvm_report_object_method(
+                            obj_id,
+                            name.as_str(),
+                            &arg_vals,
+                        );
                     }
                 }
                 // F35: function module-level (recursive, tidak di-inline) —
@@ -674,7 +737,10 @@ impl SimulationEngine {
                 let (w_line, w_col) = self.cur_src_pos();
                 self.diag_warn_at(
                     DiagCode::NotImplemented,
-                    format!("unknown function '{}' in method context; using null default", name),
+                    format!(
+                        "unknown function '{}' in method context; using null default",
+                        name
+                    ),
                     w_line,
                     w_col,
                 );
@@ -847,7 +913,13 @@ impl SimulationEngine {
                     // `[msb:lsb]` (`[1:10]` → msb=1, lsb=10) jadi ambil min/max.
                     // Base selain 0 = member select asli (`inside {x[7:0]}`)
                     // → evaluasi sebagai nilai tunggal, bukan rentang.
-                    if let Expr::RangeSelect { expr: base, msb, lsb, .. } = item {
+                    if let Expr::RangeSelect {
+                        expr: base,
+                        msb,
+                        lsb,
+                        ..
+                    } = item
+                    {
                         if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) {
                             let a = self.evaluate_ast_expr(msb)?.to_u64();
                             let b = self.evaluate_ast_expr(lsb)?.to_u64();
@@ -886,7 +958,10 @@ impl SimulationEngine {
                     let ss_val = self.evaluate_ast_expr(ss_expr)?;
                     let n = ss_val.to_u64() as usize;
                     if n == 0 {
-                        return Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, "streaming slice size must be > 0"));
+                        return Err(SimError::with_diag(
+                            DiagCode::MemoryOutOfBounds,
+                            "streaming slice size must be > 0",
+                        ));
                     }
                     n
                 } else {
@@ -963,7 +1038,8 @@ impl SimulationEngine {
             }
             Expr::Cast { dtype, expr: inner } => {
                 let val = self.evaluate_ast_expr(inner)?;
-                let cast_width = match maria_elaboration::util::parse_type_spec_str(dtype.as_str()) {
+                let cast_width = match maria_elaboration::util::parse_type_spec_str(dtype.as_str())
+                {
                     Some(_) => {
                         // For AST path, compute width from type string
                         match dtype.as_str() {
@@ -999,7 +1075,10 @@ impl SimulationEngine {
                 }
                 self.diag_warn_at(
                     DiagCode::DpiError,
-                    format!("scoped identifier '{}.{}' not resolved at runtime; using null default", package, item),
+                    format!(
+                        "scoped identifier '{}.{}' not resolved at runtime; using null default",
+                        package, item
+                    ),
                     *line,
                     *col,
                 );
@@ -1012,16 +1091,19 @@ impl SimulationEngine {
         }
     }
 
-
     pub(crate) fn find_signal(&self, name: &str) -> Option<usize> {
         self.design
             .top
             .signals
             .iter()
             .position(|s| s.name == name)
-            .or_else(|| self.design.hier_signal_map.get(&Symbol::intern(name)).copied())
+            .or_else(|| {
+                self.design
+                    .hier_signal_map
+                    .get(&Symbol::intern(name))
+                    .copied()
+            })
     }
-
 
     pub(crate) fn build_hier_name(obj: &Expr, field: &str) -> String {
         match obj {
@@ -1030,12 +1112,15 @@ impl SimulationEngine {
                 obj: inner,
                 field: inner_field,
             } => {
-                format!("{}.{}", Self::build_hier_name(inner, inner_field.as_str()), field)
+                format!(
+                    "{}.{}",
+                    Self::build_hier_name(inner, inner_field.as_str()),
+                    field
+                )
             }
             _ => String::new(),
         }
     }
-
 
     /// F17: alokasi object class + panggil constructor (bila ada). Dipakai
     /// `x = new(...)` di jalur AST (body method class). `class = None` →
@@ -1046,13 +1131,21 @@ impl SimulationEngine {
         arg_vals: &[LogicVec],
     ) -> Result<LogicVec, SimError> {
         if std::env::var("DBG_UVM").is_ok() {
-            eprintln!("[DBG-UVM] allocate_new_object class={:?} nargs={}", class.map(|s| s.to_string()), arg_vals.len());
+            eprintln!(
+                "[DBG-UVM] allocate_new_object class={:?} nargs={}",
+                class.map(|s| s.to_string()),
+                arg_vals.len()
+            );
         }
         let raw = class
             .unwrap_or_else(|| Symbol::intern(""))
             .as_str()
             .to_string();
-        let effective = self.factory_type_overrides.get(&raw).cloned().unwrap_or(raw);
+        let effective = self
+            .factory_type_overrides
+            .get(&raw)
+            .cloned()
+            .unwrap_or(raw);
         let obj_id = self.state.alloc_object(Symbol::intern(&effective));
         // F19: inisialisasi field class ke default 0 (semantics SV — semua
         // member di-zero-initialize). Tanpa ini, baca field yang belum pernah
@@ -1115,7 +1208,19 @@ impl SimulationEngine {
         // ke field (`env = new("env", this)`), bukan local. IrClassField kini
         // menyimpan dtype (lihat ir.rs).
         if std::env::var("DBG_UVM").is_ok() {
-            eprintln!("[DBG-UVM] resolve_new_class_hint name={} class={} fields={:?}", name, class_name, class_def.fields.iter().map(|f| (f.name.to_string(), f.dtype.clone().map(|d| format!("{:?}", d)))).collect::<Vec<_>>());
+            eprintln!(
+                "[DBG-UVM] resolve_new_class_hint name={} class={} fields={:?}",
+                name,
+                class_name,
+                class_def
+                    .fields
+                    .iter()
+                    .map(|f| (
+                        f.name.to_string(),
+                        f.dtype.clone().map(|d| format!("{:?}", d))
+                    ))
+                    .collect::<Vec<_>>()
+            );
         }
         if let Some(f) = class_def.fields.iter().find(|f| f.name.as_str() == name) {
             if let Some(DataType::UserDefined(s)) = &f.dtype {
@@ -1656,7 +1761,6 @@ impl SimulationEngine {
             )),
         }
     }
-
 
     /// LANG-40: cari `let` declaration di class milik `current_this`.
     /// Dipakai evaluate_ast_expr untuk resolve ident (let tanpa parameter)

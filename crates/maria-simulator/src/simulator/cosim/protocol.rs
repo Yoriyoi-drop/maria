@@ -62,7 +62,11 @@ pub struct CosimSignalInfo {
 }
 
 /// Write a length-prefixed message to a stream.
-pub fn write_message(stream: &mut impl Write, msg_type: CosimMessageType, payload: &[u8]) -> std::io::Result<()> {
+pub fn write_message(
+    stream: &mut impl Write,
+    msg_type: CosimMessageType,
+    payload: &[u8],
+) -> std::io::Result<()> {
     let len = payload.len() as u32 + 1; // +1 for type byte
     let header = len.to_le_bytes();
     stream.write_all(&header)?;
@@ -74,7 +78,9 @@ pub fn write_message(stream: &mut impl Write, msg_type: CosimMessageType, payloa
 
 /// Read a length-prefixed message from a stream.
 /// Returns (message_type, payload) or None on connection close.
-pub fn read_message(stream: &mut impl Read) -> std::io::Result<Option<(CosimMessageType, Vec<u8>)>> {
+pub fn read_message(
+    stream: &mut impl Read,
+) -> std::io::Result<Option<(CosimMessageType, Vec<u8>)>> {
     let mut len_buf = [0u8; 4];
     match stream.read_exact(&mut len_buf) {
         Ok(()) => {}
@@ -117,33 +123,52 @@ pub fn encode_connect(signals: &[CosimSignalInfo]) -> Vec<u8> {
 /// Decode a Connect message payload into a list of signal infos.
 pub fn decode_connect(payload: &[u8]) -> std::io::Result<Vec<CosimSignalInfo>> {
     if payload.len() < 4 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated connect payload"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "truncated connect payload",
+        ));
     }
     let count = u32::from_le_bytes(payload[0..4].try_into().unwrap()) as usize;
     let mut signals = Vec::with_capacity(count);
     let mut offset = 4usize;
     for _ in 0..count {
         if offset + 4 > payload.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated signal name length"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "truncated signal name length",
+            ));
         }
-        let name_len = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap()) as usize;
+        let name_len = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
         if offset + name_len > payload.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated signal name"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "truncated signal name",
+            ));
         }
-        let name = String::from_utf8_lossy(&payload[offset..offset+name_len]).to_string();
+        let name = String::from_utf8_lossy(&payload[offset..offset + name_len]).to_string();
         offset += name_len;
         if offset + 4 > payload.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated signal width"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "truncated signal width",
+            ));
         }
-        let width = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+        let width = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
         offset += 4;
         if offset >= payload.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated signal direction"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "truncated signal direction",
+            ));
         }
         let direction = CosimDirection::from_byte(payload[offset]).unwrap_or(CosimDirection::Input);
         offset += 1;
-        signals.push(CosimSignalInfo { name, width, direction });
+        signals.push(CosimSignalInfo {
+            name,
+            width,
+            direction,
+        });
     }
     Ok(signals)
 }
@@ -161,7 +186,10 @@ pub fn encode_sync(time_step: u64) -> Vec<u8> {
 /// Decode a Sync message payload.
 pub fn decode_sync(payload: &[u8]) -> std::io::Result<u64> {
     if payload.len() < 8 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated sync payload"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "truncated sync payload",
+        ));
     }
     Ok(u64::from_le_bytes(payload[0..8].try_into().unwrap()))
 }
@@ -182,7 +210,10 @@ pub fn encode_signal_update(signal_id: u32, value_bytes: &[u8]) -> Vec<u8> {
 /// Decode a SignalUpdate message payload.
 pub fn decode_signal_update(payload: &[u8]) -> std::io::Result<(u32, Vec<u8>)> {
     if payload.len() < 4 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated signal update payload"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "truncated signal update payload",
+        ));
     }
     let signal_id = u32::from_le_bytes(payload[0..4].try_into().unwrap());
     let value_bytes = payload[4..].to_vec();
@@ -261,8 +292,14 @@ mod tests {
 
     #[test]
     fn test_message_type_from_byte() {
-        assert_eq!(CosimMessageType::from_byte(0x01), Some(CosimMessageType::Connect));
-        assert_eq!(CosimMessageType::from_byte(0x07), Some(CosimMessageType::Error));
+        assert_eq!(
+            CosimMessageType::from_byte(0x01),
+            Some(CosimMessageType::Connect)
+        );
+        assert_eq!(
+            CosimMessageType::from_byte(0x07),
+            Some(CosimMessageType::Error)
+        );
         assert_eq!(CosimMessageType::from_byte(0xFF), None);
     }
 

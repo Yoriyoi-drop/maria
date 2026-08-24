@@ -37,7 +37,9 @@ mod tests {
     fn test_plugin_context() {
         let ctx = PluginContext::new();
         assert_eq!(ctx.plugin_count(), 0);
-        ctx.manager.register(Box::new(ExamplePlugin::new())).unwrap();
+        ctx.manager
+            .register(Box::new(ExamplePlugin::new()))
+            .unwrap();
         assert_eq!(ctx.plugin_count(), 1);
         assert_eq!(ctx.registry().active_names(), vec!["example-plugin"]);
     }

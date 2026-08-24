@@ -30,12 +30,20 @@ pub struct PinConn {
 impl PinConn {
     /// Koneksi seluruh net.
     pub fn whole(net: crate::net::NetId, pin: impl Into<String>) -> Self {
-        PinConn { net, pin: pin.into(), bit: None }
+        PinConn {
+            net,
+            pin: pin.into(),
+            bit: None,
+        }
     }
 
     /// Koneksi bit `i` dari net (dipakai LUT/CARRY4).
     pub fn bit(net: crate::net::NetId, pin: impl Into<String>, i: usize) -> Self {
-        PinConn { net, pin: pin.into(), bit: Some(i) }
+        PinConn {
+            net,
+            pin: pin.into(),
+            bit: Some(i),
+        }
     }
 }
 
@@ -71,19 +79,32 @@ pub enum CellKind {
     ReduceXor,
     // ── Bit-vector —─
     Concat,
-    Slice { msb: usize, lsb: usize },
+    Slice {
+        msb: usize,
+        lsb: usize,
+    },
     // ── Buffer / I/O —─
     Buffer,
     TriState,
     // ── Register —─
     Dff,
     DffE,
-    DffR { reset_value: u64, polarity: bool, r#async: bool },
-    DffRE { reset_value: u64, polarity: bool, r#async: bool },
+    DffR {
+        reset_value: u64,
+        polarity: bool,
+        r#async: bool,
+    },
+    DffRE {
+        reset_value: u64,
+        polarity: bool,
+        r#async: bool,
+    },
     // ── Teknologi (phase 4, maria-tech) —─
     /// LUT6 dengan truth table `init` (64 bit). Input yang tidak terpakai
     /// di-tie ke `1'b0` (pola FPGA — LUT selalu 6 input).
-    Lut { init: u64 },
+    Lut {
+        init: u64,
+    },
     /// Carry chain 4-bit (CARRY4 — adder ripple).
     Carry4,
 }
@@ -130,10 +151,7 @@ impl CellKind {
     pub fn is_sequential(&self) -> bool {
         matches!(
             self,
-            CellKind::Dff
-                | CellKind::DffE
-                | CellKind::DffR { .. }
-                | CellKind::DffRE { .. }
+            CellKind::Dff | CellKind::DffE | CellKind::DffR { .. } | CellKind::DffRE { .. }
         )
     }
 
@@ -142,13 +160,21 @@ impl CellKind {
     /// bertabrakan pada satu nama modul.
     pub fn module_key(&self) -> String {
         match self {
-            CellKind::DffR { reset_value, polarity, r#async } => format!(
+            CellKind::DffR {
+                reset_value,
+                polarity,
+                r#async,
+            } => format!(
                 "DFFR_r{:x}_{}_{}",
                 reset_value,
                 if *polarity { "ah" } else { "al" },
                 if *r#async { "a" } else { "s" }
             ),
-            CellKind::DffRE { reset_value, polarity, r#async } => format!(
+            CellKind::DffRE {
+                reset_value,
+                polarity,
+                r#async,
+            } => format!(
                 "DFFRE_r{:x}_{}_{}",
                 reset_value,
                 if *polarity { "ah" } else { "al" },
@@ -246,12 +272,22 @@ mod tests {
 
     #[test]
     fn cell_kind_flags_and_pins() {
-        assert!(CellKind::DffR { reset_value: 0, polarity: true, r#async: true }.is_sequential());
+        assert!(CellKind::DffR {
+            reset_value: 0,
+            polarity: true,
+            r#async: true
+        }
+        .is_sequential());
         assert!(!CellKind::Add.is_sequential());
         assert_eq!(CellKind::Mux.input_pins(), vec!["s", "a", "b"]);
         assert_eq!(CellKind::Mux.output_pins(), vec!["y"]);
         assert_eq!(
-            CellKind::DffRE { reset_value: 0, polarity: false, r#async: true }.input_pins(),
+            CellKind::DffRE {
+                reset_value: 0,
+                polarity: false,
+                r#async: true
+            }
+            .input_pins(),
             vec!["c", "r", "ce", "d"]
         );
         assert_eq!(CellKind::DffE.output_pins(), vec!["q"]);

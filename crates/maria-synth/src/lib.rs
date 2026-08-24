@@ -20,13 +20,13 @@ pub mod techmap;
 use maria_core::intern::Symbol;
 use maria_ir::IrDesign;
 
-pub use infer::{SynthOpts, infer_netlist};
-pub use netlist::{CellKind, DeviceKind, Instance, Netlist, Net, PinRef, Port, PortDir};
+pub use infer::{infer_netlist, SynthOpts};
+pub use netlist::{CellKind, DeviceKind, Instance, Net, Netlist, PinRef, Port, PortDir};
 pub use opt::{ArithmeticSimplify, ConstFold, Cse, Dce, MuxSimplify};
 pub use pass::{PassResult, SynthContext, SynthPass, SynthPipeline};
 pub use report::DeviceCapacity;
-pub use subset::{SynCheck, SynIssue, SynSeverity, check as synth_check};
-pub use techmap::{TechMapResult, tech_map};
+pub use subset::{check as synth_check, SynCheck, SynIssue, SynSeverity};
+pub use techmap::{tech_map, TechMapResult};
 
 /// Hasil pipeline synthesis S1.
 #[derive(Debug, Clone)]

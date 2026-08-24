@@ -4,8 +4,8 @@
 //! cbReadOnlySynch, cbValueChange, cbAfterDelay, cbNextSimTime.
 
 use super::types::*;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 /// Registered VPI callback
 struct RegisteredCallback {
@@ -55,7 +55,8 @@ pub fn vpi_remove_cb(cb_handle: vpiHandle) -> i32 {
 pub fn fire_callbacks(reason: i32) {
     let snapshot: Vec<t_cb_data> = {
         let registry = VPI_CALLBACKS.lock().unwrap();
-        registry.iter()
+        registry
+            .iter()
             .filter(|cb| cb.data.reason == reason)
             .map(|cb| cb.data.clone())
             .collect()
@@ -74,7 +75,8 @@ pub fn fire_callbacks(reason: i32) {
 pub fn fire_value_change_callbacks(sig_name: &str, _old_val: &t_vpi_value, _new_val: &t_vpi_value) {
     let matching: Vec<t_cb_data> = {
         let registry = VPI_CALLBACKS.lock().unwrap();
-        registry.iter()
+        registry
+            .iter()
             .filter(|cb| {
                 if cb.data.reason != cbValueChange {
                     return false;
@@ -116,10 +118,13 @@ pub struct CallbackEntry {
 /// Get a snapshot of the callback registry (for vpi_get_cb_info access).
 pub fn get_callback_registry() -> Vec<CallbackEntry> {
     let registry = VPI_CALLBACKS.lock().unwrap();
-    registry.iter().map(|cb| CallbackEntry {
-        id: cb.id,
-        data: cb.data.clone(),
-    }).collect()
+    registry
+        .iter()
+        .map(|cb| CallbackEntry {
+            id: cb.id,
+            data: cb.data.clone(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -158,10 +163,18 @@ mod tests {
         let h = vpi_register_cb(&make_cb(cbStartOfSimulation));
         assert!(h.is_valid(), "handle callback harus valid");
         dispatch_start_of_simulation();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 1, "callback terpanggil sekali");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            1,
+            "callback terpanggil sekali"
+        );
         assert_eq!(vpi_remove_cb(h), 1, "remove sukses");
         dispatch_start_of_simulation();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 1, "setelah remove tidak terpanggil lagi");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            1,
+            "setelah remove tidak terpanggil lagi"
+        );
         assert_eq!(vpi_remove_cb(h), 0, "remove ganda → 0");
         clear_all_callbacks();
     }
@@ -174,7 +187,11 @@ mod tests {
         // register utk cbEndOfSimulation — fire StartOfSimulation tak boleh memanggil
         let h = vpi_register_cb(&make_cb(cbEndOfSimulation));
         dispatch_start_of_simulation();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 0, "reason berbeda tak dipanggil");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            0,
+            "reason berbeda tak dipanggil"
+        );
         dispatch_end_of_simulation();
         assert_eq!(FIRED.load(Ordering::SeqCst), 1, "reason cocok dipanggil");
         assert_eq!(vpi_remove_cb(h), 1);
@@ -189,7 +206,11 @@ mod tests {
         let h1 = vpi_register_cb(&make_cb(cbReadWriteSynch));
         let h2 = vpi_register_cb(&make_cb(cbReadWriteSynch));
         dispatch_read_write_synch();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 2, "dua callback pd reason sama");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            2,
+            "dua callback pd reason sama"
+        );
         assert_eq!(vpi_remove_cb(h1), 1);
         assert_eq!(vpi_remove_cb(h2), 1);
         clear_all_callbacks();
@@ -217,9 +238,17 @@ mod tests {
         let h3 = vpi_register_cb(&make_cb(cbReadOnlySynch));
         assert_eq!(vpi_remove_cb(h2), 1, "hapus tengah sukses");
         assert_eq!(vpi_remove_cb(h1), 1, "hapus pertama sukses");
-        assert_eq!(vpi_remove_cb(h3), 1, "handle ketiga tetap valid walau posisi bergeser");
+        assert_eq!(
+            vpi_remove_cb(h3),
+            1,
+            "handle ketiga tetap valid walau posisi bergeser"
+        );
         dispatch_read_only_synch();
-        assert_eq!(FIRED.load(Ordering::SeqCst), 0, "semua callback sudah dihapus");
+        assert_eq!(
+            FIRED.load(Ordering::SeqCst),
+            0,
+            "semua callback sudah dihapus"
+        );
         clear_all_callbacks();
     }
 }

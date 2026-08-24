@@ -194,8 +194,7 @@ impl<V> Default for CacheStore<V> {
 // ─── Remote Sync Mode ───
 
 /// How aggressively to sync cache entries with remote backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RemoteSyncMode {
     /// Never sync (local-only, default)
     #[default]
@@ -318,7 +317,9 @@ impl CacheManager {
 
     /// Try to store a cache entry to remote backend.
     pub fn try_store_to_remote(&self, key: &CacheKey, data: &[u8]) {
-        let Some(backend) = self.remote.as_ref() else { return };
+        let Some(backend) = self.remote.as_ref() else {
+            return;
+        };
         if let Err(e) = backend.put(key, data) {
             eprintln!("Remote cache write error: {}", e);
         }
@@ -363,12 +364,20 @@ impl CacheManager {
                 self.hir_cache.insert(key.clone(), data.to_vec(), size, 0);
             }
             CacheKey::Macro { .. } => {
-                self.macro_cache
-                    .insert(key.clone(), String::from_utf8_lossy(data).to_string(), size, 0);
+                self.macro_cache.insert(
+                    key.clone(),
+                    String::from_utf8_lossy(data).to_string(),
+                    size,
+                    0,
+                );
             }
             CacheKey::Include { .. } => {
-                self.include_cache
-                    .insert(key.clone(), String::from_utf8_lossy(data).to_string(), size, 0);
+                self.include_cache.insert(
+                    key.clone(),
+                    String::from_utf8_lossy(data).to_string(),
+                    size,
+                    0,
+                );
             }
         }
     }

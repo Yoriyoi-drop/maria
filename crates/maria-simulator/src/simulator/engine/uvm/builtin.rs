@@ -21,9 +21,9 @@ impl SimulationEngine {
         method: &str,
         args: &[LogicVec],
     ) -> Result<LogicVec, SimError> {
-        let obj_id = self
-            .current_this
-            .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "'super' used outside class method"))?;
+        let obj_id = self.current_this.ok_or_else(|| {
+            SimError::with_diag(DiagCode::NullHandle, "'super' used outside class method")
+        })?;
         let class_name = self
             .state
             .get_object(obj_id)
@@ -35,10 +35,10 @@ impl SimulationEngine {
             .get(&class_name)
             .and_then(|c| c.extends)
             .ok_or_else(|| {
-                self.diag_error(DiagCode::DpiError, format!(
-                    "class '{}' has no parent for super call",
-                    class_name
-                ))
+                self.diag_error(
+                    DiagCode::DpiError,
+                    format!("class '{}' has no parent for super call", class_name),
+                )
             })?;
         // Check hierarchy from most specific to least
         // ── Reg layer (check before uvm_component since uvm_reg_block extends uvm_component) ──
@@ -138,8 +138,9 @@ impl SimulationEngine {
             return self.execute_uvm_report_object_method(obj_id, method, args);
         }
         // Super dispatch: start search from parent class, skipping current class override
-        let method_def = self.find_method_in_hierarchy(parent.as_str(), method)?.clone();
+        let method_def = self
+            .find_method_in_hierarchy(parent.as_str(), method)?
+            .clone();
         self.execute_method_body(Some(obj_id), &method_def, args, method)
     }
-
 }

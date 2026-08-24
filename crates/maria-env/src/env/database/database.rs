@@ -14,7 +14,10 @@ impl std::fmt::Debug for DatabaseContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DatabaseContext")
             .field("open", &self.is_open())
-            .field("files", &self.db.as_ref().map(|d| d.files.len()).unwrap_or(0))
+            .field(
+                "files",
+                &self.db.as_ref().map(|d| d.files.len()).unwrap_or(0),
+            )
             .finish()
     }
 }

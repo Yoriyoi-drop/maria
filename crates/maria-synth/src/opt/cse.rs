@@ -70,10 +70,10 @@ fn value_key(m: &SirModule, vid: ValueId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pass::SynthPipeline;
     use maria_core::intern::Symbol;
     use maria_core::LogicVec;
     use maria_sir::{SirModule, SirNodeKind};
-    use crate::pass::SynthPipeline;
 
     #[test]
     fn identical_nodes_are_deduped() {

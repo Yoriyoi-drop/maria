@@ -2,13 +2,13 @@
 
 use eframe::egui;
 
+use super::super::splitter;
+use super::super::state::{BottomTab, DiagLevel, GuiState};
 use super::benchmark;
 use super::coverage;
 use super::pipeline;
 use super::terminal;
 use super::waveform;
-use super::super::splitter;
-use super::super::state::{BottomTab, DiagLevel, GuiState};
 
 pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     // ── Splitter handle di border atas panel — drag untuk resize ──
@@ -46,9 +46,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 BottomTab::Benchmark => 0,
                 BottomTab::Coverage => state.coverage.branch_total as usize,
                 BottomTab::Terminal => state.term_lines.len(),
-                BottomTab::Pipeline => {
-                    state.compile_info.as_ref().map(|c| c.micd.as_ref().map(|m| m.files).unwrap_or(0)).unwrap_or(0)
-                }
+                BottomTab::Pipeline => state
+                    .compile_info
+                    .as_ref()
+                    .map(|c| c.micd.as_ref().map(|m| m.files).unwrap_or(0))
+                    .unwrap_or(0),
             };
             let text = egui::RichText::new(format!("{} ({})", label, count)).size(12.0);
             if ui.selectable_label(state.bottom_tab == tab, text).clicked() {
@@ -184,7 +186,11 @@ fn console_tab(ui: &mut egui::Ui, state: &mut GuiState) {
 
 fn signals_tab(ui: &mut egui::Ui, state: &mut GuiState) {
     if state.signals.is_empty() {
-        ui.label(egui::RichText::new("Jalankan simulasi untuk melihat signal").weak().italics());
+        ui.label(
+            egui::RichText::new("Jalankan simulasi untuk melihat signal")
+                .weak()
+                .italics(),
+        );
         return;
     }
     egui::Grid::new("signals_grid")

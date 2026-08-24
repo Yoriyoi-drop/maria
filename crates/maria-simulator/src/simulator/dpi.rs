@@ -51,11 +51,19 @@ pub struct svScope {
 }
 
 impl svScope {
-    pub const NULL: svScope = svScope { ptr: std::ptr::null_mut() };
-    pub fn null() -> Self { svScope::NULL }
-    pub fn is_null(&self) -> bool { self.ptr.is_null() }
+    pub const NULL: svScope = svScope {
+        ptr: std::ptr::null_mut(),
+    };
+    pub fn null() -> Self {
+        svScope::NULL
+    }
+    pub fn is_null(&self) -> bool {
+        self.ptr.is_null()
+    }
     pub fn from_id(id: usize) -> Self {
-        svScope { ptr: id as *mut std::ffi::c_void }
+        svScope {
+            ptr: id as *mut std::ffi::c_void,
+        }
     }
     pub fn id(&self) -> usize {
         self.ptr as usize
@@ -79,17 +87,23 @@ pub fn sv_set_scope_name(scope_name: &str) -> svScope {
     let mut registry = scope_registry().lock().unwrap();
     for (id, name) in registry.iter() {
         if name == scope_name {
-            return svScope { ptr: *id as *mut std::ffi::c_void };
+            return svScope {
+                ptr: *id as *mut std::ffi::c_void,
+            };
         }
     }
     let id = NEXT_SCOPE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     registry.insert(id, scope_name.to_string());
-    svScope { ptr: id as *mut std::ffi::c_void }
+    svScope {
+        ptr: id as *mut std::ffi::c_void,
+    }
 }
 
 /// Get the instance path for a scope handle.
 pub fn sv_get_scope_name(scope: svScope) -> Option<String> {
-    if scope.is_null() { return None; }
+    if scope.is_null() {
+        return None;
+    }
     let id = scope.ptr as usize;
     let registry = scope_registry().lock().unwrap();
     registry.get(&id).cloned()
@@ -134,7 +148,9 @@ impl DpiEngine {
         }
         if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
             for path in ld_path.split(':') {
-                if !path.is_empty() { lib_search_paths.push(path.to_string()); }
+                if !path.is_empty() {
+                    lib_search_paths.push(path.to_string());
+                }
             }
         }
         lib_search_paths.push("/usr/local/lib".to_string());
@@ -147,7 +163,10 @@ impl DpiEngine {
         }
     }
 
-    pub fn load_library(&mut self, path: &str) -> Result<std::sync::Arc<libloading::Library>, SimError> {
+    pub fn load_library(
+        &mut self,
+        path: &str,
+    ) -> Result<std::sync::Arc<libloading::Library>, SimError> {
         if let Some(lib) = self.libraries.get(path) {
             return Ok(lib.clone());
         }
@@ -166,7 +185,10 @@ impl DpiEngine {
                     }
                 }
                 if loaded.is_none() {
-                    let lib_name = format!("lib{}.so", path.trim_end_matches(".so").trim_start_matches("lib"));
+                    let lib_name = format!(
+                        "lib{}.so",
+                        path.trim_end_matches(".so").trim_start_matches("lib")
+                    );
                     for sp in &self.lib_search_paths {
                         let fp = Path::new(sp).join(&lib_name);
                         if fp.exists() {
@@ -177,10 +199,12 @@ impl DpiEngine {
                         }
                     }
                 }
-                loaded.ok_or_else(|| SimError::with_diag(
-                    maria_core::diagnostics::DiagCode::DpiError,
-                    format!("cannot load DPI library '{}'", path),
-                ))?
+                loaded.ok_or_else(|| {
+                    SimError::with_diag(
+                        maria_core::diagnostics::DiagCode::DpiError,
+                        format!("cannot load DPI library '{}'", path),
+                    )
+                })?
             }
         };
         let arc_lib = std::sync::Arc::new(lib);
@@ -190,22 +214,25 @@ impl DpiEngine {
 
     pub fn resolve_function(&mut self, dpi: &IrDpiImport) -> Result<(), SimError> {
         let name = dpi.name.as_str();
-        if self.resolved.contains_key(name) { return Ok(()); }
+        if self.resolved.contains_key(name) {
+            return Ok(());
+        }
 
         for lib in self.libraries.values() {
             // Try symbol as-is
             let sym_bytes = name.as_bytes();
-            let ptr: *mut std::ffi::c_void = match unsafe { lib.get::<unsafe extern "C" fn()>(sym_bytes) } {
-                Ok(sym) => *sym as *mut std::ffi::c_void,
-                Err(_) => {
-                    // Try with underscore prefix (some C compilers add _ prefix)
-                    let underscored = format!("_{}", name);
-                    match unsafe { lib.get::<unsafe extern "C" fn()>(underscored.as_bytes()) } {
-                        Ok(sym) => *sym as *mut std::ffi::c_void,
-                        Err(_) => continue,
+            let ptr: *mut std::ffi::c_void =
+                match unsafe { lib.get::<unsafe extern "C" fn()>(sym_bytes) } {
+                    Ok(sym) => *sym as *mut std::ffi::c_void,
+                    Err(_) => {
+                        // Try with underscore prefix (some C compilers add _ prefix)
+                        let underscored = format!("_{}", name);
+                        match unsafe { lib.get::<unsafe extern "C" fn()>(underscored.as_bytes()) } {
+                            Ok(sym) => *sym as *mut std::ffi::c_void,
+                            Err(_) => continue,
+                        }
                     }
-                }
-            };
+                };
             let dpi_func = DpiFunction {
                 name: name.to_string(),
                 return_width: dpi.return_width,
@@ -223,7 +250,12 @@ impl DpiEngine {
         ))
     }
 
-    pub fn call_function(&self, name: &str, arg_vals: &[LogicVec], _scope: &svScope) -> Result<LogicVec, SimError> {
+    pub fn call_function(
+        &self,
+        name: &str,
+        arg_vals: &[LogicVec],
+        _scope: &svScope,
+    ) -> Result<LogicVec, SimError> {
         let func = match self.resolved.get(name) {
             Some(f) => f,
             None => return Ok(LogicVec::from_u64(0, 32)),
@@ -301,16 +333,39 @@ unsafe fn call_dpi_ffi_generic(
 
     for (dpi_type, data) in marshalled {
         let tag = match dpi_type {
-            DpiType::Byte => { owned_data.push(data.clone()); 0i32 }
-            DpiType::Int => { owned_data.push(data.clone()); 1i32 }
-            DpiType::LongLong => { owned_data.push(data.clone()); 2i32 }
-            DpiType::Double => { owned_data.push(data.clone()); 3i32 }
-            DpiType::StringPtr => { owned_data.push(data.clone()); 4i32 }
-            DpiType::VoidPtr => { owned_data.push(data.clone()); 5i32 }
-            DpiType::PackedArrayPtr(_) => { owned_data.push(data.clone()); 6i32 }
+            DpiType::Byte => {
+                owned_data.push(data.clone());
+                0i32
+            }
+            DpiType::Int => {
+                owned_data.push(data.clone());
+                1i32
+            }
+            DpiType::LongLong => {
+                owned_data.push(data.clone());
+                2i32
+            }
+            DpiType::Double => {
+                owned_data.push(data.clone());
+                3i32
+            }
+            DpiType::StringPtr => {
+                owned_data.push(data.clone());
+                4i32
+            }
+            DpiType::VoidPtr => {
+                owned_data.push(data.clone());
+                5i32
+            }
+            DpiType::PackedArrayPtr(_) => {
+                owned_data.push(data.clone());
+                6i32
+            }
         };
         tags.push(tag);
-        let data_ptr = owned_data.last().map(|v| v.as_ptr() as *const std::ffi::c_void)
+        let data_ptr = owned_data
+            .last()
+            .map(|v| v.as_ptr() as *const std::ffi::c_void)
             .unwrap_or(std::ptr::null());
         ptrs.push(data_ptr);
     }
@@ -321,7 +376,11 @@ unsafe fn call_dpi_ffi_generic(
         n_args: n_args as i32,
         tags: tags.as_ptr() as *const i32,
         args: ptrs.as_ptr(),
-        ret_buf: if ret_bytes.is_empty() { std::ptr::null_mut() } else { ret_bytes.as_mut_ptr() as *mut std::ffi::c_void },
+        ret_buf: if ret_bytes.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            ret_bytes.as_mut_ptr() as *mut std::ffi::c_void
+        },
         ret_max: ret_bytes.len() as i32,
     };
 
@@ -347,13 +406,21 @@ pub struct DpiCallFrame {
 // Legacy FFI callers for simple cases (keep for backward compat)
 
 /// Call a DPI function (void return / task) with marshalled arguments.
-unsafe fn call_dpi_ffi(func_ptr: *mut std::ffi::c_void, marshalled: &[(DpiType, Vec<u8>)], _return_width: usize) {
+unsafe fn call_dpi_ffi(
+    func_ptr: *mut std::ffi::c_void,
+    marshalled: &[(DpiType, Vec<u8>)],
+    _return_width: usize,
+) {
     let mut ret_buf = vec![0u8; 0];
     call_dpi_ffi_generic(func_ptr, marshalled, &mut ret_buf, true);
 }
 
 /// Call a DPI function with marshalled arguments and capture return value.
-unsafe fn call_dpi_ffi_with_return(func_ptr: *mut std::ffi::c_void, marshalled: &[(DpiType, Vec<u8>)], ret: &mut [u8]) {
+unsafe fn call_dpi_ffi_with_return(
+    func_ptr: *mut std::ffi::c_void,
+    marshalled: &[(DpiType, Vec<u8>)],
+    ret: &mut [u8],
+) {
     call_dpi_ffi_generic(func_ptr, marshalled, ret, false);
 }
 
@@ -380,7 +447,9 @@ fn marshal_arg(val: &LogicVec, width: usize) -> (DpiType, Vec<u8>) {
         return (DpiType::StringPtr, bytes);
     }
 
-    if width == 0 { return (DpiType::VoidPtr, Vec::new()); }
+    if width == 0 {
+        return (DpiType::VoidPtr, Vec::new());
+    }
 
     if width <= 8 {
         (DpiType::Byte, vec![val.to_u64() as u8])
@@ -400,7 +469,9 @@ fn marshal_arg(val: &LogicVec, width: usize) -> (DpiType, Vec<u8>) {
 }
 
 fn marshal_return(return_width: usize, raw: &[u8]) -> LogicVec {
-    if return_width == 0 { return LogicVec::new(0); }
+    if return_width == 0 {
+        return LogicVec::new(0);
+    }
     if return_width <= 32 {
         let mut arr = [0u8; 4];
         let len = raw.len().min(4);
@@ -435,7 +506,9 @@ pub fn sv_get_scope() -> svScope {
 
 /// svSetScope(scope) — set current scope (returns 1 on success).
 pub fn sv_set_scope(scope: svScope) -> i32 {
-    if scope.is_null() { return 0; }
+    if scope.is_null() {
+        return 0;
+    }
     if let Some(name) = sv_get_scope_name(scope) {
         CURRENT_DPI_SCOPE_PATH.with(|cell| {
             *cell.borrow_mut() = name;
@@ -481,7 +554,11 @@ pub fn sv_get_time(_scope: svScope, _time_unit: *mut std::ffi::c_void) -> u64 {
 pub fn sv_get_time_precision(_scope: svScope) -> i32 {
     CURRENT_DPI_TIME.with(|cell| {
         let t = *cell.borrow();
-        if t == 0 { -12 } else { -9 } // default ns precision
+        if t == 0 {
+            -12
+        } else {
+            -9
+        } // default ns precision
     })
 }
 
@@ -492,10 +569,16 @@ pub fn sv_get_time_precision(_scope: svScope) -> i32 {
 /// # Safety
 /// `vec` must point to a valid `svBitVecVal` array of sufficient length for `idx/32` words.
 pub unsafe fn sv_get_bitsel(vec: *const svBitVecVal, idx: i32) -> svBit {
-    if vec.is_null() { return 0; }
+    if vec.is_null() {
+        return 0;
+    }
     let word = idx as usize / 32;
     let bit = idx as usize % 32;
-    if (*vec.add(word) >> bit) & 1 == 1 { 1 } else { 0 }
+    if (*vec.add(word) >> bit) & 1 == 1 {
+        1
+    } else {
+        0
+    }
 }
 
 /// svPutBitsel — set a single bit in a logic vector.
@@ -503,11 +586,16 @@ pub unsafe fn sv_get_bitsel(vec: *const svBitVecVal, idx: i32) -> svBit {
 /// # Safety
 /// `vec` must point to a valid mutable `svBitVecVal` array of sufficient length for `idx/32` words.
 pub unsafe fn sv_put_bitsel(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
-    if vec.is_null() { return; }
+    if vec.is_null() {
+        return;
+    }
     let word = idx as usize / 32;
     let bit_pos = idx as usize % 32;
-    if bit != 0 { *vec.add(word) |= 1 << bit_pos; }
-    else { *vec.add(word) &= !(1 << bit_pos); }
+    if bit != 0 {
+        *vec.add(word) |= 1 << bit_pos;
+    } else {
+        *vec.add(word) &= !(1 << bit_pos);
+    }
 }
 
 /// svGetLogicBitsel — get a single 4-state logic bit.
@@ -515,15 +603,28 @@ pub unsafe fn sv_put_bitsel(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
 /// # Safety
 /// `vec` must point to a valid `svLogicVecVal` array (2 words per element) of sufficient length.
 pub unsafe fn sv_get_logic_bitsel(vec: *const svLogicVecVal, idx: i32) -> svLogic {
-    if vec.is_null() { return 0; }
+    if vec.is_null() {
+        return 0;
+    }
     let word = idx as usize / 32;
     let bit = idx as usize % 32;
     let aval = *vec.add(word * 2) >> bit & 1;
     let bval = *vec.add(word * 2 + 1) >> bit & 1;
-    if aval == 0 && bval == 0 { 0 }      // 0
-    else if aval == 1 && bval == 0 { 1 }  // 1
-    else if aval == 0 && bval == 1 { 2 }  // X
-    else { 3 }                            // Z
+    if aval == 0 && bval == 0 {
+        0
+    }
+    // 0
+    else if aval == 1 && bval == 0 {
+        1
+    }
+    // 1
+    else if aval == 0 && bval == 1 {
+        2
+    }
+    // X
+    else {
+        3
+    } // Z
 }
 
 /// svPutLogicBitsel — set a single 4-state logic bit.
@@ -531,15 +632,29 @@ pub unsafe fn sv_get_logic_bitsel(vec: *const svLogicVecVal, idx: i32) -> svLogi
 /// # Safety
 /// `vec` must point to a valid mutable `svLogicVecVal` array (2 words per element) of sufficient length.
 pub unsafe fn sv_put_logic_bitsel(vec: *mut svLogicVecVal, idx: i32, logic: svLogic) {
-    if vec.is_null() { return; }
+    if vec.is_null() {
+        return;
+    }
     let word = idx as usize / 32;
     let bit = idx as usize % 32;
     let mask = 1u32 << bit;
     match logic {
-        0 => { *vec.add(word * 2) &= !mask; *vec.add(word * 2 + 1) &= !mask; }
-        1 => { *vec.add(word * 2) |= mask; *vec.add(word * 2 + 1) &= !mask; }
-        2 => { *vec.add(word * 2) &= !mask; *vec.add(word * 2 + 1) |= mask; }
-        _ => { *vec.add(word * 2) |= mask; *vec.add(word * 2 + 1) |= mask; }
+        0 => {
+            *vec.add(word * 2) &= !mask;
+            *vec.add(word * 2 + 1) &= !mask;
+        }
+        1 => {
+            *vec.add(word * 2) |= mask;
+            *vec.add(word * 2 + 1) &= !mask;
+        }
+        2 => {
+            *vec.add(word * 2) &= !mask;
+            *vec.add(word * 2 + 1) |= mask;
+        }
+        _ => {
+            *vec.add(word * 2) |= mask;
+            *vec.add(word * 2 + 1) |= mask;
+        }
     }
 }
 
@@ -548,7 +663,9 @@ pub unsafe fn sv_put_logic_bitsel(vec: *mut svLogicVecVal, idx: i32, logic: svLo
 /// # Safety
 /// `vec` must point to a valid `svBitVecVal` array of sufficient length to cover `idx+width` bits.
 pub unsafe fn sv_get_part_select(vec: *const svBitVecVal, idx: i32, width: i32) -> svBitVecVal {
-    if vec.is_null() || width <= 0 { return 0; }
+    if vec.is_null() || width <= 0 {
+        return 0;
+    }
     let mut result = 0u32;
     for i in 0..width.min(32) {
         let w = (idx + i) as usize / 32;
@@ -565,13 +682,18 @@ pub unsafe fn sv_get_part_select(vec: *const svBitVecVal, idx: i32, width: i32) 
 /// # Safety
 /// `vec` must point to a valid mutable `svBitVecVal` array of sufficient length to cover `idx+width` bits.
 pub unsafe fn sv_put_part_select(vec: *mut svBitVecVal, idx: i32, width: i32, val: svBitVecVal) {
-    if vec.is_null() || width <= 0 { return; }
+    if vec.is_null() || width <= 0 {
+        return;
+    }
     for i in 0..width.min(32) {
         let w = (idx + i) as usize / 32;
         let b = (idx + i) as usize % 32;
         let bit = (val >> i) & 1;
-        if bit != 0 { *vec.add(w) |= 1 << b; }
-        else { *vec.add(w) &= !(1 << b); }
+        if bit != 0 {
+            *vec.add(w) |= 1 << b;
+        } else {
+            *vec.add(w) &= !(1 << b);
+        }
     }
 }
 
@@ -581,25 +703,33 @@ pub unsafe fn sv_put_part_select(vec: *mut svBitVecVal, idx: i32, width: i32, va
 /// `vec` must be a valid pointer (may be null, which yields 0).
 pub unsafe fn sv_left(vec: *const svBitVecVal, _width: i32) -> i32 {
     // Simplified: assume [width-1:0]
-    if vec.is_null() { return 0; }
+    if vec.is_null() {
+        return 0;
+    }
     *vec as i32
 }
 
 /// svRight — get the right bound of a range.
 pub fn sv_right(vec: *const svBitVecVal, _width: i32) -> i32 {
-    if vec.is_null() { return 0; }
+    if vec.is_null() {
+        return 0;
+    }
     0
 }
 
 /// svLow — get the low bound of a range.
 pub fn sv_low(vec: *const svBitVecVal, _width: i32) -> i32 {
-    if vec.is_null() { return 0; }
+    if vec.is_null() {
+        return 0;
+    }
     0
 }
 
 /// svHigh — get the high bound of a range.
 pub fn sv_high(vec: *const svBitVecVal, width: i32) -> i32 {
-    if vec.is_null() { return 0; }
+    if vec.is_null() {
+        return 0;
+    }
     width - 1
 }
 
@@ -635,18 +765,31 @@ pub type svBitVecVal = u32;
 #[allow(non_camel_case_types)]
 pub type svLogicVecVal = u32;
 
-pub fn sv_bit_to_logic(b: svBit) -> svLogic { b }
-pub fn sv_logic_to_bit(l: svLogic) -> svBit { match l { 0 | 1 => l, _ => 0 } }
+pub fn sv_bit_to_logic(b: svBit) -> svLogic {
+    b
+}
+pub fn sv_logic_to_bit(l: svLogic) -> svBit {
+    match l {
+        0 | 1 => l,
+        _ => 0,
+    }
+}
 
 /// svGetBit — get a single bit from a 2-state vector.
 ///
 /// # Safety
 /// `vec` must point to a valid `svBitVecVal` array of sufficient length for `idx/32` words.
 pub unsafe fn sv_get_bit(vec: *const svBitVecVal, idx: i32) -> svBit {
-    if vec.is_null() { return 0; }
+    if vec.is_null() {
+        return 0;
+    }
     let word = idx as usize / 32;
     let bit = idx as usize % 32;
-    if (*vec.add(word) >> bit) & 1 == 1 { 1 } else { 0 }
+    if (*vec.add(word) >> bit) & 1 == 1 {
+        1
+    } else {
+        0
+    }
 }
 
 /// svPutBit — set a single bit in a 2-state vector.
@@ -654,11 +797,16 @@ pub unsafe fn sv_get_bit(vec: *const svBitVecVal, idx: i32) -> svBit {
 /// # Safety
 /// `vec` must point to a valid mutable `svBitVecVal` array of sufficient length for `idx/32` words.
 pub unsafe fn sv_put_bit(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
-    if vec.is_null() { return; }
+    if vec.is_null() {
+        return;
+    }
     let word = idx as usize / 32;
     let bit_pos = idx as usize % 32;
-    if bit != 0 { *vec.add(word) |= 1 << bit_pos; }
-    else { *vec.add(word) &= !(1 << bit_pos); }
+    if bit != 0 {
+        *vec.add(word) |= 1 << bit_pos;
+    } else {
+        *vec.add(word) &= !(1 << bit_pos);
+    }
 }
 
 // ─── DPI Export Framework (C-callable SV functions) ───

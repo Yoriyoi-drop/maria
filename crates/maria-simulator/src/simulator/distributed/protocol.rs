@@ -112,29 +112,35 @@ pub fn encode_partition_assign(assign: &PartitionAssignment) -> Vec<u8> {
 /// Decode PartitionAssign payload.
 pub fn decode_partition_assign(payload: &[u8]) -> std::io::Result<PartitionAssignment> {
     if payload.len() < 16 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated partition assign"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "truncated partition assign",
+        ));
     }
     let mut offset = 0;
-    let partition_id = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+    let partition_id = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
     offset += 4;
-    let num_partitions = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+    let num_partitions = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
     offset += 4;
-    let num_signals = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+    let num_signals = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
     offset += 4;
-    let num_processes = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+    let num_processes = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
     offset += 4;
-    let n = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+    let n = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
     offset += 4;
     let mut cross_signals = Vec::with_capacity(n as usize);
     for _ in 0..n {
         if offset + 12 > payload.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated cross signals"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "truncated cross signals",
+            ));
         }
-        let local_id = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+        let local_id = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
         offset += 4;
-        let remote_id = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+        let remote_id = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
         offset += 4;
-        let width = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+        let width = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
         offset += 4;
         cross_signals.push((local_id, remote_id, width));
     }
@@ -158,7 +164,10 @@ pub fn encode_delta_sync(delta_id: u64, sim_time: u64) -> Vec<u8> {
 /// Decode DeltaSync payload.
 pub fn decode_delta_sync(payload: &[u8]) -> std::io::Result<(u64, u64)> {
     if payload.len() < 16 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated delta sync"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "truncated delta sync",
+        ));
     }
     let delta_id = u64::from_le_bytes(payload[0..8].try_into().unwrap());
     let sim_time = u64::from_le_bytes(payload[8..16].try_into().unwrap());
@@ -182,25 +191,37 @@ pub fn encode_signal_exchange(values: &[SignalValue]) -> Vec<u8> {
 /// Decode SignalExchange payload.
 pub fn decode_signal_exchange(payload: &[u8]) -> std::io::Result<Vec<SignalValue>> {
     if payload.len() < 4 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated signal exchange"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "truncated signal exchange",
+        ));
     }
     let n = u32::from_le_bytes(payload[0..4].try_into().unwrap()) as usize;
     let mut values = Vec::with_capacity(n);
     let mut offset = 4;
     for _ in 0..n {
         if offset + 8 > payload.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated signal entry"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "truncated signal entry",
+            ));
         }
-        let signal_id = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap());
+        let signal_id = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
         offset += 4;
-        let len = u32::from_le_bytes(payload[offset..offset+4].try_into().unwrap()) as usize;
+        let len = u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
         if offset + len > payload.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated signal value"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "truncated signal value",
+            ));
         }
-        let value_bytes = payload[offset..offset+len].to_vec();
+        let value_bytes = payload[offset..offset + len].to_vec();
         offset += len;
-        values.push(SignalValue { signal_id, value_bytes });
+        values.push(SignalValue {
+            signal_id,
+            value_bytes,
+        });
     }
     Ok(values)
 }
@@ -213,7 +234,10 @@ pub fn encode_heartbeat(timestamp: u64) -> Vec<u8> {
 /// Decode a Heartbeat payload.
 pub fn decode_heartbeat(payload: &[u8]) -> std::io::Result<u64> {
     if payload.len() < 8 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "truncated heartbeat"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "truncated heartbeat",
+        ));
     }
     Ok(u64::from_le_bytes(payload[0..8].try_into().unwrap()))
 }
@@ -264,9 +288,18 @@ mod tests {
     #[test]
     fn test_signal_exchange_roundtrip() {
         let values = vec![
-            SignalValue { signal_id: 0, value_bytes: vec![0x00, 0x01] },
-            SignalValue { signal_id: 1, value_bytes: vec![0xFF] },
-            SignalValue { signal_id: 5, value_bytes: vec![0xAB, 0xCD, 0xEF, 0x01] },
+            SignalValue {
+                signal_id: 0,
+                value_bytes: vec![0x00, 0x01],
+            },
+            SignalValue {
+                signal_id: 1,
+                value_bytes: vec![0xFF],
+            },
+            SignalValue {
+                signal_id: 5,
+                value_bytes: vec![0xAB, 0xCD, 0xEF, 0x01],
+            },
         ];
         let payload = encode_signal_exchange(&values);
         let decoded = decode_signal_exchange(&payload).unwrap();

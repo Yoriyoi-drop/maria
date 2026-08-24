@@ -250,15 +250,9 @@ impl CpuCore for Rv32Cpu {
             Decoded::Mret => self.mret(),
             Decoded::Instr(instr) => match self.execute(pc, instr, mem) {
                 Ok(()) => {}
-                Err(ExecErr::LoadFault(addr)) => {
-                    self.trap(CAUSE_LOAD_ACCESS_FAULT, addr, pc)
-                }
-                Err(ExecErr::StoreFault(addr)) => {
-                    self.trap(CAUSE_STORE_ACCESS_FAULT, addr, pc)
-                }
-                Err(ExecErr::Illegal(raw)) => {
-                    self.trap(CAUSE_ILLEGAL_INSTRUCTION, raw as u64, pc)
-                }
+                Err(ExecErr::LoadFault(addr)) => self.trap(CAUSE_LOAD_ACCESS_FAULT, addr, pc),
+                Err(ExecErr::StoreFault(addr)) => self.trap(CAUSE_STORE_ACCESS_FAULT, addr, pc),
+                Err(ExecErr::Illegal(raw)) => self.trap(CAUSE_ILLEGAL_INSTRUCTION, raw as u64, pc),
             },
         }
         Ok(CpuStep::InstructionExecuted { cycles: 1 })
@@ -313,17 +307,61 @@ enum Decoded {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Instr {
-    Lui { rd: u8, imm: u64 },
-    Auipc { rd: u8, imm: u64 },
-    Jal { rd: u8, imm: i64 },
-    Jalr { rd: u8, rs1: u8, imm: i64 },
-    Branch { op: u8, rs1: u8, rs2: u8, imm: i64 },
-    Load { op: u8, rd: u8, rs1: u8, imm: i64 },
-    Store { op: u8, rs1: u8, rs2: u8, imm: i64 },
-    OpImm { op: u8, rd: u8, rs1: u8, imm: i64 },
-    Op { op: u8, rd: u8, rs1: u8, rs2: u8 },
+    Lui {
+        rd: u8,
+        imm: u64,
+    },
+    Auipc {
+        rd: u8,
+        imm: u64,
+    },
+    Jal {
+        rd: u8,
+        imm: i64,
+    },
+    Jalr {
+        rd: u8,
+        rs1: u8,
+        imm: i64,
+    },
+    Branch {
+        op: u8,
+        rs1: u8,
+        rs2: u8,
+        imm: i64,
+    },
+    Load {
+        op: u8,
+        rd: u8,
+        rs1: u8,
+        imm: i64,
+    },
+    Store {
+        op: u8,
+        rs1: u8,
+        rs2: u8,
+        imm: i64,
+    },
+    OpImm {
+        op: u8,
+        rd: u8,
+        rs1: u8,
+        imm: i64,
+    },
+    Op {
+        op: u8,
+        rd: u8,
+        rs1: u8,
+        rs2: u8,
+    },
     Fence,
-    Csr { op: u8, rd: u8, rs1: u8, csr: u64, zimm: u64 },
+    Csr {
+        op: u8,
+        rd: u8,
+        rs1: u8,
+        csr: u64,
+        zimm: u64,
+    },
 }
 
 fn sext(v: u64, bits: u32) -> i64 {
@@ -339,39 +377,77 @@ fn decode(raw: u32) -> Decoded {
     let rs2 = ((raw >> 20) & 0x1f) as u8;
     let funct7 = (raw >> 25) as u8;
     match opcode {
-        0x37 => Decoded::Instr(Instr::Lui { rd, imm: ((raw >> 12) as u64) << 12 }),
-        0x17 => Decoded::Instr(Instr::Auipc { rd, imm: ((raw >> 12) as u64) << 12 }),
+        0x37 => Decoded::Instr(Instr::Lui {
+            rd,
+            imm: ((raw >> 12) as u64) << 12,
+        }),
+        0x17 => Decoded::Instr(Instr::Auipc {
+            rd,
+            imm: ((raw >> 12) as u64) << 12,
+        }),
         0x6f => {
             let imm = ((raw >> 31) & 1) << 20
                 | ((raw >> 12) & 0xff) << 12
                 | ((raw >> 20) & 1) << 11
                 | ((raw >> 21) & 0x3ff) << 1;
-            Decoded::Instr(Instr::Jal { rd, imm: sext(imm as u64, 21) })
+            Decoded::Instr(Instr::Jal {
+                rd,
+                imm: sext(imm as u64, 21),
+            })
         }
         0x67 => {
             let imm = raw >> 20;
-            Decoded::Instr(Instr::Jalr { rd, rs1, imm: sext(imm as u64, 12) })
+            Decoded::Instr(Instr::Jalr {
+                rd,
+                rs1,
+                imm: sext(imm as u64, 12),
+            })
         }
         0x63 => {
             let imm = ((raw >> 31) & 1) << 12
                 | ((raw >> 7) & 1) << 11
                 | ((raw >> 25) & 0x3f) << 5
                 | ((raw >> 8) & 0xf) << 1;
-            Decoded::Instr(Instr::Branch { op: funct3, rs1, rs2, imm: sext(imm as u64, 13) })
+            Decoded::Instr(Instr::Branch {
+                op: funct3,
+                rs1,
+                rs2,
+                imm: sext(imm as u64, 13),
+            })
         }
         0x03 => {
             let imm = raw >> 20;
-            Decoded::Instr(Instr::Load { op: funct3, rd, rs1, imm: sext(imm as u64, 12) })
+            Decoded::Instr(Instr::Load {
+                op: funct3,
+                rd,
+                rs1,
+                imm: sext(imm as u64, 12),
+            })
         }
         0x23 => {
             let imm = ((raw >> 25) & 0x7f) << 5 | ((raw >> 7) & 0x1f);
-            Decoded::Instr(Instr::Store { op: funct3, rs1, rs2, imm: sext(imm as u64, 12) })
+            Decoded::Instr(Instr::Store {
+                op: funct3,
+                rs1,
+                rs2,
+                imm: sext(imm as u64, 12),
+            })
         }
         0x13 => {
             let imm = raw >> 20;
-            Decoded::Instr(Instr::OpImm { op: funct3, rd, rs1, imm: sext(imm as u64, 12) })
+            Decoded::Instr(Instr::OpImm {
+                op: funct3,
+                rd,
+                rs1,
+                imm: sext(imm as u64, 12),
+            })
         }
-        0x33 => Decoded::Instr(Instr::Op { op: funct3 | (funct7 << 3), rd, rs1, rs2 }),
+        0x33 => Decoded::Instr(Instr::Op {
+            op: funct3 | (funct7 << 3),
+            rd,
+            rs1,
+            rs2,
+        }),
         0x0f => Decoded::Instr(Instr::Fence), // FENCE / FENCE.I
         0x73 => {
             if raw == 0x0000_0073 {
@@ -383,7 +459,13 @@ fn decode(raw: u32) -> Decoded {
             } else {
                 let csr = (raw >> 20) as u64;
                 let zimm = rs1 as u64;
-                Decoded::Instr(Instr::Csr { op: funct3, rd, rs1, csr, zimm })
+                Decoded::Instr(Instr::Csr {
+                    op: funct3,
+                    rd,
+                    rs1,
+                    csr,
+                    zimm,
+                })
             }
         }
         _ => Decoded::Illegal,
@@ -429,12 +511,12 @@ impl Rv32Cpu {
                 let a = self.regs[rs1 as usize] as i32;
                 let b = self.regs[rs2 as usize] as i32;
                 let taken = match op {
-                    0 => a == b,                                    // BEQ
-                    1 => a != b,                                    // BNE
-                    4 => a < b,                                     // BLT
-                    5 => a >= b,                                    // BGE
-                    6 => (a as u32) < (b as u32),                   // BLTU
-                    7 => (a as u32) >= (b as u32),                  // BGEU
+                    0 => a == b,                   // BEQ
+                    1 => a != b,                   // BNE
+                    4 => a < b,                    // BLT
+                    5 => a >= b,                   // BGE
+                    6 => (a as u32) < (b as u32),  // BLTU
+                    7 => (a as u32) >= (b as u32), // BGEU
                     _ => return Err(ExecErr::Illegal(0)),
                 };
                 self.pc = if taken {
@@ -478,11 +560,11 @@ impl Rv32Cpu {
                 let a = self.regs[rs1 as usize] as u32;
                 let imm32 = imm as u32;
                 let val = match op {
-                    0 => a.wrapping_add(imm32),                     // ADDI
-                    1 => a.wrapping_shl(imm32 & 0x1f),              // SLLI
-                    2 => ((a as i32) < (imm as i32)) as u32,        // SLTI
-                    3 => (a < imm32) as u32,                        // SLTIU
-                    4 => a ^ imm32,                                 // XORI
+                    0 => a.wrapping_add(imm32),              // ADDI
+                    1 => a.wrapping_shl(imm32 & 0x1f),       // SLLI
+                    2 => ((a as i32) < (imm as i32)) as u32, // SLTI
+                    3 => (a < imm32) as u32,                 // SLTIU
+                    4 => a ^ imm32,                          // XORI
                     5 => {
                         // SRLI (imm[11:5]=0) / SRAI (imm[11:5]=0x20 → bit 10).
                         let shamt = imm32 & 0x1f;
@@ -492,8 +574,8 @@ impl Rv32Cpu {
                             a >> shamt
                         }
                     }
-                    6 => a | imm32,                                 // ORI
-                    7 => a & imm32,                                 // ANDI
+                    6 => a | imm32, // ORI
+                    7 => a & imm32, // ANDI
                     _ => return Err(ExecErr::Illegal(0)),
                 };
                 self.write_rd(rd, val as u64);
@@ -504,18 +586,18 @@ impl Rv32Cpu {
                 let b = self.regs[rs2 as usize] as u32;
                 let val = match op {
                     // funct7=0 (bit 3 = 0): integer ops
-                    0x0 => a.wrapping_add(b),                       // ADD
-                    0x20 => a.wrapping_sub(b),                      // SUB
-                    0x1 => a.wrapping_shl(b & 0x1f),                // SLL
-                    0x2 => ((a as i32) < (b as i32)) as u32,        // SLT
-                    0x3 => (a < b) as u32,                          // SLTU
-                    0x4 => a ^ b,                                   // XOR
-                    0x5 => a >> (b & 0x1f),                         // SRL
-                    0x25 => ((a as i32) >> (b & 0x1f)) as u32,      // SRA
-                    0x6 => a | b,                                   // OR
-                    0x7 => a & b,                                   // AND
+                    0x0 => a.wrapping_add(b),                  // ADD
+                    0x20 => a.wrapping_sub(b),                 // SUB
+                    0x1 => a.wrapping_shl(b & 0x1f),           // SLL
+                    0x2 => ((a as i32) < (b as i32)) as u32,   // SLT
+                    0x3 => (a < b) as u32,                     // SLTU
+                    0x4 => a ^ b,                              // XOR
+                    0x5 => a >> (b & 0x1f),                    // SRL
+                    0x25 => ((a as i32) >> (b & 0x1f)) as u32, // SRA
+                    0x6 => a | b,                              // OR
+                    0x7 => a & b,                              // AND
                     // funct7=1 (bit 3 = 1): M extension
-                    0x8 => (a as u32).wrapping_mul(b as u32),       // MUL (low)
+                    0x8 => (a as u32).wrapping_mul(b as u32), // MUL (low)
                     0x9 => {
                         // MULH: high dari (a_sign * b_sign) 64-bit
                         (((a as i64) * (b as i64)) >> 32) as u32
@@ -572,7 +654,13 @@ impl Rv32Cpu {
             Instr::Fence => {
                 self.pc = base_pc + 4; // nop (single-core)
             }
-            Instr::Csr { op, rd, rs1, csr, zimm } => {
+            Instr::Csr {
+                op,
+                rd,
+                rs1,
+                csr,
+                zimm,
+            } => {
                 let old = self.csr_read(csr).ok_or(ExecErr::Illegal(0))?;
                 let (new, _wval) = match op {
                     // BUG FIX: CSRRW (op=1) menulis nilai REGISTER rs1 —
@@ -585,15 +673,23 @@ impl Rv32Cpu {
                     }
                     2 => {
                         // CSRRS: set bit
-                        let w = if rs1 != 0 { old | self.regs[rs1 as usize] } else { old };
+                        let w = if rs1 != 0 {
+                            old | self.regs[rs1 as usize]
+                        } else {
+                            old
+                        };
                         (if rs1 != 0 { Some(w) } else { None }, w)
                     }
                     3 => {
                         // CSRRC: clear bit
-                        let w = if rs1 != 0 { old & !self.regs[rs1 as usize] } else { old };
+                        let w = if rs1 != 0 {
+                            old & !self.regs[rs1 as usize]
+                        } else {
+                            old
+                        };
                         (if rs1 != 0 { Some(w) } else { None }, w)
                     }
-                    5 => (Some(zimm), zimm),                              // CSRRWI
+                    5 => (Some(zimm), zimm), // CSRRWI
                     6 => {
                         let w = if zimm != 0 { old | zimm } else { old };
                         (if zimm != 0 { Some(w) } else { None }, w)
@@ -631,28 +727,69 @@ mod tests {
         let mut m = MemoryMap::new();
         // Kode di 0x0..0x100000 (program ELF/test di 0x100-0x700), data di
         // 0x8000_0000 (store/load — alamat memori konvensional bare-metal).
-        m.add(RamRegion::new(Symbol::intern("code"), 0x0, 0x10_0000, RegionKind::Ram, false).unwrap()).unwrap();
-        m.add(RamRegion::new(Symbol::intern("data"), 0x8000_0000, 0x10_0000, RegionKind::Ram, false).unwrap()).unwrap();
+        m.add(
+            RamRegion::new(
+                Symbol::intern("code"),
+                0x0,
+                0x10_0000,
+                RegionKind::Ram,
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        m.add(
+            RamRegion::new(
+                Symbol::intern("data"),
+                0x8000_0000,
+                0x10_0000,
+                RegionKind::Ram,
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         m
     }
 
     /// Helper encoding RV32I.
     fn r(f7: u8, rs2: u8, rs1: u8, f3: u8, rd: u8, op: u32) -> u32 {
-        ((f7 as u32) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((rd as u32) << 7) | op
+        ((f7 as u32) << 25)
+            | ((rs2 as u32) << 20)
+            | ((rs1 as u32) << 15)
+            | ((f3 as u32) << 12)
+            | ((rd as u32) << 7)
+            | op
     }
 
     fn i(imm: i32, rs1: u8, f3: u8, rd: u8, op: u32) -> u32 {
-        ((imm as u32 & 0xfff) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((rd as u32) << 7) | op
+        ((imm as u32 & 0xfff) << 20)
+            | ((rs1 as u32) << 15)
+            | ((f3 as u32) << 12)
+            | ((rd as u32) << 7)
+            | op
     }
 
     fn s(imm: i32, rs2: u8, rs1: u8, f3: u8, op: u32) -> u32 {
         let imm = imm as u32 & 0xfff;
-        ((imm >> 5) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((imm & 0x1f) << 7) | op
+        ((imm >> 5) << 25)
+            | ((rs2 as u32) << 20)
+            | ((rs1 as u32) << 15)
+            | ((f3 as u32) << 12)
+            | ((imm & 0x1f) << 7)
+            | op
     }
 
     fn b(imm: i32, rs2: u8, rs1: u8, f3: u8, op: u32) -> u32 {
         let imm = imm as u32 & 0x1fff;
-        ((imm >> 12) << 31) | (((imm >> 5) & 0x3f) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | (((imm >> 1) & 0xf) << 8) | (((imm >> 11) & 1) << 7) | op
+        ((imm >> 12) << 31)
+            | (((imm >> 5) & 0x3f) << 25)
+            | ((rs2 as u32) << 20)
+            | ((rs1 as u32) << 15)
+            | ((f3 as u32) << 12)
+            | (((imm >> 1) & 0xf) << 8)
+            | (((imm >> 11) & 1) << 7)
+            | op
     }
 
     const ADDI: u32 = 0x13;
@@ -692,9 +829,9 @@ mod tests {
         let mut m = map();
         let mut cpu = Rv32Cpu::new();
         let code = [
-            i(42, 0, 0, 5, ADDI),                      // t0 = 42
-            (0x80000u32 << 12) | (10u32 << 7) | LUI,   // a0 = 0x80000000
-            s(0, 5, 10, 2, SW),                        // mem[a0] = t0
+            i(42, 0, 0, 5, ADDI),                    // t0 = 42
+            (0x80000u32 << 12) | (10u32 << 7) | LUI, // a0 = 0x80000000
+            s(0, 5, 10, 2, SW),                      // mem[a0] = t0
             i(0, 10, 2, 11, LW),                     // a1 = mem[a0]
             r(0, 5, 11, 0, 12, OP),                  // a2 = a1 + t0
         ];
@@ -713,13 +850,13 @@ mod tests {
         let mut cpu = Rv32Cpu::new();
         // t0=1, t1=2; beq t0,t1,+12 (skip); addi t2,zero,1; jal +8; addi t2,zero,2
         let code = [
-            i(1, 0, 0, 5, ADDI),   // t0 = 1
-            i(2, 0, 0, 6, ADDI),   // t1 = 2
-            b(12, 6, 5, 0, BR),    // beq t0,t1,+12 → not taken
-            i(1, 0, 0, 7, ADDI),   // t2 = 1
-            jal(8, 0),             // jal x0, +8 → skip t2=2
-            i(2, 0, 0, 7, ADDI),   // t2 = 2
-            b(-8, 6, 5, 0, BR),    // beq t0,t1,-8 → not taken
+            i(1, 0, 0, 5, ADDI), // t0 = 1
+            i(2, 0, 0, 6, ADDI), // t1 = 2
+            b(12, 6, 5, 0, BR),  // beq t0,t1,+12 → not taken
+            i(1, 0, 0, 7, ADDI), // t2 = 1
+            jal(8, 0),           // jal x0, +8 → skip t2=2
+            i(2, 0, 0, 7, ADDI), // t2 = 2
+            b(-8, 6, 5, 0, BR),  // beq t0,t1,-8 → not taken
         ];
         load_code(&mut cpu, &mut m, 0x100, &code);
         run(&mut cpu, &mut m, 6);
@@ -727,11 +864,11 @@ mod tests {
         // BLT: t0=1 < t1=2 → diambil
         let mut cpu2 = Rv32Cpu::new();
         let code2 = [
-            i(1, 0, 0, 5, ADDI),   // t0=1
-            i(2, 0, 0, 6, ADDI),   // t1=2
-            b(8, 6, 5, 4, BR),     // blt t0,t1,+8 → diambil
-            i(9, 0, 0, 7, ADDI),   // t2=9 (skip)
-            i(5, 0, 0, 7, ADDI),   // t2=5
+            i(1, 0, 0, 5, ADDI), // t0=1
+            i(2, 0, 0, 6, ADDI), // t1=2
+            b(8, 6, 5, 4, BR),   // blt t0,t1,+8 → diambil
+            i(9, 0, 0, 7, ADDI), // t2=9 (skip)
+            i(5, 0, 0, 7, ADDI), // t2=5
         ];
         load_code(&mut cpu2, &mut m, 0x200, &code2);
         run(&mut cpu2, &mut m, 4);
@@ -745,10 +882,10 @@ mod tests {
         // auipc t0, 0 → t0 = pc; jalr ra, t0, 8 (call ke +8); addi t1,zero,1; addi t1,zero,2
         let base = 0x300u64;
         let code = [
-            r(0, 0, 0, 0, 5, 0x17),  // auipc t0, 0
-            i(8, 5, 0, 1, JALR),     // jalr ra, t0, 8 → target = pc+8
-            i(1, 0, 0, 6, ADDI),     // t1=1
-            i(2, 0, 0, 6, ADDI),     // t1=2
+            r(0, 0, 0, 0, 5, 0x17), // auipc t0, 0
+            i(8, 5, 0, 1, JALR),    // jalr ra, t0, 8 → target = pc+8
+            i(1, 0, 0, 6, ADDI),    // t1=1
+            i(2, 0, 0, 6, ADDI),    // t1=2
         ];
         load_code(&mut cpu, &mut m, base, &code);
         run(&mut cpu, &mut m, 4);
@@ -767,9 +904,9 @@ mod tests {
         let code = [
             i(-3, 0, 0, 5, ADDI),
             i(7, 0, 0, 6, ADDI),
-            r(1, 6, 5, 0, 7, OP),  // t2 = t0 * t1 (low) = -21 = 0xFFFFFFEB
-            r(1, 6, 5, 4, 8, OP),  // t3 = t0 / t1 (div) = 0
-            r(1, 6, 5, 6, 9, OP),  // t4 = t0 % t1 (rem) = -3
+            r(1, 6, 5, 0, 7, OP), // t2 = t0 * t1 (low) = -21 = 0xFFFFFFEB
+            r(1, 6, 5, 4, 8, OP), // t3 = t0 / t1 (div) = 0
+            r(1, 6, 5, 6, 9, OP), // t4 = t0 % t1 (rem) = -3
         ];
         load_code(&mut cpu, &mut m, 0x400, &code);
         run(&mut cpu, &mut m, 5);
@@ -786,9 +923,9 @@ mod tests {
         let code = [
             i(5, 0, 0, 5, ADDI),
             i(0, 0, 0, 6, ADDI),
-            r(1, 6, 5, 4, 7, OP), // DIV t2 = t0/t1
-            r(1, 6, 5, 5, 8, OP), // DIVU t3
-            r(1, 6, 5, 6, 9, OP), // REM t4
+            r(1, 6, 5, 4, 7, OP),  // DIV t2 = t0/t1
+            r(1, 6, 5, 5, 8, OP),  // DIVU t3
+            r(1, 6, 5, 6, 9, OP),  // REM t4
             r(1, 6, 5, 7, 10, OP), // REMU t5
         ];
         load_code(&mut cpu, &mut m, 0x500, &code);
@@ -835,7 +972,11 @@ mod tests {
         run(&mut cpu, &mut m, 4);
         assert_eq!(cpu.read_reg(5), 0, "csrrw t0 membaca mtvec lama (0)");
         assert_eq!(cpu.read_reg(6), 0x100, "csrrs t1 membaca mtvec baru");
-        assert_eq!(cpu.read_reg(7), 0x100, "csrrw t2 membaca mtvec, lalu tulis 0");
+        assert_eq!(
+            cpu.read_reg(7),
+            0x100,
+            "csrrw t2 membaca mtvec, lalu tulis 0"
+        );
         assert_eq!(cpu.csr(CSR_MTVEC), Some(0));
     }
 
@@ -849,19 +990,31 @@ mod tests {
         let base = 0x1000u64;
         let handler = 0x700u64;
         let code = [
-            i(0x700, 0, 0, 10, ADDI),   // a0 = 0x700
-            i(0x305, 10, 1, 0, CSRRW),  // csrrw x0, mtvec, a0
-            i(0x300, 8, 5, 0, SYSTEM),  // csrrwi x0, mstatus, 8 → MIE=1
-            0x0000_0073,                // ecall
+            i(0x700, 0, 0, 10, ADDI),  // a0 = 0x700
+            i(0x305, 10, 1, 0, CSRRW), // csrrw x0, mtvec, a0
+            i(0x300, 8, 5, 0, SYSTEM), // csrrwi x0, mstatus, 8 → MIE=1
+            0x0000_0073,               // ecall
         ];
         load_code(&mut cpu, &mut m, base, &code);
         // Tulis handler (mret) di 0x700.
         m.write(handler, 4, 0x3020_0073u32 as u64).unwrap();
         run(&mut cpu, &mut m, 5);
         assert_eq!(cpu.csr(CSR_MCAUSE), Some(CAUSE_ECALL_M));
-        assert_eq!(cpu.csr(CSR_MEPC), Some(base + 12), "mepc = pc instruksi ecall");
-        assert_eq!(cpu.pc(), base + 12, "mret kembali ke mepc (instruksi ecall)");
-        assert_eq!(cpu.csr(CSR_MSTATUS).unwrap() & MSTATUS_MIE as u64, MSTATUS_MIE as u64, "MIE dipulihkan oleh mret");
+        assert_eq!(
+            cpu.csr(CSR_MEPC),
+            Some(base + 12),
+            "mepc = pc instruksi ecall"
+        );
+        assert_eq!(
+            cpu.pc(),
+            base + 12,
+            "mret kembali ke mepc (instruksi ecall)"
+        );
+        assert_eq!(
+            cpu.csr(CSR_MSTATUS).unwrap() & MSTATUS_MIE as u64,
+            MSTATUS_MIE as u64,
+            "MIE dipulihkan oleh mret"
+        );
     }
 
     #[test]
@@ -870,9 +1023,9 @@ mod tests {
         let mut cpu = Rv32Cpu::new();
         // mtvec = 0x200 (mret di sana), lalu lw a0, 0(a1) dengan a1 = 0xDEAD0000 (unmapped)
         let code = [
-            i(0x200, 0, 0, 10, ADDI),   // a0 = 0x200
-            i(0x305, 10, 1, 0, CSRRW),  // mtvec = a0
-            i(0xdead, 0, 0, 11, ADDI),  // a1 = 0xDEAD (imm 12-bit: 0xDEAD & 0xfff = 0xead)
+            i(0x200, 0, 0, 10, ADDI),  // a0 = 0x200
+            i(0x305, 10, 1, 0, CSRRW), // mtvec = a0
+            i(0xdead, 0, 0, 11, ADDI), // a1 = 0xDEAD (imm 12-bit: 0xDEAD & 0xfff = 0xead)
         ];
         // a1 = 0xDEAD0000 via lui+addi:
         let code = [

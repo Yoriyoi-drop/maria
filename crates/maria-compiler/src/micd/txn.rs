@@ -113,11 +113,8 @@ mod tests {
     use super::*;
 
     fn test_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "maria_micd_txn_{}_{}",
-            std::process::id(),
-            name
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("maria_micd_txn_{}_{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         dir
@@ -127,10 +124,7 @@ mod tests {
     fn test_journal_roundtrip() {
         let dir = test_dir("roundtrip");
         let path = dir.join("journal.mdb");
-        let files = vec![
-            PathBuf::from("metadata.mdb"),
-            PathBuf::from("graph.mdb"),
-        ];
+        let files = vec![PathBuf::from("metadata.mdb"), PathBuf::from("graph.mdb")];
         write_journal(&path, &files).unwrap();
         let j = read_journal(&path).expect("journal terbaca");
         assert_eq!(j.files, files);

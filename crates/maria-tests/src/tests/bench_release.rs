@@ -15,7 +15,9 @@ use std::time::Instant;
 /// Read peak virtual memory (VmPeak) from /proc/self/status in MB.
 /// Returns 0.0 on non-Linux or if file is unreadable.
 fn peak_vmem_mb() -> f64 {
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else { return 0.0; };
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return 0.0;
+    };
     for line in status.lines() {
         if let Some(val) = line.strip_prefix("VmPeak:") {
             let val = val.trim();
@@ -31,7 +33,9 @@ fn peak_vmem_mb() -> f64 {
 
 /// Read current virtual memory (VmRSS) from /proc/self/status in MB.
 fn current_rss_mb() -> f64 {
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else { return 0.0; };
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return 0.0;
+    };
     for line in status.lines() {
         if let Some(val) = line.strip_prefix("VmRSS:") {
             let val = val.trim();
@@ -47,7 +51,8 @@ fn current_rss_mb() -> f64 {
 
 /// Generate a simulation design with N-cycle counter and clock.
 fn gen_sim_design(cycles: u64) -> String {
-    format!(r#"
+    format!(
+        r#"
 module bench_sim (
     input clk,
     input rst_n
@@ -72,14 +77,14 @@ module tb;
     end
     always #1 clk = ~clk;
 endmodule
-"#, cycles)
+"#,
+        cycles
+    )
 }
 
 /// Generate N parallel always_comb blocks for throughput scaling test.
 fn gen_parallel_design(blocks: usize) -> String {
-    let mut src = String::from(
-        "module bench_parallel;\n"
-    );
+    let mut src = String::from("module bench_parallel;\n");
     // Declare signals
     src.push_str("    reg [7:0] a, b;\n");
     for i in 0..blocks {
@@ -87,14 +92,10 @@ fn gen_parallel_design(blocks: usize) -> String {
     }
     // Always_comb blocks
     for i in 0..blocks {
-        src.push_str(&format!(
-            "    always_comb begin out_{} = a + b; end\n", i
-        ));
+        src.push_str(&format!("    always_comb begin out_{} = a + b; end\n", i));
     }
     // Stimulus
-    src.push_str(
-        "    initial begin\n"
-    );
+    src.push_str("    initial begin\n");
     src.push_str("        a = 10; b = 20;\n");
     src.push_str("        #1;\n");
     if blocks > 0 {
@@ -115,7 +116,9 @@ fn gen_elab_design(count: usize) -> String {
         src.push_str(&format!(
             "module elab_{}(input clk, output reg [7:0] q);
              always_ff @(posedge clk) q <= q + 8'h1;
-             endmodule\n", i));
+             endmodule\n",
+            i
+        ));
     }
     // Top tunggal yang meng-instansiasi semua submodule → tepat satu top
     // candidate (StrictSimulation menolak design dengan banyak candidate tops).
@@ -124,10 +127,7 @@ fn gen_elab_design(count: usize) -> String {
         src.push_str(&format!("    wire [7:0] q_{};\n", i));
     }
     for i in 0..count {
-        src.push_str(&format!(
-            "    elab_{} u{}(.clk(clk), .q(q_{}));\n",
-            i, i, i
-        ));
+        src.push_str(&format!("    elab_{} u{}(.clk(clk), .q(q_{}));\n", i, i, i));
     }
     src.push_str("endmodule\n");
     src
@@ -164,8 +164,11 @@ fn bench_release_sim_throughput_counter() {
     eprintln!("  Mem delta:       {:.1} MB", mem_delta);
 
     // Assert minimum performance (at least 10K cycles/sec in debug mode)
-    assert!(cycles_per_sec > 10_000.0,
-        "Simulation too slow: {:.0} cycles/sec (expected >10K)", cycles_per_sec);
+    assert!(
+        cycles_per_sec > 10_000.0,
+        "Simulation too slow: {:.0} cycles/sec (expected >10K)",
+        cycles_per_sec
+    );
 }
 
 #[test]
@@ -195,8 +198,11 @@ fn bench_release_sim_throughput_counter_1m() {
     eprintln!("  Peak VMem after: {:.1} MB", mem_after);
     eprintln!("  Mem delta:       {:.1} MB", mem_delta);
 
-    assert!(cycles_per_sec > 10_000.0,
-        "Simulation too slow: {:.0} cycles/sec (expected >10K)", cycles_per_sec);
+    assert!(
+        cycles_per_sec > 10_000.0,
+        "Simulation too slow: {:.0} cycles/sec (expected >10K)",
+        cycles_per_sec
+    );
 }
 
 #[test]
@@ -221,8 +227,11 @@ fn bench_release_sim_throughput_parallel() {
     eprintln!("  Peak VMem after: {:.1} MB", mem_after);
     eprintln!("  Mem delta:       {:.1} MB", mem_after - mem_before);
 
-    assert!(elapsed.as_secs() < 10,
-        "Parallel simulation too slow: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 10,
+        "Parallel simulation too slow: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -266,8 +275,11 @@ endmodule
     eprintln!("  Sim time:        {}", engine.state.time);
     eprintln!("  Peak VMem after: {:.1} MB", mem_after);
 
-    assert!(cycles_per_sec > 5_000.0,
-        "Busy loop sim too slow: {:.0} cycles/sec", cycles_per_sec);
+    assert!(
+        cycles_per_sec > 5_000.0,
+        "Busy loop sim too slow: {:.0} cycles/sec",
+        cycles_per_sec
+    );
 }
 
 #[test]
@@ -283,13 +295,21 @@ fn bench_release_elaborate_1000_modules() {
     let mem_after = peak_vmem_mb();
 
     eprintln!("═══ Compile & Elaboration (1000 modules) ═══");
-    eprintln!("  Modules:         {} ({} in top)", design.modules.len() + 1, design.modules.len());
+    eprintln!(
+        "  Modules:         {} ({} in top)",
+        design.modules.len() + 1,
+        design.modules.len()
+    );
     eprintln!("  Elapsed:         {:?}", elapsed);
     eprintln!("  Peak VMem:       {:.1} MB", mem_before);
     eprintln!("  Peak VMem after: {:.1} MB", mem_after);
     eprintln!("  Mem delta:       {:.1} MB", mem_after - mem_before);
 
-    assert!(elapsed.as_secs() < 30, "1000 modules too slow: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 30,
+        "1000 modules too slow: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -305,10 +325,16 @@ fn bench_release_elaborate_100_modules() {
     let mem_after = peak_vmem_mb();
 
     eprintln!("═══ Compile & Elaboration (100 modules) ═══");
-    eprintln!("  Modules:         {} ({} in top)", design.modules.len() + 1, design.modules.len());
+    eprintln!(
+        "  Modules:         {} ({} in top)",
+        design.modules.len() + 1,
+        design.modules.len()
+    );
     eprintln!("  Elapsed:         {:?}", elapsed);
-    eprintln!("  Rate:            {:.0} modules/sec",
-        100.0 / elapsed.as_secs_f64());
+    eprintln!(
+        "  Rate:            {:.0} modules/sec",
+        100.0 / elapsed.as_secs_f64()
+    );
     eprintln!("  Peak VMem after: {:.1} MB", mem_after);
 
     assert!(elapsed.as_secs() < 5, "100 modules too slow: {:?}", elapsed);
@@ -329,12 +355,20 @@ fn bench_release_elaborate_10000_modules() {
     let modules_per_sec = (design.modules.len() + 1) as f64 / elapsed.as_secs_f64();
 
     eprintln!("═══ Compile & Elaboration (10000 modules) ═══");
-    eprintln!("  Modules:         {} ({} in top)", design.modules.len() + 1, design.modules.len());
+    eprintln!(
+        "  Modules:         {} ({} in top)",
+        design.modules.len() + 1,
+        design.modules.len()
+    );
     eprintln!("  Elapsed:         {:?}", elapsed);
     eprintln!("  Rate:            {:.0} modules/sec", modules_per_sec);
     eprintln!("  Peak VMem after: {:.1} MB", mem_after);
 
-    assert!(elapsed.as_secs() < 120, "10000 modules too slow: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 120,
+        "10000 modules too slow: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -346,14 +380,18 @@ fn bench_release_memory_open_titan() {
         eprintln!("OpenTitan file list not found, skipping memory benchmark");
         return;
     }
-    let content = std::fs::read_to_string(&file_list_path)
-        .expect("opentitan_rtl.f not found");
+    let content = std::fs::read_to_string(&file_list_path).expect("opentitan_rtl.f not found");
     let manifest = env!("CARGO_MANIFEST_DIR");
     let sources: Vec<String> = content
         .lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| std::path::Path::new(manifest).join(l).to_string_lossy().to_string())
+        .map(|l| {
+            std::path::Path::new(manifest)
+                .join(l)
+                .to_string_lossy()
+                .to_string()
+        })
         .collect();
 
     eprintln!("OpenTitan RTL files: {}", sources.len());
@@ -383,8 +421,14 @@ fn bench_release_memory_open_titan() {
         Err(e) => {
             let elapsed = start.elapsed();
             let mem_after = peak_vmem_mb();
-            eprintln!("OpenTitan compile partially failed after {:?}: {:?}", elapsed, e);
-            eprintln!("Peak VMem before: {:.1} MB, after: {:.1} MB", mem_before, mem_after);
+            eprintln!(
+                "OpenTitan compile partially failed after {:?}: {:?}",
+                elapsed, e
+            );
+            eprintln!(
+                "Peak VMem before: {:.1} MB, after: {:.1} MB",
+                mem_before, mem_after
+            );
         }
     }
 }
@@ -409,7 +453,11 @@ fn bench_release_memory_stress() {
     let mem_per_module = (mem_after - mem_before) / 1000.0;
 
     eprintln!("═══ Memory Stress (1000 modules) ═══");
-    eprintln!("  Modules:         {} ({} in top)", design.modules.len() + 1, design.modules.len());
+    eprintln!(
+        "  Modules:         {} ({} in top)",
+        design.modules.len() + 1,
+        design.modules.len()
+    );
     eprintln!("  Elapsed:         {:?}", elapsed);
     eprintln!("  Peak VMem:       {:.1} MB", mem_before);
     eprintln!("  Peak VMem after: {:.1} MB", mem_after);
@@ -428,7 +476,10 @@ fn bench_release_compile_counter() {
         let _ = compile_str(src).unwrap();
     }
     let avg = start.elapsed() / 100;
-    eprintln!("counter.sv: {:.1} µs avg (100x)", avg.as_nanos() as f64 / 1000.0);
+    eprintln!(
+        "counter.sv: {:.1} µs avg (100x)",
+        avg.as_nanos() as f64 / 1000.0
+    );
 }
 
 #[test]
@@ -439,12 +490,18 @@ fn bench_release_parse_large() {
         src.push_str(&format!(
             "module m_{}(input clk, output reg [7:0] q);
              always_ff @(posedge clk) q <= q + 8'h1;
-             endmodule\n", i));
+             endmodule\n",
+            i
+        ));
     }
     let start = Instant::now();
     let design = compile_str(&src).unwrap();
     let elapsed = start.elapsed();
-    eprintln!("1000 modules: {:?} ({} modules)", elapsed, design.modules.len());
+    eprintln!(
+        "1000 modules: {:?} ({} modules)",
+        elapsed,
+        design.modules.len()
+    );
 }
 
 #[test]
@@ -455,8 +512,11 @@ fn bench_release_string_intern() {
         let _sym = Symbol::intern(&s);
     }
     let elapsed = start.elapsed();
-    eprintln!("100K symbols: {:?} ({:.0} sym/sec)",
-        elapsed, 100000.0 / elapsed.as_secs_f64());
+    eprintln!(
+        "100K symbols: {:?} ({:.0} sym/sec)",
+        elapsed,
+        100000.0 / elapsed.as_secs_f64()
+    );
 }
 
 #[test]
@@ -470,11 +530,16 @@ fn bench_release_session_100_files() {
         let c = format!(
             "module m_{}(input clk, output reg [7:0] q);
              always_ff @(posedge clk) q <= q + 8'h1;
-             endmodule\n", i);
+             endmodule\n",
+            i
+        );
         std::fs::write(&p, &c).unwrap();
         sources.push(p);
     }
-    let config = SessionConfig { sources, ..Default::default() };
+    let config = SessionConfig {
+        sources,
+        ..Default::default()
+    };
     let mut session = CompileSession::new(config);
     let start = Instant::now();
     let (_design, _idx) = session.compile().unwrap();
@@ -489,8 +554,7 @@ fn bench_release_session_100_files() {
 fn bench_release_opentitan_compile() {
     // Compile all OpenTitan RTL files listed in opentitan_rtl.f
     let file_list_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("opentitan_rtl.f");
-    let content = std::fs::read_to_string(&file_list_path)
-        .expect("opentitan_rtl.f not found");
+    let content = std::fs::read_to_string(&file_list_path).expect("opentitan_rtl.f not found");
 
     let manifest = env!("CARGO_MANIFEST_DIR");
     let sources: Vec<std::path::PathBuf> = content
@@ -527,8 +591,13 @@ fn bench_release_opentitan_compile() {
         }
         Err(e) => {
             let elapsed = start.elapsed();
-            eprintln!("OpenTitan compile partially failed after {:?}: {:?}", elapsed, e);
-            eprintln!("Note: OpenTitan uses advanced SV features (reggen output, interfaces, etc.)");
+            eprintln!(
+                "OpenTitan compile partially failed after {:?}: {:?}",
+                elapsed, e
+            );
+            eprintln!(
+                "Note: OpenTitan uses advanced SV features (reggen output, interfaces, etc.)"
+            );
             eprintln!("that Maria's parser doesn't fully support yet.");
             // Don't panic — this is a benchmark, not a correctness test
         }
@@ -540,8 +609,7 @@ fn bench_release_opentitan_compile() {
 fn bench_release_opentitan_warm_compile() {
     // Measure warm (cached) compile after a cold compile
     let file_list_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("opentitan_rtl.f");
-    let content = std::fs::read_to_string(&file_list_path)
-        .expect("opentitan_rtl.f not found");
+    let content = std::fs::read_to_string(&file_list_path).expect("opentitan_rtl.f not found");
 
     let manifest = env!("CARGO_MANIFEST_DIR");
     let sources: Vec<std::path::PathBuf> = content

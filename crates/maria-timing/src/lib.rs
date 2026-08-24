@@ -22,11 +22,9 @@ pub mod area;
 pub mod constraint;
 pub mod timing;
 
-pub use area::{AreaReport, estimate_area, render_area_report};
-pub use constraint::{Constraint, ClockSpec, load_constraints, parse_constraints};
-pub use timing::{
-    TimingOptions, TimingReport, analyze, render_timing_report,
-};
+pub use area::{estimate_area, render_area_report, AreaReport};
+pub use constraint::{load_constraints, parse_constraints, ClockSpec, Constraint};
+pub use timing::{analyze, render_timing_report, TimingOptions, TimingReport};
 
 /// Versi library.
 pub const VERSION: &str = "0.1.0";

@@ -98,7 +98,10 @@ mod tests {
 
     #[test]
     fn test_cpu_fault_display() {
-        let f = CpuFault { pc: 0x8000_0000, reason: "fetch".into() };
+        let f = CpuFault {
+            pc: 0x8000_0000,
+            reason: "fetch".into(),
+        };
         assert!(f.to_string().contains("0x80000000"));
         assert!(f.to_string().contains("fetch"));
     }

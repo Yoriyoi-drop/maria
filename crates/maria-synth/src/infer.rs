@@ -10,9 +10,7 @@
 //! - Array besar → estimasi BRAM/ROM (inferensi penuh di S3).
 
 use maria_core::intern::Symbol;
-use maria_ir::{
-    ClockEdge, IrDesign, IrExpr, IrLValue, IrStmt, LogicVec, Process, SignalId,
-};
+use maria_ir::{ClockEdge, IrDesign, IrExpr, IrLValue, IrStmt, LogicVec, Process, SignalId};
 use std::collections::HashSet;
 
 use crate::netlist::{CellKind, DeviceKind, Netlist, Port, PortDir};
@@ -480,7 +478,8 @@ mod tests {
         let rhs = IrExpr::Cond(
             Box::new(IrExpr::BinaryOp(
                 maria_ir::BinaryIrOp::Eq,
-                Box::new(IrExpr::Signal(3, 8)),                    Box::new(IrExpr::Const(LogicVec::from_u64(99, 8))),
+                Box::new(IrExpr::Signal(3, 8)),
+                Box::new(IrExpr::Const(LogicVec::from_u64(99, 8))),
             )),
             Box::new(IrExpr::Const(LogicVec::from_u64(0, 8))),
             Box::new(IrExpr::BinaryOp(
@@ -519,7 +518,10 @@ mod tests {
         assert_eq!(nl.ffs().count(), 1);
         // D-logic di proses sequential ikut dihitung: Cond + Eq (2 LUT)
         // + Add (1 carry) → LUT est = 3, CARRY4 = 1.
-        assert_eq!(nl.stats.lut_count, 3, "adder/komparator di proses sequential harus dihitung");
+        assert_eq!(
+            nl.stats.lut_count, 3,
+            "adder/komparator di proses sequential harus dihitung"
+        );
         assert_eq!(nl.stats.carry4_count, 1);
         // clock & reset ditandai
         assert!(nl.nets.iter().any(|n| n.is_clock));

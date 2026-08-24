@@ -98,7 +98,13 @@ impl std::fmt::Debug for RamRegion {
 impl RamRegion {
     /// Buat region RAM/ROM berukuran `size` di `base`.
     /// `mmap=true` → anonymous mmap (hugepages-ready); `false` → Vec (test kecil).
-    pub fn new(name: Symbol, base: u64, size: u64, kind: RegionKind, mmap: bool) -> Result<Self, String> {
+    pub fn new(
+        name: Symbol,
+        base: u64,
+        size: u64,
+        kind: RegionKind,
+        mmap: bool,
+    ) -> Result<Self, String> {
         if size == 0 {
             return Err(format!("region '{}': size 0", name.as_str()));
         }
@@ -109,7 +115,13 @@ impl RamRegion {
         } else {
             Backing::Vec(vec![0u8; size as usize])
         };
-        Ok(Self { name, base, size, kind, backing })
+        Ok(Self {
+            name,
+            base,
+            size,
+            kind,
+            backing,
+        })
     }
 
     /// Alamat offset relatif ke base; None bila di luar region.
@@ -128,7 +140,10 @@ impl RamRegion {
         })?;
         let size = size as usize;
         if size == 0 || size > 8 || off + size > self.backing.len() {
-            return Err(AccessFault { addr, reason: format!("ukuran {} tidak valid", size) });
+            return Err(AccessFault {
+                addr,
+                reason: format!("ukuran {} tidak valid", size),
+            });
         }
         let bytes = self.backing.as_ref();
         let mut v = 0u64;
@@ -140,7 +155,10 @@ impl RamRegion {
 
     pub fn write(&mut self, addr: u64, size: u8, val: u64) -> Result<(), AccessFault> {
         if self.kind == RegionKind::Rom {
-            return Err(AccessFault { addr, reason: format!("write ke ROM '{}'", self.name.as_str()) });
+            return Err(AccessFault {
+                addr,
+                reason: format!("write ke ROM '{}'", self.name.as_str()),
+            });
         }
         let off = self.offset(addr).ok_or_else(|| AccessFault {
             addr,
@@ -148,7 +166,10 @@ impl RamRegion {
         })?;
         let size = size as usize;
         if size == 0 || size > 8 || off + size > self.backing.len() {
-            return Err(AccessFault { addr, reason: format!("ukuran {} tidak valid", size) });
+            return Err(AccessFault {
+                addr,
+                reason: format!("ukuran {} tidak valid", size),
+            });
         }
         let bytes = self.backing.as_mut();
         for i in 0..size {
@@ -160,14 +181,24 @@ impl RamRegion {
     /// Salin byte ke region (untuk loader ELF/ISO). Write ke ROM ditolak.
     pub fn load_bytes(&mut self, addr: u64, data: &[u8]) -> Result<(), AccessFault> {
         if self.kind == RegionKind::Rom {
-            return Err(AccessFault { addr, reason: format!("write ke ROM '{}'", self.name.as_str()) });
+            return Err(AccessFault {
+                addr,
+                reason: format!("write ke ROM '{}'", self.name.as_str()),
+            });
         }
         let off = self.offset(addr).ok_or_else(|| AccessFault {
             addr,
             reason: format!("di luar region '{}'", self.name.as_str()),
         })?;
         if off + data.len() > self.backing.len() {
-            return Err(AccessFault { addr, reason: format!("{} byte melebihi region '{}'", data.len(), self.name.as_str()) });
+            return Err(AccessFault {
+                addr,
+                reason: format!(
+                    "{} byte melebihi region '{}'",
+                    data.len(),
+                    self.name.as_str()
+                ),
+            });
         }
         self.backing.as_mut()[off..off + data.len()].copy_from_slice(data);
         Ok(())
@@ -186,13 +217,17 @@ pub struct MemoryMap {
 
 impl std::fmt::Debug for MemoryMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoryMap").field("regions", &self.regions).finish()
+        f.debug_struct("MemoryMap")
+            .field("regions", &self.regions)
+            .finish()
     }
 }
 
 impl MemoryMap {
     pub fn new() -> Self {
-        Self { regions: Vec::new() }
+        Self {
+            regions: Vec::new(),
+        }
     }
 
     /// Tambah region; tolak overlap dengan region lain (decode deterministik).
@@ -205,8 +240,12 @@ impl MemoryMap {
             if a < d && c < b {
                 return Err(format!(
                     "region '{}' (0x{:x}-0x{:x}) overlap dengan '{}' (0x{:x}-0x{:x})",
-                    region.name.as_str(), a, b.saturating_sub(1),
-                    r.name.as_str(), c, d.saturating_sub(1)
+                    region.name.as_str(),
+                    a,
+                    b.saturating_sub(1),
+                    r.name.as_str(),
+                    c,
+                    d.saturating_sub(1)
                 ));
             }
         }
@@ -215,7 +254,9 @@ impl MemoryMap {
     }
 
     pub fn region_at(&self, addr: u64) -> Option<&RamRegion> {
-        self.regions.iter().find(|r| addr >= r.base && addr < r.base + r.size)
+        self.regions
+            .iter()
+            .find(|r| addr >= r.base && addr < r.base + r.size)
     }
 
     /// Salin byte ke region yang memuat `addr` (untuk loader ELF/ISO).
@@ -224,7 +265,10 @@ impl MemoryMap {
             .regions
             .iter()
             .position(|r| addr >= r.base && addr < r.base + r.size)
-            .ok_or_else(|| AccessFault { addr, reason: "unmapped".into() })?;
+            .ok_or_else(|| AccessFault {
+                addr,
+                reason: "unmapped".into(),
+            })?;
         self.regions[idx].load_bytes(addr, data)
     }
 }
@@ -239,7 +283,10 @@ impl MemoryPort for MemoryMap {
     fn read(&self, addr: u64, size: u8) -> Result<u64, AccessFault> {
         match self.region_at(addr) {
             Some(r) => r.read(addr, size),
-            None => Err(AccessFault { addr, reason: "unmapped".into() }),
+            None => Err(AccessFault {
+                addr,
+                reason: "unmapped".into(),
+            }),
         }
     }
 
@@ -249,7 +296,10 @@ impl MemoryPort for MemoryMap {
             .regions
             .iter()
             .position(|r| addr >= r.base && addr < r.base + r.size)
-            .ok_or_else(|| AccessFault { addr, reason: "unmapped".into() })?;
+            .ok_or_else(|| AccessFault {
+                addr,
+                reason: "unmapped".into(),
+            })?;
         self.regions[idx].write(addr, size, val)
     }
 
@@ -257,7 +307,10 @@ impl MemoryPort for MemoryMap {
         self.regions
             .iter()
             .position(|r| addr >= r.base && addr < r.base + r.size)
-            .map(|i| RegionRef { kind: self.regions[i].kind, index: i })
+            .map(|i| RegionRef {
+                kind: self.regions[i].kind,
+                index: i,
+            })
     }
 }
 
@@ -267,8 +320,28 @@ mod tests {
 
     fn map() -> MemoryMap {
         let mut m = MemoryMap::new();
-        m.add(RamRegion::new(Symbol::intern("ram"), 0x8000_0000, 0x1000, RegionKind::Ram, false).unwrap()).unwrap();
-        m.add(RamRegion::new(Symbol::intern("rom"), 0x0001_0000, 0x100, RegionKind::Rom, false).unwrap()).unwrap();
+        m.add(
+            RamRegion::new(
+                Symbol::intern("ram"),
+                0x8000_0000,
+                0x1000,
+                RegionKind::Ram,
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        m.add(
+            RamRegion::new(
+                Symbol::intern("rom"),
+                0x0001_0000,
+                0x100,
+                RegionKind::Rom,
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         m
     }
 
@@ -315,22 +388,40 @@ mod tests {
         let mut m = map();
         m.load_bytes(0x8000_0000, &[1, 2, 3, 4]).unwrap();
         assert_eq!(m.read(0x8000_0000, 4).unwrap(), 0x0403_0201);
-        assert!(m.load_bytes(0x8000_0ff0, &[0u8; 32]).is_err(), "melebihi region");
+        assert!(
+            m.load_bytes(0x8000_0ff0, &[0u8; 32]).is_err(),
+            "melebihi region"
+        );
     }
 
     #[test]
     fn test_overlap_rejected() {
         let mut m = map();
-        let dup = RamRegion::new(Symbol::intern("dup"), 0x8000_0800, 0x100, RegionKind::Ram, false).unwrap();
+        let dup = RamRegion::new(
+            Symbol::intern("dup"),
+            0x8000_0800,
+            0x100,
+            RegionKind::Ram,
+            false,
+        )
+        .unwrap();
         assert!(m.add(dup).is_err(), "overlap dengan 'ram'");
         // Region berdampingan (tidak overlap) diterima.
-        let next = RamRegion::new(Symbol::intern("next"), 0x8000_1000, 0x100, RegionKind::Ram, false).unwrap();
+        let next = RamRegion::new(
+            Symbol::intern("next"),
+            0x8000_1000,
+            0x100,
+            RegionKind::Ram,
+            false,
+        )
+        .unwrap();
         assert!(m.add(next).is_ok());
     }
 
     #[test]
     fn test_mmap_backing() {
-        let mut r = RamRegion::new(Symbol::intern("mm"), 0x1000, 64, RegionKind::Ram, true).unwrap();
+        let mut r =
+            RamRegion::new(Symbol::intern("mm"), 0x1000, 64, RegionKind::Ram, true).unwrap();
         r.write(0x1000, 2, 0x1234).unwrap();
         assert_eq!(r.read(0x1000, 2).unwrap(), 0x1234);
     }

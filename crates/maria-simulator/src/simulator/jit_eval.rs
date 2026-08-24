@@ -8,8 +8,8 @@
 //! - Operasi tidak didukung oleh JIT (Div, Mod, Power, dll)
 //! - Cranelift tidak tersedia (non-x86_64)
 
-use maria_ir::{BinaryIrOp, IrExpr, LogicVal, LogicVec, UnaryIrOp};
 use crate::simulator::jit_cranelift::{CraneliftEngine, JitOp};
+use maria_ir::{BinaryIrOp, IrExpr, LogicVal, LogicVec, UnaryIrOp};
 
 /// JIT Evaluator — wraps CraneliftEngine dengan API evaluasi LogicVec.
 pub struct JITEvaluator {
@@ -71,8 +71,14 @@ impl JITEvaluator {
         }
 
         // Check for X/Z — JIT hanya untuk 2-state
-        let lhs_clean = !lhs.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z));
-        let rhs_clean = !rhs.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+        let lhs_clean = !lhs
+            .bits
+            .iter()
+            .any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+        let rhs_clean = !rhs
+            .bits
+            .iter()
+            .any(|b| matches!(b, LogicVal::X | LogicVal::Z));
         if !lhs_clean || !rhs_clean {
             self.fallback_count += 1;
             return None;
@@ -105,11 +111,7 @@ impl JITEvaluator {
     }
 
     /// Evaluate a unary operation using JIT (if available).
-    pub fn eval_unary(
-        &mut self,
-        op: &UnaryIrOp,
-        val: &LogicVec,
-    ) -> Option<LogicVec> {
+    pub fn eval_unary(&mut self, op: &UnaryIrOp, val: &LogicVec) -> Option<LogicVec> {
         let engine = self.engine.as_mut()?;
 
         let jit_op = match op {
@@ -125,7 +127,10 @@ impl JITEvaluator {
         }
 
         // Check for X/Z
-        let clean = !val.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+        let clean = !val
+            .bits
+            .iter()
+            .any(|b| matches!(b, LogicVal::X | LogicVal::Z));
         if !clean {
             self.fallback_count += 1;
             return None;
@@ -286,7 +291,11 @@ mod tests {
         if !eval.is_available() {
             return;
         }
-        let result = eval.eval_binary(&BinaryIrOp::Sub, &LogicVec::from_u64(50, 32), &LogicVec::from_u64(23, 32));
+        let result = eval.eval_binary(
+            &BinaryIrOp::Sub,
+            &LogicVec::from_u64(50, 32),
+            &LogicVec::from_u64(23, 32),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_u64(), 27);
     }
@@ -297,7 +306,11 @@ mod tests {
         if !eval.is_available() {
             return;
         }
-        let result = eval.eval_binary(&BinaryIrOp::BitAnd, &LogicVec::from_u64(0xFF, 8), &LogicVec::from_u64(0x0F, 8));
+        let result = eval.eval_binary(
+            &BinaryIrOp::BitAnd,
+            &LogicVec::from_u64(0xFF, 8),
+            &LogicVec::from_u64(0x0F, 8),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_u64(), 0x0F);
     }
@@ -308,7 +321,11 @@ mod tests {
         if !eval.is_available() {
             return;
         }
-        let result = eval.eval_binary(&BinaryIrOp::BitOr, &LogicVec::from_u64(0xF0, 8), &LogicVec::from_u64(0x0F, 8));
+        let result = eval.eval_binary(
+            &BinaryIrOp::BitOr,
+            &LogicVec::from_u64(0xF0, 8),
+            &LogicVec::from_u64(0x0F, 8),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_u64(), 0xFF);
     }
@@ -319,7 +336,11 @@ mod tests {
         if !eval.is_available() {
             return;
         }
-        let result = eval.eval_binary(&BinaryIrOp::BitXor, &LogicVec::from_u64(0xFF, 8), &LogicVec::from_u64(0x0F, 8));
+        let result = eval.eval_binary(
+            &BinaryIrOp::BitXor,
+            &LogicVec::from_u64(0xFF, 8),
+            &LogicVec::from_u64(0x0F, 8),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_u64(), 0xF0);
     }
@@ -330,7 +351,11 @@ mod tests {
         if !eval.is_available() {
             return;
         }
-        let result = eval.eval_binary(&BinaryIrOp::Eq, &LogicVec::from_u64(5, 32), &LogicVec::from_u64(5, 32));
+        let result = eval.eval_binary(
+            &BinaryIrOp::Eq,
+            &LogicVec::from_u64(5, 32),
+            &LogicVec::from_u64(5, 32),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_u64(), 1);
     }
@@ -341,7 +366,11 @@ mod tests {
         if !eval.is_available() {
             return;
         }
-        let result = eval.eval_binary(&BinaryIrOp::Lt, &LogicVec::from_u64(3, 32), &LogicVec::from_u64(7, 32));
+        let result = eval.eval_binary(
+            &BinaryIrOp::Lt,
+            &LogicVec::from_u64(3, 32),
+            &LogicVec::from_u64(7, 32),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_u64(), 1);
     }
@@ -352,7 +381,11 @@ mod tests {
         if !eval.is_available() {
             return;
         }
-        let result = eval.eval_binary(&BinaryIrOp::Shl, &LogicVec::from_u64(1, 8), &LogicVec::from_u64(3, 8));
+        let result = eval.eval_binary(
+            &BinaryIrOp::Shl,
+            &LogicVec::from_u64(1, 8),
+            &LogicVec::from_u64(3, 8),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_u64(), 8);
     }
@@ -379,7 +412,11 @@ mod tests {
             return;
         }
         // Div is not supported by JIT
-        let result = eval.eval_binary(&BinaryIrOp::Div, &LogicVec::from_u64(10, 32), &LogicVec::from_u64(2, 32));
+        let result = eval.eval_binary(
+            &BinaryIrOp::Div,
+            &LogicVec::from_u64(10, 32),
+            &LogicVec::from_u64(2, 32),
+        );
         assert!(result.is_none(), "Div should fallback");
     }
 
@@ -413,7 +450,11 @@ mod tests {
             return;
         }
         // 4-bit add: 15 + 1 = 16 → masked to 4 bits → 0
-        let result = eval.eval_binary(&BinaryIrOp::Add, &LogicVec::from_u64(15, 4), &LogicVec::from_u64(1, 4));
+        let result = eval.eval_binary(
+            &BinaryIrOp::Add,
+            &LogicVec::from_u64(15, 4),
+            &LogicVec::from_u64(1, 4),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().to_u64(), 0, "4-bit add should wrap: 15+1=0");
     }
@@ -426,14 +467,29 @@ mod tests {
         }
 
         // Do some evaluations
-        let _ = eval.eval_binary(&BinaryIrOp::Add, &LogicVec::from_u64(1, 32), &LogicVec::from_u64(2, 32));
-        let _ = eval.eval_binary(&BinaryIrOp::Add, &LogicVec::from_u64(3, 32), &LogicVec::from_u64(4, 32));
+        let _ = eval.eval_binary(
+            &BinaryIrOp::Add,
+            &LogicVec::from_u64(1, 32),
+            &LogicVec::from_u64(2, 32),
+        );
+        let _ = eval.eval_binary(
+            &BinaryIrOp::Add,
+            &LogicVec::from_u64(3, 32),
+            &LogicVec::from_u64(4, 32),
+        );
         // Unsupported ops (like Div) return None without incrementing fallback —
         // fallback only counts X/Z data that COULD be JIT but was not
-        let _ = eval.eval_binary(&BinaryIrOp::Div, &LogicVec::from_u64(1, 32), &LogicVec::from_u64(2, 32)); // unsupported -> None, no fallback count
+        let _ = eval.eval_binary(
+            &BinaryIrOp::Div,
+            &LogicVec::from_u64(1, 32),
+            &LogicVec::from_u64(2, 32),
+        ); // unsupported -> None, no fallback count
 
         let (jit, fallback, _) = eval.stats();
         assert_eq!(jit, 2, "2 JIT evals");
-        assert_eq!(fallback, 0, "0 fallbacks (Div is unsupported, not a fallback)");
+        assert_eq!(
+            fallback, 0,
+            "0 fallbacks (Div is unsupported, not a fallback)"
+        );
     }
 }

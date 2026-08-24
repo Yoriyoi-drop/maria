@@ -30,17 +30,26 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         ("Time steps", state.cycles as f64, "steps"),
         ("Delta cycles", state.delta_cycles as f64, "delta"),
         ("Events processed", state.events_processed as f64, "events"),
-        ("Processes evaluated", state.processes_evaluated as f64, "eval"),
+        (
+            "Processes evaluated",
+            state.processes_evaluated as f64,
+            "eval",
+        ),
         ("NBA commits", state.nba_commits as f64, "commit"),
-        ("Sensitivity triggers", state.sensitive_triggers as f64, "trigger"),
+        (
+            "Sensitivity triggers",
+            state.sensitive_triggers as f64,
+            "trigger",
+        ),
         ("Events / delta", state.events_per_delta, "avg"),
     ];
-    let max_v = rows
-        .iter()
-        .map(|r| r.1)
-        .fold(1.0f64, f64::max);
+    let max_v = rows.iter().map(|r| r.1).fold(1.0f64, f64::max);
 
-    ui.label(egui::RichText::new("Simulation metrics").strong().size(12.0));
+    ui.label(
+        egui::RichText::new("Simulation metrics")
+            .strong()
+            .size(12.0),
+    );
     ui.add_space(4.0);
     for (label, v, unit) in &rows {
         metric_row(ui, label, *v, max_v, unit);
@@ -96,7 +105,11 @@ fn resource_section(ui: &mut egui::Ui, state: &mut GuiState) {
         }
     }
 
-    ui.label(egui::RichText::new("Resource Monitor (realtime)").strong().size(12.0));
+    ui.label(
+        egui::RichText::new("Resource Monitor (realtime)")
+            .strong()
+            .size(12.0),
+    );
     ui.add_space(4.0);
 
     let res = &state.resource;
@@ -112,14 +125,29 @@ fn resource_section(ui: &mut egui::Ui, state: &mut GuiState) {
     let mem_total = res.mem_total_gb.max(0.1);
     let mem_pct = (res.mem_used_gb / mem_total).clamp(0.0, 1.0) as f32;
 
-    resource_bar(ui, "CPU", (res.cpu_percent as f32) / 100.0, res.cpu_color(),
-        format!("{:.0}%", res.cpu_percent));
-    resource_bar(ui, "RAM", mem_pct, egui::Color32::from_rgb(59, 130, 246),
-        format!("{:.1}G / {:.1}G", res.mem_used_gb, mem_total));
+    resource_bar(
+        ui,
+        "CPU",
+        (res.cpu_percent as f32) / 100.0,
+        res.cpu_color(),
+        format!("{:.0}%", res.cpu_percent),
+    );
+    resource_bar(
+        ui,
+        "RAM",
+        mem_pct,
+        egui::Color32::from_rgb(59, 130, 246),
+        format!("{:.1}G / {:.1}G", res.mem_used_gb, mem_total),
+    );
     ui.horizontal(|ui| {
         let th = res.threads as f32;
-        resource_bar(ui, "Threads", th / th.max(16.0), egui::Color32::from_rgb(168, 85, 247),
-            format!("{}", res.threads));
+        resource_bar(
+            ui,
+            "Threads",
+            th / th.max(16.0),
+            egui::Color32::from_rgb(168, 85, 247),
+            format!("{}", res.threads),
+        );
         ui.label(
             egui::RichText::new(format!("load {:.2}", res.load_1))
                 .weak()
@@ -134,7 +162,11 @@ fn resource_section(ui: &mut egui::Ui, state: &mut GuiState) {
     if h.cpu.len() >= 2 {
         history_chart(
             ui,
-            &[("CPU %", h.cpu.as_slice(), egui::Color32::from_rgb(59, 130, 246))],
+            &[(
+                "CPU %",
+                h.cpu.as_slice(),
+                egui::Color32::from_rgb(59, 130, 246),
+            )],
             100.0,
             90.0,
             "CPU % (history)",
@@ -142,7 +174,11 @@ fn resource_section(ui: &mut egui::Ui, state: &mut GuiState) {
         ui.add_space(4.0);
         history_chart(
             ui,
-            &[("RAM GB", h.mem.as_slice(), egui::Color32::from_rgb(34, 197, 94))],
+            &[(
+                "RAM GB",
+                h.mem.as_slice(),
+                egui::Color32::from_rgb(34, 197, 94),
+            )],
             mem_total as f32,
             90.0,
             "RAM GB (history)",
@@ -236,7 +272,8 @@ fn history_chart(
             fill: egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 26),
             stroke: egui::epaint::PathStroke::NONE,
         }));
-        ui.painter().add(egui::Shape::line(pts, egui::Stroke::new(1.6, *color)));
+        ui.painter()
+            .add(egui::Shape::line(pts, egui::Stroke::new(1.6, *color)));
         ui.painter().text(
             egui::pos2(rect.left() + 4.0, rect.top() + 2.0),
             egui::Align2::LEFT_TOP,
@@ -258,11 +295,7 @@ fn metric_row(ui: &mut egui::Ui, label: &str, v: f64, max_v: f64, unit: &str) {
         let bg = ui.visuals().widgets.noninteractive.bg_fill;
         let accent = ui.visuals().selection.bg_fill;
         let fill_w = (rect.width() * frac.clamp(0.0, 1.0)).max(2.0);
-        ui.painter().rect_filled(
-            rect,
-            egui::CornerRadius::ZERO,
-            bg,
-        );
+        ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, bg);
         ui.painter().rect_filled(
             egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, rect.height())),
             egui::CornerRadius::ZERO,

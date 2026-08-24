@@ -14,7 +14,11 @@ use super::super::state::{CompileInfo, GuiState, SearchCat};
 pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     if state.compile_info.is_none() && state.design.is_none() {
         ui.add_space(8.0);
-        ui.label(egui::RichText::new("Compile dulu untuk mencari").weak().italics());
+        ui.label(
+            egui::RichText::new("Compile dulu untuk mencari")
+                .weak()
+                .italics(),
+        );
         return;
     }
 
@@ -29,7 +33,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             (SearchCat::Macro, "Macro"),
             (SearchCat::Instance, "Instance"),
         ] {
-            if ui.selectable_label(state.search_cat == cat, label).clicked() {
+            if ui
+                .selectable_label(state.search_cat == cat, label)
+                .clicked()
+            {
                 clicked = Some(cat);
             }
         }
@@ -81,12 +88,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
 
 /// Satu baris hasil klik → buka file (opsional lompat baris). Mengembalikan
 /// true jika baris diklik.
-fn result_row(
-    ui: &mut egui::Ui,
-    primary: &str,
-    secondary: &str,
-    file: Option<&PathBuf>,
-) -> bool {
+fn result_row(ui: &mut egui::Ui, primary: &str, secondary: &str, file: Option<&PathBuf>) -> bool {
     let resp = ui
         .horizontal(|ui| {
             ui.label(egui::RichText::new("·").weak().size(10.0));
@@ -119,7 +121,11 @@ fn modules_ui(
         return;
     }
     *found_any = true;
-    ui.label(egui::RichText::new(format!("Modules ({})", modules.len())).strong().size(11.0));
+    ui.label(
+        egui::RichText::new(format!("Modules ({})", modules.len()))
+            .strong()
+            .size(11.0),
+    );
     for m in modules {
         if result_row(ui, m, "", info.module_files.get(m)) {
             if let Some(file) = info.module_files.get(m) {
@@ -174,7 +180,11 @@ fn signals_ui(
         return;
     }
     *found_any = true;
-    ui.label(egui::RichText::new(format!("Signals ({})", matched.len())).strong().size(11.0));
+    ui.label(
+        egui::RichText::new(format!("Signals ({})", matched.len()))
+            .strong()
+            .size(11.0),
+    );
     for (full, width, _owner, file) in matched.into_iter().take(500) {
         if result_row(ui, &full, &format!("[{}]", width), file.as_ref()) {
             if let Some(f) = file {
@@ -196,9 +206,7 @@ fn parameters_ui(
         .param_index
         .iter()
         .filter(|p| {
-            q.is_empty()
-                || p.name.to_lowercase().contains(q)
-                || p.module.to_lowercase().contains(q)
+            q.is_empty() || p.name.to_lowercase().contains(q) || p.module.to_lowercase().contains(q)
         })
         .take(500)
         .collect();
@@ -206,7 +214,11 @@ fn parameters_ui(
         return;
     }
     *found_any = true;
-    ui.label(egui::RichText::new(format!("Parameters ({})", matched.len())).strong().size(11.0));
+    ui.label(
+        egui::RichText::new(format!("Parameters ({})", matched.len()))
+            .strong()
+            .size(11.0),
+    );
     for p in matched {
         if result_row(ui, &p.name, &format!("@ {}", p.module), Some(&p.file)) {
             *to_open = Some((p.file.clone(), None));
@@ -231,7 +243,11 @@ fn packages_ui(
         return;
     }
     *found_any = true;
-    ui.label(egui::RichText::new(format!("Packages ({})", matched.len())).strong().size(11.0));
+    ui.label(
+        egui::RichText::new(format!("Packages ({})", matched.len()))
+            .strong()
+            .size(11.0),
+    );
     for p in matched {
         let file = info.symbol_files.get(p);
         if result_row(ui, p, "", file) {
@@ -260,7 +276,11 @@ fn macros_ui(
         return;
     }
     *found_any = true;
-    ui.label(egui::RichText::new(format!("Macros ({})", matched.len())).strong().size(11.0));
+    ui.label(
+        egui::RichText::new(format!("Macros ({})", matched.len()))
+            .strong()
+            .size(11.0),
+    );
     for m in matched {
         let sec = format!("L{}", m.line);
         if result_row(ui, &format!("`{}", m.name), &sec, Some(&m.file)) {
@@ -281,9 +301,7 @@ fn instances_ui(
         .instance_index
         .iter()
         .filter(|i| {
-            q.is_empty()
-                || i.name.to_lowercase().contains(q)
-                || i.module.to_lowercase().contains(q)
+            q.is_empty() || i.name.to_lowercase().contains(q) || i.module.to_lowercase().contains(q)
         })
         .take(500)
         .collect();
@@ -291,7 +309,11 @@ fn instances_ui(
         return;
     }
     *found_any = true;
-    ui.label(egui::RichText::new(format!("Instances ({})", matched.len())).strong().size(11.0));
+    ui.label(
+        egui::RichText::new(format!("Instances ({})", matched.len()))
+            .strong()
+            .size(11.0),
+    );
     for i in matched {
         let has_file = !i.file.as_os_str().is_empty();
         let sec = if has_file {

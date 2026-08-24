@@ -65,7 +65,9 @@ pub fn compute_expr_width(
             for m in members {
                 match m {
                     maria_ast::expr::StructLitMember::Positional(e) => {
-                        if let Ok(mw) = compute_expr_width(e, signal_map, signals, param_vals, package_symbols) {
+                        if let Ok(mw) =
+                            compute_expr_width(e, signal_map, signals, param_vals, package_symbols)
+                        {
                             w += mw;
                         }
                     }
@@ -76,7 +78,11 @@ pub fn compute_expr_width(
                     }
                 }
             }
-            if all_pos && w > 0 { Ok(w) } else { Ok(1) }
+            if all_pos && w > 0 {
+                Ok(w)
+            } else {
+                Ok(1)
+            }
         }
         Expr::FuncCall { name, args, .. } if name == "$bits" || name == "$size" => {
             if let Some(arg) = args.first() {
@@ -283,7 +289,10 @@ pub fn compute_expr_width(
                 if let Some(v) = resolve_pkg_param_width(&name, package_symbols) {
                     return Ok(v as usize);
                 }
-                Ok(resolve_dtype_width(&DataType::UserDefined(name), package_symbols))
+                Ok(resolve_dtype_width(
+                    &DataType::UserDefined(name),
+                    package_symbols,
+                ))
             }
         },
         Expr::MethodCall { .. } | Expr::StreamingConcat { .. } | Expr::Dist { .. } => {
@@ -353,15 +362,19 @@ pub fn eval_width_aware_param(
         Expr::Value(Value::Binary { bits, .. }) => {
             maria_ast::const_eval::parse_literal(bits, 2).ok()
         }
-        Expr::Value(Value::Hex { bits, .. }) => {
-            maria_ast::const_eval::parse_literal(bits, 16).ok()
-        }
+        Expr::Value(Value::Hex { bits, .. }) => maria_ast::const_eval::parse_literal(bits, 16).ok(),
         Expr::Value(Value::Octal { bits, .. }) => {
             maria_ast::const_eval::parse_literal(bits, 8).ok()
         }
         Expr::String(s) => Some(maria_ast::const_eval::string_to_i64(s)),
         Expr::Ident { name, .. } => effective_params.get(name).copied(),
-        Expr::Paren(inner) => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
+        Expr::Paren(inner) => eval_width_aware_param(
+            inner,
+            signal_map,
+            signals,
+            effective_params,
+            package_symbols,
+        ),
         Expr::FuncCall { name, args, .. } if name == "$bits" || name == "$size" => {
             let arg = args.first()?;
             compute_expr_width(arg, signal_map, signals, effective_params, package_symbols)
@@ -370,7 +383,13 @@ pub fn eval_width_aware_param(
         }
         Expr::FuncCall { name, args, .. } if name == "$clog2" => {
             let arg = args.first()?;
-            let v = eval_width_aware_param(arg, signal_map, signals, effective_params, package_symbols)?;
+            let v = eval_width_aware_param(
+                arg,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             Some(clog2_value(v))
         }
         // $high/$left(sig) = lebar signal - 1; $low/$right(sig) = 0 (untuk
@@ -378,7 +397,8 @@ pub fn eval_width_aware_param(
         // konstanta, mis. `be_idx[$high(be_idx):1]` di dm_sba.
         Expr::FuncCall { name, args, .. } if name == "$high" || name == "$left" => {
             let arg = args.first()?;
-            let w = compute_expr_width(arg, signal_map, signals, effective_params, package_symbols).ok()?;
+            let w = compute_expr_width(arg, signal_map, signals, effective_params, package_symbols)
+                .ok()?;
             Some((w as i64) - 1)
         }
         Expr::FuncCall { name, .. } if name == "$low" || name == "$right" => Some(0),
@@ -386,12 +406,30 @@ pub fn eval_width_aware_param(
         // const_eval.rs): vbits, ceil_div, get_synd_width, is_width_valid,
         // bucket_ht_data_width, num_bucket_ht_inst.
         Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "vbits" => {
-            let v = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+            let v = eval_width_aware_param(
+                args.first()?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             Some(if v == 1 { 1 } else { clog2_value(v) })
         }
         Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "ceil_div" => {
-            let a = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
-            let b = eval_width_aware_param(args.get(1)?, signal_map, signals, effective_params, package_symbols)?;
+            let a = eval_width_aware_param(
+                args.first()?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
+            let b = eval_width_aware_param(
+                args.get(1)?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             if b == 0 {
                 None
             } else {
@@ -402,8 +440,20 @@ pub fn eval_width_aware_param(
         // ECC (SecdedHsiao=0, SecdedHamming=1, SecdedInvHsiao=2,
         // SecdedInvHamming=3). Dipakai localparam `EccWidth` di otp_macro.
         Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "get_synd_width" => {
-            let sd = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
-            let w = eval_width_aware_param(args.get(1)?, signal_map, signals, effective_params, package_symbols)?;
+            let sd = eval_width_aware_param(
+                args.first()?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
+            let w = eval_width_aware_param(
+                args.get(1)?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             Some(match (sd, w) {
                 (0, 16) | (2, 16) => 6,
                 (0, 22) | (2, 22) => 6,
@@ -418,22 +468,64 @@ pub fn eval_width_aware_param(
             })
         }
         Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "is_width_valid" => {
-            let sd = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
-            let w = eval_width_aware_param(args.get(1)?, signal_map, signals, effective_params, package_symbols)?;
+            let sd = eval_width_aware_param(
+                args.first()?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
+            let w = eval_width_aware_param(
+                args.get(1)?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             Some(match (sd, w) {
-                (0, 16) | (0, 22) | (0, 32) | (0, 57) | (0, 64)
-                | (2, 16) | (2, 22) | (2, 32) | (2, 57) | (2, 64)
-                | (1, 16) | (1, 32) | (1, 64) | (1, 68)
-                | (3, 16) | (3, 32) | (3, 64) | (3, 68) => 1,
+                (0, 16)
+                | (0, 22)
+                | (0, 32)
+                | (0, 57)
+                | (0, 64)
+                | (2, 16)
+                | (2, 22)
+                | (2, 32)
+                | (2, 57)
+                | (2, 64)
+                | (1, 16)
+                | (1, 32)
+                | (1, 64)
+                | (1, 68)
+                | (3, 16)
+                | (3, 32)
+                | (3, 64)
+                | (3, 68) => 1,
                 _ => 0,
             })
         }
-        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "bucket_ht_data_width" => {
-            let w = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+        Expr::FuncCall { name, args, .. }
+            if pkg_func_base(name.as_str()) == "bucket_ht_data_width" =>
+        {
+            let w = eval_width_aware_param(
+                args.first()?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             Some(if w >= 4 { 4 } else { w })
         }
-        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "num_bucket_ht_inst" => {
-            let w = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+        Expr::FuncCall { name, args, .. }
+            if pkg_func_base(name.as_str()) == "num_bucket_ht_inst" =>
+        {
+            let w = eval_width_aware_param(
+                args.first()?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             let b = if w >= 4 { 4 } else { w };
             if b == 0 {
                 None
@@ -445,34 +537,86 @@ pub fn eval_width_aware_param(
         // lebar randomness untuk otbn_sec_add / otbn_mask_accelerator
         // (localparam `RandWidth = SecAddRandWidth(Width)`).
         Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "SecAddRandWidth" => {
-            let w = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
-            let clog = if w <= 1 { 1 } else { 63 - (w as u64).leading_zeros() as i64 };
+            let w = eval_width_aware_param(
+                args.first()?,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
+            let clog = if w <= 1 {
+                1
+            } else {
+                63 - (w as u64).leading_zeros() as i64
+            };
             Some(2 * (clog * w + 1))
         }
         Expr::UnaryOp {
             op: UnaryOp::Minus,
             expr: inner,
-        } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols)
-            .map(|v| -v),
+        } => eval_width_aware_param(
+            inner,
+            signal_map,
+            signals,
+            effective_params,
+            package_symbols,
+        )
+        .map(|v| -v),
         Expr::UnaryOp {
             op: UnaryOp::BitNot,
             expr: inner,
-        } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols)
-            .map(|v| !v),
+        } => eval_width_aware_param(
+            inner,
+            signal_map,
+            signals,
+            effective_params,
+            package_symbols,
+        )
+        .map(|v| !v),
         Expr::UnaryOp {
             op: UnaryOp::Not,
             expr: inner,
-        } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols)
-            .map(|v| if v == 0 { 1 } else { 0 }),
+        } => eval_width_aware_param(
+            inner,
+            signal_map,
+            signals,
+            effective_params,
+            package_symbols,
+        )
+        .map(|v| if v == 0 { 1 } else { 0 }),
         Expr::BinaryOp { op, lhs, rhs } => {
-            let l = eval_width_aware_param(lhs, signal_map, signals, effective_params, package_symbols)?;
-            let r = eval_width_aware_param(rhs, signal_map, signals, effective_params, package_symbols)?;
+            let l = eval_width_aware_param(
+                lhs,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
+            let r = eval_width_aware_param(
+                rhs,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             match op {
                 BinaryOp::Add => Some(l.wrapping_add(r)),
                 BinaryOp::Sub => Some(l.wrapping_sub(r)),
                 BinaryOp::Mul => Some(l.wrapping_mul(r)),
-                BinaryOp::Div => if r == 0 { None } else { Some(l.wrapping_div(r)) },
-                BinaryOp::Mod => if r == 0 { None } else { Some(l.wrapping_rem(r)) },
+                BinaryOp::Div => {
+                    if r == 0 {
+                        None
+                    } else {
+                        Some(l.wrapping_div(r))
+                    }
+                }
+                BinaryOp::Mod => {
+                    if r == 0 {
+                        None
+                    } else {
+                        Some(l.wrapping_rem(r))
+                    }
+                }
                 BinaryOp::Power => Some(l.pow(r.max(0).min(31) as u32)),
                 BinaryOp::BitAnd => Some(l & r),
                 BinaryOp::BitOr => Some(l | r),
@@ -500,28 +644,71 @@ pub fn eval_width_aware_param(
             true_expr,
             false_expr,
         } => {
-            let c = eval_width_aware_param(cond, signal_map, signals, effective_params, package_symbols)?;
+            let c = eval_width_aware_param(
+                cond,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
             if c != 0 {
-                eval_width_aware_param(true_expr, signal_map, signals, effective_params, package_symbols)
+                eval_width_aware_param(
+                    true_expr,
+                    signal_map,
+                    signals,
+                    effective_params,
+                    package_symbols,
+                )
             } else {
-                eval_width_aware_param(false_expr, signal_map, signals, effective_params, package_symbols)
+                eval_width_aware_param(
+                    false_expr,
+                    signal_map,
+                    signals,
+                    effective_params,
+                    package_symbols,
+                )
             }
         }
-        Expr::Cast { expr: inner, .. } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
+        Expr::Cast { expr: inner, .. } => eval_width_aware_param(
+            inner,
+            signal_map,
+            signals,
+            effective_params,
+            package_symbols,
+        ),
         // CastWidth `W'(expr)` — NILAI cast adalah nilai expr (truncate ke W bit
         // jarang mengubah nilai konstanta kecil). Konsisten dengan const_eval.rs
         // yang mengembalikan inner; sebelumnya salah mengembalikan LEBAR W.
-        Expr::CastWidth { expr: inner, .. } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
+        Expr::CastWidth { expr: inner, .. } => eval_width_aware_param(
+            inner,
+            signal_map,
+            signals,
+            effective_params,
+            package_symbols,
+        ),
         // Replikasi `{N{expr}}` — nilai = pola diulang N kali. Untuk pola
         // 1-bit (0/1) hasilnya mask of N ones / 0 (pola umum `{W{1'b1}}`
         // untuk mask FullRegMask). Untuk pola lebih lebar: ulangi bit pattern
         // N kali dengan lebar pola = lebar ekspresi.
         Expr::Replicate { count, expr } => {
-            let n = eval_width_aware_param(count, signal_map, signals, effective_params, package_symbols)?;
-            let v = eval_width_aware_param(expr, signal_map, signals, effective_params, package_symbols)?;
-            let w = compute_expr_width(expr, signal_map, signals, effective_params, package_symbols)
-                .unwrap_or(1)
-                .max(1);
+            let n = eval_width_aware_param(
+                count,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
+            let v = eval_width_aware_param(
+                expr,
+                signal_map,
+                signals,
+                effective_params,
+                package_symbols,
+            )?;
+            let w =
+                compute_expr_width(expr, signal_map, signals, effective_params, package_symbols)
+                    .unwrap_or(1)
+                    .max(1);
             let n = n.max(0).min(63) as u32;
             if v == 0 {
                 Some(0)
@@ -553,11 +740,23 @@ pub fn eval_width_aware_param(
             let mut acc: u64 = 0;
             let mut shift: u32 = 0;
             for elem in elems.iter().rev() {
-                let v = eval_width_aware_param(elem, signal_map, signals, effective_params, package_symbols)?;
-                let w = compute_expr_width(elem, signal_map, signals, effective_params, package_symbols)
-                    .unwrap_or(32)
-                    .max(1)
-                    .min(63) as u32;
+                let v = eval_width_aware_param(
+                    elem,
+                    signal_map,
+                    signals,
+                    effective_params,
+                    package_symbols,
+                )?;
+                let w = compute_expr_width(
+                    elem,
+                    signal_map,
+                    signals,
+                    effective_params,
+                    package_symbols,
+                )
+                .unwrap_or(32)
+                .max(1)
+                .min(63) as u32;
                 let masked = (v as u64) & ((1u64 << w).wrapping_sub(1));
                 acc |= masked.wrapping_shl(shift.min(63));
                 shift = shift.saturating_add(w);
@@ -583,7 +782,11 @@ fn clog2_value(v: i64) -> i64 {
     } else {
         let n = v as u64;
         let msb = (64 - n.leading_zeros()) as i64;
-        if n.is_power_of_two() { msb - 1 } else { msb }
+        if n.is_power_of_two() {
+            msb - 1
+        } else {
+            msb
+        }
     }
 }
 

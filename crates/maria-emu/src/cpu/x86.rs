@@ -14,8 +14,8 @@
 //! operand-size 66 (reg 32-bit) + segment override + rep. INT di-dispatch ke
 //! BIOS stub (INT 13h disk, INT 10h teletype, INT 16h keyboard, INT 1Ah time).
 
-use crate::mem::MemoryPort;
 use super::{CpuCore, CpuFault, CpuStep, Isa};
+use crate::mem::MemoryPort;
 
 /// Flag FLAGS (bit positions real mode).
 pub const FLAG_CF: u16 = 1 << 0;
@@ -254,33 +254,63 @@ impl X86Cpu {
 
     fn read8(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32) -> Result<u8, CpuFault> {
         let a = self.lin(seg, off);
-        mem.read(a, 1).map(|v| v as u8).map_err(|e| self.fault(format!("read8 0x{:x}: {}", a, e)))
+        mem.read(a, 1)
+            .map(|v| v as u8)
+            .map_err(|e| self.fault(format!("read8 0x{:x}: {}", a, e)))
     }
     fn read16(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32) -> Result<u16, CpuFault> {
         let a = self.lin(seg, off);
-        let lo = mem.read(a, 1).map_err(|e| self.fault(format!("read16 0x{:x}: {}", a, e)))? as u8;
-        let hi = mem.read(a + 1, 1).map_err(|e| self.fault(format!("read16 0x{:x}: {}", a + 1, e)))? as u8;
+        let lo = mem
+            .read(a, 1)
+            .map_err(|e| self.fault(format!("read16 0x{:x}: {}", a, e)))? as u8;
+        let hi =
+            mem.read(a + 1, 1)
+                .map_err(|e| self.fault(format!("read16 0x{:x}: {}", a + 1, e)))? as u8;
         Ok((lo as u16) | ((hi as u16) << 8))
     }
     fn read32(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32) -> Result<u32, CpuFault> {
         let a = self.lin(seg, off);
-        let b0 = mem.read(a, 1).map_err(|e| self.fault(format!("read32 0x{:x}: {}", a, e)))? as u32;
-        let b1 = mem.read(a + 1, 1).map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 1, e)))? as u32;
-        let b2 = mem.read(a + 2, 1).map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 2, e)))? as u32;
-        let b3 = mem.read(a + 3, 1).map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 3, e)))? as u32;
+        let b0 = mem
+            .read(a, 1)
+            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a, e)))? as u32;
+        let b1 = mem
+            .read(a + 1, 1)
+            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 1, e)))?
+            as u32;
+        let b2 = mem
+            .read(a + 2, 1)
+            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 2, e)))?
+            as u32;
+        let b3 = mem
+            .read(a + 3, 1)
+            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 3, e)))?
+            as u32;
         Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
     }
     fn write8(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32, v: u8) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
-        mem.write(a, 1, v as u64).map_err(|e| self.fault(format!("write8 0x{:x}: {}", a, e)))
+        mem.write(a, 1, v as u64)
+            .map_err(|e| self.fault(format!("write8 0x{:x}: {}", a, e)))
     }
-    fn write16(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32, v: u16) -> Result<(), CpuFault> {
+    fn write16(
+        &self,
+        mem: &mut dyn MemoryPort,
+        seg: u16,
+        off: u32,
+        v: u16,
+    ) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
         mem.write(a, 1, (v & 0xff) as u64)
             .and_then(|_| mem.write(a + 1, 1, (v >> 8) as u64))
             .map_err(|e| self.fault(format!("write16 0x{:x}: {}", a, e)))
     }
-    fn write32(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32, v: u32) -> Result<(), CpuFault> {
+    fn write32(
+        &self,
+        mem: &mut dyn MemoryPort,
+        seg: u16,
+        off: u32,
+        v: u32,
+    ) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
         for i in 0..4 {
             mem.write(a + i, 1, ((v >> (8 * i)) & 0xff) as u64)
@@ -292,7 +322,10 @@ impl X86Cpu {
     fn fetch8(&mut self, mem: &mut dyn MemoryPort) -> Result<u8, CpuFault> {
         let a = self.lin(self.cs, self.ip as u32);
         if (0xbdc0..=0xbe30).contains(&a) && std::env::var("MARIA_X86_TRACE").is_ok() {
-            eprintln!("FETCH @0x{a:x} ip={} cs=0x{:x} pmode={}", self.ip, self.cs, self.pmode);
+            eprintln!(
+                "FETCH @0x{a:x} ip={} cs=0x{:x} pmode={}",
+                self.ip, self.cs, self.pmode
+            );
         }
         let b = self.read8(mem, self.cs, self.ip as u32)?;
         self.ip = self.ip.wrapping_add(1);
@@ -312,7 +345,10 @@ impl X86Cpu {
     }
 
     fn fault(&self, reason: String) -> CpuFault {
-        CpuFault { pc: self.pc(), reason }
+        CpuFault {
+            pc: self.pc(),
+            reason,
+        }
     }
 
     /// Push/pop stack. Real mode: SP 16-bit (wrap 64K); protected mode:
@@ -405,12 +441,23 @@ fn sign32(v: u32) -> i64 {
 impl X86Cpu {
     /// Decode ModRM + hitung alamat efektif. Real mode → 16-bit; protected
     /// mode → 32-bit (SIB + disp32).
-    fn ea16(&mut self, mem: &mut dyn MemoryPort, modrm: ModRm, seg_ov: Option<u16>) -> Result<Ea, CpuFault> {
+    fn ea16(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        modrm: ModRm,
+        seg_ov: Option<u16>,
+    ) -> Result<Ea, CpuFault> {
         if self.pmode {
             return self.ea32(mem, modrm, seg_ov);
         }
         if modrm.m == 3 {
-            return Ok(Ea { lin: 0, seg: 0, off: 0, is_reg: true, reg: modrm.rm });
+            return Ok(Ea {
+                lin: 0,
+                seg: 0,
+                off: 0,
+                is_reg: true,
+                reg: modrm.rm,
+            });
         }
         let base_ss = modrm.rm == 2 || modrm.rm == 3 || modrm.rm == 6; // bp-based → SS
         let default_seg = if base_ss { self.ss } else { self.ds };
@@ -441,13 +488,30 @@ impl X86Cpu {
             off = off.wrapping_add(sign16(self.fetch16(mem)?) as u32);
         }
         let lin = self.lin(seg, off & 0xffff);
-        Ok(Ea { lin, seg, off: off & 0xffff, is_reg: false, reg: modrm.rm })
+        Ok(Ea {
+            lin,
+            seg,
+            off: off & 0xffff,
+            is_reg: false,
+            reg: modrm.rm,
+        })
     }
 
     /// Alamat efektif 32-bit (protected mode): modrm + SIB + disp8/32.
-    fn ea32(&mut self, mem: &mut dyn MemoryPort, modrm: ModRm, seg_ov: Option<u16>) -> Result<Ea, CpuFault> {
+    fn ea32(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        modrm: ModRm,
+        seg_ov: Option<u16>,
+    ) -> Result<Ea, CpuFault> {
         if modrm.m == 3 {
-            return Ok(Ea { lin: 0, seg: 0, off: 0, is_reg: true, reg: modrm.rm });
+            return Ok(Ea {
+                lin: 0,
+                seg: 0,
+                off: 0,
+                is_reg: true,
+                reg: modrm.rm,
+            });
         }
         let rm = modrm.rm;
         let mut off: u32;
@@ -496,14 +560,26 @@ impl X86Cpu {
         let default_seg = if base_ss { self.ss } else { self.ds };
         let seg = seg_ov.unwrap_or(default_seg);
         let lin = self.lin(seg, off);
-        Ok(Ea { lin, seg, off, is_reg: false, reg: rm })
+        Ok(Ea {
+            lin,
+            seg,
+            off,
+            is_reg: false,
+            reg: rm,
+        })
     }
 
     /// Baca operand ModRM (register bila mod=3, memori sebaliknya).
     /// PENTING: `wide=false` = operasi 8-bit SELALU, terlepas dari opsz —
     /// cek `!wide` dulu sebelum opsz (bug klasik: `mov [mem], al` di mode
     /// 32-bit ikut baca 32-bit).
-    fn read_op(&self, mem: &mut dyn MemoryPort, ea: &Ea, opsz: u8, wide: bool) -> Result<u64, CpuFault> {
+    fn read_op(
+        &self,
+        mem: &mut dyn MemoryPort,
+        ea: &Ea,
+        opsz: u8,
+        wide: bool,
+    ) -> Result<u64, CpuFault> {
         if ea.is_reg {
             let i = ea.reg as usize;
             return Ok(if !wide {
@@ -524,7 +600,14 @@ impl X86Cpu {
     }
 
     /// Tulis operand ModRM.
-    fn write_op(&mut self, mem: &mut dyn MemoryPort, ea: &Ea, val: u64, opsz: u8, wide: bool) -> Result<(), CpuFault> {
+    fn write_op(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        ea: &Ea,
+        val: u64,
+        opsz: u8,
+        wide: bool,
+    ) -> Result<(), CpuFault> {
         if ea.is_reg {
             let i = ea.reg as usize;
             if !wide {
@@ -594,7 +677,10 @@ impl X86Cpu {
                 _ => {
                     let a = self.lin(self.cs, self.ip as u32);
                     if (0xc7e0..=0xc7f8).contains(&a) && std::env::var("MARIA_X86_TRACE").is_ok() {
-                        eprintln!("OP @0x{a:x} op=0x{op:02x} opsz={opsz} rep={rep} ip={} cs=0x{:x}", self.ip, self.cs);
+                        eprintln!(
+                            "OP @0x{a:x} op=0x{op:02x} opsz={opsz} rep={rep} ip={} cs=0x{:x}",
+                            self.ip, self.cs
+                        );
                     }
                     self.exec_op(op, opsz, seg_ov, rep, mem)?;
                     return Ok(());
@@ -616,7 +702,11 @@ impl X86Cpu {
             // ── mov r/m, r8/16/32 (88/89) ──
             0x88 | 0x89 => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, seg_ov)?;
                 let src = if op == 0x88 {
                     self.r8(m.r as usize) as u64
@@ -630,7 +720,11 @@ impl X86Cpu {
             // ── mov r8/16/32, r/m (8a/8b) ──
             0x8a | 0x8b => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, seg_ov)?;
                 let v = self.read_op(mem, &ea, opsz, op == 0x8b)?;
                 let r = m.r as usize;
@@ -645,7 +739,11 @@ impl X86Cpu {
             // ── mov r/m, imm (c6 /0, c7 /0) ──
             0xc6 | 0xc7 => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 if m.r != 0 {
                     return Err(self.fault(format!("mov imm grup /{} tak didukung", m.r)));
                 }
@@ -680,7 +778,11 @@ impl X86Cpu {
             // ── mov sreg, r/m (8e) ──
             0x8e => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, seg_ov)?;
                 let v = self.read_op(mem, &ea, 16, true)? as u16;
                 match m.r {
@@ -696,7 +798,11 @@ impl X86Cpu {
             // ── mov r/m16, sreg (8c) ──
             0x8c => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let v = match m.r {
                     0 => self.es,
                     1 => self.cs,
@@ -754,7 +860,11 @@ impl X86Cpu {
                 } else {
                     self.fetch16(mem)? as u64
                 };
-                let a = if opsz == 32 { self.r32(0) as u64 } else { self.r16(0) as u64 };
+                let a = if opsz == 32 {
+                    self.r32(0) as u64
+                } else {
+                    self.r16(0) as u64
+                };
                 let r = self.arith_apply(opc, a, imm, opsz, true);
                 if opc != 7 {
                     if opsz == 32 {
@@ -836,19 +946,31 @@ impl X86Cpu {
             // ── imul r, r/m, imm (69/6b) ──
             0x69 | 0x6b => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, seg_ov)?;
                 let b = self.read_op(mem, &ea, opsz, true)?;
                 let r = m.r as usize;
                 if opsz == 32 {
-                    let imm = if op == 0x69 { self.fetch32(mem)? as i32 as i64 } else { sign8(self.fetch8(mem)?) as i64 };
+                    let imm = if op == 0x69 {
+                        self.fetch32(mem)? as i32 as i64
+                    } else {
+                        sign8(self.fetch8(mem)?) as i64
+                    };
                     let rv = (b as i32 as i64).wrapping_mul(imm);
                     self.r32_set(r, rv as u32);
                     let cf = (rv as u32) & 0x8000_0000 != 0 && rv != (rv as i32 as i64);
                     self.set_flag(FLAG_CF, cf);
                     self.set_flag(FLAG_OF, cf);
                 } else {
-                    let imm = if op == 0x69 { self.fetch16(mem)? as i16 as i64 } else { sign8(self.fetch8(mem)?) as i64 };
+                    let imm = if op == 0x69 {
+                        self.fetch16(mem)? as i16 as i64
+                    } else {
+                        sign8(self.fetch8(mem)?) as i64
+                    };
                     let rv = (b as i16 as i64).wrapping_mul(imm);
                     self.r16_set(r, rv as u16);
                     let cf = (rv as u16) & 0x8000 != 0 && rv != (rv as i16 as i64);
@@ -942,7 +1064,13 @@ impl X86Cpu {
                     self.fetch16(mem)? as u64
                 };
                 let r = v & imm;
-                let bits = if op == 0xa8 { 8 } else if opsz == 32 { 32 } else { 16 };
+                let bits = if op == 0xa8 {
+                    8
+                } else if opsz == 32 {
+                    32
+                } else {
+                    16
+                };
                 self.set_logic_flags(r, bits);
                 self.set_flag(FLAG_CF, false);
                 self.set_flag(FLAG_OF, false);
@@ -950,7 +1078,11 @@ impl X86Cpu {
             // ── test r/m, r (84/85) ──
             0x84 | 0x85 => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, seg_ov)?;
                 let a = self.read_op(mem, &ea, opsz, op == 0x85)?;
                 let b = if op == 0x84 {
@@ -961,13 +1093,23 @@ impl X86Cpu {
                     self.r16(m.r as usize) as u64
                 };
                 let r = a & b;
-                let bits = if op == 0x84 { 8 } else if opsz == 32 { 32 } else { 16 };
+                let bits = if op == 0x84 {
+                    8
+                } else if opsz == 32 {
+                    32
+                } else {
+                    16
+                };
                 self.set_logic_flags(r, bits);
             }
             // ── xchg (86/87) ──
             0x86 | 0x87 => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, seg_ov)?;
                 let a = self.read_op(mem, &ea, opsz, op == 0x87)?;
                 let b = if op == 0x86 {
@@ -1005,7 +1147,14 @@ impl X86Cpu {
             0x99 => {
                 if opsz == 32 {
                     // cdq: edx = sign(eax)
-                    self.r32_set(2, if self.r32(0) & 0x8000_0000 != 0 { 0xffff_ffff } else { 0 });
+                    self.r32_set(
+                        2,
+                        if self.r32(0) & 0x8000_0000 != 0 {
+                            0xffff_ffff
+                        } else {
+                            0
+                        },
+                    );
                 } else {
                     self.r16_set(2, if self.r16(0) & 0x8000 != 0 { 0xffff } else { 0 });
                 }
@@ -1014,12 +1163,20 @@ impl X86Cpu {
             //    bukan operand size: real mode = moffs16 SELALU (prefix 66 hanya
             //    mengubah operand), protected mode = moffs32. ──
             0xa0 => {
-                let off = if self.pmode { self.fetch32(mem)? } else { self.fetch16(mem)? as u32 };
+                let off = if self.pmode {
+                    self.fetch32(mem)?
+                } else {
+                    self.fetch16(mem)? as u32
+                };
                 let v = self.read8(mem, self.ds, off)?;
                 self.r8_set(0, v);
             }
             0xa1 => {
-                let off = if self.pmode { self.fetch32(mem)? } else { self.fetch16(mem)? as u32 };
+                let off = if self.pmode {
+                    self.fetch32(mem)?
+                } else {
+                    self.fetch16(mem)? as u32
+                };
                 if opsz == 32 {
                     let v = self.read32(mem, self.ds, off)?;
                     self.r32_set(0, v);
@@ -1029,11 +1186,19 @@ impl X86Cpu {
                 }
             }
             0xa2 => {
-                let off = if self.pmode { self.fetch32(mem)? } else { self.fetch16(mem)? as u32 };
+                let off = if self.pmode {
+                    self.fetch32(mem)?
+                } else {
+                    self.fetch16(mem)? as u32
+                };
                 self.write8(mem, self.ds, off, self.r8(0))?;
             }
             0xa3 => {
-                let off = if self.pmode { self.fetch32(mem)? } else { self.fetch16(mem)? as u32 };
+                let off = if self.pmode {
+                    self.fetch32(mem)?
+                } else {
+                    self.fetch16(mem)? as u32
+                };
                 if opsz == 32 {
                     self.write32(mem, self.ds, off, self.r32(0))?;
                 } else {
@@ -1074,10 +1239,24 @@ impl X86Cpu {
                 let saved = self.pop32(mem)?;
                 self.r32_set(5, saved);
             }
-            0xc3 => self.ip = if opsz == 32 { self.pop32(mem)? } else { self.pop16(mem)? as u32 },
+            0xc3 => {
+                self.ip = if opsz == 32 {
+                    self.pop32(mem)?
+                } else {
+                    self.pop16(mem)? as u32
+                }
+            }
             0xc2 => {
-                let n = if opsz == 32 { self.fetch32(mem)? } else { self.fetch16(mem)? as u32 };
-                self.ip = if opsz == 32 { self.pop32(mem)? } else { self.pop16(mem)? as u32 };
+                let n = if opsz == 32 {
+                    self.fetch32(mem)?
+                } else {
+                    self.fetch16(mem)? as u32
+                };
+                self.ip = if opsz == 32 {
+                    self.pop32(mem)?
+                } else {
+                    self.pop16(mem)? as u32
+                };
                 self.sp_set(self.sp().wrapping_add(n as u16));
             }
             0xcb => {
@@ -1089,7 +1268,11 @@ impl X86Cpu {
                 self.cs = self.pop16(mem)?;
             }
             0xca => {
-                let n = if opsz == 32 { self.fetch32(mem)? } else { self.fetch16(mem)? as u32 };
+                let n = if opsz == 32 {
+                    self.fetch32(mem)?
+                } else {
+                    self.fetch16(mem)? as u32
+                };
                 if opsz == 32 {
                     self.ip = self.pop32(mem)?;
                 } else {
@@ -1199,14 +1382,22 @@ impl X86Cpu {
             // ── grup fe: inc/dec r/m8 ──
             0xfe => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 if m.r > 1 {
                     self.halt(&format!("fe /{} belum didukung", m.r));
                     return Ok(());
                 }
                 let ea = self.ea16(mem, m, seg_ov)?;
                 let v = self.read_op(mem, &ea, 8, false)?;
-                let r = if m.r == 0 { v.wrapping_add(1) } else { v.wrapping_sub(1) };
+                let r = if m.r == 0 {
+                    v.wrapping_add(1)
+                } else {
+                    v.wrapping_sub(1)
+                };
                 self.write_op(mem, &ea, r, 8, false)?;
                 self.set_logic_flags(r, 8);
                 self.set_flag(FLAG_OF, (r & 0x80) != 0 && (v & 0x80) == 0);
@@ -1221,7 +1412,11 @@ impl X86Cpu {
             // ── lea (8d) ──
             0x8d => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, seg_ov)?;
                 let r = m.r as usize;
                 if opsz == 32 {
@@ -1233,13 +1428,21 @@ impl X86Cpu {
             // ── pop r/m (8f /0) ──
             0x8f => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 if m.r != 0 {
                     self.halt(&format!("8f /{} belum didukung", m.r));
                     return Ok(());
                 }
                 let ea = self.ea16(mem, m, seg_ov)?;
-                let v = if opsz == 32 { self.pop32(mem)? } else { self.pop16(mem)? as u32 };
+                let v = if opsz == 32 {
+                    self.pop32(mem)?
+                } else {
+                    self.pop16(mem)? as u32
+                };
                 self.write_op(mem, &ea, v as u64, opsz, true)?;
             }
             // ── iret (cf) ──
@@ -1268,7 +1471,11 @@ impl X86Cpu {
         // mengikuti opsz. Jangan tambahkan `opsz == 32` di sini.
         let wide = (op & 1) == 1;
         let mr = self.fetch8(mem)?;
-        let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+        let m = ModRm {
+            m: mr >> 6,
+            r: (mr >> 3) & 7,
+            rm: mr & 7,
+        };
         let opc = (op >> 3) & 7; // 0=add 1=or 2=adc 3=sbb 4=and 5=sub 6=xor 7=cmp
         let dst_reg = ((op >> 1) & 1) == 1; // bit1: 1 → dest = reg
         let ea = self.ea16(mem, m, seg_ov)?;
@@ -1281,7 +1488,11 @@ impl X86Cpu {
             self.r16(m.r as usize) as u64
         };
         // a = operand sisi dest, b = sumber
-        let (a, b) = if dst_reg { (reg_val, ea_val) } else { (ea_val, reg_val) };
+        let (a, b) = if dst_reg {
+            (reg_val, ea_val)
+        } else {
+            (ea_val, reg_val)
+        };
         let dst = if dst_reg { m.r as usize } else { m.rm as usize };
         let r = self.arith_apply(opc, a, b, opsz, wide);
         if opc != 7 {
@@ -1302,15 +1513,36 @@ impl X86Cpu {
 
     /// Terapkan operasi aritmatika + set flag. Kembalikan hasil.
     fn arith_apply(&mut self, opc: u8, a: u64, b: u64, opsz: u8, wide: bool) -> u64 {
-        let bits = if !wide { 8 } else if opsz == 32 { 32 } else { 16 };
-        let mask = if bits == 32 { 0xffff_ffffu64 } else if bits == 16 { 0xffff } else { 0xff };
-        let sign_bit = if bits == 32 { 0x8000_0000u64 } else if bits == 16 { 0x8000 } else { 0x80 };
+        let bits = if !wide {
+            8
+        } else if opsz == 32 {
+            32
+        } else {
+            16
+        };
+        let mask = if bits == 32 {
+            0xffff_ffffu64
+        } else if bits == 16 {
+            0xffff
+        } else {
+            0xff
+        };
+        let sign_bit = if bits == 32 {
+            0x8000_0000u64
+        } else if bits == 16 {
+            0x8000
+        } else {
+            0x80
+        };
         match opc {
             0 => {
                 // add
                 let r = (a + b) & mask;
                 self.set_flag(FLAG_CF, (a + b) > mask);
-                self.set_flag(FLAG_OF, (a & sign_bit) == (b & sign_bit) && (r & sign_bit) != (a & sign_bit));
+                self.set_flag(
+                    FLAG_OF,
+                    (a & sign_bit) == (b & sign_bit) && (r & sign_bit) != (a & sign_bit),
+                );
                 self.set_logic_flags(r, bits as u8);
                 r
             }
@@ -1332,7 +1564,10 @@ impl X86Cpu {
                 // sub
                 let r = (a.wrapping_sub(b)) & mask;
                 self.set_flag(FLAG_CF, a < b);
-                self.set_flag(FLAG_OF, (a & sign_bit) != (b & sign_bit) && (r & sign_bit) != (a & sign_bit));
+                self.set_flag(
+                    FLAG_OF,
+                    (a & sign_bit) != (b & sign_bit) && (r & sign_bit) != (a & sign_bit),
+                );
                 self.set_logic_flags(r, bits as u8);
                 r
             }
@@ -1347,7 +1582,10 @@ impl X86Cpu {
                 // cmp
                 let r = (a.wrapping_sub(b)) & mask;
                 self.set_flag(FLAG_CF, a < b);
-                self.set_flag(FLAG_OF, (a & sign_bit) != (b & sign_bit) && (r & sign_bit) != (a & sign_bit));
+                self.set_flag(
+                    FLAG_OF,
+                    (a & sign_bit) != (b & sign_bit) && (r & sign_bit) != (a & sign_bit),
+                );
                 self.set_logic_flags(r, bits as u8);
                 r
             }
@@ -1382,8 +1620,20 @@ impl X86Cpu {
 
     /// Set ZF/SF/PF untuk hasil (CF/OF tidak disentuh — pemanggil atur).
     fn set_logic_flags(&mut self, r: u64, bits: u8) {
-        let mask = if bits == 32 { 0xffff_ffffu64 } else if bits == 16 { 0xffff } else { 0xff };
-        let sign_bit = if bits == 32 { 0x8000_0000u64 } else if bits == 16 { 0x8000 } else { 0x80 };
+        let mask = if bits == 32 {
+            0xffff_ffffu64
+        } else if bits == 16 {
+            0xffff
+        } else {
+            0xff
+        };
+        let sign_bit = if bits == 32 {
+            0x8000_0000u64
+        } else if bits == 16 {
+            0x8000
+        } else {
+            0x80
+        };
         self.set_flag(FLAG_ZF, (r & mask) == 0);
         self.set_flag(FLAG_SF, r & sign_bit != 0);
         self.set_flag(FLAG_PF, (r as u8).count_ones() % 2 == 0);
@@ -1401,7 +1651,11 @@ impl X86Cpu {
         // 0x83 = 16/32-bit dengan imm8 sign-extended.
         let wide = op != 0x80;
         let mr = self.fetch8(mem)?;
-        let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+        let m = ModRm {
+            m: mr >> 6,
+            r: (mr >> 3) & 7,
+            rm: mr & 7,
+        };
         let ea = self.ea16(mem, m, seg_ov)?;
         let a = self.read_op(mem, &ea, opsz, wide)?;
         let imm = if op == 0x80 {
@@ -1431,7 +1685,11 @@ impl X86Cpu {
     ) -> Result<(), CpuFault> {
         let wide = (op & 1) == 1;
         let mr = self.fetch8(mem)?;
-        let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+        let m = ModRm {
+            m: mr >> 6,
+            r: (mr >> 3) & 7,
+            rm: mr & 7,
+        };
         let ea = self.ea16(mem, m, seg_ov)?;
         let a = self.read_op(mem, &ea, opsz, wide)?;
         let cnt = if op >= 0xd2 {
@@ -1441,9 +1699,27 @@ impl X86Cpu {
         } else {
             (self.fetch8(mem)? & 0x1f) as u32 // c0/c1: shift by imm8
         };
-        let bits = if !wide { 8u32 } else if opsz == 32 { 32 } else { 16 };
-        let mask = if bits == 32 { 0xffff_ffffu64 } else if bits == 16 { 0xffff } else { 0xff };
-        let sign_bit = if bits == 32 { 0x8000_0000u64 } else if bits == 16 { 0x8000 } else { 0x80 };
+        let bits = if !wide {
+            8u32
+        } else if opsz == 32 {
+            32
+        } else {
+            16
+        };
+        let mask = if bits == 32 {
+            0xffff_ffffu64
+        } else if bits == 16 {
+            0xffff
+        } else {
+            0xff
+        };
+        let sign_bit = if bits == 32 {
+            0x8000_0000u64
+        } else if bits == 16 {
+            0x8000
+        } else {
+            0x80
+        };
         let r = match m.r {
             4 | 6 => {
                 let r = (a << cnt) & mask;
@@ -1540,18 +1816,35 @@ impl X86Cpu {
     ) -> Result<(), CpuFault> {
         let wide = op == 0xf7;
         let mr = self.fetch8(mem)?;
-        let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+        let m = ModRm {
+            m: mr >> 6,
+            r: (mr >> 3) & 7,
+            rm: mr & 7,
+        };
         let ea = self.ea16(mem, m, seg_ov)?;
         let a = self.read_op(mem, &ea, opsz, wide)?;
         match m.r {
             0 => {
                 let imm = if op == 0xf7 {
-                    if opsz == 32 { self.fetch32(mem)? as u64 } else { self.fetch16(mem)? as u64 }
+                    if opsz == 32 {
+                        self.fetch32(mem)? as u64
+                    } else {
+                        self.fetch16(mem)? as u64
+                    }
                 } else {
                     self.fetch8(mem)? as u64
                 };
                 let r = a & imm;
-                self.set_logic_flags(r, if !wide { 8 } else if opsz == 32 { 32 } else { 16 });
+                self.set_logic_flags(
+                    r,
+                    if !wide {
+                        8
+                    } else if opsz == 32 {
+                        32
+                    } else {
+                        16
+                    },
+                );
                 self.set_flag(FLAG_CF, false);
                 self.set_flag(FLAG_OF, false);
             }
@@ -1561,8 +1854,20 @@ impl X86Cpu {
             }
             3 => {
                 // neg r/m: 0 - a (CF = a != 0)
-                let bits = if !wide { 8u64 } else if opsz == 32 { 32 } else { 16 };
-                let mask = if bits == 32 { 0xffff_ffffu64 } else if bits == 16 { 0xffff } else { 0xff };
+                let bits = if !wide {
+                    8u64
+                } else if opsz == 32 {
+                    32
+                } else {
+                    16
+                };
+                let mask = if bits == 32 {
+                    0xffff_ffffu64
+                } else if bits == 16 {
+                    0xffff
+                } else {
+                    0xff
+                };
                 let r = (mask.wrapping_sub(a) + 1) & mask;
                 self.write_op(mem, &ea, r, opsz, wide)?;
                 self.set_logic_flags(r, bits as u8);
@@ -1667,13 +1972,21 @@ impl X86Cpu {
     ) -> Result<(), CpuFault> {
         let _wide = opsz == 32;
         let mr = self.fetch8(mem)?;
-        let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+        let m = ModRm {
+            m: mr >> 6,
+            r: (mr >> 3) & 7,
+            rm: mr & 7,
+        };
         let ea = self.ea16(mem, m, seg_ov)?;
         match m.r {
             0 | 1 => {
                 let v = self.read_op(mem, &ea, opsz, true)?;
                 let bits = if opsz == 32 { 32u32 } else { 16 };
-                let r = if m.r == 0 { v.wrapping_add(1) } else { v.wrapping_sub(1) };
+                let r = if m.r == 0 {
+                    v.wrapping_add(1)
+                } else {
+                    v.wrapping_sub(1)
+                };
                 self.write_op(mem, &ea, r, opsz, true)?;
                 self.set_logic_flags(r, bits as u8);
                 let sign_bit = if opsz == 32 { 0x8000_0000u64 } else { 0x8000 };
@@ -1738,7 +2051,11 @@ impl X86Cpu {
             0x90..=0x9f => {
                 // setcc r/m8
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let v = self.jcc_taken(op & 0x0f) as u8;
                 if m.m == 3 {
                     self.r8_set(m.rm as usize, v);
@@ -1750,7 +2067,11 @@ impl X86Cpu {
             0xaf => {
                 // imul r16/32, r/m16/32
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, None)?;
                 let b = self.read_op(mem, &ea, opsz, true)?;
                 let r = m.r as usize;
@@ -1773,7 +2094,11 @@ impl X86Cpu {
             0xb6 | 0xb7 => {
                 // movzx r16/32, r/m8/16
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, None)?;
                 let v = self.read_op(mem, &ea, 16, op == 0xb7)?;
                 let r = m.r as usize;
@@ -1786,7 +2111,11 @@ impl X86Cpu {
             0xbe | 0xbf => {
                 // movsx r16/32, r/m8/16
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 let ea = self.ea16(mem, m, None)?;
                 let v = self.read_op(mem, &ea, 16, op == 0xbf)?;
                 let r = m.r as usize;
@@ -1804,7 +2133,11 @@ impl X86Cpu {
             // ── grup sistem 0f 01: sgdt/sidt/lgdt/lidt/smsw/lmsw/invlpg ──
             0x01 => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 if m.m == 3 {
                     // mod=11: smsw r/m16 (reg 4), lmsw r/m16 (reg 6)
                     match m.r {
@@ -1814,7 +2147,13 @@ impl X86Cpu {
                             if m.rm == 0 {
                                 self.r16_set(0, v);
                             } else {
-                                let ea = Ea { lin: 0, seg: 0, off: 0, is_reg: true, reg: m.rm };
+                                let ea = Ea {
+                                    lin: 0,
+                                    seg: 0,
+                                    off: 0,
+                                    is_reg: true,
+                                    reg: m.rm,
+                                };
                                 self.write_op(mem, &ea, v as u64, 16, true)?;
                             }
                         }
@@ -1823,7 +2162,13 @@ impl X86Cpu {
                             let v = if m.rm == 0 {
                                 self.r16(0)
                             } else {
-                                let ea = Ea { lin: 0, seg: 0, off: 0, is_reg: true, reg: m.rm };
+                                let ea = Ea {
+                                    lin: 0,
+                                    seg: 0,
+                                    off: 0,
+                                    is_reg: true,
+                                    reg: m.rm,
+                                };
                                 self.read_op(mem, &ea, 16, true)? as u16
                             };
                             self.cr[0] = (self.cr[0] & !0xffff) | v as u32;
@@ -1869,14 +2214,22 @@ impl X86Cpu {
                             // invlpg m: no-op (cache tak disimulasikan)
                             let _ = ea;
                         }
-                        _ => return Err(self.fault(format!("0f 01 /{} mod{} tak didukung", m.r, m.m))),
+                        _ => {
+                            return Err(
+                                self.fault(format!("0f 01 /{} mod{} tak didukung", m.r, m.m))
+                            )
+                        }
                     }
                 }
             }
             // ── mov r32, crN (0f 20) / mov crN, r32 (0f 22) ──
             0x20 | 0x22 => {
                 let mr = self.fetch8(mem)?;
-                let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
                 if m.r > 7 {
                     return Err(self.fault(format!("mov cr reg invalid {}", m.r)));
                 }
@@ -1939,32 +2292,65 @@ impl X86Cpu {
 
     /// SI 32-bit penuh (protected mode; di real mode = 16-bit, high bits 0).
     fn si32(&self) -> u32 {
-        if self.pmode { self.r32(6) } else { self.si() as u32 }
+        if self.pmode {
+            self.r32(6)
+        } else {
+            self.si() as u32
+        }
     }
     /// DI 32-bit penuh (protected mode; di real mode = 16-bit, high bits 0).
     fn di32(&self) -> u32 {
-        if self.pmode { self.r32(7) } else { self.di() as u32 }
+        if self.pmode {
+            self.r32(7)
+        } else {
+            self.di() as u32
+        }
     }
     fn si32_set(&mut self, v: u32) {
-        if self.pmode { self.r32_set(6, v); } else { self.si_set(v as u16); }
+        if self.pmode {
+            self.r32_set(6, v);
+        } else {
+            self.si_set(v as u16);
+        }
     }
     fn di32_set(&mut self, v: u32) {
-        if self.pmode { self.r32_set(7, v); } else { self.di_set(v as u16); }
+        if self.pmode {
+            self.r32_set(7, v);
+        } else {
+            self.di_set(v as u16);
+        }
     }
     /// Counter REP: ECX di pmode (address-size 32), CX di real mode.
     fn rep_cnt(&self) -> u32 {
-        if self.pmode { self.r32(1) } else { self.cx() as u32 }
+        if self.pmode {
+            self.r32(1)
+        } else {
+            self.cx() as u32
+        }
     }
     fn rep_cnt_set(&mut self, v: u32) {
-        if self.pmode { self.r32_set(1, v); } else { self.cx_set(v as u16); }
+        if self.pmode {
+            self.r32_set(1, v);
+        } else {
+            self.cx_set(v as u16);
+        }
     }
 
-    fn movs(&mut self, mem: &mut dyn MemoryPort, n: u32, rep: bool, seg_ov: Option<u16>) -> Result<(), CpuFault> {
+    fn movs(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        n: u32,
+        rep: bool,
+        seg_ov: Option<u16>,
+    ) -> Result<(), CpuFault> {
         let src_seg = seg_ov.unwrap_or(self.ds);
         loop {
             let (si, di) = (self.si32(), self.di32());
             if std::env::var("MARIA_X86_TRACE").is_ok() && !rep {
-                eprintln!("MOVS n={n} si=0x{si:x} di=0x{di:x} es=0x{:x} ds=0x{:x} pmode={}", self.es, src_seg, self.pmode);
+                eprintln!(
+                    "MOVS n={n} si=0x{si:x} di=0x{di:x} es=0x{:x} ds=0x{:x} pmode={}",
+                    self.es, src_seg, self.pmode
+                );
             }
             for i in 0..n {
                 let b = self.read8(mem, src_seg, si + i)?;
@@ -1987,7 +2373,13 @@ impl X86Cpu {
         Ok(())
     }
 
-    fn cmps(&mut self, mem: &mut dyn MemoryPort, n: u32, rep: bool, seg_ov: Option<u16>) -> Result<(), CpuFault> {
+    fn cmps(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        n: u32,
+        rep: bool,
+        seg_ov: Option<u16>,
+    ) -> Result<(), CpuFault> {
         let src_seg = seg_ov.unwrap_or(self.ds);
         loop {
             let mut neq = false;
@@ -2017,7 +2409,13 @@ impl X86Cpu {
         Ok(())
     }
 
-    fn stos(&mut self, mem: &mut dyn MemoryPort, n: u32, rep: bool, seg_ov: Option<u16>) -> Result<(), CpuFault> {
+    fn stos(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        n: u32,
+        rep: bool,
+        seg_ov: Option<u16>,
+    ) -> Result<(), CpuFault> {
         let _ = seg_ov;
         loop {
             let di = self.di32();
@@ -2197,7 +2595,7 @@ impl X86Cpu {
             let di = self.r16(7) as u32;
             let buf_seg = self.es;
             let ram = 0x400_0000u64; // 64MB (probe)
-            // base 0, length 64MB, type 1 (usable)
+                                     // base 0, length 64MB, type 1 (usable)
             for (i, v) in [0u64, ram, 1u64, 1u64].iter().enumerate() {
                 let off = di + (i as u32) * 8;
                 self.write32(mem, buf_seg, off, *v as u32)?;
@@ -2277,7 +2675,11 @@ impl X86Cpu {
 
     // ── boot helper ──
     /// Muat boot sector ke 0x0000:0x7C00 (BIOS boot convention).
-    pub fn load_boot_sector(&mut self, mem: &mut dyn MemoryPort, data: &[u8]) -> Result<(), CpuFault> {
+    pub fn load_boot_sector(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        data: &[u8],
+    ) -> Result<(), CpuFault> {
         self.write8(mem, 0x0000, 0x7c00, 0)?; // pastikan region ada
         for (i, b) in data.iter().take(512).enumerate() {
             self.write8(mem, 0x0000, 0x7c00 + i as u32, *b)?;
@@ -2309,8 +2711,12 @@ impl FileDisk {
 impl X86Disk for FileDisk {
     fn read(&mut self, lba: u64, count: u16, buf: &mut [u8]) -> Result<(), String> {
         use std::io::{Read, Seek, SeekFrom};
-        let need = lba.checked_mul(512).and_then(|o| o.checked_add((count as u64) * 512));
-        let Some(need) = need else { return Err("overflow".into()) };
+        let need = lba
+            .checked_mul(512)
+            .and_then(|o| o.checked_add((count as u64) * 512));
+        let Some(need) = need else {
+            return Err("overflow".into());
+        };
         if need > self.len {
             // baca parsial: zero-fill sisanya (CD media sering baca melewati EOF)
             buf.fill(0);
@@ -2319,11 +2725,17 @@ impl X86Disk for FileDisk {
             if n == 0 {
                 return Ok(());
             }
-            self.file.seek(SeekFrom::Start(lba * 512)).map_err(|e| e.to_string())?;
-            self.file.read_exact(&mut buf[..n as usize]).map_err(|e| e.to_string())?;
+            self.file
+                .seek(SeekFrom::Start(lba * 512))
+                .map_err(|e| e.to_string())?;
+            self.file
+                .read_exact(&mut buf[..n as usize])
+                .map_err(|e| e.to_string())?;
             return Ok(());
         }
-        self.file.seek(SeekFrom::Start(lba * 512)).map_err(|e| e.to_string())?;
+        self.file
+            .seek(SeekFrom::Start(lba * 512))
+            .map_err(|e| e.to_string())?;
         self.file.read_exact(buf).map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -2340,12 +2752,18 @@ impl CpuCore for X86Cpu {
 
     fn step(&mut self, mem: &mut dyn MemoryPort) -> Result<CpuStep, CpuFault> {
         if self.halted {
-            return Ok(CpuStep::Trap { cause: 0, tval: self.pc() });
+            return Ok(CpuStep::Trap {
+                cause: 0,
+                tval: self.pc(),
+            });
         }
         self.steps += 1;
         self.exec_one(mem)?;
         if self.halted {
-            return Ok(CpuStep::Trap { cause: 0, tval: self.pc() });
+            return Ok(CpuStep::Trap {
+                cause: 0,
+                tval: self.pc(),
+            });
         }
         Ok(CpuStep::InstructionExecuted { cycles: 1 })
     }
@@ -2388,7 +2806,17 @@ mod tests {
 
     fn mem() -> MemoryMap {
         let mut m = MemoryMap::new();
-        m.add(RamRegion::new(Symbol::intern("ram"), 0x0, 0x10_0000, RegionKind::Ram, false).unwrap()).unwrap();
+        m.add(
+            RamRegion::new(
+                Symbol::intern("ram"),
+                0x0,
+                0x10_0000,
+                RegionKind::Ram,
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         m
     }
 
@@ -2473,7 +2901,9 @@ mod tests {
     fn test_lodsb_int10_output() {
         // be 0c 7c (mov si, 0x7c0c → data); ac (lodsb); b4 0e (mov ah, 0x0e); cd 10 (int 10h);
         // 3c 00 (cmp al,0); 75 f7 (jnz -9) — data 'A' di 0x7c0c, 0x00 di 0x7c0d
-        let code = [0xbe, 0x0c, 0x7c, 0xac, 0xb4, 0x0e, 0xcd, 0x10, 0x3c, 0x00, 0x75, 0xf7, b'A', 0x00];
+        let code = [
+            0xbe, 0x0c, 0x7c, 0xac, 0xb4, 0x0e, 0xcd, 0x10, 0x3c, 0x00, 0x75, 0xf7, b'A', 0x00,
+        ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 6); // loop sekali: tulis 'A', al=0 → stop
@@ -2540,9 +2970,17 @@ mod tests {
                 break;
             }
         }
-        assert!(ok >= 10, "MBR harus mengeksekusi >= 10 instruksi, dapat {}", ok);
+        assert!(
+            ok >= 10,
+            "MBR harus mengeksekusi >= 10 instruksi, dapat {}",
+            ok
+        );
         // IP harus maju melewati header (jmp 0x65) dan memanggil INT 13h
-        assert!(cpu.ip > 0x65, "IP harus melewati jmp awal, ip=0x{:x}", cpu.ip);
+        assert!(
+            cpu.ip > 0x65,
+            "IP harus melewati jmp awal, ip=0x{:x}",
+            cpu.ip
+        );
     }
 
     /// E2E: GRUB boot.img (El Torito LBA 667) — eksekusi dengan INT 13h AH=42.
@@ -2568,8 +3006,10 @@ mod tests {
                 break;
             }
         }
-        assert!(ok >= 20, "GRUB boot.img harus mengeksekusi >= 20 instruksi, dapat {}", ok);
+        assert!(
+            ok >= 20,
+            "GRUB boot.img harus mengeksekusi >= 20 instruksi, dapat {}",
+            ok
+        );
     }
 }
-
-

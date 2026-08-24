@@ -166,8 +166,14 @@ impl SignalStats {
         }
 
         report.push('\n');
-        report.push_str(&format!("Total toggles across all signals: {}\n", total_toggles));
-        report.push_str(&format!("Total active signals: {}\n", sorted.iter().filter(|s| s.toggle_count > 0).count()));
+        report.push_str(&format!(
+            "Total toggles across all signals: {}\n",
+            total_toggles
+        ));
+        report.push_str(&format!(
+            "Total active signals: {}\n",
+            sorted.iter().filter(|s| s.toggle_count > 0).count()
+        ));
         report.push('\n');
 
         report
@@ -193,7 +199,7 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maria_ir::{LogicVec, IrDesign, SignalInfo};
+    use maria_ir::{IrDesign, LogicVec, SignalInfo};
 
     fn make_design() -> IrDesign {
         let mut design = IrDesign::default();
@@ -256,7 +262,10 @@ mod tests {
         assert!(report.contains("clk"), "report should contain clk");
         assert!(report.contains("data"), "report should contain data");
         assert!(report.contains("Toggles"), "report should have header");
-        assert!(report.contains("Total toggles"), "report should have summary");
+        assert!(
+            report.contains("Total toggles"),
+            "report should have summary"
+        );
     }
 
     #[test]

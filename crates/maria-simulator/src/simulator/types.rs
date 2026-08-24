@@ -1,5 +1,5 @@
-use maria_ir::*;
 use maria_core::Symbol;
+use maria_ir::*;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -82,14 +82,22 @@ pub struct StateSnapshot {
 pub enum EventKind {
     EvalProcess(usize),
     ContinueBlock(Continuation),
-    ContinueAstBlock(Vec<maria_ast::Stmt>, Option<usize>, Option<ObjId>, Option<Symbol>),
+    ContinueAstBlock(
+        Vec<maria_ast::Stmt>,
+        Option<usize>,
+        Option<ObjId>,
+        Option<Symbol>,
+    ),
     /// WAV-13: commit tertunda dari write signal ber-annotasi SDF delay.
     /// `annotate_sdf` mengisi `IrSignal.delay_rise/delay_fall` (ps) tapi
     /// sebelumnya tidak pernah dibaca — write langsung commit di t, padahal
     /// harus muncul di t + delay. `write_lvalue` menjadwalkan event ini;
     /// handler (`process_event`) commit dengan resolusi multi-driver +
     /// record_signal_change seperti write normal.
-    SdfDelayedWrite { sig_id: usize, value: LogicVec },
+    SdfDelayedWrite {
+        sig_id: usize,
+        value: LogicVec,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

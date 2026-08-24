@@ -45,7 +45,10 @@ impl TelemetryContext {
         let m = self.metrics.snapshot();
         format!(
             "builds={} sims={} files={} tokens={} elapsed_ms={}",
-            m.0, m.1, m.2, m.3,
+            m.0,
+            m.1,
+            m.2,
+            m.3,
             m.4 / 1_000_000,
         )
     }

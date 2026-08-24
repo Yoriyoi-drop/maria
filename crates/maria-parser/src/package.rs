@@ -8,10 +8,10 @@
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
+use crate::lexer::*;
 use maria_ast::*;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_package_decl(&mut self) -> Result<PackageDecl, SimError> {
@@ -230,10 +230,7 @@ impl Parser {
                             } else {
                                 let td = self.parse_typedef()?;
                                 self.typedef_names.insert(td.name);
-                                self.package_tdefs
-                                    .entry(name)
-                                    .or_default()
-                                    .push(td.name);
+                                self.package_tdefs.entry(name).or_default().push(td.name);
                                 items.push(PackageItem::Typedef(td));
                             }
                         }
@@ -241,12 +238,12 @@ impl Parser {
                             self.advance();
                             let pkg = self.expect_ident()?;
                             self.expect(Token::Scope)?;
-                    let item = if self.peek() == &Token::Star {
-                        self.advance();
-                        Symbol::intern("*")
-                    } else {
-                        self.expect_ident()?
-                    };
+                            let item = if self.peek() == &Token::Star {
+                                self.advance();
+                                Symbol::intern("*")
+                            } else {
+                                self.expect_ident()?
+                            };
                             // Register imported typedef names
                             if let Some(tdefs) = self.package_tdefs.get(&pkg) {
                                 if item == "*" {
@@ -264,12 +261,12 @@ impl Parser {
                             self.advance();
                             let pkg = self.expect_ident()?;
                             self.expect(Token::Scope)?;
-                    let item = if self.peek() == &Token::Star {
-                        self.advance();
-                        Symbol::intern("*")
-                    } else {
-                        self.expect_ident()?
-                    };
+                            let item = if self.peek() == &Token::Star {
+                                self.advance();
+                                Symbol::intern("*")
+                            } else {
+                                self.expect_ident()?
+                            };
                             self.skip_semi();
                             items.push(PackageItem::Export { package: pkg, item });
                         }

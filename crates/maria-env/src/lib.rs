@@ -17,7 +17,7 @@ pub mod lsp;
 
 pub mod plugin;
 
-pub use env::{GlobalEnv, shutdown, startup, startup_with, for_cli};
+pub use env::{for_cli, shutdown, startup, startup_with, GlobalEnv};
 #[cfg(feature = "lsp")]
-pub use lsp::{LspBackend, run_lsp_server};
+pub use lsp::{run_lsp_server, LspBackend};
 pub use plugin::{ExamplePlugin, Plugin, PluginManager, PluginMetadata};

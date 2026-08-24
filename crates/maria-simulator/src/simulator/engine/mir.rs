@@ -17,9 +17,9 @@
 //!   `nba_pending`).
 
 use super::SimulationEngine;
+use maria_compiler::mir::*;
 use maria_core::error::SimError;
 use maria_core::Symbol;
-use maria_compiler::mir::*;
 use maria_ir::*;
 use std::collections::HashSet;
 
@@ -63,13 +63,12 @@ impl SimulationEngine {
             IrExpr::BinaryOp(_, lhs, rhs) => {
                 Self::is_expr_jit_safe(lhs) && Self::is_expr_jit_safe(rhs)
             }
-            IrExpr::UnaryOp(op, inner) => {
-                match op {
-                    maria_ir::UnaryIrOp::BitNot | maria_ir::UnaryIrOp::Minus
-                    | maria_ir::UnaryIrOp::Plus => Self::is_expr_jit_safe(inner),
-                    _ => false,
-                }
-            }
+            IrExpr::UnaryOp(op, inner) => match op {
+                maria_ir::UnaryIrOp::BitNot
+                | maria_ir::UnaryIrOp::Minus
+                | maria_ir::UnaryIrOp::Plus => Self::is_expr_jit_safe(inner),
+                _ => false,
+            },
             // Cond (ternary) supported with Branch/Jump/Label in MIR JIT phase 3
             IrExpr::Cond(cond, t, f) => {
                 Self::is_expr_jit_safe(cond)
@@ -98,8 +97,7 @@ impl SimulationEngine {
                         return false;
                     }
                 }
-                IrStmt::Block { stmts: inner }
-                | IrStmt::NamedBlock { stmts: inner, .. } => {
+                IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                     if !Self::is_body_jit_safe(inner) {
                         return false;
                     }
@@ -142,8 +140,7 @@ impl SimulationEngine {
                         return false;
                     }
                 }
-                IrStmt::LoopWhile { cond, body, .. }
-                | IrStmt::LoopDoWhile { cond, body, .. } => {
+                IrStmt::LoopWhile { cond, body, .. } | IrStmt::LoopDoWhile { cond, body, .. } => {
                     if !Self::is_expr_jit_safe(cond) {
                         return false;
                     }
@@ -294,7 +291,11 @@ impl SimulationEngine {
             // Concat: shift each part into place and OR
             IrExpr::Concat(exprs) => {
                 let width = Self::compute_expr_width(expr).unwrap_or(64);
-                instrs.push(maria_compiler::mir::MirInstr::Const { dest: dest_reg, value: 0, width });
+                instrs.push(maria_compiler::mir::MirInstr::Const {
+                    dest: dest_reg,
+                    value: 0,
+                    width,
+                });
                 let mut offset = 0usize;
                 for part in exprs.iter().rev() {
                     let part_reg = *next_reg;
@@ -304,7 +305,11 @@ impl SimulationEngine {
                     if offset > 0 {
                         let shift_reg = *next_reg;
                         *next_reg += 1;
-                        instrs.push(maria_compiler::mir::MirInstr::Const { dest: shift_reg, value: offset as u64, width: 64 });
+                        instrs.push(maria_compiler::mir::MirInstr::Const {
+                            dest: shift_reg,
+                            value: offset as u64,
+                            width: 64,
+                        });
                         instrs.push(maria_compiler::mir::MirInstr::Binary {
                             op: maria_compiler::mir::MirBinOp::Shl,
                             dest: part_reg,
@@ -329,10 +334,18 @@ impl SimulationEngine {
                 *next_reg += 1;
                 Self::ir_expr_to_mir(inner, instrs, inner_reg, next_reg);
                 if Self::compute_expr_width(inner).unwrap_or(1) != *width {
-                    let mask = if *width < 64 { ((1u64 << width) - 1) as i64 } else { -1i64 };
+                    let mask = if *width < 64 {
+                        ((1u64 << width) - 1) as i64
+                    } else {
+                        -1i64
+                    };
                     let mask_reg = *next_reg;
                     *next_reg += 1;
-                    instrs.push(maria_compiler::mir::MirInstr::Const { dest: mask_reg, value: mask as u64, width: *width });
+                    instrs.push(maria_compiler::mir::MirInstr::Const {
+                        dest: mask_reg,
+                        value: mask as u64,
+                        width: *width,
+                    });
                     instrs.push(maria_compiler::mir::MirInstr::Binary {
                         op: maria_compiler::mir::MirBinOp::And,
                         dest: dest_reg,
@@ -342,7 +355,11 @@ impl SimulationEngine {
                     });
                 } else {
                     // Same width — copy via OR with 0
-                    instrs.push(maria_compiler::mir::MirInstr::Const { dest: dest_reg, value: 0, width: *width });
+                    instrs.push(maria_compiler::mir::MirInstr::Const {
+                        dest: dest_reg,
+                        value: 0,
+                        width: *width,
+                    });
                     instrs.push(maria_compiler::mir::MirInstr::Binary {
                         op: maria_compiler::mir::MirBinOp::Or,
                         dest: dest_reg,
@@ -358,7 +375,11 @@ impl SimulationEngine {
                 *next_reg += 1;
                 Self::ir_expr_to_mir(inner, instrs, inner_reg, next_reg);
                 let width = Self::compute_expr_width(expr).unwrap_or(64);
-                instrs.push(maria_compiler::mir::MirInstr::Const { dest: dest_reg, value: 0, width });
+                instrs.push(maria_compiler::mir::MirInstr::Const {
+                    dest: dest_reg,
+                    value: 0,
+                    width,
+                });
                 instrs.push(maria_compiler::mir::MirInstr::Binary {
                     op: maria_compiler::mir::MirBinOp::Or,
                     dest: dest_reg,
@@ -375,9 +396,17 @@ impl SimulationEngine {
 
     /// Generate a unique label number for MIR Branch/Jump/Label instructions.
     fn next_label(instrs: &[maria_compiler::mir::MirInstr]) -> usize {
-        let max_label = instrs.iter().filter_map(|i| {
-            if let maria_compiler::mir::MirInstr::Label(l) = i { Some(*l) } else { None }
-        }).max().unwrap_or(0);
+        let max_label = instrs
+            .iter()
+            .filter_map(|i| {
+                if let maria_compiler::mir::MirInstr::Label(l) = i {
+                    Some(*l)
+                } else {
+                    None
+                }
+            })
+            .max()
+            .unwrap_or(0);
         max_label + 1
     }
 
@@ -415,8 +444,7 @@ impl SimulationEngine {
                     }
                 }
                 // Block / NamedBlock: flatten inner statements
-                IrStmt::Block { stmts: inner }
-                | IrStmt::NamedBlock { stmts: inner, .. } => {
+                IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                     let (inner_instrs, _) = Self::ir_body_to_mir_inner(inner, n_sigs, next_reg)?;
                     instrs.extend(inner_instrs);
                     next_reg = Self::max_reg_used(&instrs).unwrap_or(next_reg);
@@ -498,10 +526,13 @@ impl SimulationEngine {
                     // Item bodies
                     for (i, item) in items.iter().enumerate() {
                         instrs.push(maria_compiler::mir::MirInstr::Label(item_labels[i]));
-                        let (item_instrs, _) = Self::ir_body_to_mir_inner(&item.body, n_sigs, next_reg)?;
+                        let (item_instrs, _) =
+                            Self::ir_body_to_mir_inner(&item.body, n_sigs, next_reg)?;
                         instrs.extend(item_instrs);
                         next_reg = Self::max_reg_used(&instrs).unwrap_or(next_reg);
-                        instrs.push(maria_compiler::mir::MirInstr::Jump { label: end_case_label });
+                        instrs.push(maria_compiler::mir::MirInstr::Jump {
+                            label: end_case_label,
+                        });
                     }
                     // Default body
                     instrs.push(maria_compiler::mir::MirInstr::Label(default_label));
@@ -558,7 +589,11 @@ impl SimulationEngine {
                     ..
                 } => {
                     if let Some(init_stmt) = init {
-                        let (i_instrs, _) = Self::ir_body_to_mir_inner(&[init_stmt.as_ref().clone()], n_sigs, next_reg)?;
+                        let (i_instrs, _) = Self::ir_body_to_mir_inner(
+                            &[init_stmt.as_ref().clone()],
+                            n_sigs,
+                            next_reg,
+                        )?;
                         instrs.extend(i_instrs);
                         next_reg = Self::max_reg_used(&instrs).unwrap_or(next_reg);
                     }
@@ -579,7 +614,11 @@ impl SimulationEngine {
                     instrs.extend(b_instrs);
                     next_reg = Self::max_reg_used(&instrs).unwrap_or(next_reg);
                     if let Some(step_stmt) = step {
-                        let (s_instrs, _) = Self::ir_body_to_mir_inner(&[step_stmt.as_ref().clone()], n_sigs, next_reg)?;
+                        let (s_instrs, _) = Self::ir_body_to_mir_inner(
+                            &[step_stmt.as_ref().clone()],
+                            n_sigs,
+                            next_reg,
+                        )?;
                         instrs.extend(s_instrs);
                         next_reg = Self::max_reg_used(&instrs).unwrap_or(next_reg);
                     }
@@ -593,7 +632,11 @@ impl SimulationEngine {
                     Self::ir_expr_to_mir(count, &mut instrs, count_reg, &mut next_reg);
                     let counter_reg = next_reg;
                     next_reg += 1;
-                    instrs.push(maria_compiler::mir::MirInstr::Const { dest: counter_reg, value: 0, width: 32 });
+                    instrs.push(maria_compiler::mir::MirInstr::Const {
+                        dest: counter_reg,
+                        value: 0,
+                        width: 32,
+                    });
                     let loop_start = Self::next_label(&instrs);
                     instrs.push(maria_compiler::mir::MirInstr::Label(loop_start));
                     // cond: counter < count
@@ -620,7 +663,11 @@ impl SimulationEngine {
                     // counter++
                     let one_reg = next_reg;
                     next_reg += 1;
-                    instrs.push(maria_compiler::mir::MirInstr::Const { dest: one_reg, value: 1, width: 32 });
+                    instrs.push(maria_compiler::mir::MirInstr::Const {
+                        dest: one_reg,
+                        value: 1,
+                        width: 32,
+                    });
                     instrs.push(maria_compiler::mir::MirInstr::Binary {
                         op: maria_compiler::mir::MirBinOp::Add,
                         dest: counter_reg,
@@ -677,15 +724,18 @@ impl SimulationEngine {
             return Some((Vec::new(), start_reg));
         }
         let mir = Self::ir_body_to_mir(body, n_sigs, Symbol::intern("__inner"))?;
-        let max_reg = mir.instrs.iter().filter_map(|i| {
-            match i {
+        let max_reg = mir
+            .instrs
+            .iter()
+            .filter_map(|i| match i {
                 maria_compiler::mir::MirInstr::Const { dest, .. }
                 | maria_compiler::mir::MirInstr::Load { dest, .. }
                 | maria_compiler::mir::MirInstr::Binary { dest, .. }
                 | maria_compiler::mir::MirInstr::Unary { dest, .. } => Some(*dest + 1),
                 _ => None,
-            }
-        }).max().unwrap_or(start_reg);
+            })
+            .max()
+            .unwrap_or(start_reg);
         Some((mir.instrs, max_reg.max(start_reg)))
     }
 
@@ -703,7 +753,11 @@ impl SimulationEngine {
                 _ => {}
             }
         }
-        if max_reg == 0 { None } else { Some(max_reg + 1) }
+        if max_reg == 0 {
+            None
+        } else {
+            Some(max_reg + 1)
+        }
     }
 
     /// Try to evaluate a process using MIR JIT (compiled-code simulation path).
@@ -744,8 +798,7 @@ impl SimulationEngine {
                             targets.insert(*id);
                         }
                     }
-                    IrStmt::Block { stmts: inner }
-                    | IrStmt::NamedBlock { stmts: inner, .. } => {
+                    IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                         targets.extend(collect_nba_signals(inner));
                     }
                     IrStmt::If {
@@ -756,9 +809,7 @@ impl SimulationEngine {
                         targets.extend(collect_nba_signals(true_branch));
                         targets.extend(collect_nba_signals(false_branch));
                     }
-                    IrStmt::Case {
-                        items, default, ..
-                    } => {
+                    IrStmt::Case { items, default, .. } => {
                         for item in items {
                             targets.extend(collect_nba_signals(&item.body));
                         }
@@ -790,7 +841,11 @@ impl SimulationEngine {
         }
         // Execute compiled native code
         unsafe {
-            maria_compiler::mir::MirJitCompiler::call_process(compiled.code_ptr, &signal_vals, &mut out_vals);
+            maria_compiler::mir::MirJitCompiler::call_process(
+                compiled.code_ptr,
+                &signal_vals,
+                &mut out_vals,
+            );
         }
         // Apply output values back to state — differentiate blocking vs NBA
         for (i, &val) in out_vals.iter().enumerate() {
@@ -829,7 +884,11 @@ impl SimulationEngine {
             }
             IrExpr::Concat(exprs) => {
                 let total: usize = exprs.iter().filter_map(Self::compute_expr_width).sum();
-                if total == 0 { Some(1) } else { Some(total) }
+                if total == 0 {
+                    Some(1)
+                } else {
+                    Some(total)
+                }
             }
             IrExpr::Cast { width, .. } => Some(*width),
             IrExpr::Signed(inner) => Self::compute_expr_width(inner),

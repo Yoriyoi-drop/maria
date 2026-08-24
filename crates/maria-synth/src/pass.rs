@@ -139,7 +139,11 @@ mod tests {
 
         let mut p = SynthPipeline::with_preset("fpga").unwrap();
         let (m2, results) = p.run(m).unwrap();
-        assert_eq!(results.len(), 7, "const_fold, arith, mux, cse, dce + fixed-point fold/dce");
+        assert_eq!(
+            results.len(),
+            7,
+            "const_fold, arith, mux, cse, dce + fixed-point fold/dce"
+        );
         // And(0,1) → const 0 → node mati → DCE menghapusnya. Dengan
         // fixed-point, DCE pertama yang membersihkan; DCE kedua (trailing)
         // sah-sah saja no-op — cek ADA pass DCE yang mengurangi node.
@@ -147,7 +151,10 @@ mod tests {
         let removed = results
             .iter()
             .any(|r| r.name == "dce" && r.nodes_after < r.nodes_before);
-        assert!(removed, "harus ada pass DCE yang menghapus node mati: {results:?}");
+        assert!(
+            removed,
+            "harus ada pass DCE yang menghapus node mati: {results:?}"
+        );
     }
 
     #[test]

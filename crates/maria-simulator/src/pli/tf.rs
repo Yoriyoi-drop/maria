@@ -56,7 +56,10 @@ pub fn tf_getinstance() -> u32 {
 /// tf_getp(tfinst, n) — argumen ke-n sebagai i32 (1-based; 0 = tanpa arg).
 pub fn tf_getp(tfinst: u32, n: i32) -> i32 {
     let reg = tf_registry().lock().unwrap();
-    match reg.get(&tfinst).and_then(|args| args.get((n - 1).max(0) as usize)) {
+    match reg
+        .get(&tfinst)
+        .and_then(|args| args.get((n - 1).max(0) as usize))
+    {
         Some(PliArg::Int(v)) => *v as i32,
         Some(PliArg::BitVec(bits)) => bits_to_u64(bits) as i32,
         _ => 0,
@@ -66,7 +69,10 @@ pub fn tf_getp(tfinst: u32, n: i32) -> i32 {
 /// tf_getlongp(tfinst, n) — argumen ke-n sebagai i64 (vector lebar).
 pub fn tf_getlongp(tfinst: u32, n: i32) -> i64 {
     let reg = tf_registry().lock().unwrap();
-    match reg.get(&tfinst).and_then(|args| args.get((n - 1).max(0) as usize)) {
+    match reg
+        .get(&tfinst)
+        .and_then(|args| args.get((n - 1).max(0) as usize))
+    {
         Some(PliArg::Int(v)) => *v,
         Some(PliArg::BitVec(bits)) => bits_to_u64(bits) as i64,
         _ => 0,
@@ -102,7 +108,10 @@ pub fn tf_putlongp(tfinst: u32, n: i32, value: i64) -> i32 {
 /// tf_strgetp(tfinst, n) — argumen ke-n sebagai string.
 pub fn tf_strgetp(tfinst: u32, n: i32) -> String {
     let reg = tf_registry().lock().unwrap();
-    match reg.get(&tfinst).and_then(|args| args.get((n - 1).max(0) as usize)) {
+    match reg
+        .get(&tfinst)
+        .and_then(|args| args.get((n - 1).max(0) as usize))
+    {
         Some(PliArg::Str(s)) => s.clone(),
         Some(PliArg::Int(v)) => v.to_string(),
         Some(PliArg::BitVec(bits)) => bits_to_u64(bits).to_string(),
@@ -126,7 +135,10 @@ pub fn tf_strputp(tfinst: u32, n: i32, value: &str) -> i32 {
 /// tf_sizep(tfinst, n) — lebar bit argumen ke-n.
 pub fn tf_sizep(tfinst: u32, n: i32) -> i32 {
     let reg = tf_registry().lock().unwrap();
-    match reg.get(&tfinst).and_then(|args| args.get((n - 1).max(0) as usize)) {
+    match reg
+        .get(&tfinst)
+        .and_then(|args| args.get((n - 1).max(0) as usize))
+    {
         Some(PliArg::BitVec(bits)) => bits.len() as i32,
         Some(PliArg::Int(_)) => 32,
         _ => 0,
@@ -224,7 +236,7 @@ mod tests {
     fn test_bits_to_u64() {
         assert_eq!(bits_to_u64(&[]), 0);
         assert_eq!(bits_to_u64(&[1, 0, 1]), 5); // 0b101
-        // bit ke-63 → 1<<63
+                                                // bit ke-63 → 1<<63
         let mut bits = vec![0u8; 64];
         bits[63] = 1;
         assert_eq!(bits_to_u64(&bits), 1u64 << 63);

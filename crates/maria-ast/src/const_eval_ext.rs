@@ -113,7 +113,23 @@ fn apply_bin(op: BinaryOp, l: i64, r: i64) -> Result<i64, String> {
             }
             l % r
         }
-        BinaryOp::Power => l.pow(r as u32),
+        BinaryOp::Power => {
+            // Modular biner mod 2^64 (dulu `l.pow(r as u32)`: truncation
+            // eksponen + panic overflow saat debug).
+            let mut b = l as u64;
+            let mut acc: u64 = 1;
+            let mut e = r as u64;
+            while e > 0 {
+                if e & 1 == 1 {
+                    acc = acc.wrapping_mul(b);
+                }
+                e >>= 1;
+                if e > 0 {
+                    b = b.wrapping_mul(b);
+                }
+            }
+            acc as i64
+        }
         BinaryOp::Eq => (l == r) as i64,
         BinaryOp::Neq => (l != r) as i64,
         BinaryOp::Lt => (l < r) as i64,
@@ -148,11 +164,7 @@ fn clog2(v: i64) -> i64 {
 
 /// Evaluasi ekspresi konstanta. `cur_pkg` menandai package tempat expr berada
 /// sehingga referensi plain-name di-resolve ke `pkg::name` dulu.
-pub fn eval_expr(
-    e: &Expr,
-    ctx: &PkgCtx,
-    cur_pkg: Option<&str>,
-) -> Result<CVal, String> {
+pub fn eval_expr(e: &Expr, ctx: &PkgCtx, cur_pkg: Option<&str>) -> Result<CVal, String> {
     match e {
         Expr::Value(Value::Decimal(n)) => Ok(CVal::Scalar(*n)),
         Expr::Value(Value::Binary { bits, .. }) => parse_base(bits, 2),
@@ -204,10 +216,15 @@ pub fn eval_expr(
                 UnaryOp::Minus => v.wrapping_neg(),
                 UnaryOp::Plus => v,
                 UnaryOp::BitNot => {
-                    // SV §11.4.9: mask ke lebar literal sized (sama dengan
-                    // const_eval_with_params) — `~(2'b11)` = 0, bukan -4.
+                    // SV §11.8.1: `~` context-determined — evaluasi pada
+                    // lebar ≥ 32, penugasan yang memotong (ekivalen untuk
+                    // semua konteks; konsisten dgn const_eval_with_params).
                     match sized_width(expr) {
-                        Some(w) if w > 0 && w < 64 => !v & ((1i64 << w) - 1),
+                        Some(w) if w > 0 && w < 64 => {
+                            let ew = w.max(32);
+                            let mask = (1u64 << ew) - 1;
+                            (!(v as u64) & mask) as i64
+                        }
                         _ => !v,
                     }
                 }
@@ -270,7 +287,7 @@ pub fn eval_expr(
                     if width >= 64 {
                         Ok(CVal::Scalar(v >> l))
                     } else {
-                        Ok(CVal::Scalar((v >> l) & ((1i64 << width) - 1)))
+                        Ok(CVal::Scalar((v >> l) & (((1u64 << width) - 1) as i64)))
                     }
                 }
                 CVal::Struct(_) => Err("range select on struct constant".to_string()),
@@ -293,12 +310,14 @@ pub fn eval_expr(
                     if width >= 64 {
                         Ok(CVal::Scalar(v >> b))
                     } else {
-                        Ok(CVal::Scalar((v >> b) & ((1i64 << width) - 1)))
+                        Ok(CVal::Scalar((v >> b) & (((1u64 << width) - 1) as i64)))
                     }
                 }
                 CVal::Array(a) => {
                     if b >= 0 && (b as usize + w as usize) <= a.len() {
-                        Ok(CVal::Array(a[(b as usize)..(b as usize + w as usize)].to_vec()))
+                        Ok(CVal::Array(
+                            a[(b as usize)..(b as usize + w as usize)].to_vec(),
+                        ))
                     } else {
                         Err("part-select out of bounds".to_string())
                     }
@@ -348,8 +367,7 @@ pub fn eval_expr(
         Expr::MemberAccess { obj, field } => match eval_expr(obj, ctx, cur_pkg)? {
             CVal::Struct(fields) => {
                 for f in &fields {
-                    if f
-                        .name
+                    if f.name
                         .as_ref()
                         .map(|n| n.as_str() == field.as_str())
                         .unwrap_or(false)
@@ -363,7 +381,10 @@ pub fn eval_expr(
                         return Ok(f.val.clone());
                     }
                 }
-                Err(format!("field '{}' not found in struct constant", field.as_str()))
+                Err(format!(
+                    "field '{}' not found in struct constant",
+                    field.as_str()
+                ))
             }
             _ => Err("member access on non-struct constant".to_string()),
         },
@@ -397,7 +418,9 @@ fn eval_func(
             // termasuk nested struct/typedef dan range eksplisit.
             let type_name: Option<(Option<&str>, &str)> = match arg {
                 Expr::Ident { name, .. } => Some((None, name.as_str())),
-                Expr::ScopedIdent { package, item, .. } => Some((Some(package.as_str()), item.as_str())),
+                Expr::ScopedIdent { package, item, .. } => {
+                    Some((Some(package.as_str()), item.as_str()))
+                }
                 _ => None,
             };
             if let Some((pkg_opt, type_name)) = type_name {
@@ -405,13 +428,14 @@ fn eval_func(
                     return Ok(CVal::Scalar(w as i64));
                 }
             }
-            Err(format!("'$bits' argument cannot be evaluated (not a constant or known type)"))
+            Err(format!(
+                "'$bits' argument cannot be evaluated (not a constant or known type)"
+            ))
         }
-        "$size" | "$left" | "$right" | "$low" | "$high" => {
-            args.first()
-                .ok_or_else(|| format!("{} needs 1 arg", name))
-                .and_then(|a| eval_expr(a, ctx, cur_pkg))
-        }
+        "$size" | "$left" | "$right" | "$low" | "$high" => args
+            .first()
+            .ok_or_else(|| format!("{} needs 1 arg", name))
+            .and_then(|a| eval_expr(a, ctx, cur_pkg)),
         "vbits" => {
             let v = first_arg(0)?;
             Ok(CVal::Scalar(if v == 1 { 1 } else { clog2(v) }))
@@ -450,24 +474,22 @@ fn resolve_typedef_bits(
     // Cari typedef: scoped (pkg::type) atau plain di semua package.
     // Package disimpan sebagai String milik sendiri agar bebas dari lifetime
     // borrow pkg_opt / iterator.
-    let (td, typedef_pkg): (&crate::types::TypedefDecl, String) =
-        if let Some(pkg) = pkg_opt {
-            match package_symbols
-                .get(&Symbol::intern(pkg))
-                .and_then(|items| lookup_pkg_typedef(items, type_name))
-            {
-                Some(td) => (td, pkg.to_string()),
-                None => return None,
-            }
-        } else {
-            match package_symbols.iter().find_map(|(pkg, items)| {
-                lookup_pkg_typedef(items, type_name)
-                    .map(|td| (td, pkg.as_str().to_string()))
-            }) {
-                Some((td, pkg)) => (td, pkg),
-                None => return None,
-            }
-        };
+    let (td, typedef_pkg): (&crate::types::TypedefDecl, String) = if let Some(pkg) = pkg_opt {
+        match package_symbols
+            .get(&Symbol::intern(pkg))
+            .and_then(|items| lookup_pkg_typedef(items, type_name))
+        {
+            Some(td) => (td, pkg.to_string()),
+            None => return None,
+        }
+    } else {
+        match package_symbols.iter().find_map(|(pkg, items)| {
+            lookup_pkg_typedef(items, type_name).map(|td| (td, pkg.as_str().to_string()))
+        }) {
+            Some((td, pkg)) => (td, pkg),
+            None => return None,
+        }
+    };
     // Range eksplisit `typedef logic [W-1:0] name;` menang atas width default.
     if let Some(er) = &td.range {
         if let (Ok(msb), Ok(lsb)) = (
@@ -477,7 +499,12 @@ fn resolve_typedef_bits(
             return Some(msb.abs_diff(lsb) as usize + 1);
         }
     }
-    Some(typedef_dtype_bits(ctx, &td.dtype, Some(typedef_pkg.as_str()), depth))
+    Some(typedef_dtype_bits(
+        ctx,
+        &td.dtype,
+        Some(typedef_pkg.as_str()),
+        depth,
+    ))
 }
 
 /// Lebar bit dari DataType dengan resolve `UserDefined` ke typedef lain.
@@ -522,11 +549,9 @@ fn typedef_dtype_bits(
         }
         DataType::Signed(inner) => typedef_dtype_bits(ctx, inner, typedef_pkg, depth),
         DataType::StructType { members } => members.iter().map(|m| member_width(m)).sum(),
-        DataType::UnionType { members } => members
-            .iter()
-            .map(|m| member_width(m))
-            .max()
-            .unwrap_or(1),
+        DataType::UnionType { members } => {
+            members.iter().map(|m| member_width(m)).max().unwrap_or(1)
+        }
         _ => dtype.width(),
     }
 }
@@ -810,7 +835,9 @@ pub fn eval_package_constants(
         let mut changed = false;
         for (pkg_name, items) in package_symbols {
             for (name, item) in items {
-                let PackageItem::Param(p) = item else { continue };
+                let PackageItem::Param(p) = item else {
+                    continue;
+                };
                 if p.is_type_param {
                     continue;
                 }
@@ -852,7 +879,11 @@ pub fn eval_package_constants(
                         for (i, elem) in a.iter().enumerate() {
                             if let CVal::Struct(fields) = elem {
                                 if eval_debug {
-                                    eprintln!("[DBG-PKG]   elem[{}] = struct len {}", i, fields.len());
+                                    eprintln!(
+                                        "[DBG-PKG]   elem[{}] = struct len {}",
+                                        i,
+                                        fields.len()
+                                    );
                                 }
                                 for f in fields {
                                     if let Some(fname) = f.name {
@@ -913,8 +944,12 @@ pub fn eval_package_constants(
             // Ini membuat `import pkg::*` bisa memakai nama member enum (mis.
             // `NumTotalCmdInfo`) sebagai konstanta integer dalam ekspresi parameter.
             for (_name, item) in items {
-                let PackageItem::Typedef(td) = item else { continue };
-                let crate::types::DataType::EnumType { members, .. } = &td.dtype else { continue };
+                let PackageItem::Typedef(td) = item else {
+                    continue;
+                };
+                let crate::types::DataType::EnumType { members, .. } = &td.dtype else {
+                    continue;
+                };
                 let mut last = 0i64;
                 for (mname, mexpr) in members {
                     let val = match mexpr {
@@ -987,7 +1022,10 @@ pub fn flatten_imported_consts_into_ctx(
             if let Some(rest) = qname.as_str().strip_prefix(&prefix) {
                 for (i, v) in elems.iter().enumerate() {
                     ctx.insert(Symbol::intern(&format!("{}[{}]", rest, i)), *v);
-                    ctx.insert(Symbol::intern(&format!("{}::{}[{}]", pkg_name, rest, i)), *v);
+                    ctx.insert(
+                        Symbol::intern(&format!("{}::{}[{}]", pkg_name, rest, i)),
+                        *v,
+                    );
                 }
                 if let Some(&first) = elems.first() {
                     ctx.entry(Symbol::intern(rest)).or_insert(first);

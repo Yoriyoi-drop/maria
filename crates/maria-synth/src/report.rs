@@ -54,7 +54,11 @@ fn row(out: &mut String, name: &str, used: u64, avail: u64, note: &str) {
     let _ = writeln!(
         out,
         "│ {:<8} │ {:>8} │ {:>7} │ {:>9} │ {:<8} │",
-        name, used, avail, pct(used, avail), note
+        name,
+        used,
+        avail,
+        pct(used, avail),
+        note
     );
 }
 
@@ -89,13 +93,7 @@ pub fn render_util_report(nl: &Netlist, cap: &DeviceCapacity) -> String {
         cap.carry4,
         "",
     );
-    row(
-        &mut s,
-        "BRAM36",
-        nl.stats.bram_count as u64,
-        cap.bram36,
-        "",
-    );
+    row(&mut s, "BRAM36", nl.stats.bram_count as u64, cap.bram36, "");
     row(&mut s, "ROM36", nl.stats.rom_count as u64, cap.bram36, "");
     row(&mut s, "DSP48", nl.stats.dsp_count as u64, cap.dsp48, "est");
     row(&mut s, "IO", nl.stats.io_count as u64, cap.io, "");

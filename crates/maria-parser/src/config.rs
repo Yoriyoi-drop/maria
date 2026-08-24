@@ -8,10 +8,10 @@
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
+use crate::lexer::*;
 use maria_ast::*;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_config_decl(&mut self) -> Result<ConfigDecl, SimError> {
@@ -107,7 +107,9 @@ impl Parser {
                         self.advance();
                         if let Token::Ident(lib) = self.peek().clone() {
                             self.advance();
-                            rules.push(ConfigRule::UseLiblist { liblist: lib.as_str().to_string() });
+                            rules.push(ConfigRule::UseLiblist {
+                                liblist: lib.as_str().to_string(),
+                            });
                         }
                     }
                     self.skip_semi();

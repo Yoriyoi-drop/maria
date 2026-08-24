@@ -1,11 +1,11 @@
 use super::*;
-use maria_core::intern::Symbol;
 use crate::simulator::logicvec_to_string;
+use maria_core::intern::Symbol;
 
-mod stress_tests;
-mod bench_release;
 mod bench_profile;
+mod bench_release;
 mod debug_lex_check;
+mod stress_tests;
 
 #[test]
 fn test_simple_module() {
@@ -397,7 +397,11 @@ endmodule
         // `extra` hanya ada di varian TERAKHIR — bila first-wins, field ini
         // tidak ada di package → elaborasi E2001 (test gagal di result.is_ok).
         // Nilai 1 membuktikan offset field `extra` (bit 4) ter-resolve benar.
-        assert_eq!(get("r_extra"), Some((1, 1)), "r_extra = 1 dari varian package terakhir");
+        assert_eq!(
+            get("r_extra"),
+            Some((1, 1)),
+            "r_extra = 1 dari varian package terakhir"
+        );
     }
 }
 
@@ -657,8 +661,7 @@ endmodule
         v.to_u64()
     });
     assert_eq!(
-        got,
-        610,
+        got, 610,
         "fib(15) = 610 (recursive ANSI return must terminate and compute correctly)"
     );
 }
@@ -691,8 +694,7 @@ endmodule
         v.to_u64()
     });
     assert_eq!(
-        got,
-        120,
+        got, 120,
         "fact(5) = 120 (recursive non-ANSI assignment-to-name return)"
     );
 }
@@ -721,9 +723,21 @@ module tb_ca {
 }
 "#;
     let r = maria_mv::transpile(src, "compound").expect("transpile .mv OK");
-    assert!(r.sv.contains("a += 5;"), "codegen harus emit compound: {}", r.sv);
-    assert!(r.sv.contains("b <<= 3;"), "codegen harus emit shl compound: {}", r.sv);
-    assert!(r.sv.contains("i++;"), "codegen harus emit increment: {}", r.sv);
+    assert!(
+        r.sv.contains("a += 5;"),
+        "codegen harus emit compound: {}",
+        r.sv
+    );
+    assert!(
+        r.sv.contains("b <<= 3;"),
+        "codegen harus emit shl compound: {}",
+        r.sv
+    );
+    assert!(
+        r.sv.contains("i++;"),
+        "codegen harus emit increment: {}",
+        r.sv
+    );
     let sigs = simulate_signals(&r.sv, 5).unwrap();
     let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
     assert_eq!(get("a"), 15, "a = 10+5");
@@ -762,9 +776,21 @@ module tb_pp {
     let r = maria_mv::transpile(src, "prefix").expect("transpile .mv OK");
     // statement prefix di-emit apa adanya; postfix statement juga
     assert!(r.sv.contains("++i;"), "codegen harus emit prefix: {}", r.sv);
-    assert!(r.sv.contains("--i;"), "codegen harus emit prefix dec: {}", r.sv);
-    assert!(r.sv.contains("i--;"), "codegen harus emit postfix: {}", r.sv);
-    assert!(!r.sv.contains("$display(\"PP_B %0d %0d\", i, j)--;"), "postfix tidak boleh menempel ke statement lain: {}", r.sv);
+    assert!(
+        r.sv.contains("--i;"),
+        "codegen harus emit prefix dec: {}",
+        r.sv
+    );
+    assert!(
+        r.sv.contains("i--;"),
+        "codegen harus emit postfix: {}",
+        r.sv
+    );
+    assert!(
+        !r.sv.contains("$display(\"PP_B %0d %0d\", i, j)--;"),
+        "postfix tidak boleh menempel ke statement lain: {}",
+        r.sv
+    );
     let sigs = simulate_signals(&r.sv, 5).unwrap();
     let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
     // statement prefix bekerja penuh: ++i(1), lalu j=++i tidak mengubah i
@@ -803,9 +829,21 @@ module tb_dw {
 }
 "#;
     let r = maria_mv::transpile(src, "dowhile").expect("transpile .mv OK");
-    assert!(r.sv.contains("do begin"), "codegen harus emit do begin: {}", r.sv);
-    assert!(r.sv.contains("end while (i < 3);"), "codegen harus emit end while: {}", r.sv);
-    assert!(r.sv.contains("-> ev;"), "codegen harus emit event trigger: {}", r.sv);
+    assert!(
+        r.sv.contains("do begin"),
+        "codegen harus emit do begin: {}",
+        r.sv
+    );
+    assert!(
+        r.sv.contains("end while (i < 3);"),
+        "codegen harus emit end while: {}",
+        r.sv
+    );
+    assert!(
+        r.sv.contains("-> ev;"),
+        "codegen harus emit event trigger: {}",
+        r.sv
+    );
     let sigs = simulate_signals(&r.sv, 20).unwrap();
     let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
     assert_eq!(get("i"), 3, "do while: body jalan 3x");
@@ -881,13 +919,25 @@ module tb_fj {
     let r = maria_mv::transpile(src, "forkjoin").expect("transpile .mv OK");
     assert!(r.sv.contains("fork\n"), "codegen harus emit fork: {}", r.sv);
     assert!(r.sv.contains("join"), "codegen harus emit join: {}", r.sv);
-    assert!(r.sv.contains("join_any"), "codegen harus emit join_any: {}", r.sv);
-    assert!(r.sv.contains("join_none"), "codegen harus emit join_none: {}", r.sv);
+    assert!(
+        r.sv.contains("join_any"),
+        "codegen harus emit join_any: {}",
+        r.sv
+    );
+    assert!(
+        r.sv.contains("join_none"),
+        "codegen harus emit join_none: {}",
+        r.sv
+    );
     let sigs = simulate_signals(&r.sv, 30).unwrap();
     let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
     assert_eq!(get("a"), 11, "branch #10 selesai (join + join_any lanjut)");
     assert_eq!(get("b"), 22, "branch terakhir join_none menimpa b");
-    assert_eq!(get("reached"), 1, "join_any lanjut setelah branch pertama (#5)");
+    assert_eq!(
+        get("reached"),
+        1,
+        "join_any lanjut setelah branch pertama (#5)"
+    );
 }
 
 #[test]
@@ -904,7 +954,10 @@ module tb_bad {
 }
 "#;
     let e = maria_mv::transpile(src, "bad").unwrap_err();
-    assert!(e.to_string().contains("join"), "pesan harus sebut join: {e}");
+    assert!(
+        e.to_string().contains("join"),
+        "pesan harus sebut join: {e}"
+    );
 }
 
 #[test]
@@ -921,7 +974,10 @@ module tb_bad {
 }
 "#;
     let e = maria_mv::transpile(src, "bad").unwrap_err();
-    assert!(e.to_string().contains("postfix"), "pesan harus sebut postfix: {e}");
+    assert!(
+        e.to_string().contains("postfix"),
+        "pesan harus sebut postfix: {e}"
+    );
 }
 
 #[test]
@@ -1225,10 +1281,14 @@ fn test_line_directive_updates_error_line() {
 wire a
 "#;
     let result = compile_str(source);
-    assert!(result.is_ok() || {
-        let err = result.as_ref().unwrap_err().to_string();
-        err.contains("skipping top-level")
-    }, "expected ok or skip warning, got: {:?}", result.err());
+    assert!(
+        result.is_ok() || {
+            let err = result.as_ref().unwrap_err().to_string();
+            err.contains("skipping top-level")
+        },
+        "expected ok or skip warning, got: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -1553,7 +1613,10 @@ endmodule
         .find(|(n, _)| n == "q")
         .map(|(_, v)| v.to_u64())
         .unwrap();
-    assert_eq!(q, 5, "koneksi space-separated: FF harus clock d=5 (bukan z)");
+    assert_eq!(
+        q, 5,
+        "koneksi space-separated: FF harus clock d=5 (bukan z)"
+    );
 }
 
 #[test]
@@ -1594,7 +1657,10 @@ endmodule
         .find(|(n, _)| n == "count")
         .map(|(_, v)| v.to_u64())
         .unwrap();
-    assert_eq!(count_val, 2, "reset async diterapkan di t=2 → posedge t=5 count=1, t=15 count=2");
+    assert_eq!(
+        count_val, 2,
+        "reset async diterapkan di t=2 → posedge t=5 count=1, t=15 count=2"
+    );
 }
 
 #[test]
@@ -2046,7 +2112,10 @@ endmodule
     let design = compile_str(source).unwrap();
     assert!(design.classes.contains_key(&Symbol::intern("my_base")));
     assert!(design.classes.contains_key(&Symbol::intern("driver")));
-    assert_eq!(design.classes[&Symbol::intern("driver")].extends, Some(Symbol::intern("my_base")));
+    assert_eq!(
+        design.classes[&Symbol::intern("driver")].extends,
+        Some(Symbol::intern("my_base"))
+    );
 }
 
 #[test]
@@ -2153,7 +2222,10 @@ endmodule
     let design = compile_str(source).unwrap();
     assert!(design.classes.contains_key(&Symbol::intern("base")));
     assert!(design.classes.contains_key(&Symbol::intern("extended")));
-    assert_eq!(design.classes[&Symbol::intern("extended")].extends, Some(Symbol::intern("base")));
+    assert_eq!(
+        design.classes[&Symbol::intern("extended")].extends,
+        Some(Symbol::intern("base"))
+    );
     let base_show = design.classes[&Symbol::intern("base")]
         .methods
         .iter()
@@ -2632,21 +2704,43 @@ module tb;
 endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
-    let get = |name: &str| sigs.iter().find(|(n, _)| n == name).map(|(_, v)| v.to_i64()).unwrap_or(0);
-    let getu = |name: &str| sigs.iter().find(|(n, _)| n == name).map(|(_, v)| v.to_u64()).unwrap_or(0);
-    assert_eq!(get("result"), 1, "randomize with signed domains should succeed");
+    let get = |name: &str| {
+        sigs.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.to_i64())
+            .unwrap_or(0)
+    };
+    let getu = |name: &str| {
+        sigs.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    assert_eq!(
+        get("result"),
+        1,
+        "randomize with signed domains should succeed"
+    );
     let x = get("xv");
     assert!(x > -10 && x < 100, "x in (-10, 100), got {}", x);
     let y = get("yv");
     assert!(y >= -200 && y <= -100, "y in [-200, -100], got {}", y);
     let z = get("zv");
-    assert!((z >= -5 && z <= 5) || z == 100, "z in dist [-5..5, 100], got {}", z);
+    assert!(
+        (z >= -5 && z <= 5) || z == 100,
+        "z in dist [-5..5, 100], got {}",
+        z
+    );
     let w = get("wv");
     assert!(w == 7 || w == -3 || w == 42, "w in [7, -3, 42], got {}", w);
     let u = getu("uv");
     assert!(u > 0xF0, "u > 8'hF0 unsigned, got {:#x}", u);
     let v = getu("vv");
-    assert!(v >= 0x20 && v <= 0x30, "v in [0x20, 0x30] unsigned, got {:#x}", v);
+    assert!(
+        v >= 0x20 && v <= 0x30,
+        "v in [0x20, 0x30] unsigned, got {:#x}",
+        v
+    );
 }
 
 #[test]
@@ -2711,8 +2805,8 @@ fn test_vhpi_engine_hook_e2e() {
     // di run() memungkinkan vhpi_handle_by_name mengakses object Maria.
     // Verifikasi: handle_by_name signal setelah sim (engine di-clear di akhir
     // run, jadi jalankan di dalam run via callback start-of-simulation).
-    use maria_api::vhpi::callback::{t_vhpi_cb_data, vhpi_register_cb, vhpiCbStartOfSimulation};
-    use maria_api::vhpi::object::{vhpi_handle_by_name, vhpi_get, vhpiKind, vhpiSignal};
+    use maria_api::vhpi::callback::{t_vhpi_cb_data, vhpiCbStartOfSimulation, vhpi_register_cb};
+    use maria_api::vhpi::object::{vhpiKind, vhpiSignal, vhpi_get, vhpi_handle_by_name};
     use std::sync::atomic::{AtomicI32, Ordering};
 
     static FOUND: AtomicI32 = AtomicI32::new(0);
@@ -2776,7 +2870,10 @@ endmodule
             }
         }
     }
-    assert!(ok, "VHPI handle_by_name harus menemukan signal 'count' saat sim");
+    assert!(
+        ok,
+        "VHPI handle_by_name harus menemukan signal 'count' saat sim"
+    );
 }
 
 #[test]
@@ -2785,7 +2882,9 @@ fn test_pli_tf_e2e_via_sim() {
     // saat task PLI dieksekusi — verifikasi tf_getinstance/tf_gettime
     // konsisten setelah simulate_signals (engine di-clear, tapi thread-local
     // tf current di-set ulang tiap run).
-    use maria_api::pli::tf::{tf_getinstance, tf_gettime, tf_set_current_instance, tf_set_current_time};
+    use maria_api::pli::tf::{
+        tf_getinstance, tf_gettime, tf_set_current_instance, tf_set_current_time,
+    };
 
     // Jalankan sim nyata — pastikan tidak ada panic saat engine cleanup
     // memanggil pli_cleanup (tf_clear_all + acc_close).
@@ -2844,11 +2943,19 @@ fn test_vhpi_value_change_callback_e2e() {
     let old = maria_ir::LogicVec::from_u64(0, 8);
     let new = maria_ir::LogicVec::from_u64(1, 8);
     fire_value_change_callbacks(0, &old, &new);
-    assert_eq!(FIRED.load(Ordering::SeqCst), 1, "value-change callback utk signal 0 terpanggil");
+    assert_eq!(
+        FIRED.load(Ordering::SeqCst),
+        1,
+        "value-change callback utk signal 0 terpanggil"
+    );
 
     // Signal id lain → tidak terpanggil.
     fire_value_change_callbacks(5, &old, &new);
-    assert_eq!(FIRED.load(Ordering::SeqCst), 1, "signal id beda tak boleh fire");
+    assert_eq!(
+        FIRED.load(Ordering::SeqCst),
+        1,
+        "signal id beda tak boleh fire"
+    );
 
     // obj NULL (semua signal) → terpanggil utk signal apa pun.
     let cb_all = maria_api::vhpi::callback::t_vhpi_cb_data {
@@ -2860,7 +2967,11 @@ fn test_vhpi_value_change_callback_e2e() {
     };
     let h2 = maria_api::vhpi::callback::vhpi_register_cb(&cb_all);
     fire_value_change_callbacks(9, &old, &new);
-    assert_eq!(FIRED.load(Ordering::SeqCst), 2, "obj NULL fire utk signal apa pun");
+    assert_eq!(
+        FIRED.load(Ordering::SeqCst),
+        2,
+        "obj NULL fire utk signal apa pun"
+    );
 
     maria_api::vhpi::callback::vhpi_remove_cb(h);
     maria_api::vhpi::callback::vhpi_remove_cb(h2);
@@ -2877,7 +2988,11 @@ fn test_vhpi_loader_e2e_gcc_so() {
     use std::process::Command;
 
     // Cek gcc tersedia.
-    let gcc_ok = Command::new("gcc").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    let gcc_ok = Command::new("gcc")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     if !gcc_ok {
         eprintln!("SKIP: gcc tidak tersedia — test VHPI .so dilewati");
         return;
@@ -2887,13 +3002,17 @@ fn test_vhpi_loader_e2e_gcc_so() {
     std::fs::create_dir_all(&dir).expect("buat dir temp");
     let c_path = dir.join("vhpi_stub.c");
     let so_path = dir.join("libvhpi_stub.so");
-    std::fs::write(&c_path, r#"
+    std::fs::write(
+        &c_path,
+        r#"
 #include <stdio.h>
 int vhpi_startup(void) {
     printf("vhpi_startup called (C stub)\n");
     return 0;
 }
-"#).expect("tulis C stub");
+"#,
+    )
+    .expect("tulis C stub");
 
     let status = Command::new("gcc")
         .args(["-shared", "-fPIC", "-o"])
@@ -2923,7 +3042,11 @@ fn test_pli_loader_e2e_gcc_so() {
     // `veriusertfs` / `vpi_startup` terdeteksi. Skip bila gcc tidak ada.
     use std::process::Command;
 
-    let gcc_ok = Command::new("gcc").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    let gcc_ok = Command::new("gcc")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     if !gcc_ok {
         eprintln!("SKIP: gcc tidak tersedia — test PLI .so dilewati");
         return;
@@ -2933,13 +3056,17 @@ fn test_pli_loader_e2e_gcc_so() {
     std::fs::create_dir_all(&dir).expect("buat dir temp");
     let c_path = dir.join("pli_stub.c");
     let so_path = dir.join("libpli_stub.so");
-    std::fs::write(&c_path, r#"
+    std::fs::write(
+        &c_path,
+        r#"
 #include <stdio.h>
 int vpi_startup(void) {
     printf("pli vpi_startup called (C stub)\n");
     return 0;
 }
-"#).expect("tulis C stub");
+"#,
+    )
+    .expect("tulis C stub");
 
     let status = Command::new("gcc")
         .args(["-shared", "-fPIC", "-o"])
@@ -2949,9 +3076,12 @@ int vpi_startup(void) {
         .expect("jalankan gcc");
     assert!(status.success(), "gcc compile .so gagal");
 
-    let pli = maria_api::pli::loader::load_pli_library(so_path.to_str().unwrap())
-        .expect("load PLI .so");
-    assert!(maria_api::pli::loader::has_pli_entry_points(&pli), "entry point vpi_startup terdeteksi");
+    let pli =
+        maria_api::pli::loader::load_pli_library(so_path.to_str().unwrap()).expect("load PLI .so");
+    assert!(
+        maria_api::pli::loader::has_pli_entry_points(&pli),
+        "entry point vpi_startup terdeteksi"
+    );
     maria_api::pli::loader::call_pli_startup(&pli).expect("pli vpi_startup sukses");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -2987,7 +3117,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    assert_eq!(val.to_u64(), 1, "randomize with soft constraint should succeed");
+    assert_eq!(
+        val.to_u64(),
+        1,
+        "randomize with soft constraint should succeed"
+    );
 }
 
 #[test]
@@ -3023,7 +3157,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    assert_eq!(val.to_u64(), 1, "soft must yield to hard: randomize should succeed");
+    assert_eq!(
+        val.to_u64(),
+        1,
+        "soft must yield to hard: randomize should succeed"
+    );
     let (_, addr) = sigs.iter().find(|(n, _)| n == "addr_out").unwrap();
     assert!(
         addr.to_u64() < 10,
@@ -3167,7 +3305,11 @@ endmodule
         .find(|(n, _)| n == "vb")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_ne!(va, vb, "per-instance seed: p1/p2 harus beda (va={}, vb={})", va, vb);
+    assert_ne!(
+        va, vb,
+        "per-instance seed: p1/p2 harus beda (va={}, vb={})",
+        va, vb
+    );
 }
 
 #[test]
@@ -3203,7 +3345,11 @@ endmodule
         .find(|(n, _)| n == "va")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(a1, a2, "per-instance seed harus reproducible ({} vs {})", a1, a2);
+    assert_eq!(
+        a1, a2,
+        "per-instance seed harus reproducible ({} vs {})",
+        a1, a2
+    );
 }
 
 #[test]
@@ -3588,7 +3734,10 @@ endmodule
         .find(|(n, _)| n == "q")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(q_val, 42, "q should be 42 after @(posedge clk) blocks until next edge");
+    assert_eq!(
+        q_val, 42,
+        "q should be 42 after @(posedge clk) blocks until next edge"
+    );
 }
 
 #[test]
@@ -3719,7 +3868,11 @@ endmodule
         .expect("count signal should exist")
         .1
         .clone();
-    assert_eq!(count.to_u64(), 1, "count should be 1 (only gated edge counts)");
+    assert_eq!(
+        count.to_u64(),
+        1,
+        "count should be 1 (only gated edge counts)"
+    );
 }
 
 #[test]
@@ -3737,12 +3890,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(src).expect("compile should succeed");
-    let has_iff = design.top.processes.iter().any(|p| {
-        matches!(
-            p,
-            maria_ir::Process::Sequential { iff: Some(_), .. }
-        )
-    });
+    let has_iff = design
+        .top
+        .processes
+        .iter()
+        .any(|p| matches!(p, maria_ir::Process::Sequential { iff: Some(_), .. }));
     assert!(has_iff, "sequential process should carry iff guard");
 }
 
@@ -3926,15 +4078,47 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     // $onehot0 returns 1 for 0 or 1 bits set
-    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_a").unwrap().1.to_u64(), 1, "$onehot0(0000)");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_b").unwrap().1.to_u64(), 1, "$onehot0(0001)");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_c").unwrap().1.to_u64(), 0, "$onehot0(0011)");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_d").unwrap().1.to_u64(), 0, "$onehot0(0101)");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_e").unwrap().1.to_u64(), 0, "$onehot0(1111)");
+    assert_eq!(
+        sigs.iter().find(|(n, _)| n == "oh0_a").unwrap().1.to_u64(),
+        1,
+        "$onehot0(0000)"
+    );
+    assert_eq!(
+        sigs.iter().find(|(n, _)| n == "oh0_b").unwrap().1.to_u64(),
+        1,
+        "$onehot0(0001)"
+    );
+    assert_eq!(
+        sigs.iter().find(|(n, _)| n == "oh0_c").unwrap().1.to_u64(),
+        0,
+        "$onehot0(0011)"
+    );
+    assert_eq!(
+        sigs.iter().find(|(n, _)| n == "oh0_d").unwrap().1.to_u64(),
+        0,
+        "$onehot0(0101)"
+    );
+    assert_eq!(
+        sigs.iter().find(|(n, _)| n == "oh0_e").unwrap().1.to_u64(),
+        0,
+        "$onehot0(1111)"
+    );
     // $onehot returns 1 only for exactly 1 bit set
-    assert_eq!(sigs.iter().find(|(n,_)| n == "oh_a").unwrap().1.to_u64(), 0, "$onehot(0000)");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "oh_b").unwrap().1.to_u64(), 1, "$onehot(0001)");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "oh_c").unwrap().1.to_u64(), 0, "$onehot(0011)");
+    assert_eq!(
+        sigs.iter().find(|(n, _)| n == "oh_a").unwrap().1.to_u64(),
+        0,
+        "$onehot(0000)"
+    );
+    assert_eq!(
+        sigs.iter().find(|(n, _)| n == "oh_b").unwrap().1.to_u64(),
+        1,
+        "$onehot(0001)"
+    );
+    assert_eq!(
+        sigs.iter().find(|(n, _)| n == "oh_c").unwrap().1.to_u64(),
+        0,
+        "$onehot(0011)"
+    );
 }
 
 #[test]
@@ -4019,8 +4203,18 @@ module tb;
 endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
-    let ra = sigs.iter().find(|(n,_)| n == "result_a").unwrap().1.to_u64();
-    let rb = sigs.iter().find(|(n,_)| n == "result_b").unwrap().1.to_u64();
+    let ra = sigs
+        .iter()
+        .find(|(n, _)| n == "result_a")
+        .unwrap()
+        .1
+        .to_u64();
+    let rb = sigs
+        .iter()
+        .find(|(n, _)| n == "result_b")
+        .unwrap()
+        .1
+        .to_u64();
     assert_eq!(ra, 4, "$countbits(8'b10100101) = 4");
     assert_eq!(rb, 8, "$countbits(16'hA5A5) = 8");
 }
@@ -4045,10 +4239,42 @@ module tb;
 endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
-    assert_eq!(sigs.iter().find(|(n,_)| n == "dim_scalar").unwrap().1.to_u64(), 0, "$dimensions(scalar) = 0");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "dim_packed_2d").unwrap().1.to_u64(), 2, "$dimensions(packed_2d) = 2");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "dim_unpacked").unwrap().1.to_u64(), 1, "$dimensions(unpacked) = 1");
-    assert_eq!(sigs.iter().find(|(n,_)| n == "dim_packed_3d").unwrap().1.to_u64(), 3, "$dimensions(packed_3d) = 3");
+    assert_eq!(
+        sigs.iter()
+            .find(|(n, _)| n == "dim_scalar")
+            .unwrap()
+            .1
+            .to_u64(),
+        0,
+        "$dimensions(scalar) = 0"
+    );
+    assert_eq!(
+        sigs.iter()
+            .find(|(n, _)| n == "dim_packed_2d")
+            .unwrap()
+            .1
+            .to_u64(),
+        2,
+        "$dimensions(packed_2d) = 2"
+    );
+    assert_eq!(
+        sigs.iter()
+            .find(|(n, _)| n == "dim_unpacked")
+            .unwrap()
+            .1
+            .to_u64(),
+        1,
+        "$dimensions(unpacked) = 1"
+    );
+    assert_eq!(
+        sigs.iter()
+            .find(|(n, _)| n == "dim_packed_3d")
+            .unwrap()
+            .1
+            .to_u64(),
+        3,
+        "$dimensions(packed_3d) = 3"
+    );
 }
 
 #[test]
@@ -6038,7 +6264,12 @@ module tb;
 endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
-    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).map(|(_, v)| v.to_u64()).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap()
+    };
     assert_eq!(get("x"), 0, "X harus 0 (enum kedua mulai dari 0)");
     assert_eq!(get("y"), 1, "Y harus 1");
     assert_eq!(get("z"), 2, "Z harus 2");
@@ -6068,7 +6299,12 @@ module tb;
 endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
-    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).map(|(_, v)| v.to_u64()).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap()
+    };
     assert_eq!(get("q"), 0, "Q harus 0 (pkg p2 enum mulai dari 0)");
     assert_eq!(get("r"), 1, "R harus 1");
 }
@@ -6384,9 +6620,21 @@ module tb;
 endmodule
 "#;
     let sigs = simulate_signals(source, 2).unwrap();
-    let av = sigs.iter().find(|(n, _)| n == "a").map(|(_, v)| v.to_u64()).unwrap();
-    let bv = sigs.iter().find(|(n, _)| n == "b").map(|(_, v)| v.to_u64()).unwrap();
-    let cv = sigs.iter().find(|(n, _)| n == "c").map(|(_, v)| v.to_u64()).unwrap();
+    let av = sigs
+        .iter()
+        .find(|(n, _)| n == "a")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let bv = sigs
+        .iter()
+        .find(|(n, _)| n == "b")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let cv = sigs
+        .iter()
+        .find(|(n, _)| n == "c")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
     assert_eq!(av, 0xFF, "-1 in signed [7:0] should be 0xFF");
     assert_eq!(bv, 0x80, "-128 in signed [7:0] should be 0x80");
     assert_eq!(cv, 0xFED4, "-300 in signed [15:0] should be 0xFED4");
@@ -6429,12 +6677,22 @@ endmodule
     let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
     let mut elaborator =
         maria_elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
-    elaborator.elaborate(None, maria_elaboration::elaborator::ElaborateMode::StrictSimulation).unwrap();
+    elaborator
+        .elaborate(
+            None,
+            maria_elaboration::elaborator::ElaborateMode::StrictSimulation,
+        )
+        .unwrap();
 
     let diags = elaborator.flush_diagnostics();
     let warn_msgs: Vec<String> = diags
         .iter()
-        .filter(|d| matches!(d.code, maria_core::diagnostics::DiagCode::WidthMismatchWarning))
+        .filter(|d| {
+            matches!(
+                d.code,
+                maria_core::diagnostics::DiagCode::WidthMismatchWarning
+            )
+        })
         .map(|d| d.message.to_string())
         .collect();
 
@@ -6455,7 +6713,8 @@ endmodule
         1,
         "expected exactly 1 width mismatch warning (only d), got: {:?}",
         warn_msgs
-    );    assert!(
+    );
+    assert!(
         warn_msgs.iter().any(|m| m.contains("assignment to 'd'")),
         "d=-200 should still warn, got: {:?}",
         warn_msgs
@@ -6538,7 +6797,10 @@ endmodule
         maria_elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
     // AnalysisRecovery: tanpa --top, top tidak unik TIDAK menggagalkan analisis.
     let ir = elaborator
-        .elaborate(None, maria_elaboration::elaborator::ElaborateMode::AnalysisRecovery)
+        .elaborate(
+            None,
+            maria_elaboration::elaborator::ElaborateMode::AnalysisRecovery,
+        )
         .expect("elaborate");
     // Auto top resolution memilih cone terbesar (chip_soc menginstansiasi
     // add8+mul4+alu = 4 module) — bukan tb kecil (cone 2).
@@ -6591,7 +6853,10 @@ endmodule
     let mut elaborator =
         maria_elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
     let ir = elaborator
-        .elaborate(None, maria_elaboration::elaborator::ElaborateMode::AnalysisRecovery)
+        .elaborate(
+            None,
+            maria_elaboration::elaborator::ElaborateMode::AnalysisRecovery,
+        )
         .expect("elaborate");
     assert_eq!(
         ir.top.name.as_str(),
@@ -6603,8 +6868,6 @@ endmodule
         "unique winner → analysis NOT recovered"
     );
 }
-
-
 
 #[test]
 fn test_bits_package_array_param() {
@@ -6670,11 +6933,20 @@ endmodule
         .find(|(n, _)| n == "s2")
         .map(|(_, v)| v.to_u64())
         .unwrap();
-    assert_eq!(b1, 128, "$bits(COEFFS) via import should be 4 ints * 32 = 128");
-    assert_eq!(b2, 128, "$bits(cfg_pkg::COEFFS) should be 4 ints * 32 = 128");
+    assert_eq!(
+        b1, 128,
+        "$bits(COEFFS) via import should be 4 ints * 32 = 128"
+    );
+    assert_eq!(
+        b2, 128,
+        "$bits(cfg_pkg::COEFFS) should be 4 ints * 32 = 128"
+    );
     // Signal array lokal: SignalInfo.width sudah lebar total (elem * depth),
     // jadi $bits(arr) = 32 (4 elemen x 8), bukan 128 (double-count lama).
-    assert_eq!(b3, 32, "$bits(arr) on local signal array should be 4 * 8 = 32");
+    assert_eq!(
+        b3, 32,
+        "$bits(arr) on local signal array should be 4 * 8 = 32"
+    );
     // $bits tetap lebar total untuk packed multi-dimensi (4 x 8 = 32),
     // tidak terpengaruh fix $size.
     assert_eq!(b4, 32, "$bits(p) on packed [3:0][7:0] should be 32");
@@ -7053,8 +7325,16 @@ endmodule
             .map(|(_, v)| v.to_u64())
             .unwrap_or(0)
     };
-    assert_eq!(get("r1"), 1, "a < (2+3) signed compare (fold desimal signed)");
-    assert_eq!(get("r2"), 0, "a < (8'h01+8'h05) unsigned compare (any-unsigned)");
+    assert_eq!(
+        get("r1"),
+        1,
+        "a < (2+3) signed compare (fold desimal signed)"
+    );
+    assert_eq!(
+        get("r2"),
+        0,
+        "a < (8'h01+8'h05) unsigned compare (any-unsigned)"
+    );
 }
 
 #[test]
@@ -7105,9 +7385,15 @@ endmodule
     // Port [7:0] x [0:3]: total 4 elemen x 8 bit = 32 bit, bukan elem_width 8.
     assert_eq!(w, 32, "$bits(port array) should be 4 elems * 8 = 32");
     // $size = jumlah elemen dimensi pertama (array_depth=4).
-    assert_eq!(s, 4, "$size(port array) should return first-dimension size 4");
+    assert_eq!(
+        s, 4,
+        "$size(port array) should return first-dimension size 4"
+    );
     // arr[0]=8'h01 ... arr[3]=8'h04 mengalir ke parent: lsb-first 0x04030201.
-    assert_eq!(a, 0x04030201, "child assigns should flow through the array port");
+    assert_eq!(
+        a, 0x04030201,
+        "child assigns should flow through the array port"
+    );
 }
 
 #[test]
@@ -7386,7 +7672,10 @@ endmodule
         .find(|(n, _)| n == "snapshot")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(snap, 11, "wait fork harus menunggu kedua branch (done1=1, done2=1)");
+    assert_eq!(
+        snap, 11,
+        "wait fork harus menunggu kedua branch (done1=1, done2=1)"
+    );
 }
 
 #[test]
@@ -7558,8 +7847,16 @@ endmodule
     // Current behavior: disable branch_a in parent process kills ALL fork branches
     // (a=0, b=0) — disable label not yet properly scoped to fork branches.
     // Expected when fixed: only branch_a killed (a=0), branch_b runs (b=1).
-    assert_eq!(get("a"), 0, "branch_a killed (current: disable label affects all)");
-    assert_eq!(get("b"), 0, "branch_b also killed (current: disable not fork-scoped)");
+    assert_eq!(
+        get("a"),
+        0,
+        "branch_a killed (current: disable label affects all)"
+    );
+    assert_eq!(
+        get("b"),
+        0,
+        "branch_b also killed (current: disable not fork-scoped)"
+    );
 }
 
 #[test]
@@ -8116,7 +8413,10 @@ endmodule
         .find(|(n, _)| n == "suppressed_ok")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(ok, 1, "$assign should suppress the x=0 write (x stays 0xA1)");
+    assert_eq!(
+        ok, 1,
+        "$assign should suppress the x=0 write (x stays 0xA1)"
+    );
 }
 
 #[test]
@@ -8139,7 +8439,11 @@ endmodule
         .find(|(n, _)| n == "c")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(v, 2, "$get_randcount after 2 x $urandom should be 2, got {}", v);
+    assert_eq!(
+        v, 2,
+        "$get_randcount after 2 x $urandom should be 2, got {}",
+        v
+    );
 }
 
 #[test]
@@ -8222,9 +8526,17 @@ endmodule
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
     // First call returns default seed (42)
-    assert_eq!(prev, 42, "$urandom_seed first call should return default seed 42, got {}", prev);
+    assert_eq!(
+        prev, 42,
+        "$urandom_seed first call should return default seed 42, got {}",
+        prev
+    );
     // Second call returns previous seed (12345)
-    assert_eq!(new_s, 12345, "$urandom_seed second call should return previous seed 12345, got {}", new_s);
+    assert_eq!(
+        new_s, 12345,
+        "$urandom_seed second call should return previous seed 12345, got {}",
+        new_s
+    );
 }
 
 #[test]
@@ -8264,11 +8576,27 @@ endmodule
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
     // $srandom returns previous seed
-    assert_eq!(prev1, 42, "$srandom first call should return default seed 42, got {}", prev1);
-    assert_eq!(prev2, 111, "$srandom second call should return previous seed 111, got {}", prev2);
+    assert_eq!(
+        prev1, 42,
+        "$srandom first call should return default seed 42, got {}",
+        prev1
+    );
+    assert_eq!(
+        prev2, 111,
+        "$srandom second call should return previous seed 111, got {}",
+        prev2
+    );
     // $srandom does NOT increment rand_call_count (per IEEE)
-    assert_eq!(cnt1, 0, "$get_randcount after $srandom should be 0, got {}", cnt1);
-    assert_eq!(cnt2, 0, "$get_randcount after two $srandom should be 0, got {}", cnt2);
+    assert_eq!(
+        cnt1, 0,
+        "$get_randcount after $srandom should be 0, got {}",
+        cnt1
+    );
+    assert_eq!(
+        cnt2, 0,
+        "$get_randcount after two $srandom should be 0, got {}",
+        cnt2
+    );
 }
 
 #[test]
@@ -8306,7 +8634,10 @@ endmodule
     };
     let s1 = run(source);
     let s2 = run(source);
-    assert_eq!(s1, s2, "seed sama → stream $urandom harus identik antar run");
+    assert_eq!(
+        s1, s2,
+        "seed sama → stream $urandom harus identik antar run"
+    );
 
     // Run 3: seed BERBEDA → stream harus berubah (tidak kebetulan sama).
     let src_diff = source.replace("$urandom_seed(777);", "$urandom_seed(888);");
@@ -8318,7 +8649,11 @@ endmodule
 
     // $urandom_range dalam [1, 1000] — validasi range tetap bekerja setelah seed.
     for v in &s1[3..] {
-        assert!((1..=1000).contains(v), "$urandom_range harus dalam [1,1000], got {}", v);
+        assert!(
+            (1..=1000).contains(v),
+            "$urandom_range harus dalam [1,1000], got {}",
+            v
+        );
     }
 }
 
@@ -8341,7 +8676,11 @@ endmodule
         .find(|(n, _)| n == "prev")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(prev, 999, "$srandom() no-arg should return previous seed 999, got {}", prev);
+    assert_eq!(
+        prev, 999,
+        "$srandom() no-arg should return previous seed 999, got {}",
+        prev
+    );
 }
 
 #[test]
@@ -8467,10 +8806,19 @@ module tb;
 endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
-    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).map(|(_, v)| v.to_u64()).unwrap_or(99);
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(99)
+    };
     assert_eq!(get("r1"), 1, "first try_put should succeed");
     assert_eq!(get("r2"), 1, "second try_put should succeed");
-    assert_eq!(get("r3"), 0, "third try_put on full bounded mailbox should fail");
+    assert_eq!(
+        get("r3"),
+        0,
+        "third try_put on full bounded mailbox should fail"
+    );
 }
 
 #[test]
@@ -8542,7 +8890,11 @@ module tb;
 endmodule
 "#;
     let result = simulate_str(source, 100);
-    assert!(result.is_ok(), "blocking mailbox get should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "blocking mailbox get should succeed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -8590,7 +8942,11 @@ module tb;
 endmodule
 "#;
     let result = simulate_str(source, 100);
-    assert!(result.is_ok(), "bounded mailbox put should block then succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "bounded mailbox put should block then succeed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -8970,7 +9326,10 @@ endmodule
         .find(|(n, _)| n == "result")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(v, 7, "array lvalue index dinamis di task method harus jalan");
+    assert_eq!(
+        v, 7,
+        "array lvalue index dinamis di task method harus jalan"
+    );
 }
 
 #[test]
@@ -9704,11 +10063,7 @@ module tb;
 endmodule
 "#;
     let result = simulate_str(source, 500);
-    assert!(
-        result.is_ok(),
-        "uvm_event sync failed: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "uvm_event sync failed: {:?}", result.err());
 }
 
 #[test]
@@ -10760,11 +11115,7 @@ module tb;
 endmodule
 "#;
     let result = simulate_str(source, 200);
-    assert!(
-        result.is_ok(),
-        "interface with ports: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "interface with ports: {:?}", result.err());
 }
 
 #[test]
@@ -10803,11 +11154,7 @@ module tb;
 endmodule
 "#;
     let result = simulate_str(source, 200);
-    assert!(
-        result.is_ok(),
-        "alias hier diff names: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "alias hier diff names: {:?}", result.err());
 }
 
 #[test]
@@ -11015,7 +11362,11 @@ endmodule
     let (_, a) = sigs.iter().find(|(n, _)| n == "e1").unwrap();
     assert_eq!(a.to_u64(), 1, "exists untuk resource wildcard harus 1");
     let (_, b) = sigs.iter().find(|(n, _)| n == "e2").unwrap();
-    assert_eq!(b.to_u64(), 0, "exists untuk resource yang tidak ada harus 0");
+    assert_eq!(
+        b.to_u64(),
+        0,
+        "exists untuk resource yang tidak ada harus 0"
+    );
 }
 
 #[test]
@@ -11036,7 +11387,11 @@ endmodule
     let (_, sv) = sigs.iter().find(|(n, _)| n == "success").unwrap();
     assert_eq!(sv.to_u64(), 1, "read_by_name harus menemukan resource");
     let (_, vv) = sigs.iter().find(|(n, _)| n == "val").unwrap();
-    assert_eq!(vv.to_u64(), 42, "read_by_name harus mengembalikan nilai write_by_name");
+    assert_eq!(
+        vv.to_u64(),
+        42,
+        "read_by_name harus mengembalikan nilai write_by_name"
+    );
 }
 
 #[test]
@@ -11367,7 +11722,8 @@ module tb;
         #1 $finish;
     end
 endmodule
-"#;    let sigs = simulate_signals(source, 5).unwrap();
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
     let v = sigs
         .iter()
         .find(|(n, _)| n == "x")
@@ -11442,11 +11798,17 @@ endmodule
     let _ = engine.run();
     let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
     let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
-    assert!(total_pass >= 3, "cnt<=3 lulus siklus 1..3: pass={}", total_pass);
-    assert!(total_fail >= 1, "cnt<=3 gagal siklus ke-4: fail={}", total_fail);
+    assert!(
+        total_pass >= 3,
+        "cnt<=3 lulus siklus 1..3: pass={}",
+        total_pass
+    );
+    assert!(
+        total_fail >= 1,
+        "cnt<=3 gagal siklus ke-4: fail={}",
+        total_fail
+    );
 }
-
-
 
 #[test]
 fn test_cover_pass() {
@@ -11496,8 +11858,16 @@ endmodule
     let _ = engine.run();
     let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
     let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
-    assert!(total_pass >= 3, "module-level assert property: pass={}", total_pass);
-    assert!(total_fail >= 1, "module-level assert property: fail={}", total_fail);
+    assert!(
+        total_pass >= 3,
+        "module-level assert property: pass={}",
+        total_pass
+    );
+    assert!(
+        total_fail >= 1,
+        "module-level assert property: fail={}",
+        total_fail
+    );
 }
 
 #[test]
@@ -11529,10 +11899,18 @@ endmodule
     let _ = engine.run();
     // cover property → hit tercatat di cover_hits (key cover@line:col).
     let cover_total: u64 = engine.cover_hits.values().sum();
-    assert!(cover_total >= 1, "cover property harus tercatat hit: {}", cover_total);
+    assert!(
+        cover_total >= 1,
+        "cover property harus tercatat hit: {}",
+        cover_total
+    );
     // restrict property (asumsi) → violation saat committed cnt=4 (>3).
     let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
-    assert!(total_fail >= 1, "restrict property violation harus tercatat fail: {}", total_fail);
+    assert!(
+        total_fail >= 1,
+        "restrict property violation harus tercatat fail: {}",
+        total_fail
+    );
 }
 
 #[test]
@@ -11560,7 +11938,11 @@ endmodule
     let mut engine = crate::simulator::SimulationEngine::new(design, 40);
     let _ = engine.run();
     let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
-    assert!(total_fail >= 1, "assume property violation harus fail: {}", total_fail);
+    assert!(
+        total_fail >= 1,
+        "assume property violation harus fail: {}",
+        total_fail
+    );
 }
 
 #[test]
@@ -11588,7 +11970,8 @@ endmodule
     let sigs = simulate_signals(source, 25).expect("temporal property skipped, modul tetap parse");
     let v = sigs.iter().find(|(n, _)| n == "clk").unwrap();
     assert!(v.1.width > 0, "clk harus tetap ada — modul ter-parse");
-}#[test]
+}
+#[test]
 fn test_psl_boolean_assert_always_never() {
     // LANG-03: PSL (IEEE 1850) boolean — `assert always (expr) @(posedge
     // clk);` / `assert never (expr) @(posedge clk);` + directive
@@ -11620,7 +12003,11 @@ endmodule
     let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
     let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
     assert!(total_pass >= 8, "PSL always+never: pass={}", total_pass);
-    assert_eq!(total_fail, 0, "PSL never (cnt>8 dibalik) tidak boleh fail: {}", total_fail);
+    assert_eq!(
+        total_fail, 0,
+        "PSL never (cnt>8 dibalik) tidak boleh fail: {}",
+        total_fail
+    );
 }
 
 #[test]
@@ -11834,7 +12221,11 @@ endmodule
     let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
     let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
     assert!(total_pass >= 3, "checker assertion: pass={}", total_pass);
-    assert!(total_fail >= 1, "checker assertion: fail saat cnt>3: {}", total_fail);
+    assert!(
+        total_fail >= 1,
+        "checker assertion: fail saat cnt>3: {}",
+        total_fail
+    );
 }
 
 #[test]
@@ -11865,7 +12256,11 @@ endmodule
     let mut engine = crate::simulator::SimulationEngine::new(design, 50);
     let _ = engine.run();
     let cover_total: u64 = engine.cover_hits.values().sum();
-    assert!(cover_total >= 1, "checker cover property: hit={}", cover_total);
+    assert!(
+        cover_total >= 1,
+        "checker cover property: hit={}",
+        cover_total
+    );
 }
 
 #[test]
@@ -11882,7 +12277,6 @@ module tb;
     end
 endmodule
 "#;
-
 
     let sigs = simulate_signals(source, 5).unwrap();
     let v = sigs
@@ -12071,11 +12465,26 @@ endmodule
             agg_total += v;
         }
     }
-    assert_eq!(agg_total, 0, "per_instance=1 tidak boleh memakai key agregat");
+    assert_eq!(
+        agg_total, 0,
+        "per_instance=1 tidak boleh memakai key agregat"
+    );
     assert_eq!(per_inst_totals.len(), 2, "dua instance → dua key terpisah");
-    assert!(per_inst_totals.contains(&2), "instance1 2 sample: {:?}", per_inst_totals);
-    assert!(per_inst_totals.contains(&1), "instance2 1 sample: {:?}", per_inst_totals);
-    assert_eq!(per_inst_totals.iter().sum::<u64>(), 3, "total 3 sample (2+1)");
+    assert!(
+        per_inst_totals.contains(&2),
+        "instance1 2 sample: {:?}",
+        per_inst_totals
+    );
+    assert!(
+        per_inst_totals.contains(&1),
+        "instance2 1 sample: {:?}",
+        per_inst_totals
+    );
+    assert_eq!(
+        per_inst_totals.iter().sum::<u64>(),
+        3,
+        "total 3 sample (2+1)"
+    );
 
     // merge_from_engine menjumlahkan semua key instance ke agregat.
     let mut db = crate::simulator::coverage_db::CoverageDatabase::new();
@@ -12244,10 +12653,7 @@ endmodule
             .iter()
             .any(|d| d.message.as_ref().contains("illegal_bins hit")),
         "harus ada laporan illegal_bins: {:#?}",
-        diags
-            .iter()
-            .map(|d| d.message.as_ref())
-            .collect::<Vec<_>>()
+        diags.iter().map(|d| d.message.as_ref()).collect::<Vec<_>>()
     );
 }
 
@@ -12326,12 +12732,16 @@ endmodule
     let key = Symbol::intern("cg.cp_a");
     let bins = engine.cover_bins.get(&key).unwrap();
     assert_eq!(
-        bins.get(&Symbol::intern("cp_a=rising")).copied().unwrap_or(0),
+        bins.get(&Symbol::intern("cp_a=rising"))
+            .copied()
+            .unwrap_or(0),
         2,
         "rising (0=>1) harus kena 2x"
     );
     assert_eq!(
-        bins.get(&Symbol::intern("cp_a=falling")).copied().unwrap_or(0),
+        bins.get(&Symbol::intern("cp_a=falling"))
+            .copied()
+            .unwrap_or(0),
         1,
         "falling (1=>0) harus kena 1x"
     );
@@ -12383,7 +12793,8 @@ endmodule
     );
     // Covergroup never_sampled tidak pernah di-sample → cp_x gap.
     assert!(
-        gaps.iter().any(|g| g.contains("never_sampled.cp_x") && g.contains("tidak pernah di-sample")),
+        gaps.iter()
+            .any(|g| g.contains("never_sampled.cp_x") && g.contains("tidak pernah di-sample")),
         "gap harus menyebut coverpoint never_sampled.cp_x tak pernah di-sample: {:?}",
         gaps
     );
@@ -12605,18 +13016,18 @@ endmodule
 fn test_dpi_scope_management() {
     // Test svGetScope/svSetScope via thread-local path
     use crate::simulator::dpi::*;
-    
+
     // Initially no scope set
     let scope = sv_get_scope();
     assert!(scope.is_null(), "no scope should be set initially");
-    
+
     // Set scope via thread-local
     set_current_dpi_scope("top.u_sub");
     let scope = sv_get_scope();
     assert!(!scope.is_null(), "scope should be non-null after setting");
     let name = sv_get_scope_name(scope);
     assert_eq!(name, Some("top.u_sub".to_string()));
-    
+
     // Test svSetScope
     let new_scope = sv_set_scope_name("top.other");
     let result = sv_set_scope(new_scope);
@@ -12630,7 +13041,7 @@ fn test_dpi_scope_management() {
 #[test]
 fn test_dpi_time_query() {
     use crate::simulator::dpi::*;
-    
+
     // Set time to 42
     set_current_dpi_time(42);
     let scope = svScope::NULL;
@@ -12642,24 +13053,28 @@ fn test_dpi_time_query() {
 #[test]
 fn test_dpi_chandle_store() {
     use crate::simulator::dpi::*;
-    
+
     // Allocate a chandle for an opaque pointer value
     let handle1 = chandle_alloc(0xDEADBEEF);
     assert!(handle1 > 0, "chandle handle should be non-zero");
-    
+
     let handle2 = chandle_alloc(0xCAFEBABE);
     assert_ne!(handle1, handle2, "chandle handles should be unique");
-    
+
     // Get back the stored value
     let val1 = chandle_get(handle1);
     assert_eq!(val1, Some(0xDEADBEEF));
-    
+
     let val2 = chandle_get(handle2);
     assert_eq!(val2, Some(0xCAFEBABE));
-    
+
     // Free handle
     chandle_free(handle1);
-    assert_eq!(chandle_get(handle1), None, "freed handle should return None");
+    assert_eq!(
+        chandle_get(handle1),
+        None,
+        "freed handle should return None"
+    );
 }
 
 #[cfg(feature = "dpi")]
@@ -12667,7 +13082,7 @@ fn test_dpi_chandle_store() {
 fn test_dpi_export_register_and_call() {
     use crate::simulator::dpi::*;
     use maria_ir::*;
-    
+
     // Register a simple SV function as DPI export
     let func = DpiExportedFunction {
         export_name: "my_sv_func".to_string(),
@@ -12681,12 +13096,9 @@ fn test_dpi_export_register_and_call() {
         }),
     };
     sv_export_register(func);
-    
+
     // Call the exported function
-    let args = vec![
-        LogicVec::from_u64(40, 32),
-        LogicVec::from_u64(2, 32),
-    ];
+    let args = vec![LogicVec::from_u64(40, 32), LogicVec::from_u64(2, 32)];
     let result = sv_export_call("my_sv_func", &args).unwrap();
     assert_eq!(result.to_u64(), 42, "DPI export should return 40+2=42");
 }
@@ -12697,9 +13109,9 @@ fn test_dpi_export_task() {
     use crate::simulator::dpi::*;
     use maria_ir::*;
     use std::sync::atomic::{AtomicBool, Ordering};
-    
+
     static CALLED: AtomicBool = AtomicBool::new(false);
-    
+
     let func = DpiExportedFunction {
         export_name: "my_sv_task".to_string(),
         n_args: 0,
@@ -12711,16 +13123,19 @@ fn test_dpi_export_task() {
         }),
     };
     sv_export_register(func);
-    
+
     sv_export_call("my_sv_task", &[]).unwrap();
-    assert!(CALLED.load(Ordering::SeqCst), "task should have been called");
+    assert!(
+        CALLED.load(Ordering::SeqCst),
+        "task should have been called"
+    );
 }
 
 #[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_bit_vector_helpers() {
     use crate::simulator::dpi::*;
-    
+
     // Test svGetBitsel and svPutBitsel (helpers are unsafe fn — pointer args)
     let mut vec_bits: [svBitVecVal; 2] = [0, 0];
     unsafe {
@@ -12728,7 +13143,7 @@ fn test_dpi_bit_vector_helpers() {
         assert_eq!(sv_get_bitsel(&vec_bits as *const svBitVecVal, 3), 1);
         assert_eq!(sv_get_bitsel(&vec_bits as *const svBitVecVal, 2), 0);
     }
-    
+
     // Test svPutPartSelect and svGetPartSelect
     let mut vec2: [svBitVecVal; 2] = [0, 0];
     let val = unsafe {
@@ -12742,21 +13157,30 @@ fn test_dpi_bit_vector_helpers() {
 #[test]
 fn test_dpi_logic_vector_helpers() {
     use crate::simulator::dpi::*;
-    
+
     // Test svGetLogicBitsel with 4-state encoding (helpers are unsafe fn)
     let mut logic_vec: [svLogicVecVal; 4] = [0, 0, 0, 0];
     unsafe {
         // Set bit 0 to '1' (aval=1, bval=0)
         sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 0, 1);
-        assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 0), 1);
-        
+        assert_eq!(
+            sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 0),
+            1
+        );
+
         // Set bit 1 to 'X' (aval=0, bval=1)
         sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 1, 2);
-        assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 1), 2);
-        
+        assert_eq!(
+            sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 1),
+            2
+        );
+
         // Set bit 2 to 'Z' (aval=1, bval=1)
         sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 2, 3);
-        assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 2), 3);
+        assert_eq!(
+            sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 2),
+            3
+        );
     }
 }
 
@@ -12764,7 +13188,7 @@ fn test_dpi_logic_vector_helpers() {
 #[test]
 fn test_dpi_chandle_conversion() {
     use crate::simulator::dpi::*;
-    
+
     let ptr_val: u64 = 0x1234567890ABCDEF;
     let ch = u64_to_chandle(ptr_val);
     let back = chandle_to_u64(ch);
@@ -13273,14 +13697,22 @@ endmodule
     let mut elaborator =
         maria_elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
     elaborator
-        .elaborate(None, maria_elaboration::elaborator::ElaborateMode::StrictSimulation)
+        .elaborate(
+            None,
+            maria_elaboration::elaborator::ElaborateMode::StrictSimulation,
+        )
         .unwrap();
     let diags = elaborator.flush_diagnostics();
     assert!(
-        diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::AssertionFailed
-            && d.message.contains("elaboration-time assertion failed")),
+        diags.iter().any(
+            |d| d.code == maria_core::diagnostics::DiagCode::AssertionFailed
+                && d.message.contains("elaboration-time assertion failed")
+        ),
         "harus ada warning elab-time assertion failed: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -13311,13 +13743,21 @@ endmodule
     let mut elaborator =
         maria_elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
     elaborator
-        .elaborate(None, maria_elaboration::elaborator::ElaborateMode::StrictSimulation)
+        .elaborate(
+            None,
+            maria_elaboration::elaborator::ElaborateMode::StrictSimulation,
+        )
         .unwrap();
     let diags = elaborator.flush_diagnostics();
     assert!(
-        !diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::AssertionFailed),
+        !diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::AssertionFailed),
         "assertion true tidak boleh warn: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -14014,7 +14454,10 @@ module top;
     \mod_x  u(.a(w));
     initial #1 $finish;
 endmodule"#;
-    assert!(compile_str(src).is_ok(), "escaped module name harus ter-parse");
+    assert!(
+        compile_str(src).is_ok(),
+        "escaped module name harus ter-parse"
+    );
 }
 
 #[test]
@@ -14028,7 +14471,10 @@ module top;
     sub u(.a(\clk+1 ), .b(\out-2 ));
     initial #1 $finish;
 endmodule"#;
-    assert!(compile_str(src).is_ok(), "escaped signal + port connect harus ter-parse");
+    assert!(
+        compile_str(src).is_ok(),
+        "escaped signal + port connect harus ter-parse"
+    );
 }
 
 #[test]
@@ -14036,7 +14482,10 @@ fn test_escaped_ident_trailing_dollar_and_double_space() {
     // `$` di dalam escaped ident valid; spasi GANDA setelah escaped ident
     // juga terminator (bukan bagian nama).
     let src = r"module top; reg \a$b  ; initial begin \a$b  = 1; #1 $finish; end endmodule";
-    assert!(compile_str(src).is_ok(), "escaped ident dgn $ + spasi ganda harus ter-parse");
+    assert!(
+        compile_str(src).is_ok(),
+        "escaped ident dgn $ + spasi ganda harus ter-parse"
+    );
 }
 
 #[test]
@@ -14044,7 +14493,10 @@ fn test_unicode_in_string_and_comment_ok() {
     // Karakter Unicode di STRING literal dan KOMENTAR legal (lexer skip) —
     // `"héllo wörld"` dan komentar `// jalur ⚡`. Bukan identifier.
     let src = "module top;\n    reg [7:0] s;\n    // komentar dengan ⚡ unicode\n    initial begin s = \"héllo\"; #1 $finish; end\nendmodule";
-    assert!(compile_str(src).is_ok(), "Unicode di string/komentar harus ter-parse");
+    assert!(
+        compile_str(src).is_ok(),
+        "Unicode di string/komentar harus ter-parse"
+    );
 }
 
 #[test]
@@ -14052,7 +14504,10 @@ fn test_unicode_identifier_rejected_cleanly() {
     // Unicode sebagai IDENTIFIER bukan karakter ident SV — harus error
     // bersih (bukan hang/panic). Lexer hanya is_ascii_alphabetic.
     let src = "module top; reg café; initial #1 $finish; endmodule";
-    assert!(compile_str(src).is_err(), "Unicode identifier harus ditolak bersih");
+    assert!(
+        compile_str(src).is_err(),
+        "Unicode identifier harus ditolak bersih"
+    );
 }
 
 // `$abc` identifier hangs parser — known lexer issue
@@ -14427,7 +14882,11 @@ endmodule
     let (_, b) = sigs.iter().find(|(n, _)| n == "b").unwrap();
     assert_eq!(b.to_u64(), 1, "5000 inside {{[4096:7487]}} should be true");
     let (_, c) = sigs.iter().find(|(n, _)| n == "c").unwrap();
-    assert_eq!(c.to_u64(), 0, "5000 inside {{[0:100],[1000:2000]}} should be false");
+    assert_eq!(
+        c.to_u64(),
+        0,
+        "5000 inside {{[0:100],[1000:2000]}} should be false"
+    );
 }
 
 #[test]
@@ -14460,7 +14919,11 @@ endmodule
     let (_, sel) = sigs.iter().find(|(n, _)| n == "sel").unwrap();
     assert_eq!(sel.to_u64(), 2, "10 inside {{[6:12]}} should select 2");
     let (_, sel2) = sigs.iter().find(|(n, _)| n == "sel2").unwrap();
-    assert_eq!(sel2.to_u64(), 2, "unique case 7 inside {{[6:12]}} should select 2");
+    assert_eq!(
+        sel2.to_u64(),
+        2,
+        "unique case 7 inside {{[6:12]}} should select 2"
+    );
 }
 
 #[test]
@@ -15460,20 +15923,23 @@ endmodule
         content.contains("functionalCoverage"),
         "UCIS file should contain functionalCoverage"
     );
-    
+
     // The coverage data may or may not have line/toggle/branch/fsm data
     // depending on what the simulation engine collected
-    eprintln!("UCIS export test: {} bytes written, has line={} toggle={} branch={} fsm={}",
+    eprintln!(
+        "UCIS export test: {} bytes written, has line={} toggle={} branch={} fsm={}",
         content.len(),
         content.contains("lineCoverage"),
         content.contains("toggleCoverage"),
         content.contains("branchCoverage"),
-        content.contains("fsmCoverage"));
-    
+        content.contains("fsmCoverage")
+    );
+
     std::fs::remove_file(path).ok();
 }
 
-#[test]fn test_sdf_parse() {
+#[test]
+fn test_sdf_parse() {
     // CELL and NET must be at the top level (outside DELAYFILE),
     // because parse_delayfile_header skips unknown constructs.
     let sdf_content = r#"
@@ -15595,10 +16061,15 @@ endmodule
 fn assert_timing_violation(engine: &mut crate::simulator::SimulationEngine, msg: &str) {
     let diags = engine.flush_diagnostics();
     assert!(
-        diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
+        diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
         "{}: {:#?}",
         msg,
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -15667,7 +16138,12 @@ fn test_sdf_setuphold_violation() {
     .unwrap();
     // Pastikan parser menangkap signal + delay (SIM-10: sebelumnya kosong).
     match &sdf.timing_checks[0] {
-        crate::simulator::sdf::TimingCheck::Setuphold { signal, ref_signal, setup, hold } => {
+        crate::simulator::sdf::TimingCheck::Setuphold {
+            signal,
+            ref_signal,
+            setup,
+            hold,
+        } => {
             assert_eq!(signal, "d");
             assert_eq!(ref_signal, "clk");
             assert!(setup.get(crate::simulator::sdf::TimingMode::Typ) > 0.0);
@@ -15754,15 +16230,25 @@ endmodule
     let diags = engine.flush_diagnostics();
     // Pulse di-reject → TIDAK boleh ada TimingViolation.
     assert!(
-        !diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
+        !diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
         "pulse control harus menolak pulse (bukan violation): {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
     // Ada catatan glitch/pulse rejected.
     assert!(
-        diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::SignalGlitch),
+        diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::SignalGlitch),
         "pulse reject harus tercatat sebagai SignalGlitch: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -15804,7 +16290,11 @@ endmodule
         .position(|s| s.name.as_str() == "clk")
         .expect("clk ada");
     let final_val = engine.state.read_signal(clk_id).to_u64();
-    assert_eq!(final_val, 0, "clk harus di-rollback ke 0 setelah pulse reject (got {})", final_val);
+    assert_eq!(
+        final_val, 0,
+        "clk harus di-rollback ke 0 setelah pulse reject (got {})",
+        final_val
+    );
     // Sanity: TB memang menulis 0 di t=3 — tanpa reject pun 0. Yang membedakan
     // ada di test_sdf_pulse_control_reject (no TimingViolation). Di sini kita
     // verifikasi sinyal turunan `saw_hi` sempat melihat clk=1 saat pulse aktif
@@ -15844,9 +16334,14 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     assert!(
-        !diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
+        !diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
         "tidak boleh ada violation: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -15890,7 +16385,11 @@ endmodule
 
     // Isi harus valid — bisa di-load ulang.
     let restored = crate::simulator::checkpoint::SimCheckpoint::load_from_file(&path).unwrap();
-    assert!(restored.time > 0, "checkpoint time harus > 0 (got {})", restored.time);
+    assert!(
+        restored.time > 0,
+        "checkpoint time harus > 0 (got {})",
+        restored.time
+    );
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&dir);
@@ -16049,9 +16548,7 @@ endmodule
     engine.debug_mode = crate::simulator::types::DebugMode::Debug;
     let _ = engine.run();
     let sym = Symbol::intern("c");
-    let hist = engine
-        .signal_history
-        .get_history(&sym);
+    let hist = engine.signal_history.get_history(&sym);
     assert!(
         hist.len() >= 4,
         "history should have >= 4 entries, got {}",
@@ -16326,7 +16823,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).expect("uvm_root method sim");
     let (_, tv) = sigs.iter().find(|(n, _)| n == "has_top").unwrap();
-    assert_eq!(tv.to_u64(), 1, "root.run_test + root.get_top harus non-null top");
+    assert_eq!(
+        tv.to_u64(),
+        1,
+        "root.run_test + root.get_top harus non-null top"
+    );
 }
 
 #[test]
@@ -16443,7 +16944,11 @@ endmodule
     let (_, bv) = sigs.iter().find(|(n, _)| n == "cnt_b").unwrap();
     assert_eq!(bv.to_u64(), 2, "get_objection_count(b) = 2 raise langsung");
     let (_, av) = sigs.iter().find(|(n, _)| n == "cnt_a").unwrap();
-    assert_eq!(av.to_u64(), 2, "get_objection_count(a) = 2 propagasi dari b");
+    assert_eq!(
+        av.to_u64(),
+        2,
+        "get_objection_count(a) = 2 propagasi dari b"
+    );
     let (_, dv) = sigs.iter().find(|(n, _)| n == "cnt_after_drop").unwrap();
     assert_eq!(dv.to_u64(), 1, "setelah 1 drop, count a turun ke 1");
 }
@@ -16506,7 +17011,11 @@ endmodule
     let (_, v) = sigs.iter().find(|(n, _)| n == "stream_cnt").unwrap();
     assert_eq!(v.to_u64(), 1, "stream s2 get_tr_count() = 1 record");
     let (_, v) = sigs.iter().find(|(n, _)| n == "s3_same").unwrap();
-    assert_eq!(v.to_u64(), 1, "db.get_stream(s3) via method dispatch non-null");
+    assert_eq!(
+        v.to_u64(),
+        1,
+        "db.get_stream(s3) via method dispatch non-null"
+    );
 }
 
 #[test]
@@ -16892,7 +17401,10 @@ endmodule
 "#;
     // Should simulate without error (race is a warning, not an error)
     let result = simulate_str(source, 5);
-    assert!(result.is_ok(), "write-write race should not crash simulation");
+    assert!(
+        result.is_ok(),
+        "write-write race should not crash simulation"
+    );
 }
 
 #[test]
@@ -16946,7 +17458,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val_sig) = sigs.iter().find(|(n, _)| n == "val").unwrap();
-    assert_eq!(val_sig.to_u64(), 42, "equality constraint should set addr=42");
+    assert_eq!(
+        val_sig.to_u64(),
+        42,
+        "equality constraint should set addr=42"
+    );
 }
 
 #[test]
@@ -16978,8 +17494,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val_sig) = sigs.iter().find(|(n, _)| n == "val").unwrap();
-    assert!(val_sig.to_u64() > 10 && val_sig.to_u64() < 50,
-        "range constraint should give addr in [11..49], got {}", val_sig.to_u64());
+    assert!(
+        val_sig.to_u64() > 10 && val_sig.to_u64() < 50,
+        "range constraint should give addr in [11..49], got {}",
+        val_sig.to_u64()
+    );
 }
 
 #[test]
@@ -17010,7 +17529,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, result_sig) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    assert_eq!(result_sig.to_u64(), 1, "inside constraint randomize should succeed");
+    assert_eq!(
+        result_sig.to_u64(),
+        1,
+        "inside constraint randomize should succeed"
+    );
 }
 
 #[test]
@@ -17044,7 +17567,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, result_sig) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    assert_eq!(result_sig.to_u64(), 1, "inside range constraint randomize should succeed");
+    assert_eq!(
+        result_sig.to_u64(),
+        1,
+        "inside range constraint randomize should succeed"
+    );
     // Nilai harus berada di himpunan yang diizinkan
     let (_, val_sig) = sigs.iter().find(|(n, _)| n == "val").unwrap();
     let v = val_sig.to_u64();
@@ -17136,7 +17663,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, ok_sig) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
-    assert_eq!(ok_sig.to_u64(), 1, "assert inside range 8-bit vs 32-bit should pass");
+    assert_eq!(
+        ok_sig.to_u64(),
+        1,
+        "assert inside range 8-bit vs 32-bit should pass"
+    );
 }
 
 #[test]
@@ -17290,7 +17821,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, v) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
-    assert_eq!(v.to_u64(), 1, "assert + severity action block: sim berlanjut setelah $error");
+    assert_eq!(
+        v.to_u64(),
+        1,
+        "assert + severity action block: sim berlanjut setelah $error"
+    );
 }
 
 #[test]
@@ -17315,12 +17850,16 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     // Assertion failure harus punya source snippet dengan baris > 0.
-    let assertion = diags
-        .iter()
-        .find(|d| d.code == maria_core::diagnostics::DiagCode::AssertionFailed && d.message == "assertion failed");
+    let assertion = diags.iter().find(|d| {
+        d.code == maria_core::diagnostics::DiagCode::AssertionFailed
+            && d.message == "assertion failed"
+    });
     assert!(assertion.is_some(), "harus ada diag assertion failed");
     let snap = assertion.unwrap().source_snippet.as_ref();
-    assert!(snap.is_some(), "assertion failed WAJIB punya source snippet (file:line:col)");
+    assert!(
+        snap.is_some(),
+        "assertion failed WAJIB punya source snippet (file:line:col)"
+    );
     if let Some(s) = snap {
         assert!(s.line > 0, "line assertion harus > 0, got {}", s.line);
         assert!(
@@ -17354,7 +17893,10 @@ endmodule
         .find(|(n, _)| n == "hit")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(hit, 1, "expect gagal harus mengeksekusi else (fail) statement");
+    assert_eq!(
+        hit, 1,
+        "expect gagal harus mengeksekusi else (fail) statement"
+    );
 
     // Diag "expect failed" harus ada (diperiksa via engine langsung).
     let design = compile_str(source).unwrap();
@@ -17367,7 +17909,10 @@ endmodule
                 && d.message == "expect failed"
         }),
         "harus ada diag 'expect failed': {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -17405,7 +17950,10 @@ endmodule
                 && d.message == "expect failed"
         }),
         "expect berhasil TIDAK boleh memunculkan diag failure: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -17509,7 +18057,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, v) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
-    assert_eq!(v.to_u64(), 1, "randomize() pada uvm_sequence_item harus sukses");
+    assert_eq!(
+        v.to_u64(),
+        1,
+        "randomize() pada uvm_sequence_item harus sukses"
+    );
     let (_, a) = sigs.iter().find(|(n, _)| n == "addr_v").unwrap();
     let av = a.to_u64();
     assert!(
@@ -17773,14 +18325,17 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 50).unwrap();
     let get = |name: &str| {
-        sigs
-            .iter()
+        sigs.iter()
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.to_u64())
             .unwrap_or(0)
     };
     // Driver menerima item yang dikirim sequence (random addr, bukan 0/null).
-    assert!(get("got_val") != 0, "driver harus menerima item via get_next_item (got={})", get("got_val"));
+    assert!(
+        get("got_val") != 0,
+        "driver harus menerima item via get_next_item (got={})",
+        get("got_val")
+    );
     // connect_phase env harus dipanggil walau root test tidak punya connect_phase.
     assert_eq!(get("conn"), 1, "connect_phase env harus jalan");
     // `run_test` harus memicu fase akhir (report/final) saat objection drop —
@@ -17855,11 +18410,18 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, result_sig) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    assert_eq!(result_sig.to_u64(), 1, "multiple constraint randomize should succeed");
+    assert_eq!(
+        result_sig.to_u64(),
+        1,
+        "multiple constraint randomize should succeed"
+    );
     let (_, data_sig) = sigs.iter().find(|(n, _)| n == "data_val").unwrap();
     let (_, addr_sig) = sigs.iter().find(|(n, _)| n == "addr_val").unwrap();
-    assert_eq!(data_sig.to_u64(), addr_sig.to_u64() + 1,
-        "data should equal addr + 1");
+    assert_eq!(
+        data_sig.to_u64(),
+        addr_sig.to_u64() + 1,
+        "data should equal addr + 1"
+    );
 }
 
 #[test]
@@ -17890,7 +18452,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, result_sig) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    assert_eq!(result_sig.to_u64(), 1, "not-equal constraint randomize should succeed");
+    assert_eq!(
+        result_sig.to_u64(),
+        1,
+        "not-equal constraint randomize should succeed"
+    );
 }
 
 // ── CRIT-047: Macro expansion recursive depth limit ──────────────────────
@@ -18020,7 +18586,8 @@ endmodule
     let err = result.unwrap_err();
     let err_str = format!("{}", err);
     assert!(
-        err_str.contains("RT2001") || err_str.contains("delta")
+        err_str.contains("RT2001")
+            || err_str.contains("delta")
             || err_str.contains("InfiniteDelta"),
         "error should mention delta limit: got '{}'",
         err_str
@@ -18093,7 +18660,10 @@ endmodule
         0,
         "err_o = data_i[0] ? 1 : 0 — data_i[0]=0 di akhir, harus 0 (bukan X/2)"
     );
-    let (_, di) = sigs.iter().find(|(n, _)| n == "data_i").expect("data_i ada");
+    let (_, di) = sigs
+        .iter()
+        .find(|(n, _)| n == "data_i")
+        .expect("data_i ada");
     assert_eq!(di.to_u64(), 0xAA, "data_i harus 0xAA setelah #20");
 }
 
@@ -18142,21 +18712,31 @@ endmodule
 
     // Manually add a callback entry to the queue
     let key = ("my_component".to_string(), "my_cb_type".to_string());
-    engine.callback_queues.insert(key.clone(), crate::simulator::types::UvmCallbackData {
-        cb_type_name: "my_cb_type".to_string(),
-        callbacks: Vec::new(),
-        enabled: true,
-    });
+    engine.callback_queues.insert(
+        key.clone(),
+        crate::simulator::types::UvmCallbackData {
+            cb_type_name: "my_cb_type".to_string(),
+            callbacks: Vec::new(),
+            enabled: true,
+        },
+    );
 
     // Verify the callback is in the queue
     let entry = engine.callback_queues.get(&key);
     assert!(entry.is_some(), "callback should exist in queue");
     assert!(entry.unwrap().enabled, "callback should be enabled");
-    assert!(entry.unwrap().callbacks.is_empty(), "no callbacks registered yet");
+    assert!(
+        entry.unwrap().callbacks.is_empty(),
+        "no callbacks registered yet"
+    );
 
     // Run simulation — should not crash
     let result = engine.run();
-    assert!(result.is_ok(), "engine should run with callbacks: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "engine should run with callbacks: {:?}",
+        result.err()
+    );
 
     eprintln!("UVN callback infrastructure test passed");
 }
@@ -18181,15 +18761,23 @@ endmodule
     let mut engine = crate::simulator::SimulationEngine::new(design, 10);
     engine.set_use_mir_jit(true);
     let result = engine.run();
-    assert!(result.is_ok(), "JIT body sim should succeed: {:?}", result.err());
-    let out_sig_idx = engine.design.top.signals.iter().position(|s| s.name.as_str() == "out").unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT body sim should succeed: {:?}",
+        result.err()
+    );
+    let out_sig_idx = engine
+        .design
+        .top
+        .signals
+        .iter()
+        .position(|s| s.name.as_str() == "out")
+        .unwrap();
     let out_val = engine.state.read_signal(out_sig_idx).to_u64();
     eprintln!("JIT combinational integration test: out = {}", out_val);
     // constant expr 10 + 20 = 30 computed at time 0 via JIT
     assert_eq!(out_val, 30, "10 + 20 should be 30 via JIT body");
 }
-
-
 
 #[test]
 fn test_jit_body_nonblocking_assign() {
@@ -18212,14 +18800,35 @@ endmodule
     let design = crate::compile_str(source).unwrap();
     let mut engine = crate::simulator::SimulationEngine::new(design, 10);
     engine.set_use_mir_jit(true);
-    let d_sig_idx = engine.design.top.signals.iter().position(|s| s.name.as_str() == "d").unwrap();
-    let q_sig_idx = engine.design.top.signals.iter().position(|s| s.name.as_str() == "q").unwrap();
+    let d_sig_idx = engine
+        .design
+        .top
+        .signals
+        .iter()
+        .position(|s| s.name.as_str() == "d")
+        .unwrap();
+    let q_sig_idx = engine
+        .design
+        .top
+        .signals
+        .iter()
+        .position(|s| s.name.as_str() == "q")
+        .unwrap();
     // Set d = 42
-    engine.state.write_signal(d_sig_idx, maria_ir::LogicVec::from_u64(42, 8));
+    engine
+        .state
+        .write_signal(d_sig_idx, maria_ir::LogicVec::from_u64(42, 8));
     // Toggle clock to trigger the always_ff: manually run edge mechanism
     let result = engine.run();
-    assert!(result.is_ok(), "JIT NBA sim should succeed: {:?}", result.err());
-    eprintln!("JIT NBA integration test passed, q = {}", engine.state.read_signal(q_sig_idx).to_u64());
+    assert!(
+        result.is_ok(),
+        "JIT NBA sim should succeed: {:?}",
+        result.err()
+    );
+    eprintln!(
+        "JIT NBA integration test passed, q = {}",
+        engine.state.read_signal(q_sig_idx).to_u64()
+    );
 }
 
 // ─── SIM-30: $coverage_control semua mode (per-type gating) ───────────────
@@ -18245,7 +18854,10 @@ endmodule
     let design = crate::compile_str(source).unwrap();
     let mut engine = crate::simulator::SimulationEngine::new(design, 4);
     engine.run().unwrap();
-    assert!(!engine.coverage_enabled, "coverage should be disabled with bitmask 0");
+    assert!(
+        !engine.coverage_enabled,
+        "coverage should be disabled with bitmask 0"
+    );
     assert!(engine.coverage_enabled_types.is_empty());
     assert_eq!(
         engine.coverage_options.get("control").map(|s| s.as_str()),
@@ -18270,8 +18882,14 @@ endmodule
     let design = crate::compile_str(source).unwrap();
     let mut engine = crate::simulator::SimulationEngine::new(design, 2);
     engine.run().unwrap();
-    assert!(engine.coverage_enabled, "coverage should be enabled with ~0");
-    assert!(engine.coverage_enabled_types.is_empty(), "empty set = semua tipe enabled");
+    assert!(
+        engine.coverage_enabled,
+        "coverage should be enabled with ~0"
+    );
+    assert!(
+        engine.coverage_enabled_types.is_empty(),
+        "empty set = semua tipe enabled"
+    );
 }
 
 #[test]
@@ -18294,7 +18912,9 @@ endmodule
     use crate::simulator::types::CoverageType;
     assert!(engine.coverage_enabled, "coverage enabled with toggle bit");
     assert!(
-        engine.coverage_enabled_types.contains(&CoverageType::Toggle),
+        engine
+            .coverage_enabled_types
+            .contains(&CoverageType::Toggle),
         "Toggle harus ter-enable: {:?}",
         engine.coverage_enabled_types
     );
@@ -18340,9 +18960,14 @@ endmodule
     let mut engine = crate::simulator::SimulationEngine::new(design, 2);
     engine.run().unwrap();
     use crate::simulator::types::CoverageType;
-    assert!(engine.coverage_enabled_types.contains(&CoverageType::Branch));
+    assert!(engine
+        .coverage_enabled_types
+        .contains(&CoverageType::Branch));
     assert!(!engine.coverage_enabled_types.contains(&CoverageType::Line));
-    assert!(engine.cover_toggle.is_empty(), "toggle coverage harus kosong");
+    assert!(
+        engine.cover_toggle.is_empty(),
+        "toggle coverage harus kosong"
+    );
 }
 
 // ─── SIM-23: Glitch detection (A→B→A dalam window) ────────────────────────
@@ -18367,9 +18992,14 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     assert!(
-        diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::SignalGlitch),
+        diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::SignalGlitch),
         "harus ada warning glitch: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -18392,7 +19022,9 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     assert!(
-        !diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::SignalGlitch),
+        !diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::SignalGlitch),
         "glitch detection default harus nonaktif (window 0)"
     );
 }
@@ -18417,9 +19049,14 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     assert!(
-        !diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::SignalGlitch),
+        !diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::SignalGlitch),
         "transisi dengan jarak > window bukan glitch: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -18449,7 +19086,13 @@ endmodule
         .count();
     assert!(glitch_count >= 1, "0→FF→0→FF harus memicu glitch");
     // Nilai akhir tetap benar
-    let y_idx = engine.design.top.signals.iter().position(|s| s.name.as_str() == "y").unwrap();
+    let y_idx = engine
+        .design
+        .top
+        .signals
+        .iter()
+        .position(|s| s.name.as_str() == "y")
+        .unwrap();
     assert_eq!(engine.state.read_signal(y_idx).to_u64(), 0xFF);
 }
 
@@ -18479,9 +19122,14 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     assert!(
-        diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
+        diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
         "harus ada warning timing violation: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
     assert!(
         diags.iter().any(|d| d.code.as_str() == "WR0303"),
@@ -18513,9 +19161,14 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     assert!(
-        diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
+        diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
         "harus ada warning timing violation (hold): {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -18543,9 +19196,14 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     assert!(
-        !diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
+        !diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
         "tidak boleh ada warning timing violation: {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -18573,9 +19231,14 @@ endmodule
     engine.run().unwrap();
     let diags = engine.flush_diagnostics();
     assert!(
-        diags.iter().any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
+        diags
+            .iter()
+            .any(|d| d.code == maria_core::diagnostics::DiagCode::TimingViolation),
         "harus ada warning timing violation (width): {:#?}",
-        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.as_ref()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -18603,7 +19266,10 @@ endmodule
     let design = crate::compile_str(source).unwrap();
     let mut engine = crate::simulator::SimulationEngine::new(design, 10);
     engine.run().unwrap();
-    assert!(engine.sim_perf.counters.time_steps >= 1, "harus ada time steps");
+    assert!(
+        engine.sim_perf.counters.time_steps >= 1,
+        "harus ada time steps"
+    );
     assert!(
         engine.sim_perf.counters.delta_cycles >= 1,
         "harus ada delta cycles"
@@ -18758,7 +19424,11 @@ endmodule
     );
     let mut engine = crate::simulator::SimulationEngine::new(design, 5);
     let (start, end) = engine.coverage_exclusions[0];
-    assert!(engine.is_line_excluded(start), "baris {} harus excluded", start);
+    assert!(
+        engine.is_line_excluded(start),
+        "baris {} harus excluded",
+        start
+    );
     assert!(engine.is_line_excluded(end), "baris {} harus excluded", end);
     if start > 1 {
         assert!(
@@ -18842,7 +19512,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 20).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "got").unwrap();
-    assert_eq!(val.to_u64(), 2, "tail setelah if ber-delay harus jalan (got=2)");
+    assert_eq!(
+        val.to_u64(),
+        2,
+        "tail setelah if ber-delay harus jalan (got=2)"
+    );
 }
 
 #[test]
@@ -18869,7 +19543,11 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 20).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "n").unwrap();
-    assert_eq!(val.to_u64(), 3, "repeat 3 iterasi harus jalan meski body ber-delay");
+    assert_eq!(
+        val.to_u64(),
+        3,
+        "repeat 3 iterasi harus jalan meski body ber-delay"
+    );
 }
 
 #[test]
@@ -18889,7 +19567,10 @@ module tb;
 endmodule
 "#;
     let result = compile_str(source);
-    assert!(result.is_err(), "compile harus gagal karena 'data_oun' typo");
+    assert!(
+        result.is_err(),
+        "compile harus gagal karena 'data_oun' typo"
+    );
     let err_msg = format!("{:?}", result.err());
     // Error harus mengandung saran "did you mean 'data_out'?"
     assert!(

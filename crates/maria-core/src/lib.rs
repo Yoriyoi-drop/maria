@@ -15,10 +15,10 @@ pub mod intern;
 pub mod logic;
 pub mod template;
 
+pub use intern::{init_string_table, Span, Symbol};
 /// Tipe nilai logika inti — dipakai langsung (`maria_core::LogicVec`) dan
 /// di-reexport oleh `maria-ir` agar `maria_ir::LogicVec` tetap valid.
 pub use logic::{LogicVal, LogicVec};
-pub use intern::{init_string_table, Span, Symbol};
 
 /// Fast content hashing (xxhash3) — dipakai cache/MICD/elaboration. Dipindah
 /// dari src/cache/checksum.rs (crate 5/6 depend pada ini); cache re-export

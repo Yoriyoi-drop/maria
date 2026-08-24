@@ -48,7 +48,13 @@ pub fn run(args: &GenArgs) -> Result<(), SimError> {
     let out_dir: Option<PathBuf> = args.output.as_ref().map(PathBuf::from);
     if let Some(d) = &out_dir {
         if !d.exists() {
-            std::fs::create_dir_all(d).map_err(|e| diag(format!("tidak bisa membuat direktori '{}': {}", d.display(), e)))?;
+            std::fs::create_dir_all(d).map_err(|e| {
+                diag(format!(
+                    "tidak bisa membuat direktori '{}': {}",
+                    d.display(),
+                    e
+                ))
+            })?;
         }
     }
 
@@ -71,7 +77,13 @@ pub fn run(args: &GenArgs) -> Result<(), SimError> {
     } else {
         mv::transpile_many(&items)
     }
-    .map_err(|(i, e)| diag(mv::format_error(&files[i].display().to_string(), &items[i].0, &e)))?;
+    .map_err(|(i, e)| {
+        diag(mv::format_error(
+            &files[i].display().to_string(),
+            &items[i].0,
+            &e,
+        ))
+    })?;
     // Defensif: hasil batch harus sejajar dengan input (jangan zip-truncate).
     assert_eq!(
         results.len(),
@@ -152,7 +164,9 @@ pub fn run(args: &GenArgs) -> Result<(), SimError> {
     }
 
     if args.check && changed_any {
-        return Err(diag("mgen --check: ada file .mv yang belum di-generate — jalankan `maria mgen <file.mv>`"));
+        return Err(diag(
+            "mgen --check: ada file .mv yang belum di-generate — jalankan `maria mgen <file.mv>`",
+        ));
     }
     if !args.stdout && !args.check && !args.verbose {
         println!("mgen: {} file .mv diproses", files.len());
@@ -184,11 +198,7 @@ fn collect_dir(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), SimError> {
         let path = entry.map_err(|e| diag(e.to_string()))?.path();
         if path.is_dir() {
             collect_dir(&path, out)?;
-        } else if path
-            .extension()
-            .map(|e| e == "mv")
-            .unwrap_or(false)
-        {
+        } else if path.extension().map(|e| e == "mv").unwrap_or(false) {
             out.push(path);
         }
     }
@@ -204,7 +214,9 @@ fn target_path(out_dir: &Option<PathBuf>, input: &Path, base: &str, ext: &str) -
 }
 
 fn file_matches(path: &Path, content: &str) -> bool {
-    std::fs::read_to_string(path).map(|s| s == content).unwrap_or(false)
+    std::fs::read_to_string(path)
+        .map(|s| s == content)
+        .unwrap_or(false)
 }
 
 /// Tulis hanya bila konten berubah (deterministik + tidak sentuh mtime bila sama).

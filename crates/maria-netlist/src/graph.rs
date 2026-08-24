@@ -58,9 +58,16 @@ pub fn verify_dag(nl: &Netlist) -> DagCheck {
     // 2. Net internal tanpa driver & tanpa konstanta (mengambang).
     for (id, net) in nl.nets.iter().enumerate() {
         let is_port = nl.ports.iter().any(|p| p.name == net.name);
-        if net.driver.is_none() && net.const_value.is_none() && !is_port && !net.is_clock && !net.is_reset {
+        if net.driver.is_none()
+            && net.const_value.is_none()
+            && !is_port
+            && !net.is_clock
+            && !net.is_reset
+        {
             check.ok = false;
-            check.floating.push(format!("{} (net {})", net.name.as_str(), id));
+            check
+                .floating
+                .push(format!("{} (net {})", net.name.as_str(), id));
         }
     }
 
@@ -109,7 +116,9 @@ pub fn verify_dag(nl: &Netlist) -> DagCheck {
         }
         if l != level[cid] {
             check.ok = false;
-            check.cycles.push(format!("{} (sel {})", c.name.as_str(), cid));
+            check
+                .cycles
+                .push(format!("{} (sel {})", c.name.as_str(), cid));
         }
     }
 
@@ -176,8 +185,8 @@ pub fn stats(nl: &Netlist) -> NetlistStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maria_core::intern::Symbol;
     use crate::cell::{CellInstance, CellKind, PinConn};
+    use maria_core::intern::Symbol;
 
     fn two_gates() -> Netlist {
         // y = ~(a & b): AND lalu NOT — DAG 2 level.
@@ -187,11 +196,34 @@ mod tests {
         let t = nl.add_net(Symbol::intern("t"), 1);
         let y = nl.add_net(Symbol::intern("y"), 1);
         let mut and = CellInstance::new(Symbol::intern("u0"), CellKind::And, 1);
-        and.inputs = vec![PinConn { net: a, pin: "a".into(), bit: None }, PinConn { net: b, pin: "b".into(), bit: None }];
-        and.outputs = vec![PinConn { net: t, pin: "y".into(), bit: None }];
+        and.inputs = vec![
+            PinConn {
+                net: a,
+                pin: "a".into(),
+                bit: None,
+            },
+            PinConn {
+                net: b,
+                pin: "b".into(),
+                bit: None,
+            },
+        ];
+        and.outputs = vec![PinConn {
+            net: t,
+            pin: "y".into(),
+            bit: None,
+        }];
         let mut not = CellInstance::new(Symbol::intern("u1"), CellKind::Not, 1);
-        not.inputs = vec![PinConn { net: t, pin: "a".into(), bit: None }];
-        not.outputs = vec![PinConn { net: y, pin: "y".into(), bit: None }];
+        not.inputs = vec![PinConn {
+            net: t,
+            pin: "a".into(),
+            bit: None,
+        }];
+        not.outputs = vec![PinConn {
+            net: y,
+            pin: "y".into(),
+            bit: None,
+        }];
         nl.add_cell(and);
         nl.add_cell(not);
         nl.add_port(Symbol::intern("a"), crate::net::PortDir::Input, 1);

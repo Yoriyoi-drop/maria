@@ -43,7 +43,16 @@ fn rd_u32(d: &[u8], off: usize) -> u32 {
 }
 
 fn rd_u64(d: &[u8], off: usize) -> u64 {
-    u64::from_le_bytes([d[off], d[off + 1], d[off + 2], d[off + 3], d[off + 4], d[off + 5], d[off + 6], d[off + 7]])
+    u64::from_le_bytes([
+        d[off],
+        d[off + 1],
+        d[off + 2],
+        d[off + 3],
+        d[off + 4],
+        d[off + 5],
+        d[off + 6],
+        d[off + 7],
+    ])
 }
 
 fn err(msg: impl Into<String>) -> String {
@@ -61,7 +70,10 @@ pub fn parse_elf(data: &[u8]) -> Result<(ElfHeader, Vec<Phdr>), String> {
     let class = data[4];
     let data_enc = data[5];
     if data_enc != ELFDATA2LSB {
-        return Err(err(format!("ELF big-endian tidak didukung (data encoding {})", data_enc)));
+        return Err(err(format!(
+            "ELF big-endian tidak didukung (data encoding {})",
+            data_enc
+        )));
     }
     let machine = rd_u16(data, 18);
     let (entry, phoff, phentsize, phnum) = match class {
@@ -69,17 +81,34 @@ pub fn parse_elf(data: &[u8]) -> Result<(ElfHeader, Vec<Phdr>), String> {
             if data.len() < 64 {
                 return Err(err("ELF64: header kepotong"));
             }
-            (rd_u64(data, 24), rd_u64(data, 32), rd_u16(data, 54), rd_u16(data, 56))
+            (
+                rd_u64(data, 24),
+                rd_u64(data, 32),
+                rd_u16(data, 54),
+                rd_u16(data, 56),
+            )
         }
         ELFCLASS32 => {
             if data.len() < 52 {
                 return Err(err("ELF32: header kepotong"));
             }
-            (rd_u32(data, 24) as u64, rd_u32(data, 28) as u64, rd_u16(data, 42), rd_u16(data, 44))
+            (
+                rd_u32(data, 24) as u64,
+                rd_u32(data, 28) as u64,
+                rd_u16(data, 42),
+                rd_u16(data, 44),
+            )
         }
         _ => return Err(err(format!("class ELF tidak dikenal ({})", class))),
     };
-    let header = ElfHeader { class, machine, entry, phoff, phentsize, phnum };
+    let header = ElfHeader {
+        class,
+        machine,
+        entry,
+        phoff,
+        phentsize,
+        phnum,
+    };
 
     let mut phdrs = Vec::new();
     for i in 0..phnum as usize {
@@ -182,7 +211,17 @@ mod tests {
 
     fn map() -> MemoryMap {
         let mut m = MemoryMap::new();
-        m.add(RamRegion::new(Symbol::intern("ram"), 0x8000_0000, 0x1_0000, RegionKind::Ram, false).unwrap()).unwrap();
+        m.add(
+            RamRegion::new(
+                Symbol::intern("ram"),
+                0x8000_0000,
+                0x1_0000,
+                RegionKind::Ram,
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         m
     }
 
@@ -198,7 +237,7 @@ mod tests {
         d[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff
         d[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
         d[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
-        // PT_LOAD
+                                                        // PT_LOAD
         let po = 64usize;
         d[po..po + 4].copy_from_slice(&PT_LOAD.to_le_bytes());
         d[po + 8..po + 16].copy_from_slice(&(64u64 + 56).to_le_bytes()); // p_offset (setelah header)

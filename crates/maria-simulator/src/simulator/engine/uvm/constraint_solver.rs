@@ -1,13 +1,13 @@
-use maria_ast::expr::{BinaryOp, DistItem, Expr, UnaryOp, Value};
-use maria_ast::types::ConstraintItem;
-use maria_ast::types::is_signed_type;
-use maria_core::diagnostics::DiagCode;
-use maria_core::error::SimError;
-use maria_ir::*;
 use crate::simulator::engine::SimulationEngine;
 use crate::simulator::util::map_ast_binary_op;
 use crate::simulator::value::{eval_binary, eval_binary_signed};
+use maria_ast::expr::{BinaryOp, DistItem, Expr, UnaryOp, Value};
+use maria_ast::types::is_signed_type;
+use maria_ast::types::ConstraintItem;
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
 use maria_core::Symbol;
+use maria_ir::*;
 use std::collections::{HashMap, HashSet};
 
 /// Result from a constraint solve attempt
@@ -90,7 +90,9 @@ impl VarDomain {
                 .map(|r| interval_count(r.lo, r.hi, width))
                 .sum();
             if total_values < u64::MAX && total_values > 0 {
-                *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                *seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let pick = *seed % total_values;
                 let mut prev_accum = 0u64;
                 for range in &self.inside {
@@ -98,7 +100,10 @@ impl VarDomain {
                     let accum = prev_accum + range_width;
                     if pick < accum {
                         let offset = pick - prev_accum;
-                        return LogicVec::from_u64(interval_value(range.lo, range.hi, width, offset), width);
+                        return LogicVec::from_u64(
+                            interval_value(range.lo, range.hi, width, offset),
+                            width,
+                        );
                     }
                     prev_accum = accum;
                 }
@@ -111,12 +116,16 @@ impl VarDomain {
         let hi = self.max.unwrap_or(max_allowed).min(max_allowed);
         let total = interval_count(lo, hi, width);
         if total > 0 && total < u64::MAX {
-            *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let val = interval_value(lo, hi, width, *seed % total);
 
             // Ensure exclusion
             if self.exclude.contains(&val) && total > self.exclude.len() as u64 {
-                *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                *seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let val2 = interval_value(lo, hi, width, *seed % total);
                 if !self.exclude.contains(&val2) {
                     return LogicVec::from_u64(val2, width);
@@ -126,7 +135,9 @@ impl VarDomain {
         }
 
         // Fall back to full range
-        *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         LogicVec::from_u64(*seed >> (64 - width.min(32)), width)
     }
 }
@@ -137,7 +148,10 @@ impl SimulationEngine {
     /// HANYA cabang yang terpenuhi; `solve-before` dilewati (urutan sudah
     /// diekstrak). Dipakai solver + rejection fallback — hasil `false` bila ada
     /// item yang tidak terpenuhi.
-    pub(crate) fn eval_constraint_body(&mut self, items: &[ConstraintItem]) -> Result<bool, SimError> {
+    pub(crate) fn eval_constraint_body(
+        &mut self,
+        items: &[ConstraintItem],
+    ) -> Result<bool, SimError> {
         for item in items {
             match item {
                 ConstraintItem::Expr(e) => {
@@ -170,12 +184,20 @@ impl SimulationEngine {
     /// sebagai Boolean. `tolerate=true` (LANG-31 soft): kegagalan dikembalikan
     /// sebagai `true` — pelanggaran soft ditoleransi; hard (`tolerate=false`)
     /// tetap wajib terpenuhi.
-    pub(crate) fn eval_constraint_expr(&mut self, e: &Expr, tolerate: bool) -> Result<bool, SimError> {
+    pub(crate) fn eval_constraint_expr(
+        &mut self,
+        e: &Expr,
+        tolerate: bool,
+    ) -> Result<bool, SimError> {
         // `x dist {...}` SEBAGAI CONSTRAINT = membership: nilai `x` harus
         // berada di himpunan distribusi (nilai & range), BUKAN mengambil nilai
         // acak dari distribusi (IrExpr::Dist dipakai saat dist menjadi RHS
         // assignment).
-        if let Expr::Dist { expr: inner, items: dis } = e {
+        if let Expr::Dist {
+            expr: inner,
+            items: dis,
+        } = e
+        {
             let val = self.evaluate_ast_expr(inner)?;
             let mut ok = false;
             for di in dis {
@@ -183,9 +205,7 @@ impl SimulationEngine {
                     DistItem::Value(v, _) => {
                         let vv = self.evaluate_ast_expr(v)?;
                         let w = val.width.max(vv.width);
-                        if val.resize(w).case_eq(&vv.resize(w))
-                            == LogicVec::from_u64(1, 1)
-                        {
+                        if val.resize(w).case_eq(&vv.resize(w)) == LogicVec::from_u64(1, 1) {
                             ok = true;
                             break;
                         }
@@ -255,11 +275,21 @@ impl SimulationEngine {
         // (rentang [-5:5] = bits [0xFFFFFFFB, 5] wrap — urutan u64 min/max
         // salah utk signed: min(0xFFFFFFFB, 5) = 5). Nilai tunggal = bit
         // equality (sama utk signed/unsigned).
-        if let Expr::Inside { expr: inner, range_list } = e {
+        if let Expr::Inside {
+            expr: inner,
+            range_list,
+        } = e
+        {
             let val = self.evaluate_ast_expr(inner)?;
             let val_signed = self.constraint_expr_signed(inner)?;
             for item in range_list {
-                if let Expr::RangeSelect { expr: base, msb, lsb, .. } = item {
+                if let Expr::RangeSelect {
+                    expr: base,
+                    msb,
+                    lsb,
+                    ..
+                } = item
+                {
                     if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) {
                         let a = self.evaluate_ast_expr(msb)?;
                         let b = self.evaluate_ast_expr(lsb)?;
@@ -287,9 +317,7 @@ impl SimulationEngine {
                 }
                 let item_val = self.evaluate_ast_expr(item)?;
                 let w = val.width.max(item_val.width);
-                if val.resize(w).case_eq(&item_val.resize(w))
-                    == LogicVec::from_u64(1, 1)
-                {
+                if val.resize(w).case_eq(&item_val.resize(w)) == LogicVec::from_u64(1, 1) {
                     return Ok(true);
                 }
             }
@@ -349,11 +377,16 @@ impl SimulationEngine {
         class_name: &str,
         inline_constraint: Option<InlineConstraint<'_>>,
     ) -> Result<SolveResult, SimError> {
-        let class_def = self.design.classes.get(&Symbol::intern(class_name))
-            .ok_or_else(|| SimError::with_diag(
-                DiagCode::NullHandle,
-                format!("class '{}' not found", class_name),
-            ))?
+        let class_def = self
+            .design
+            .classes
+            .get(&Symbol::intern(class_name))
+            .ok_or_else(|| {
+                SimError::with_diag(
+                    DiagCode::NullHandle,
+                    format!("class '{}' not found", class_name),
+                )
+            })?
             .clone();
 
         if class_def.rand_fields.is_empty() {
@@ -378,7 +411,13 @@ impl SimulationEngine {
         let mut field_sigs: HashMap<Symbol, FieldSig> = HashMap::new();
         for f in &class_def.fields {
             let signed = f.dtype.as_ref().map(|d| is_signed_type(d)).unwrap_or(false);
-            field_sigs.insert(f.name, FieldSig { signed, width: f.width });
+            field_sigs.insert(
+                f.name,
+                FieldSig {
+                    signed,
+                    width: f.width,
+                },
+            );
         }
 
         // Analyze class constraints: ekstrak domain HANYA dari item ekspresi
@@ -482,9 +521,7 @@ fn extract_before_order(class_def: &IrClassDef) -> HashMap<Symbol, HashSet<Symbo
                 if vars.len() >= 2 {
                     let first = &vars[0];
                     for later in &vars[1..] {
-                        before_map.entry(*first)
-                            .or_default()
-                            .insert(*later);
+                        before_map.entry(*first).or_default().insert(*later);
                     }
                 }
             }
@@ -494,7 +531,10 @@ fn extract_before_order(class_def: &IrClassDef) -> HashMap<Symbol, HashSet<Symbo
 }
 
 /// Order rand fields: solve-before fields come first, then remaining
-fn order_fields(rand_fields: &[Symbol], before_map: &HashMap<Symbol, HashSet<Symbol>>) -> Vec<Symbol> {
+fn order_fields(
+    rand_fields: &[Symbol],
+    before_map: &HashMap<Symbol, HashSet<Symbol>>,
+) -> Vec<Symbol> {
     let mut ordered = Vec::new();
     let mut remaining: HashSet<Symbol> = rand_fields.iter().cloned().collect();
 
@@ -524,7 +564,11 @@ fn analyze_constraint_for_domains(
 ) -> bool {
     match expr {
         // Equality: var == value
-        Expr::BinaryOp { op: BinaryOp::Eq, lhs, rhs } => {
+        Expr::BinaryOp {
+            op: BinaryOp::Eq,
+            lhs,
+            rhs,
+        } => {
             let var_name = if let Expr::Ident { name, .. } = lhs.as_ref() {
                 *name
             } else if let Expr::Ident { name, .. } = rhs.as_ref() {
@@ -554,12 +598,21 @@ fn analyze_constraint_for_domains(
         }
 
         // In-equality: var < value, var <= value, var > value, var >= value
-        Expr::BinaryOp { op, lhs, rhs } if matches!(*op, BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge) => {
+        Expr::BinaryOp { op, lhs, rhs }
+            if matches!(
+                *op,
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+            ) =>
+        {
             let is_left_var = matches!(lhs.as_ref(), Expr::Ident { .. });
             let is_right_var = matches!(rhs.as_ref(), Expr::Ident { .. });
 
             if is_left_var && !is_right_var {
-                let var_name = if let Expr::Ident { name, .. } = lhs.as_ref() { *name } else { return false; };
+                let var_name = if let Expr::Ident { name, .. } = lhs.as_ref() {
+                    *name
+                } else {
+                    return false;
+                };
 
                 if let Some(domain) = domains.get_mut(&var_name) {
                     // ROUND 36: field SIGNED → narrow domain di rentang dua
@@ -610,19 +663,23 @@ fn analyze_constraint_for_domains(
                         }
                     }
                     let val = try_extract_u64(rhs);
-                    if val.is_none() { return false; }
+                    if val.is_none() {
+                        return false;
+                    }
                     let val = val.unwrap();
                     match op {
                         BinaryOp::Lt => {
                             let new_max = val.saturating_sub(1);
-                            domain.max = Some(domain.max.map(|m| m.min(new_max)).unwrap_or(new_max));
+                            domain.max =
+                                Some(domain.max.map(|m| m.min(new_max)).unwrap_or(new_max));
                         }
                         BinaryOp::Le => {
                             domain.max = Some(domain.max.map(|m| m.min(val)).unwrap_or(val));
                         }
                         BinaryOp::Gt => {
                             let new_min = val.saturating_add(1);
-                            domain.min = Some(domain.min.map(|m| m.max(new_min)).unwrap_or(new_min));
+                            domain.min =
+                                Some(domain.min.map(|m| m.max(new_min)).unwrap_or(new_min));
                         }
                         BinaryOp::Ge => {
                             domain.min = Some(domain.min.map(|m| m.max(val)).unwrap_or(val));
@@ -632,7 +689,11 @@ fn analyze_constraint_for_domains(
                 }
                 true
             } else if !is_left_var && is_right_var {
-                let var_name = if let Expr::Ident { name, .. } = rhs.as_ref() { *name } else { return false; };
+                let var_name = if let Expr::Ident { name, .. } = rhs.as_ref() {
+                    *name
+                } else {
+                    return false;
+                };
 
                 if let Some(domain) = domains.get_mut(&var_name) {
                     if let Some(sig) = fields.get(&var_name).copied() {
@@ -681,13 +742,16 @@ fn analyze_constraint_for_domains(
                         }
                     }
                     let val = try_extract_u64(lhs);
-                    if val.is_none() { return false; }
+                    if val.is_none() {
+                        return false;
+                    }
                     let val = val.unwrap();
                     match op {
                         BinaryOp::Lt => {
                             // var > val
                             let new_min = val.saturating_add(1);
-                            domain.min = Some(domain.min.map(|m| m.max(new_min)).unwrap_or(new_min));
+                            domain.min =
+                                Some(domain.min.map(|m| m.max(new_min)).unwrap_or(new_min));
                         }
                         BinaryOp::Le => {
                             // var >= val
@@ -696,7 +760,8 @@ fn analyze_constraint_for_domains(
                         BinaryOp::Gt => {
                             // var < val
                             let new_max = val.saturating_sub(1);
-                            domain.max = Some(domain.max.map(|m| m.min(new_max)).unwrap_or(new_max));
+                            domain.max =
+                                Some(domain.max.map(|m| m.min(new_max)).unwrap_or(new_max));
                         }
                         BinaryOp::Ge => {
                             // var <= val
@@ -737,8 +802,12 @@ fn analyze_constraint_for_domains(
                                     // → u64 biasa.
                                     let (l, h) = match sig {
                                         Some(s) if s.signed => {
-                                            let (la, lb) = (sign_extend(a, s.width), sign_extend(b, s.width));
-                                            (masked_bits(la.min(lb), s.width), masked_bits(la.max(lb), s.width))
+                                            let (la, lb) =
+                                                (sign_extend(a, s.width), sign_extend(b, s.width));
+                                            (
+                                                masked_bits(la.min(lb), s.width),
+                                                masked_bits(la.max(lb), s.width),
+                                            )
                                         }
                                         _ => (a.min(b), a.max(b)),
                                     };
@@ -802,8 +871,14 @@ fn analyze_constraint_for_domains(
                                     // [0xFFFFFFFB, 5]); unsigned → u64 biasa.
                                     let (lo, hi) = match sig {
                                         Some(s) if s.signed => {
-                                            let (la, lb) = (sign_extend(lo, s.width), sign_extend(hi, s.width));
-                                            (masked_bits(la.min(lb), s.width), masked_bits(la.max(lb), s.width))
+                                            let (la, lb) = (
+                                                sign_extend(lo, s.width),
+                                                sign_extend(hi, s.width),
+                                            );
+                                            (
+                                                masked_bits(la.min(lb), s.width),
+                                                masked_bits(la.max(lb), s.width),
+                                            )
                                         }
                                         _ => (lo.min(hi), lo.max(hi)),
                                     };
@@ -825,9 +900,12 @@ fn analyze_constraint_for_domains(
                             // msb/lsb sebagai rentang. Base selain 0 = member
                             // select asli (`inside {x[7:0]}`) → jangan
                             // diperlakukan sebagai rentang.
-                            Expr::RangeSelect { expr: base, msb, lsb, .. }
-                                if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) =>
-                            {
+                            Expr::RangeSelect {
+                                expr: base,
+                                msb,
+                                lsb,
+                                ..
+                            } if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) => {
                                 if let (Some(a), Some(b)) =
                                     (extract_bits(msb, sig), extract_bits(lsb, sig))
                                 {
@@ -840,8 +918,10 @@ fn analyze_constraint_for_domains(
                                     let (lo, hi) = match sig {
                                         Some(s) if s.signed => {
                                             let (l, h) = (
-                                                sign_extend(a, s.width).min(sign_extend(b, s.width)),
-                                                sign_extend(a, s.width).max(sign_extend(b, s.width)),
+                                                sign_extend(a, s.width)
+                                                    .min(sign_extend(b, s.width)),
+                                                sign_extend(a, s.width)
+                                                    .max(sign_extend(b, s.width)),
                                             );
                                             (masked_bits(l, s.width), masked_bits(h, s.width))
                                         }
@@ -863,7 +943,11 @@ fn analyze_constraint_for_domains(
         }
 
         // Not-equal: var != value
-        Expr::BinaryOp { op: BinaryOp::Neq, lhs, rhs } => {
+        Expr::BinaryOp {
+            op: BinaryOp::Neq,
+            lhs,
+            rhs,
+        } => {
             let var_name = if let Expr::Ident { name, .. } = lhs.as_ref() {
                 *name
             } else if let Expr::Ident { name, .. } = rhs.as_ref() {
@@ -1011,15 +1095,21 @@ fn try_extract_u64(expr: &Expr) -> Option<u64> {
         // yang TIDAK bisa di-parse sebagai desimal (`parse::<u64>()` gagal)
         // → domain `u > 8'hF0` kosong → rejection sampling 32-bit praktis
         // mustahil di combined constraints.
-        Expr::Value(Value::Hex { bits, width: _, is_signed: _ }) => {
-            u64::from_str_radix(bits, 16).ok()
-        }
-        Expr::Value(Value::Binary { bits, width: _, is_signed: _ }) => {
-            u64::from_str_radix(bits, 2).ok()
-        }
-        Expr::Value(Value::Octal { bits, width: _, is_signed: _ }) => {
-            u64::from_str_radix(bits, 8).ok()
-        }
+        Expr::Value(Value::Hex {
+            bits,
+            width: _,
+            is_signed: _,
+        }) => u64::from_str_radix(bits, 16).ok(),
+        Expr::Value(Value::Binary {
+            bits,
+            width: _,
+            is_signed: _,
+        }) => u64::from_str_radix(bits, 2).ok(),
+        Expr::Value(Value::Octal {
+            bits,
+            width: _,
+            is_signed: _,
+        }) => u64::from_str_radix(bits, 8).ok(),
         _ => None,
     }
 }

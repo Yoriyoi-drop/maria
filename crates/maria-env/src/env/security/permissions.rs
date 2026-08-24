@@ -9,7 +9,9 @@ pub struct PermissionSet {
 
 impl PermissionSet {
     pub fn new() -> Self {
-        PermissionSet { allowed: HashSet::new() }
+        PermissionSet {
+            allowed: HashSet::new(),
+        }
     }
 
     pub fn allow(&mut self, name: impl Into<String>) {

@@ -5,10 +5,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
     use crate::bmc::{collect_assertions, collect_combinational_assignments};
-    use maria_ir::*;
+    use crate::*;
     use maria_core::Symbol;
+    use maria_ir::*;
     use std::collections::HashMap;
 
     // ── Helper: create a minimal FormalEngine for testing ──
@@ -57,7 +57,11 @@ mod tests {
         let mul_z3 = engine.expr_to_z3_int(&mul).unwrap();
         let fourteen = z3::ast::BV::from_u64(14, 8);
         solver.assert(&mul_z3.eq(&fourteen));
-        assert_eq!(solver.check(), z3::SatResult::Sat, "(10 - 3) * 2 should equal 14");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Sat,
+            "(10 - 3) * 2 should equal 14"
+        );
     }
 
     #[test]
@@ -88,7 +92,11 @@ mod tests {
 
         let eq_bool = engine.expr_to_z3_bool(&eq).unwrap();
         solver.assert(&eq_bool);
-        assert_eq!(solver.check(), z3::SatResult::Sat, "5 == 5 should be satisfiable (true)");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Sat,
+            "5 == 5 should be satisfiable (true)"
+        );
     }
 
     #[test]
@@ -104,7 +112,11 @@ mod tests {
         let lt_bool = engine.expr_to_z3_bool(&lt).unwrap();
         // Assert NOT(3 < 5) and verify UNSAT
         solver.assert(&lt_bool.not());
-        assert_eq!(solver.check(), z3::SatResult::Unsat, "NOT(3 < 5) should be unsat");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Unsat,
+            "NOT(3 < 5) should be unsat"
+        );
     }
 
     #[test]
@@ -181,7 +193,10 @@ mod tests {
 
         let result = collect_assertions(&processes);
         assert_eq!(result.len(), 1, "Should find 1 assertion");
-        assert_eq!(result[0].0, "test_proc", "Assertion should be from test_proc");
+        assert_eq!(
+            result[0].0, "test_proc",
+            "Assertion should be from test_proc"
+        );
     }
 
     #[test]
@@ -306,7 +321,11 @@ mod tests {
         let result = collect_combinational_assignments(&processes);
         // Should only have 1 assignment for signal 0 (first one)
         let sig_ids: Vec<usize> = result[0].iter().map(|(id, _)| *id).collect();
-        assert_eq!(sig_ids.len(), 1, "Should only collect first assignment per signal");
+        assert_eq!(
+            sig_ids.len(),
+            1,
+            "Should only collect first assignment per signal"
+        );
     }
 
     // ── BMC Smoke Tests ──
@@ -450,8 +469,11 @@ mod tests {
         let results = engine.check_assertions_bmc(&design);
         assert_eq!(results.len(), 1, "Should have 1 BMC result");
         // assert(0) is always false → negation is always true → SAT → Counterexample
-        assert!(matches!(results[0].1, FormalResult::Counterexample(_)),
-            "assert(0) should give Counterexample, got {:?}", results[0].1);
+        assert!(
+            matches!(results[0].1, FormalResult::Counterexample(_)),
+            "assert(0) should give Counterexample, got {:?}",
+            results[0].1
+        );
     }
 
     // ── Expression Translation Edge Cases ──
@@ -485,7 +507,11 @@ mod tests {
         let or_bool = engine.expr_to_z3_bool(&or_expr).unwrap();
         solver.assert(&or_bool);
         // false || false = false, so asserting it should be UNSAT
-        assert_eq!(solver.check(), z3::SatResult::Unsat, "false || false should be false (unsat)");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Unsat,
+            "false || false should be false (unsat)"
+        );
     }
 
     #[test]
@@ -500,7 +526,11 @@ mod tests {
 
         let and_bool = engine.expr_to_z3_bool(&and_expr).unwrap();
         solver.assert(&and_bool.not());
-        assert_eq!(solver.check(), z3::SatResult::Unsat, "NOT(true && true) should be unsat");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Unsat,
+            "NOT(true && true) should be unsat"
+        );
     }
 
     #[test]
@@ -579,8 +609,12 @@ mod tests {
         assert_eq!(results.len(), 1);
         // Trivially true assertion should get InductiveProof with induction enabled
         assert!(
-            matches!(results[0].1, FormalResult::InductiveProof | FormalResult::Pass),
-            "assert(1) with induction should prove: got {:?}", results[0].1
+            matches!(
+                results[0].1,
+                FormalResult::InductiveProof | FormalResult::Pass
+            ),
+            "assert(1) with induction should prove: got {:?}",
+            results[0].1
         );
     }
 
@@ -613,14 +647,12 @@ mod tests {
         let design = IrDesign {
             top: IrModule {
                 name: Symbol::from("test"),
-                signals: vec![
-                    SignalInfo {
-                        name: Symbol::from("sig"),
-                        width: 8,
-                        init_val: LogicVec::from_u64(5, 8),
-                        ..Default::default()
-                    },
-                ],
+                signals: vec![SignalInfo {
+                    name: Symbol::from("sig"),
+                    width: 8,
+                    init_val: LogicVec::from_u64(5, 8),
+                    ..Default::default()
+                }],
                 inputs: vec![0],
                 outputs: vec![],
                 inouts: vec![],
@@ -652,8 +684,12 @@ mod tests {
         assert!(!results.is_empty(), "Should have BMC result");
         // sig[0] == 5 is an invariant — should be provable by induction
         assert!(
-            matches!(results[0].1, FormalResult::InductiveProof | FormalResult::Pass),
-            "Signal invariant should prove: got {:?}", results[0].1
+            matches!(
+                results[0].1,
+                FormalResult::InductiveProof | FormalResult::Pass
+            ),
+            "Signal invariant should prove: got {:?}",
+            results[0].1
         );
     }
 
@@ -663,39 +699,55 @@ mod tests {
         // Then assert b = 1 (should be sat).
         let mut engine = test_engine();
         let solver = engine.solver.as_ref().unwrap();
-        
+
         let a = z3::ast::BV::new_const("a", 8);
         let b = z3::ast::BV::new_const("b", 8);
         let zero = z3::ast::BV::from_u64(0, 8);
         let one = z3::ast::BV::from_u64(1, 8);
-        
-        solver.assert(&a.eq(&zero));          // a == 0
+
+        solver.assert(&a.eq(&zero)); // a == 0
         solver.assert(&b.eq(&a.bvadd(&one))); // b == a + 1
-        
+
         // Check: b == 1?
         solver.push();
         solver.assert(&b.eq(&one));
-        assert_eq!(solver.check(), z3::SatResult::Sat, "a=0, b=a+1 → b=1 should be SAT");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Sat,
+            "a=0, b=a+1 → b=1 should be SAT"
+        );
         solver.pop(1);
-        
+
         // Check: b < 0? (should be unsat)
         solver.push();
         solver.assert(&b.bvslt(&zero));
-        assert_eq!(solver.check(), z3::SatResult::Unsat, "a=0, b=a+1 → b<0 should be UNSAT");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Unsat,
+            "a=0, b=a+1 → b<0 should be UNSAT"
+        );
         solver.pop(1);
-        
+
         // Check: b > 2? (should be unsat)
         solver.push();
         let two = z3::ast::BV::from_u64(2, 8);
         solver.assert(&b.bvsgt(&two));
-        assert_eq!(solver.check(), z3::SatResult::Unsat, "a=0, b=a+1 → b>2 should be UNSAT");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Unsat,
+            "a=0, b=a+1 → b>2 should be UNSAT"
+        );
         solver.pop(1);
-        
+
         // Check: b == 1 is forced
         solver.push();
         let one_bv = z3::ast::BV::from_u64(1, 8);
         solver.assert(&b.ne(&one_bv));
-        assert_eq!(solver.check(), z3::SatResult::Unsat, "a=0, b=a+1 ¬(b=1) should be UNSAT");
+        assert_eq!(
+            solver.check(),
+            z3::SatResult::Unsat,
+            "a=0, b=a+1 ¬(b=1) should be UNSAT"
+        );
         solver.pop(1);
     }
 
@@ -731,14 +783,12 @@ mod tests {
         let design = IrDesign {
             top: IrModule {
                 name: Symbol::from("test"),
-                signals: vec![
-                    SignalInfo {
-                        name: Symbol::from("counter"),
-                        width: 8,
-                        init_val: LogicVec::from_u64(0, 8),
-                        ..Default::default()
-                    },
-                ],
+                signals: vec![SignalInfo {
+                    name: Symbol::from("counter"),
+                    width: 8,
+                    init_val: LogicVec::from_u64(0, 8),
+                    ..Default::default()
+                }],
                 inputs: vec![0],
                 outputs: vec![],
                 inouts: vec![],
@@ -770,7 +820,8 @@ mod tests {
         assert!(!results.is_empty(), "Should have BMC result");
         assert!(
             matches!(results[0].1, FormalResult::Counterexample(d) if d == 0),
-            "counter < 0 should fail at depth 0: got {:?}", results[0].1
+            "counter < 0 should fail at depth 0: got {:?}",
+            results[0].1
         );
     }
 
@@ -809,14 +860,12 @@ mod tests {
         let design = IrDesign {
             top: IrModule {
                 name: Symbol::from("test"),
-                signals: vec![
-                    SignalInfo {
-                        name: Symbol::from("counter"),
-                        width: 8,
-                        init_val: LogicVec::from_u64(0, 8),
-                        ..Default::default()
-                    },
-                ],
+                signals: vec![SignalInfo {
+                    name: Symbol::from("counter"),
+                    width: 8,
+                    init_val: LogicVec::from_u64(0, 8),
+                    ..Default::default()
+                }],
                 inputs: vec![0],
                 outputs: vec![],
                 inouts: vec![],
@@ -849,7 +898,8 @@ mod tests {
         // counter = 0→1→2→3, so at depth 3: 3 < 3 is false → Counterexample(3)
         assert!(
             matches!(results[0].1, FormalResult::Counterexample(d) if d == 3),
-            "counter < 3 should fail at depth 3: got {:?}", results[0].1
+            "counter < 3 should fail at depth 3: got {:?}",
+            results[0].1
         );
     }
 }

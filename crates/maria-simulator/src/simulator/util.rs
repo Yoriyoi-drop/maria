@@ -1,8 +1,8 @@
+use crate::simulator::engine::SimulationEngine;
 use maria_ast::*;
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
 use maria_ir::*;
-use crate::simulator::engine::SimulationEngine;
 use std::fmt::Write as _;
 
 pub fn map_ast_binary_op(op: &BinaryOp) -> Result<BinaryIrOp, String> {
@@ -321,171 +321,174 @@ impl SimulationEngine {
     ) -> String {
         let mut value_args = value_args;
         let mut result = String::with_capacity(fmt_str.len() + 8 * 16);
-    let mut chars = fmt_str.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let mut zero_fill = false;
-            let mut width = 0usize;
-            if let Some(&next) = chars.peek() {
-                if next == '0' {
-                    zero_fill = true;
-                    chars.next();
-                }
-                while let Some(&next) = chars.peek() {
-                    if next.is_ascii_digit() {
-                        width = width * 10 + next.to_digit(10).unwrap() as usize;
+        let mut chars = fmt_str.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '%' {
+                let mut zero_fill = false;
+                let mut width = 0usize;
+                if let Some(&next) = chars.peek() {
+                    if next == '0' {
+                        zero_fill = true;
                         chars.next();
-                    } else {
-                        break;
                     }
-                }
-            }
-            match chars.next() {
-                Some('d') => {
-                    if let Some((val, is_signed)) = value_args.next() {
-                        if is_signed && val.width <= 64 {
-                            // Signed: cetak dua-complement sebagai negatif
-                            // (mis. int -5 = 0xFFFFFFFB → "-5").
-                            let n = val.to_i64();
-                            let ndigits = i64_digits(n);
-                            if width > ndigits {
-                                let pad = if zero_fill { '0' } else { ' ' };
-                                for _ in 0..(width - ndigits) {
-                                    result.push(pad);
-                                }
-                            }
-                            let _ = write!(result, "{}", n);
+                    while let Some(&next) = chars.peek() {
+                        if next.is_ascii_digit() {
+                            width = width * 10 + next.to_digit(10).unwrap() as usize;
+                            chars.next();
                         } else {
-                            let n = val.to_u64();
-                            let ndigits = u64_digits(n);
-                            if width > ndigits {
-                                let pad = if zero_fill { '0' } else { ' ' };
-                                for _ in 0..(width - ndigits) {
-                                    result.push(pad);
-                                }
-                            }
-                            let _ = write!(result, "{}", n);
+                            break;
                         }
                     }
                 }
-                Some('b') => {
-                    if let Some((val, _)) = value_args.next() {
-                        // Tulis bit MSB-first, buang leading '0' (tanpa alokasi).
-                        let mut seen_nonzero = false;
-                        let mut trimmed_len = 0usize;
-                        for bit in val.bits.iter().rev() {
-                            if *bit == LogicVal::Zero && !seen_nonzero {
-                                continue;
+                match chars.next() {
+                    Some('d') => {
+                        if let Some((val, is_signed)) = value_args.next() {
+                            if is_signed && val.width <= 64 {
+                                // Signed: cetak dua-complement sebagai negatif
+                                // (mis. int -5 = 0xFFFFFFFB → "-5").
+                                let n = val.to_i64();
+                                let ndigits = i64_digits(n);
+                                if width > ndigits {
+                                    let pad = if zero_fill { '0' } else { ' ' };
+                                    for _ in 0..(width - ndigits) {
+                                        result.push(pad);
+                                    }
+                                }
+                                let _ = write!(result, "{}", n);
+                            } else {
+                                let n = val.to_u64();
+                                let ndigits = u64_digits(n);
+                                if width > ndigits {
+                                    let pad = if zero_fill { '0' } else { ' ' };
+                                    for _ in 0..(width - ndigits) {
+                                        result.push(pad);
+                                    }
+                                }
+                                let _ = write!(result, "{}", n);
                             }
-                            seen_nonzero = true;
-                            trimmed_len += 1;
                         }
-                        if !seen_nonzero {
-                            trimmed_len = 1; // nilai "0"
-                        }
-                        if width > trimmed_len {
-                            let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - trimmed_len) {
-                                result.push(pad);
-                            }
-                        }
-                        if !seen_nonzero {
-                            result.push('0');
-                        } else {
-                            let mut wrote = false;
+                    }
+                    Some('b') => {
+                        if let Some((val, _)) = value_args.next() {
+                            // Tulis bit MSB-first, buang leading '0' (tanpa alokasi).
+                            let mut seen_nonzero = false;
+                            let mut trimmed_len = 0usize;
                             for bit in val.bits.iter().rev() {
-                                if *bit == LogicVal::Zero && !wrote {
+                                if *bit == LogicVal::Zero && !seen_nonzero {
                                     continue;
                                 }
-                                wrote = true;
-                                result.push(match bit {
-                                    LogicVal::Zero => '0',
-                                    LogicVal::One => '1',
-                                    LogicVal::X => 'x',
-                                    LogicVal::Z => 'z',
-                                });
+                                seen_nonzero = true;
+                                trimmed_len += 1;
+                            }
+                            if !seen_nonzero {
+                                trimmed_len = 1; // nilai "0"
+                            }
+                            if width > trimmed_len {
+                                let pad = if zero_fill { '0' } else { ' ' };
+                                for _ in 0..(width - trimmed_len) {
+                                    result.push(pad);
+                                }
+                            }
+                            if !seen_nonzero {
+                                result.push('0');
+                            } else {
+                                let mut wrote = false;
+                                for bit in val.bits.iter().rev() {
+                                    if *bit == LogicVal::Zero && !wrote {
+                                        continue;
+                                    }
+                                    wrote = true;
+                                    result.push(match bit {
+                                        LogicVal::Zero => '0',
+                                        LogicVal::One => '1',
+                                        LogicVal::X => 'x',
+                                        LogicVal::Z => 'z',
+                                    });
+                                }
                             }
                         }
                     }
-                }
-                Some('h') => {
-                    if let Some((val, _)) = value_args.next() {
-                        let n = val.to_u64();
-                        let ndigits = u64_hex_digits(n);
-                        if width > ndigits {
-                            let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - ndigits) {
-                                result.push(pad);
+                    Some('h') => {
+                        if let Some((val, _)) = value_args.next() {
+                            let n = val.to_u64();
+                            let ndigits = u64_hex_digits(n);
+                            if width > ndigits {
+                                let pad = if zero_fill { '0' } else { ' ' };
+                                for _ in 0..(width - ndigits) {
+                                    result.push(pad);
+                                }
                             }
+                            let _ = write!(result, "{:x}", n);
                         }
-                        let _ = write!(result, "{:x}", n);
+                    }
+                    Some('f') => {
+                        if let Some((val, _)) = value_args.next() {
+                            let _ = write!(result, "{}", f64::from_bits(val.to_u64()));
+                        }
+                    }
+                    Some('t') => {
+                        // %t: format time using $timeformat settings (IEEE 1800).
+                        // Sim time advances 1 unit per step; base unit seeded from
+                        // design `timescale (default 1ns = 10^-9 s).
+                        let t = value_args
+                            .next()
+                            .map(|(v, _)| v.to_u64() as f64)
+                            .unwrap_or(self.state.time as f64);
+                        // Skala relatif terhadap basis sim-time, bukan hardcode -9.
+                        // saturating_sub mencegah underflow i64 (panic di debug)
+                        // jika user memanggil $timeformat dengan units ekstrem.
+                        let scale = 10f64.powi(
+                            self.state
+                                .timeformat
+                                .base_units
+                                .saturating_sub(self.state.timeformat.units)
+                                as i32,
+                        );
+                        let scaled = t * scale;
+                        let precision = self.state.timeformat.precision.clamp(0, 20) as usize;
+                        let mut s = format!("{:.*}", precision, scaled);
+                        // Clamp min_field_width utk cegah alokasi " ".repeat(huge).
+                        let min_width = self.state.timeformat.min_field_width.min(128);
+                        if s.len() < min_width {
+                            s = format!("{}{}", " ".repeat(min_width - s.len()), s);
+                        }
+                        s.push_str(&self.state.timeformat.suffix);
+                        result.push_str(&s);
+                    }
+                    Some('s') => {
+                        if let Some((val, _)) = value_args.next() {
+                            result.push_str(&logicvec_to_string(&val));
+                        }
+                    }
+                    Some(c2) => {
+                        result.push('%');
+                        if zero_fill {
+                            result.push('0');
+                        }
+                        if width > 0 {
+                            let _ = write!(result, "{}", width);
+                        }
+                        result.push(c2);
+                    }
+                    None => {
+                        result.push('%');
                     }
                 }
-                Some('f') => {
-                    if let Some((val, _)) = value_args.next() {
-                        let _ = write!(result, "{}", f64::from_bits(val.to_u64()));
+            } else if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some(c2) => {
+                        result.push('\\');
+                        result.push(c2);
                     }
+                    None => result.push('\\'),
                 }
-                Some('t') => {
-                    // %t: format time using $timeformat settings (IEEE 1800).
-                    // Sim time advances 1 unit per step; base unit seeded from
-                    // design `timescale (default 1ns = 10^-9 s).
-                    let t = value_args
-                        .next()
-                        .map(|(v, _)| v.to_u64() as f64)
-                        .unwrap_or(self.state.time as f64);
-                    // Skala relatif terhadap basis sim-time, bukan hardcode -9.
-                    // saturating_sub mencegah underflow i64 (panic di debug)
-                    // jika user memanggil $timeformat dengan units ekstrem.
-                    let scale = 10f64.powi(
-                        self.state.timeformat.base_units.saturating_sub(self.state.timeformat.units)
-                            as i32,
-                    );
-                    let scaled = t * scale;
-                    let precision = self.state.timeformat.precision.clamp(0, 20) as usize;
-                    let mut s = format!("{:.*}", precision, scaled);
-                    // Clamp min_field_width utk cegah alokasi " ".repeat(huge).
-                    let min_width = self.state.timeformat.min_field_width.min(128);
-                    if s.len() < min_width {
-                        s = format!("{}{}", " ".repeat(min_width - s.len()), s);
-                    }
-                    s.push_str(&self.state.timeformat.suffix);
-                    result.push_str(&s);
-                }
-                Some('s') => {
-                    if let Some((val, _)) = value_args.next() {
-                        result.push_str(&logicvec_to_string(&val));
-                    }
-                }
-                Some(c2) => {
-                    result.push('%');
-                    if zero_fill {
-                        result.push('0');
-                    }
-                    if width > 0 {
-                        let _ = write!(result, "{}", width);
-                    }
-                    result.push(c2);
-                }
-                None => {
-                    result.push('%');
-                }
+            } else {
+                result.push(c);
             }
-        } else if c == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some(c2) => {
-                    result.push('\\');
-                    result.push(c2);
-                }
-                None => result.push('\\'),
-            }
-        } else {
-            result.push(c);
         }
-    }
-    result
+        result
     }
 
     /// Format pesan severity task ($info/$warning/$error/$fatal): argumen
@@ -619,8 +622,12 @@ pub fn read_hex_file(
     start: Option<usize>,
     end: Option<usize>,
 ) -> Result<Vec<LogicVec>, SimError> {
-    let content = std::fs::read_to_string(filename)
-        .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("cannot read {}: {}", filename, e)))?;
+    let content = std::fs::read_to_string(filename).map_err(|e| {
+        SimError::with_diag(
+            DiagCode::IoError,
+            format!("cannot read {}: {}", filename, e),
+        )
+    })?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
     let len = end_addr - start_addr + 1;
@@ -630,8 +637,12 @@ pub fn read_hex_file(
         if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
-        let val = i64::from_str_radix(line, 16)
-            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("bad hex value '{}': {}", line, e)))?;
+        let val = i64::from_str_radix(line, 16).map_err(|e| {
+            SimError::with_diag(
+                DiagCode::InvalidSyntax,
+                format!("bad hex value '{}': {}", line, e),
+            )
+        })?;
         data.push(LogicVec::from_u64(val as u64, elem_width));
         if data.len() >= len {
             break;
@@ -647,8 +658,12 @@ pub fn read_bin_file(
     start: Option<usize>,
     end: Option<usize>,
 ) -> Result<Vec<LogicVec>, SimError> {
-    let content = std::fs::read_to_string(filename)
-        .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("cannot read {}: {}", filename, e)))?;
+    let content = std::fs::read_to_string(filename).map_err(|e| {
+        SimError::with_diag(
+            DiagCode::IoError,
+            format!("cannot read {}: {}", filename, e),
+        )
+    })?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
     let len = end_addr - start_addr + 1;
@@ -658,8 +673,12 @@ pub fn read_bin_file(
         if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
-        let val = i64::from_str_radix(line, 2)
-            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("bad binary value '{}': {}", line, e)))?;
+        let val = i64::from_str_radix(line, 2).map_err(|e| {
+            SimError::with_diag(
+                DiagCode::InvalidSyntax,
+                format!("bad binary value '{}': {}", line, e),
+            )
+        })?;
         data.push(LogicVec::from_u64(val as u64, elem_width));
         if data.len() >= len {
             break;

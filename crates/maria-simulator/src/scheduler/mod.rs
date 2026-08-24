@@ -14,11 +14,15 @@ pub mod clock_domain;
 pub mod reset_domain;
 pub mod sim_dag;
 
-pub use clock_domain::{ClockDomainAnalysis, ClockDomain, ClockEdgeType};
-pub use sim_dag::{evaluate_layer_parallel, is_process_parallelizable, layer_to_string, SimulationDag};
+pub use clock_domain::{ClockDomain, ClockDomainAnalysis, ClockEdgeType};
+pub use sim_dag::{
+    evaluate_layer_parallel, is_process_parallelizable, layer_to_string, SimulationDag,
+};
 
 // Cluster kompilasi — di-reexport dari maria-compiler agar path lama
 // (`crate::scheduler::DependencyGraph`, `crate::scheduler::Task`, ...) tetap
 // valid bagi konsumen yang belum dimigrasi.
-pub use maria_compiler::scheduler::{DependencyGraph, IncrementalTracker, NodeId, Priority, PriorityQueue, Scheduler, Task};
 pub use maria_compiler::scheduler::priority::task_priority;
+pub use maria_compiler::scheduler::{
+    DependencyGraph, IncrementalTracker, NodeId, Priority, PriorityQueue, Scheduler, Task,
+};

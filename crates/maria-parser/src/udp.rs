@@ -10,10 +10,10 @@
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
+use crate::lexer::*;
 use maria_ast::*;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_udp_symbol(&mut self) -> Result<UdpSymbol, SimError> {
@@ -128,7 +128,10 @@ impl Parser {
         }
     }
 
-    pub(crate) fn parse_udp_table(&mut self, is_sequential: bool) -> Result<Vec<UdpTableEntry>, SimError> {
+    pub(crate) fn parse_udp_table(
+        &mut self,
+        is_sequential: bool,
+    ) -> Result<Vec<UdpTableEntry>, SimError> {
         self.expect(Token::Table)?;
         self.skip_semi();
 

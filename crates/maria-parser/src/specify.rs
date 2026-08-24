@@ -10,9 +10,9 @@
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
+use crate::lexer::*;
 use maria_ast::*;
 use maria_core::error::SimError;
-use crate::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_clocking_block(&mut self) -> Result<ClockingBlock, SimError> {
@@ -416,11 +416,10 @@ impl Parser {
                                 data,
                                 ref_event,
                                 ref_edge,
-                                limit: setup_limit.unwrap_or(
-                                    hold_limit.unwrap_or(Expr::Value(
+                                limit: setup_limit
+                                    .unwrap_or(hold_limit.unwrap_or(Expr::Value(
                                         maria_ast::expr::Value::Decimal(0),
-                                    )),
-                                ),
+                                    ))),
                             }))
                         };
                     }
@@ -465,8 +464,8 @@ impl Parser {
                             self.expect(Token::RParen)?;
                             self.skip_semi();
                             return Ok(Some(SpecifyItem::PathDelay {
-                    src,
-                    dst,
+                                src,
+                                dst,
                                 rise: Some(rise),
                                 fall,
                             }));

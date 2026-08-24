@@ -17,7 +17,9 @@ fn test_preprocess_then_lex() {
     let mut out = Vec::new();
     loop {
         let (tok, line, col) = lexer.next_token();
-        if tok == Token::Eof { break; }
+        if tok == Token::Eof {
+            break;
+        }
         out.push(format!("{}:{} {:?}", line, col, tok));
     }
     eprintln!("PPLEX TOKENS: {}", out.join(" | "));
@@ -34,7 +36,9 @@ fn test_lex_dollar_with_line_directive() {
     let mut out = Vec::new();
     loop {
         let (tok, line, col) = lexer.next_token();
-        if tok == Token::Eof { break; }
+        if tok == Token::Eof {
+            break;
+        }
         out.push(format!("{}:{} {:?}", line, col, tok));
     }
     eprintln!("LINEDIR TOKENS: {}", out.join(" | "));
@@ -50,12 +54,18 @@ fn test_lex_dollar_time_legacy() {
     let mut out = Vec::new();
     loop {
         let (tok, line, col) = lexer.next_token();
-        if tok == Token::Eof { break; }
+        if tok == Token::Eof {
+            break;
+        }
         out.push(format!("{}:{} {:?}", line, col, tok));
     }
     eprintln!("LEGACY TOKENS: {}", out.join(" | "));
     let has_dollar = out.iter().any(|t| t.contains("Dollar"));
-    assert!(has_dollar, "legacy lexer should produce Dollar: {}", out.join(" | "));
+    assert!(
+        has_dollar,
+        "legacy lexer should produce Dollar: {}",
+        out.join(" | ")
+    );
 }
 
 #[test]
@@ -67,10 +77,16 @@ fn test_lex_dollar_time_fast() {
     let mut out = Vec::new();
     loop {
         let (tok, line, col) = lexer.next_token();
-        if tok == Token::Eof { break; }
+        if tok == Token::Eof {
+            break;
+        }
         out.push(format!("{}:{} {:?}", line, col, tok));
     }
     eprintln!("FAST TOKENS: {}", out.join(" | "));
     let has_dollar = out.iter().any(|t| t.contains("Dollar"));
-    assert!(has_dollar, "fast lexer should produce Dollar: {}", out.join(" | "));
+    assert!(
+        has_dollar,
+        "fast lexer should produce Dollar: {}",
+        out.join(" | ")
+    );
 }

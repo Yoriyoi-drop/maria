@@ -58,15 +58,22 @@ pub struct Port {
 pub enum CellKind {
     /// k-LUT dengan truth table `init` (FPGA). S2 mengisi init nyata;
     /// S1 memakai init 0 sebagai placeholder struktural.
-    Lut { k: usize, init: u64 },
+    Lut {
+        k: usize,
+        init: u64,
+    },
     /// D-flip-flop polos.
     Dff,
     /// FF dengan reset (nilai reset dari `ResetInfo.value`).
-    DffR { reset_value: u64 },
+    DffR {
+        reset_value: u64,
+    },
     /// FF + clock enable (`Process::Sequential.iff`).
     DffE,
     /// FF + reset + clock enable.
-    DffRE { reset_value: u64 },
+    DffRE {
+        reset_value: u64,
+    },
     /// Half/full adder (primitif carry chain).
     AddHalf,
     AddFull,
@@ -248,8 +255,14 @@ pub fn ff_instance(
     enable: Option<NetId>,
 ) -> Instance {
     let mut inputs = vec![
-        PinRef { net: clk_net, pin: "c" },
-        PinRef { net: d_net, pin: "d" },
+        PinRef {
+            net: clk_net,
+            pin: "c",
+        },
+        PinRef {
+            net: d_net,
+            pin: "d",
+        },
     ];
     if let Some((r, _v)) = reset {
         inputs.push(PinRef { net: r, pin: "r" });
@@ -262,7 +275,10 @@ pub fn ff_instance(
         name,
         kind,
         inputs,
-        outputs: vec![PinRef { net: q_net, pin: "q" }],
+        outputs: vec![PinRef {
+            net: q_net,
+            pin: "q",
+        }],
         loc: None,
     }
 }
@@ -277,7 +293,15 @@ mod tests {
         let clk = nl.add_net(Symbol::intern("clk"), 1);
         let d = nl.add_net(Symbol::intern("d"), 1);
         let q = nl.add_net(Symbol::intern("q"), 1);
-        let ff = ff_instance(Symbol::intern("u0"), CellKind::DffR { reset_value: 0 }, clk, d, q, None, None);
+        let ff = ff_instance(
+            Symbol::intern("u0"),
+            CellKind::DffR { reset_value: 0 },
+            clk,
+            d,
+            q,
+            None,
+            None,
+        );
         nl.add_instance(ff);
         assert_eq!(nl.net_fanout(d), 1);
         assert_eq!(nl.nets[q].driver, Some(0));

@@ -16,31 +16,40 @@
 //!
 //! ──────────────────────────────────────────────────────────────────────────────
 
+use crate::simulator::util::logicvec_to_string;
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
 use maria_ir::{LogicVal, LogicVec};
-use crate::simulator::util::logicvec_to_string;
 
 /// Evaluasi method string untuk tipe data string SystemVerilog.
 /// Mendukung: .len(), .substr(), .atoi(), .hextoi(), .bintoi(), .octtoi(),
 /// .tolower(), .toupper(), .compare(), .icompare()
-pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+pub(crate) fn evaluate_string_method(
+    s: &str,
+    method: &str,
+    args: &[LogicVec],
+) -> Result<LogicVec, SimError> {
     match method {
         "len" => Ok(LogicVec::from_u64(s.len() as u64, 32)),
         "substr" => {
             if args.len() != 2 {
-                return Err(SimError::with_diag(DiagCode::DpiError, format!(
-                    "substr expects 2 arguments, got {}",
-                    args.len()
-                )));
+                return Err(SimError::with_diag(
+                    DiagCode::DpiError,
+                    format!("substr expects 2 arguments, got {}", args.len()),
+                ));
             }
             let i = args[0].to_u64() as usize;
             let j = args[1].to_u64() as usize;
             if i > j || j >= s.len() {
-                return Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, format!(
-                    "substr({}, {}) out of range for string of len {}",
-                    i, j, s.len()
-                )));
+                return Err(SimError::with_diag(
+                    DiagCode::MemoryOutOfBounds,
+                    format!(
+                        "substr({}, {}) out of range for string of len {}",
+                        i,
+                        j,
+                        s.len()
+                    ),
+                ));
             }
             let sub = &s[i..=j];
             let mut bits = Vec::with_capacity(sub.len() * 8);
@@ -54,7 +63,10 @@ pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -
                     });
                 }
             }
-            Ok(LogicVec { width: bits.len(), bits })
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
         "atoi" => {
             let val: i64 = s.trim().parse().unwrap_or(0);
@@ -81,10 +93,17 @@ pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -
             for c in lower.chars() {
                 let byte = c as u8;
                 for b in 0..8 {
-                    bits.push(if (byte >> b) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                    bits.push(if (byte >> b) & 1 == 1 {
+                        LogicVal::One
+                    } else {
+                        LogicVal::Zero
+                    });
                 }
             }
-            Ok(LogicVec { width: bits.len(), bits })
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
         "toupper" => {
             let upper = s.to_uppercase();
@@ -92,14 +111,24 @@ pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -
             for c in upper.chars() {
                 let byte = c as u8;
                 for b in 0..8 {
-                    bits.push(if (byte >> b) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                    bits.push(if (byte >> b) & 1 == 1 {
+                        LogicVal::One
+                    } else {
+                        LogicVal::Zero
+                    });
                 }
             }
-            Ok(LogicVec { width: bits.len(), bits })
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
         "compare" | "icompare" => {
             if args.len() < 1 {
-                return Err(SimError::with_diag(DiagCode::DpiError, format!("{} expects 1 argument", method)));
+                return Err(SimError::with_diag(
+                    DiagCode::DpiError,
+                    format!("{} expects 1 argument", method),
+                ));
             }
             let other_val = &args[0];
             let other = logicvec_to_string(other_val);
@@ -115,7 +144,10 @@ pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -
             };
             Ok(LogicVec::from_u64(result as u64, 32))
         }
-        _ => Err(SimError::with_diag(DiagCode::NotImplemented, format!("unknown string method: {}", method))),
+        _ => Err(SimError::with_diag(
+            DiagCode::NotImplemented,
+            format!("unknown string method: {}", method),
+        )),
     }
 }
 

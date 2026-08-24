@@ -9,8 +9,8 @@ mod verification;
 mod xprop;
 
 pub use assertions::{AssertionReport, AssertionSummary};
-pub use coverage::{CoverageSettings, coverage_summary};
+pub use coverage::{coverage_summary, CoverageSettings};
 pub use lint::{LintChecks, LintReport};
 pub use semantic::SemanticStatus;
 pub use verification::VerificationContext;
-pub use xprop::{XPropMode, current_xprop, set_xprop};
+pub use xprop::{current_xprop, set_xprop, XPropMode};

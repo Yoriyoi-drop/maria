@@ -19,9 +19,9 @@
 //!
 //! 5. **Report Generation** — Output human-readable CDC report + optional DOT graph.
 
-use std::collections::{HashMap, HashSet};
-use maria_ir::*;
 use crate::scheduler::clock_domain::{ClockDomainAnalysis, ClockEdgeType};
+use maria_ir::*;
+use std::collections::{HashMap, HashSet};
 
 // ─── Types ───
 
@@ -75,7 +75,9 @@ impl std::fmt::Display for CdcViolationType {
         match self {
             CdcViolationType::Unsynchronized => write!(f, "Unsynchronized crossing"),
             CdcViolationType::SingleFlopSynchronizer => write!(f, "Single-flop synchronizer"),
-            CdcViolationType::MultiBitUnsynchronized => write!(f, "Multi-bit unsynchronized crossing"),
+            CdcViolationType::MultiBitUnsynchronized => {
+                write!(f, "Multi-bit unsynchronized crossing")
+            }
             // CdcViolationType::CombinationalPath => write!(f, "Combinational path crossing"),
             // CdcViolationType::UnsynchronizedReset => write!(f, "Unsynchronized reset crossing"),
         }
@@ -178,7 +180,8 @@ fn get_clock_name(process: &Process, signals: &[SignalInfo]) -> String {
                     return s.as_str().to_string();
                 }
             };
-            signals.get(sig_id)
+            signals
+                .get(sig_id)
                 .map(|si| si.name.as_str().to_string())
                 .unwrap_or_else(|| format!("sig_{}", sig_id))
         }
@@ -211,15 +214,17 @@ pub(crate) fn collect_writes_from_stmts(stmts: &[IrStmt]) -> HashSet<SignalId> {
 fn collect_stmt_writes_recursive(stmts: &[IrStmt], writes: &mut HashSet<SignalId>) {
     for stmt in stmts {
         match stmt {
-            IrStmt::Block { stmts: inner }
-            | IrStmt::NamedBlock { stmts: inner, .. } => {
+            IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                 collect_stmt_writes_recursive(inner, writes);
             }
-            IrStmt::BlockingAssign { lhs, .. }
-            | IrStmt::NonBlockingAssign { lhs, .. } => {
+            IrStmt::BlockingAssign { lhs, .. } | IrStmt::NonBlockingAssign { lhs, .. } => {
                 lvalue_collect_signal_ids(lhs, writes);
             }
-            IrStmt::If { true_branch, false_branch, .. } => {
+            IrStmt::If {
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 collect_stmt_writes_recursive(true_branch, writes);
                 collect_stmt_writes_recursive(false_branch, writes);
             }
@@ -229,7 +234,9 @@ fn collect_stmt_writes_recursive(stmts: &[IrStmt], writes: &mut HashSet<SignalId
                 }
                 collect_stmt_writes_recursive(default, writes);
             }
-            IrStmt::LoopFor { init, step, body, .. } => {
+            IrStmt::LoopFor {
+                init, step, body, ..
+            } => {
                 if let Some(s) = init {
                     collect_stmt_writes_recursive(&[s.as_ref().clone()], writes);
                 }
@@ -251,9 +258,21 @@ fn collect_stmt_writes_recursive(stmts: &[IrStmt], writes: &mut HashSet<SignalId
                     collect_stmt_writes_recursive(p, writes);
                 }
             }
-            IrStmt::Assert { pass_stmt, fail_stmt, .. }
-            | IrStmt::Assume { pass_stmt, fail_stmt, .. }
-            | IrStmt::Expect { pass_stmt, fail_stmt, .. } => {
+            IrStmt::Assert {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Assume {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Expect {
+                pass_stmt,
+                fail_stmt,
+                ..
+            } => {
                 collect_stmt_writes_recursive(pass_stmt, writes);
                 collect_stmt_writes_recursive(fail_stmt, writes);
             }
@@ -312,7 +331,8 @@ impl CdcAnalysis {
         let mut clock_to_domain: HashMap<SignalId, usize> = HashMap::new();
 
         for (i, raw) in raw_domains.iter().enumerate() {
-            let clock_name = signals.get(raw.clock_signal)
+            let clock_name = signals
+                .get(raw.clock_signal)
                 .map(|si| si.name.as_str().to_string())
                 .unwrap_or_else(|| format!("clk_{}", raw.clock_signal));
 
@@ -413,12 +433,12 @@ impl CdcAnalysis {
                                 if src_domain_id != dst_domain_id {
                                     let key = (sig_id, src_domain_id, dst_domain_id);
                                     if crossing_set.insert(key) {
-                                        let signal_name = signals.get(sig_id)
+                                        let signal_name = signals
+                                            .get(sig_id)
                                             .map(|si| si.name.as_str().to_string())
                                             .unwrap_or_else(|| format!("sig_{}", sig_id));
-                                        let width = signals.get(sig_id)
-                                            .map(|si| si.width)
-                                            .unwrap_or(1);
+                                        let width =
+                                            signals.get(sig_id).map(|si| si.width).unwrap_or(1);
 
                                         crossings.push(CdcSignalCrossing {
                                             signal_id: sig_id,
@@ -464,8 +484,11 @@ impl CdcAnalysis {
                         _ => HashSet::new(),
                     };
                     for &sig_id in &writes {
-                        *dst_writes.entry(domain_id).or_default()
-                            .entry(sig_id).or_insert(0) += 1;
+                        *dst_writes
+                            .entry(domain_id)
+                            .or_default()
+                            .entry(sig_id)
+                            .or_insert(0) += 1;
                     }
                 }
             }
@@ -476,7 +499,8 @@ impl CdcAnalysis {
             let dst_id = crossing.dst_domain_id;
 
             // Check how many flops in the destination domain write to this signal
-            let flop_count = dst_writes.get(&dst_id)
+            let flop_count = dst_writes
+                .get(&dst_id)
                 .and_then(|writes| writes.get(&crossing.signal_id))
                 .copied()
                 .unwrap_or(0);
@@ -500,10 +524,12 @@ impl CdcAnalysis {
         let mut sync_ok_count = 0usize;
 
         for crossing in &crossings {
-            let src_clock = domains.get(crossing.src_domain_id)
+            let src_clock = domains
+                .get(crossing.src_domain_id)
                 .map(|d| d.clock_name.as_str())
                 .unwrap_or("?");
-            let dst_clock = domains.get(crossing.dst_domain_id)
+            let dst_clock = domains
+                .get(crossing.dst_domain_id)
                 .map(|d| d.clock_name.as_str())
                 .unwrap_or("?");
 
@@ -513,11 +539,19 @@ impl CdcAnalysis {
                 continue;
             } else if crossing.synchronizer_flops == 1 {
                 single_flop_count += 1;
-                (CdcViolationType::SingleFlopSynchronizer, CdcSeverity::Low, 1)
+                (
+                    CdcViolationType::SingleFlopSynchronizer,
+                    CdcSeverity::Low,
+                    1,
+                )
             } else {
                 unsynchronized_count += 1;
                 if crossing.width > 1 {
-                    (CdcViolationType::MultiBitUnsynchronized, CdcSeverity::Critical, 0)
+                    (
+                        CdcViolationType::MultiBitUnsynchronized,
+                        CdcSeverity::Critical,
+                        0,
+                    )
                 } else {
                     (CdcViolationType::Unsynchronized, CdcSeverity::High, 0)
                 }
@@ -532,8 +566,10 @@ impl CdcAnalysis {
                     "Signal '{}' crosses from '{}' (domain {}) to '{}' (domain {}) \
                      with {}-flop synchronizer ✓",
                     crossing.signal_name,
-                    src_clock, crossing.src_domain_id,
-                    dst_clock, crossing.dst_domain_id,
+                    src_clock,
+                    crossing.src_domain_id,
+                    dst_clock,
+                    crossing.dst_domain_id,
                     crossing.synchronizer_flops
                 )
             } else if crossing.synchronizer_flops == 1 {
@@ -541,24 +577,31 @@ impl CdcAnalysis {
                     "Signal '{}' crosses from '{}' (domain {}) to '{}' (domain {}) \
                      with single-flop synchronizer — marginal metastability protection",
                     crossing.signal_name,
-                    src_clock, crossing.src_domain_id,
-                    dst_clock, crossing.dst_domain_id,
+                    src_clock,
+                    crossing.src_domain_id,
+                    dst_clock,
+                    crossing.dst_domain_id,
                 )
             } else if crossing.width > 1 {
                 format!(
                     "Multi-bit signal '{}' ({} bits) crosses from '{}' (domain {}) to '{}' \
                      (domain {}) WITHOUT synchronizer — data coherency risk!",
-                    crossing.signal_name, crossing.width,
-                    src_clock, crossing.src_domain_id,
-                    dst_clock, crossing.dst_domain_id,
+                    crossing.signal_name,
+                    crossing.width,
+                    src_clock,
+                    crossing.src_domain_id,
+                    dst_clock,
+                    crossing.dst_domain_id,
                 )
             } else {
                 format!(
                     "Signal '{}' crosses from '{}' (domain {}) to '{}' (domain {}) \
                      WITHOUT synchronizer — metastability risk!",
                     crossing.signal_name,
-                    src_clock, crossing.src_domain_id,
-                    dst_clock, crossing.dst_domain_id,
+                    src_clock,
+                    crossing.src_domain_id,
+                    dst_clock,
+                    crossing.dst_domain_id,
                 )
             };
 
@@ -638,17 +681,31 @@ impl CdcAnalysis {
 
         report.push_str("─── CDC Violations ───\n\n");
 
-        let critical_count = self.violations.iter()
-            .filter(|v| v.severity == CdcSeverity::Critical).count();
-        let high_count = self.violations.iter()
-            .filter(|v| v.severity == CdcSeverity::High).count();
-        let low_count = self.violations.iter()
-            .filter(|v| v.severity == CdcSeverity::Low).count();
-        let ok_count = self.violations.iter()
-            .filter(|v| v.severity == CdcSeverity::Ok).count();
+        let critical_count = self
+            .violations
+            .iter()
+            .filter(|v| v.severity == CdcSeverity::Critical)
+            .count();
+        let high_count = self
+            .violations
+            .iter()
+            .filter(|v| v.severity == CdcSeverity::High)
+            .count();
+        let low_count = self
+            .violations
+            .iter()
+            .filter(|v| v.severity == CdcSeverity::Low)
+            .count();
+        let ok_count = self
+            .violations
+            .iter()
+            .filter(|v| v.severity == CdcSeverity::Ok)
+            .count();
 
-        report.push_str(&format!("  Critical: {}  |  High: {}  |  Low: {}  |  OK: {}\n\n",
-            critical_count, high_count, low_count, ok_count));
+        report.push_str(&format!(
+            "  Critical: {}  |  High: {}  |  Low: {}  |  OK: {}\n\n",
+            critical_count, high_count, low_count, ok_count
+        ));
 
         if critical_count > 0 {
             report.push_str("  ⚠️ CRITICAL VIOLATIONS:\n");
@@ -687,7 +744,9 @@ impl CdcAnalysis {
                 "  {:<6} {:<30} {:<15} {:<15} {:<12} {}\n",
                 "Domain", "Signal", "Clock (src)", "Clock (dst)", "Sync?", "Flops"
             ));
-            report.push_str("  ──────────────────────────────────────────────────────────────────────────\n");
+            report.push_str(
+                "  ──────────────────────────────────────────────────────────────────────────\n",
+            );
             report.push('\n');
 
             for crossing in &self.crossings {
@@ -698,19 +757,26 @@ impl CdcAnalysis {
                 } else {
                     "❌"
                 };
-                let src_clock = self.domains.get(crossing.src_domain_id)
+                let src_clock = self
+                    .domains
+                    .get(crossing.src_domain_id)
                     .map(|d| d.clock_name.as_str())
                     .unwrap_or("?");
-                let dst_clock = self.domains.get(crossing.dst_domain_id)
+                let dst_clock = self
+                    .domains
+                    .get(crossing.dst_domain_id)
                     .map(|d| d.clock_name.as_str())
                     .unwrap_or("?");
 
                 report.push_str(&format!(
                     "  {}→{} {:<28} {:<15} {:<15} {:<12} {}\n",
-                    crossing.src_domain_id, crossing.dst_domain_id,
+                    crossing.src_domain_id,
+                    crossing.dst_domain_id,
                     crossing.signal_name,
-                    src_clock, dst_clock,
-                    sync_str, crossing.synchronizer_flops,
+                    src_clock,
+                    dst_clock,
+                    sync_str,
+                    crossing.synchronizer_flops,
                 ));
             }
         }
@@ -735,20 +801,28 @@ impl CdcAnalysis {
 pub(crate) fn collect_stmt_signal_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
     for stmt in stmts {
         match stmt {
-            IrStmt::Block { stmts: inner }
-            | IrStmt::NamedBlock { stmts: inner, .. } => {
+            IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                 collect_stmt_signal_reads(inner, reads);
             }
-            IrStmt::BlockingAssign { rhs, .. }
-            | IrStmt::NonBlockingAssign { rhs, .. } => {
+            IrStmt::BlockingAssign { rhs, .. } | IrStmt::NonBlockingAssign { rhs, .. } => {
                 collect_expr_signal_ids(rhs, reads);
             }
-            IrStmt::If { cond, true_branch, false_branch, .. } => {
+            IrStmt::If {
+                cond,
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 collect_expr_signal_ids(cond, reads);
                 collect_stmt_signal_reads(true_branch, reads);
                 collect_stmt_signal_reads(false_branch, reads);
             }
-            IrStmt::Case { expr, items, default, .. } => {
+            IrStmt::Case {
+                expr,
+                items,
+                default,
+                ..
+            } => {
                 collect_expr_signal_ids(expr, reads);
                 for item in items {
                     for pat in &item.labels {
@@ -770,7 +844,9 @@ pub(crate) fn collect_stmt_signal_reads(stmts: &[IrStmt], reads: &mut HashSet<Si
                 collect_expr_signal_ids(count, reads);
                 collect_stmt_signal_reads(body, reads);
             }
-            IrStmt::Foreach { array_var, body, .. } => {
+            IrStmt::Foreach {
+                array_var, body, ..
+            } => {
                 collect_expr_signal_ids(array_var, reads);
                 collect_stmt_signal_reads(body, reads);
             }
@@ -788,14 +864,31 @@ pub(crate) fn collect_stmt_signal_reads(stmts: &[IrStmt], reads: &mut HashSet<Si
                     collect_stmt_signal_reads(p, reads);
                 }
             }
-            IrStmt::Assert { cond, pass_stmt, fail_stmt, .. }
-            | IrStmt::Assume { cond, pass_stmt, fail_stmt, .. }
-            | IrStmt::Expect { cond, pass_stmt, fail_stmt, .. } => {
+            IrStmt::Assert {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Assume {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Expect {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                ..
+            } => {
                 collect_expr_signal_ids(cond, reads);
                 collect_stmt_signal_reads(pass_stmt, reads);
                 collect_stmt_signal_reads(fail_stmt, reads);
             }
-            IrStmt::Cover { cond, pass_stmt, .. } => {
+            IrStmt::Cover {
+                cond, pass_stmt, ..
+            } => {
                 collect_expr_signal_ids(cond, reads);
                 collect_stmt_signal_reads(pass_stmt, reads);
             }
@@ -816,8 +909,7 @@ pub(crate) fn collect_expr_signal_ids(expr: &IrExpr, ids: &mut HashSet<SignalId>
         | IrExpr::BitSelect(sig_id, _) => {
             ids.insert(*sig_id);
         }
-        IrExpr::ExprRangeSelect(inner, _, _)
-        | IrExpr::ExprBitSelect(inner, _) => {
+        IrExpr::ExprRangeSelect(inner, _, _) | IrExpr::ExprBitSelect(inner, _) => {
             collect_expr_signal_ids(inner, ids);
         }
         IrExpr::ExprPartSelect(inner, base, width) => {
@@ -834,8 +926,7 @@ pub(crate) fn collect_expr_signal_ids(expr: &IrExpr, ids: &mut HashSet<SignalId>
                 collect_expr_signal_ids(e, ids);
             }
         }
-        IrExpr::Replicate(_, inner) | IrExpr::UnaryOp(_, inner)
-        | IrExpr::Signed(inner) => {
+        IrExpr::Replicate(_, inner) | IrExpr::UnaryOp(_, inner) | IrExpr::Signed(inner) => {
             collect_expr_signal_ids(inner, ids);
         }
         IrExpr::BinaryOp(_, lhs, rhs) | IrExpr::Cond(_, lhs, rhs) => {
@@ -851,13 +942,20 @@ pub(crate) fn collect_expr_signal_ids(expr: &IrExpr, ids: &mut HashSet<SignalId>
                 collect_expr_signal_ids(item, ids);
             }
         }
-        IrExpr::DpiCall { args, .. } | IrExpr::SysFunc { args, .. }
-        | IrExpr::NewCall { args, .. } | IrExpr::FuncCall { args, .. } => {
+        IrExpr::DpiCall { args, .. }
+        | IrExpr::SysFunc { args, .. }
+        | IrExpr::NewCall { args, .. }
+        | IrExpr::FuncCall { args, .. } => {
             for arg in args {
                 collect_expr_signal_ids(arg, ids);
             }
         }
-        IrExpr::MethodCall { obj, args, with_clause, .. } => {
+        IrExpr::MethodCall {
+            obj,
+            args,
+            with_clause,
+            ..
+        } => {
             collect_expr_signal_ids(obj, ids);
             for arg in args {
                 collect_expr_signal_ids(arg, ids);
@@ -880,8 +978,8 @@ pub(crate) fn collect_expr_signal_ids(expr: &IrExpr, ids: &mut HashSet<SignalId>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maria_core::intern::Symbol;
     use crate::scheduler::clock_domain::ClockEdgeType;
+    use maria_core::intern::Symbol;
 
     /// Helper to create a default SignalInfo with just a name.
     fn make_signal(name: &str, width: usize) -> SignalInfo {
@@ -925,22 +1023,17 @@ mod tests {
         let design = IrDesign {
             top: IrModule {
                 name: Symbol::intern("top"),
-                signals: vec![
-                    make_signal("clk", 1),
-                    make_signal("q", 8),
-                ],
+                signals: vec![make_signal("clk", 1), make_signal("q", 8)],
                 inputs: vec![],
                 outputs: vec![],
                 inouts: vec![],
-                processes: vec![
-                    Process::Sequential {
-                        name: Symbol::intern("seq"),
-                        clock: ClockEdge::PosEdge(clk),
-                        reset: None,
-                        iff: None,
-                        body: const_assign(1, 42, 8),
-                    },
-                ],
+                processes: vec![Process::Sequential {
+                    name: Symbol::intern("seq"),
+                    clock: ClockEdge::PosEdge(clk),
+                    reset: None,
+                    iff: None,
+                    body: const_assign(1, 42, 8),
+                }],
                 sub_instances: vec![],
             },
             ..IrDesign::default()
@@ -1004,7 +1097,11 @@ mod tests {
         // Check violation details — signal width=8, so severity=Critical (multi-bit unsync)
         let v = &analysis.violations[0];
         assert_eq!(v.signal_id, sig);
-        assert_eq!(v.severity, CdcSeverity::Critical, "multi-bit (8) unsync should be Critical");
+        assert_eq!(
+            v.severity,
+            CdcSeverity::Critical,
+            "multi-bit (8) unsync should be Critical"
+        );
         assert!(v.description.contains("WITHOUT synchronizer"));
     }
 
@@ -1017,8 +1114,8 @@ mod tests {
         let clk0: SignalId = 0;
         let clk1: SignalId = 1;
         let src_sig: SignalId = 2; // written in domain 0
-        let sync1: SignalId = 3;   // first sync flop in domain 1
-        let sync2: SignalId = 4;   // second sync flop in domain 1 (the synchronized output)
+        let sync1: SignalId = 3; // first sync flop in domain 1
+        let sync2: SignalId = 4; // second sync flop in domain 1 (the synchronized output)
 
         let design = IrDesign {
             top: IrModule {
@@ -1072,10 +1169,10 @@ mod tests {
         // The crossing from domain 0's signal (async_data/sig2) to domain 1
         // should be detected. Since domain 1 has 2 flops writing it (seq1 and seq2
         // both write sync1 and sync2, but seq2 reads sync1 — so seq1 is the one
-        // that writes sync1 from async_data... 
-        // Actually, the crossing signal is sig2 (async_data). Domain 1 reads it 
+        // that writes sync1 from async_data...
+        // Actually, the crossing signal is sig2 (async_data). Domain 1 reads it
         // in seq1. But domain 1 doesn't *write* async_data — it reads it.
-        // So synchronizer detection counts flops in domain 1 that write to 
+        // So synchronizer detection counts flops in domain 1 that write to
         // async_data, which is 0 (since no one in domain 1 writes to async_data).
         //
         // BUT that's fine — the crossing IS synchronized because the result
@@ -1137,7 +1234,7 @@ mod tests {
                         iff: None,
                         body: {
                             let mut body = seq_assign(sig_b, sig_ab); // reads d0_to_d1
-                            // also write something locally
+                                                                      // also write something locally
                             body.push(IrStmt::BlockingAssign {
                                 lhs: IrLValue::Signal(sig_ab, 8),
                                 rhs: IrExpr::Signal(sig_a, 8), // reads from domain 0!
@@ -1208,9 +1305,18 @@ mod tests {
 
         assert!(report.contains("CDC"), "report should mention CDC");
         assert!(report.contains("2"), "report should mention domain count");
-        assert!(report.contains("async"), "report should mention async signal");
-        assert!(report.contains("WITHOUT synchronizer"), "report should flag violation");
-        assert!(report.contains("Cross-domain Signal Map"), "report should have signal map");
+        assert!(
+            report.contains("async"),
+            "report should mention async signal"
+        );
+        assert!(
+            report.contains("WITHOUT synchronizer"),
+            "report should flag violation"
+        );
+        assert!(
+            report.contains("Cross-domain Signal Map"),
+            "report should have signal map"
+        );
     }
 
     #[test]
@@ -1272,7 +1378,11 @@ mod tests {
         };
 
         let analysis = CdcAnalysis::analyze(&design);
-        assert_eq!(analysis.domains.len(), 1, "should have only 1 domain (same clock)");
+        assert_eq!(
+            analysis.domains.len(),
+            1,
+            "should have only 1 domain (same clock)"
+        );
         assert_eq!(analysis.total_crossings, 0, "should have no crossings");
     }
 
@@ -1371,12 +1481,20 @@ mod tests {
         };
 
         let analysis = CdcAnalysis::analyze(&design);
-        assert!(analysis.unsynchronized_count >= 1, "should have unsynchronized crossing");
+        assert!(
+            analysis.unsynchronized_count >= 1,
+            "should have unsynchronized crossing"
+        );
 
         // Check that the multi-bit crossing is flagged as Critical
-        let critical_violations: Vec<&CdcViolation> = analysis.violations.iter()
+        let critical_violations: Vec<&CdcViolation> = analysis
+            .violations
+            .iter()
             .filter(|v| v.severity == CdcSeverity::Critical)
             .collect();
-        assert!(!critical_violations.is_empty(), "should have critical violations for wide bus");
+        assert!(
+            !critical_violations.is_empty(),
+            "should have critical violations for wide bus"
+        );
     }
 }

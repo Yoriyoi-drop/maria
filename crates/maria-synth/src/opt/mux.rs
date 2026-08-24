@@ -46,9 +46,9 @@ impl SynthPass for MuxSimplify {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pass::SynthPipeline;
     use maria_core::intern::Symbol;
     use maria_sir::SirModule;
-    use crate::pass::SynthPipeline;
 
     #[test]
     fn mux_with_not_sel_swaps_branches() {

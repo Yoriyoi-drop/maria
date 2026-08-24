@@ -59,6 +59,14 @@ pub struct BugCase {
     pub message: String,
 }
 
+/// Satu kasus suspect — mismatch yang tak bisa diputuskan wasit eksternal.
+/// Tercatat, bukan kegagalan keras.
+#[derive(Debug, Clone)]
+pub struct SuspectCase {
+    pub input: GenInput,
+    pub message: String,
+}
+
 /// Statistik gabungan seluruh worker.
 #[derive(Debug, Clone, Default)]
 pub struct ParallelStats {
@@ -73,6 +81,8 @@ pub struct ParallelStats {
     pub elapsed_ms: u64,
     /// Testcase lambat (bottleneck pipeline), terurut menurun.
     pub bottlenecks: Vec<SlowCase>,
+    /// Kasus suspect (wasit eksternal tak bisa memutuskan).
+    pub suspects: Vec<SuspectCase>,
 }
 
 struct WorkerResult {
@@ -80,14 +90,23 @@ struct WorkerResult {
     compile_failures: u64,
     bugs: Vec<BugCase>,
     slow: Vec<SlowCase>,
-    coverage_features: usize,
-    corpus_size: usize,
+    suspects: Vec<SuspectCase>,
+    /// Feature set penuh worker — digabung (union) lintas worker.
+    features: std::collections::HashSet<String>,
+    /// Seed corpus unik — digabung dedup lintas worker.
+    corpus_seeds: std::collections::HashSet<u64>,
 }
 
-fn run_worker(worker_id: usize, workers: usize, iterations: u64, done: &Arc<AtomicU64>) -> WorkerResult {
+fn run_worker(
+    worker_id: usize,
+    workers: usize,
+    iterations: u64,
+    done: &Arc<AtomicU64>,
+) -> WorkerResult {
     let mut guide = CoverageGuide::new();
     let mut bugs = Vec::new();
     let mut slow = Vec::new();
+    let mut suspects = Vec::new();
     let mut passed = 0u64;
     let mut compile_failures = 0u64;
 
@@ -100,7 +119,10 @@ fn run_worker(worker_id: usize, workers: usize, iterations: u64, done: &Arc<Atom
         let result = check(&input);
         let us = t0.elapsed().as_micros();
         if us > BOTTLENECK_THRESHOLD_US {
-            slow.push(SlowCase { seed: input.seed, micros: us });
+            slow.push(SlowCase {
+                seed: input.seed,
+                micros: us,
+            });
         }
 
         match &result.verdict {
@@ -108,6 +130,14 @@ fn run_worker(worker_id: usize, workers: usize, iterations: u64, done: &Arc<Atom
                 input: input.clone(),
                 message: m.clone(),
             }),
+            Verdict::Suspect(m) => {
+                // Tercatat, bukan kegagalan keras (wasit eksternal tidak
+                // bisa memutuskan — mis. icarus tak mendukung `inside`).
+                suspects.push(SuspectCase {
+                    input: input.clone(),
+                    message: m.clone(),
+                });
+            }
             Verdict::Pass => passed += 1,
             Verdict::CompileFail => compile_failures += 1,
         }
@@ -126,8 +156,9 @@ fn run_worker(worker_id: usize, workers: usize, iterations: u64, done: &Arc<Atom
         compile_failures,
         bugs,
         slow,
-        coverage_features: guide.coverage_len(),
-        corpus_size: guide.corpus_len(),
+        suspects,
+        features: guide.features_snapshot(),
+        corpus_seeds: guide.corpus_seeds().into_iter().collect(),
     }
 }
 
@@ -155,15 +186,23 @@ pub fn run_parallel(cfg: ParallelConfig) -> (ParallelStats, Vec<BugCase>) {
     };
     let mut all_bugs: Vec<BugCase> = Vec::new();
 
+    let mut union_features: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut union_corpus_seeds: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
     for h in handles {
         let r = h.join().expect("fuzz worker panic");
         stats.passed += r.passed;
         stats.compile_failures += r.compile_failures;
-        stats.coverage_features = stats.coverage_features.max(r.coverage_features);
-        stats.corpus_size += r.corpus_size;
+        // UNION fitur & dedup corpus lintas worker (dulu: max / sum —
+        // keduanya menyesatkan).
+        union_features.extend(r.features);
+        union_corpus_seeds.extend(r.corpus_seeds);
         stats.bottlenecks.extend(r.slow);
         all_bugs.extend(r.bugs);
+        stats.suspects.extend(r.suspects);
     }
+    stats.coverage_features = union_features.len();
+    stats.corpus_size = union_corpus_seeds.len();
 
     // Deterministik: urutkan bug & bottleneck by seed.
     all_bugs.sort_by_key(|b| b.input.seed);

@@ -8,14 +8,14 @@
 //! maria-compiler::scheduler; scheduler/mod.rs di sini re-export dari
 //! maria_compiler untuk menjaga path lama (`crate::scheduler::Task` dkk) valid.
 
-pub mod simulator;
-pub mod waveform;
-pub mod scheduler;
 pub mod debugger;
-pub mod vpi;
 pub mod foreign;
-pub mod vhpi;
 pub mod pli;
+pub mod scheduler;
+pub mod simulator;
+pub mod vhpi;
+pub mod vpi;
+pub mod waveform;
 
 #[cfg(test)]
 pub mod test_util;

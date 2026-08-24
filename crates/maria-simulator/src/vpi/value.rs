@@ -16,16 +16,14 @@ pub fn vpi_get_value(handle: vpiHandle, value_p: &mut t_vpi_value) -> i32 {
     };
     let (sig_id, sig_width) = match &obj.kind {
         VpiObjectKind::Signal(sig_id, _) => (*sig_id, {
-            super::with_vpi_engine(|engine| {
-                engine.design.top.signals.get(*sig_id).map(|s| s.width)
-            }).flatten().unwrap_or(1)
+            super::with_vpi_engine(|engine| engine.design.top.signals.get(*sig_id).map(|s| s.width))
+                .flatten()
+                .unwrap_or(1)
         }),
         _ => return 0,
     };
     let _width = sig_width;
-    let logic_val_opt = super::with_vpi_engine(|engine| {
-        engine.state.read_signal(sig_id).clone()
-    });
+    let logic_val_opt = super::with_vpi_engine(|engine| engine.state.read_signal(sig_id).clone());
     let logic_val = match logic_val_opt {
         Some(v) => v,
         None => return 0,
@@ -55,24 +53,18 @@ pub fn vpi_get_value(handle: vpiHandle, value_p: &mut t_vpi_value) -> i32 {
         vpiBinStrVal => {
             let s = bin_str(&logic_val);
             let ptr = cache_cstring(&s);
-            value_p.value = vpi_value_union {
-                string: ptr,
-            };
+            value_p.value = vpi_value_union { string: ptr };
         }
         vpiHexStrVal => {
             let s = hex_str(&logic_val);
             let ptr = cache_cstring(&s);
-            value_p.value = vpi_value_union {
-                string: ptr,
-            };
+            value_p.value = vpi_value_union { string: ptr };
         }
         vpiDecStrVal => {
             let val = logic_val.to_u64();
             let s = val.to_string();
             let ptr = cache_cstring(&s);
-            value_p.value = vpi_value_union {
-                string: ptr,
-            };
+            value_p.value = vpi_value_union { string: ptr };
         }
         vpiRealVal => {
             let val = logic_val.to_u64() as f64;
@@ -87,7 +79,12 @@ pub fn vpi_get_value(handle: vpiHandle, value_p: &mut t_vpi_value) -> i32 {
 /// Uses direct write (vpiNoDelay semantics by default). The VPI engine is
 /// registered during the simulation run, so writes take effect immediately
 /// and are visible to the event loop in subsequent delta cycles.
-pub fn vpi_put_value(handle: vpiHandle, value_p: &t_vpi_value, _time_p: *mut t_vpi_time, _flags: i32) -> i32 {
+pub fn vpi_put_value(
+    handle: vpiHandle,
+    value_p: &t_vpi_value,
+    _time_p: *mut t_vpi_time,
+    _flags: i32,
+) -> i32 {
     let obj = match vpi_lookup_object(handle) {
         Some(o) => o,
         None => return 0,
@@ -137,7 +134,10 @@ fn value_to_logicvec(value_p: &t_vpi_value) -> LogicVec {
                 2 => LogicVal::X,
                 _ => LogicVal::Z,
             };
-            LogicVec { bits: vec![bit], width: 1 }
+            LogicVec {
+                bits: vec![bit],
+                width: 1,
+            }
         }
         vpiVectorVal => {
             let aval = unsafe { value_p.value.vector.aval };
@@ -157,7 +157,10 @@ fn value_to_logicvec(value_p: &t_vpi_value) -> LogicVec {
                 }
             }
             bits.reverse();
-            LogicVec { width: bits.len(), bits }
+            LogicVec {
+                width: bits.len(),
+                bits,
+            }
         }
         vpiHexStrVal => {
             let s = unsafe { super::types::cstr_to_str(value_p.value.string) };
@@ -268,7 +271,10 @@ mod tests {
         let mut value = t_vpi_value::default();
         value.format = vpiVectorVal;
         value.value = vpi_value_union {
-            vector: t_vpi_vector { aval: 0xDEAD, bval: 0 },
+            vector: t_vpi_vector {
+                aval: 0xDEAD,
+                bval: 0,
+            },
         };
         let lv = value_to_logicvec(&value);
         assert_eq!(lv.to_u64(), 0xDEAD);

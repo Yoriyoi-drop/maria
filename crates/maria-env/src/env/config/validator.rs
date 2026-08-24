@@ -8,7 +8,9 @@ pub fn validate(cfg: &MariaConfig) -> Vec<String> {
     let mut problems = Vec::new();
     if let Some(j) = cfg.compiler.jobs {
         if j == 0 {
-            problems.push("compiler.jobs = 0 berarti auto — set >0 untuk mengunci jumlah thread".into());
+            problems.push(
+                "compiler.jobs = 0 berarti auto — set >0 untuk mengunci jumlah thread".into(),
+            );
         }
     }
     if let Some(l) = cfg.compiler.opt_level {
@@ -28,7 +30,9 @@ pub fn validate(cfg: &MariaConfig) -> Vec<String> {
     }
     if let Some(d) = cfg.debug.snapshot_interval {
         if d == 0 {
-            problems.push("debug.snapshot_interval = 0 menonaktifkan snapshot (deep-debug butuh >0)".into());
+            problems.push(
+                "debug.snapshot_interval = 0 menonaktifkan snapshot (deep-debug butuh >0)".into(),
+            );
         }
     }
     if let Some(th) = cfg.coverage.branch_threshold {

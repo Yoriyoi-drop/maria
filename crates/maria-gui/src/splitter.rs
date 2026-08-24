@@ -99,7 +99,10 @@ pub fn show_resizer(ui: &mut egui::Ui, id: egui::Id, height: f32, bounds: (f32, 
     let cy = rect.center().y;
     // Garis aksen 1px di tengah strip.
     painter.rect_filled(
-        egui::Rect::from_min_max(egui::pos2(rect.left(), cy - 0.5), egui::pos2(rect.right(), cy + 0.5)),
+        egui::Rect::from_min_max(
+            egui::pos2(rect.left(), cy - 0.5),
+            egui::pos2(rect.right(), cy + 0.5),
+        ),
         0.0,
         line_color,
     );
@@ -108,7 +111,9 @@ pub fn show_resizer(ui: &mut egui::Ui, id: egui::Id, height: f32, bounds: (f32, 
     for dx in [-7.0, 0.0, 7.0] {
         painter.circle_filled(egui::pos2(cx + dx, cy), 1.5, line_color);
     }
-    let _ = resp.clone().on_hover_text("Tarik untuk mengubah tinggi panel");
+    let _ = resp
+        .clone()
+        .on_hover_text("Tarik untuk mengubah tinggi panel");
 
     // ── Drag → hitung tinggi baru (anchor-based, bukan delta kumulatif) ──
     //

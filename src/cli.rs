@@ -333,6 +333,15 @@ pub enum MwaveCmd {
         #[arg(required = true)]
         input: String,
     },
+    /// Decode transaksi protokol bus dari VCD (apb/axi4lite/ahb) — WAV-16
+    Decode {
+        /// VCD input
+        #[arg(required = true)]
+        input: String,
+        /// Protokol: apb (default) | axi4lite | ahb
+        #[arg(long = "proto", default_value = "apb")]
+        proto: String,
+    },
 }
 
 /// mfmt — Formatter.
@@ -549,7 +558,7 @@ pub struct SynthArgs {
     pub constraint: Option<String>,
 
     /// Static timing + area analysis (phase 5): hitung arrival/required/
-    /// slack/WNS/TNS + critical path atas netlist (tech bila `--tech-map`, 
+    /// slack/WNS/TNS + critical path atas netlist (tech bila `--tech-map`,
     /// else generic). Tulis `<prefix>.timing.rpt` + `<prefix>.area.rpt`.
     #[arg(long = "timing")]
     pub timing: bool,

@@ -228,7 +228,7 @@ mod tests {
 
         // Dump at time 5 with new values
         let state2 = vec![
-            LogicVec::from_u64(1, 1),  // clk = 1
+            LogicVec::from_u64(1, 1),   // clk = 1
             LogicVec::from_u64(255, 8), // data = 255
         ];
         writer.dump_state(5, &state2).unwrap();
@@ -250,7 +250,10 @@ mod tests {
         assert_eq!(CsvWaveWriter::vec_to_csv(&LogicVec::from_u64(1, 1)), "1");
         assert_eq!(CsvWaveWriter::vec_to_csv(&LogicVec::from_u64(10, 4)), "a");
         assert_eq!(CsvWaveWriter::vec_to_csv(&LogicVec::from_u64(255, 8)), "ff");
-        assert_eq!(CsvWaveWriter::vec_to_csv(&LogicVec::from_u64(0xabcd, 16)), "abcd");
+        assert_eq!(
+            CsvWaveWriter::vec_to_csv(&LogicVec::from_u64(0xabcd, 16)),
+            "abcd"
+        );
     }
 
     #[test]

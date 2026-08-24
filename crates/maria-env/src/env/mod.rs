@@ -32,7 +32,7 @@ pub use compiler::{CompilerContext, HirHandle, OptimizeLevel};
 pub use config::{ConfigContext, ConfigSource, EnvCliOptions};
 pub use database::DatabaseContext;
 pub use diagnostics::DiagnosticsContext;
-pub use global::{BuildInfo, GlobalEnv, shutdown, startup, startup_with, for_cli};
+pub use global::{for_cli, shutdown, startup, startup_with, BuildInfo, GlobalEnv};
 pub use plugins::{PluginContext, PluginManagerHandle, PluginRegistry, SandboxPolicy};
 pub use runtime::{CpuInfo, MemoryInfo, RuntimeContext, SchedulerHandle, ThreadPoolHandle};
 pub use security::{FileAccessPolicy, PermissionSet, SecurityContext};

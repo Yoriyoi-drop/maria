@@ -129,10 +129,7 @@ pub fn value_label(m: &SirModule, v: ValueId) -> String {
             let name = if *p < m.inputs.len() {
                 m.inputs[*p].name.as_str().to_string()
             } else {
-                m.outputs[p - m.inputs.len()]
-                    .name
-                    .as_str()
-                    .to_string()
+                m.outputs[p - m.inputs.len()].name.as_str().to_string()
             };
             format!("{}", name)
         }
@@ -146,7 +143,7 @@ pub fn value_label(m: &SirModule, v: ValueId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maria_core::{LogicVec, intern::Symbol};
+    use maria_core::{intern::Symbol, LogicVec};
 
     fn sample() -> SirModule {
         // Bangun langsung (tanpa lower) untuk tes render murni.
@@ -171,7 +168,10 @@ mod tests {
         let ir = lower_tests::counter_ir();
         let out = crate::lower::lower(&ir);
         let s = render_sir(&out.module);
-        assert!(s.contains("q(count)"), "dump harus memuat nilai register: {s}");
+        assert!(
+            s.contains("q(count)"),
+            "dump harus memuat nilai register: {s}"
+        );
         assert!(s.contains("ADD"), "dump harus memuat node ADD: {s}");
         assert!(s.contains("MUX"), "dump harus memuat node MUX: {s}");
     }
@@ -182,7 +182,9 @@ mod tests {
 mod lower_tests {
     use maria_core::intern::Symbol;
     use maria_core::LogicVec;
-    use maria_ir::{BinaryIrOp, ClockEdge, IrDesign, IrExpr, IrLValue, IrStmt, Process, ResetInfo, SignalKind};
+    use maria_ir::{
+        BinaryIrOp, ClockEdge, IrDesign, IrExpr, IrLValue, IrStmt, Process, ResetInfo, SignalKind,
+    };
 
     pub fn counter_ir() -> IrDesign {
         let mut ir = IrDesign {

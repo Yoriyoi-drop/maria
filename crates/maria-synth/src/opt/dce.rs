@@ -93,9 +93,9 @@ impl SynthPass for Dce {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pass::SynthPipeline;
     use maria_core::intern::Symbol;
     use maria_sir::{SirModule, SirNodeKind};
-    use crate::pass::SynthPipeline;
 
     #[test]
     fn orphan_node_is_removed() {
@@ -104,7 +104,7 @@ mod tests {
         let n1 = m.add_node(SirNodeKind::Not, vec![0], 1);
         let o1 = m.nodes[n1].output;
         m.add_value(SirValue::Node(n1)); // vid 1
-        // Wire merujuk vid 1 → n1 HIDUP (akar).
+                                         // Wire merujuk vid 1 → n1 HIDUP (akar).
         m.add_wire(Symbol::intern("y"), 1, 1);
         let n2 = m.add_node(SirNodeKind::Not, vec![0], 1);
         let _o2 = m.nodes[n2].output;

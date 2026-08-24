@@ -12,9 +12,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use maria_ir::IrDesign;
 use crate::simulator::distributed::partitioner::{DesignPartitioner, Partition};
 use crate::simulator::distributed::protocol::*;
+use maria_ir::IrDesign;
 
 /// Status of a connected slave node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +90,10 @@ impl DistributedMaster {
     /// 5. Collect results
     pub fn run(&mut self, design: &IrDesign, max_time: u64) -> Result<(), String> {
         if self.config.verbose {
-            eprintln!("[Master] Partitioning design into {} partitions...", self.config.num_partitions);
+            eprintln!(
+                "[Master] Partitioning design into {} partitions...",
+                self.config.num_partitions
+            );
         }
 
         // Step 1: Partition the design
@@ -108,12 +111,15 @@ impl DistributedMaster {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", self.config.port))
             .map_err(|e| format!("[Master] Cannot bind port {}: {}", self.config.port, e))?;
 
-        listener.set_nonblocking(true)
+        listener
+            .set_nonblocking(true)
             .map_err(|e| format!("[Master] Cannot set nonblocking: {}", e))?;
 
         if self.config.verbose {
-            eprintln!("[Master] Listening on port {} for {} slaves...",
-                self.config.port, partition.num_partitions);
+            eprintln!(
+                "[Master] Listening on port {} for {} slaves...",
+                self.config.port, partition.num_partitions
+            );
         }
 
         // Step 3: Accept connections from all slaves
@@ -122,8 +128,11 @@ impl DistributedMaster {
 
         while self.slaves.len() < partition.num_partitions {
             if start_time.elapsed() > timeout_duration {
-                return Err(format!("[Master] Timeout waiting for {} slaves (got {})",
-                    partition.num_partitions, self.slaves.len()));
+                return Err(format!(
+                    "[Master] Timeout waiting for {} slaves (got {})",
+                    partition.num_partitions,
+                    self.slaves.len()
+                ));
             }
 
             match listener.accept() {
@@ -147,10 +156,17 @@ impl DistributedMaster {
                         num_partitions: partition.num_partitions as u32,
                         num_signals: design.top.signals.len() as u32,
                         num_processes: 0,
-                        cross_signals: partition.partitions.get(slave_id)
-                            .map(|p| p.cross_signals.iter().map(|cs| {
-                                (cs.signal_id as u32, cs.signal_id as u32, cs.width as u32)
-                            }).collect())
+                        cross_signals: partition
+                            .partitions
+                            .get(slave_id)
+                            .map(|p| {
+                                p.cross_signals
+                                    .iter()
+                                    .map(|cs| {
+                                        (cs.signal_id as u32, cs.signal_id as u32, cs.width as u32)
+                                    })
+                                    .collect()
+                            })
                             .unwrap_or_default(),
                     };
 
@@ -163,12 +179,17 @@ impl DistributedMaster {
                         // Read PartitionAck
                         let (msg_type, _) = read_message(&mut *s)
                             .map_err(|e| format!("[Master] Read ack failed: {}", e))?
-                            .ok_or_else(|| "[Master] Slave disconnected during handshake".to_string())?;
+                            .ok_or_else(|| {
+                                "[Master] Slave disconnected during handshake".to_string()
+                            })?;
 
                         if msg_type == 0x11 {
                             info.status = SlaveStatus::Ready;
                         } else {
-                            return Err(format!("[Master] Unexpected msg type {:#x} from slave", msg_type));
+                            return Err(format!(
+                                "[Master] Unexpected msg type {:#x} from slave",
+                                msg_type
+                            ));
                         }
                     }
 
@@ -184,7 +205,10 @@ impl DistributedMaster {
         }
 
         if self.config.verbose {
-            eprintln!("[Master] All {} slaves connected and ready.", self.slaves.len());
+            eprintln!(
+                "[Master] All {} slaves connected and ready.",
+                self.slaves.len()
+            );
         }
 
         // Step 4: Coordinate simulation delta cycles
@@ -197,8 +221,11 @@ impl DistributedMaster {
         while current_time < max_time {
             // Check for faulty slaves
             if !faulty_slaves.is_empty() {
-                eprintln!("[Master] {} slave(s) faulty — continuing with remaining {} slaves",
-                    faulty_slaves.len(), self.slaves.len() - faulty_slaves.len());
+                eprintln!(
+                    "[Master] {} slave(s) faulty — continuing with remaining {} slaves",
+                    faulty_slaves.len(),
+                    self.slaves.len() - faulty_slaves.len()
+                );
                 if self.slaves.len() <= faulty_slaves.len() {
                     return Err("[Master] All slaves faulty — aborting".to_string());
                 }
@@ -235,12 +262,12 @@ impl DistributedMaster {
                         match read_message(&mut *s) {
                             Ok(Some((msg_type, payload))) => {
                                 match msg_type {
-                                    0x14 => {
-                                        match decode_signal_exchange(&payload) {
-                                            Ok(values) => all_exchange_data.push(values),
-                                            Err(e) => eprintln!("[Master] Slave {} decode error: {}", idx, e),
+                                    0x14 => match decode_signal_exchange(&payload) {
+                                        Ok(values) => all_exchange_data.push(values),
+                                        Err(e) => {
+                                            eprintln!("[Master] Slave {} decode error: {}", idx, e)
                                         }
-                                    }
+                                    },
                                     0x15 => {
                                         if self.config.verbose {
                                             eprintln!("[Master] Slave {} finished simulation", idx);
@@ -249,25 +276,38 @@ impl DistributedMaster {
                                     0x16 => {
                                         // Heartbeat response — update timestamp
                                         if let Ok(ts) = decode_heartbeat(&payload) {
-                                            if self.config.verbose && delta_id.is_multiple_of(1000) {
-                                                eprintln!("[Master] Heartbeat from slave {} at ts={}", idx, ts);
+                                            if self.config.verbose && delta_id.is_multiple_of(1000)
+                                            {
+                                                eprintln!(
+                                                    "[Master] Heartbeat from slave {} at ts={}",
+                                                    idx, ts
+                                                );
                                             }
                                         }
                                     }
                                     _ => {
-                                        eprintln!("[Master] Unexpected msg {:#x} from slave {}", msg_type, idx);
+                                        eprintln!(
+                                            "[Master] Unexpected msg {:#x} from slave {}",
+                                            msg_type, idx
+                                        );
                                     }
                                 }
                             }
                             Ok(None) => {
                                 // EOF — slave disconnected
                                 if !faulty_slaves.contains(&idx) {
-                                    eprintln!("[Master] Slave {} disconnected (EOF) — marking faulty", idx);
+                                    eprintln!(
+                                        "[Master] Slave {} disconnected (EOF) — marking faulty",
+                                        idx
+                                    );
                                     faulty_slaves.push(idx);
                                 }
                             }
                             Err(e) => {
-                                eprintln!("[Master] Slave {} read error: {} — marking faulty", idx, e);
+                                eprintln!(
+                                    "[Master] Slave {} read error: {} — marking faulty",
+                                    idx, e
+                                );
                                 if !faulty_slaves.contains(&idx) {
                                     faulty_slaves.push(idx);
                                 }
@@ -307,8 +347,12 @@ impl DistributedMaster {
             current_time += 1;
 
             if self.config.verbose && delta_id.is_multiple_of(1000) {
-                eprintln!("[Master] Delta {} completed (time={}, slaves={})",
-                    delta_id, current_time, self.slaves.len() - faulty_slaves.len());
+                eprintln!(
+                    "[Master] Delta {} completed (time={}, slaves={})",
+                    delta_id,
+                    current_time,
+                    self.slaves.len() - faulty_slaves.len()
+                );
             }
         }
 
@@ -323,7 +367,10 @@ impl DistributedMaster {
         }
 
         if self.config.verbose {
-            eprintln!("[Master] Distributed simulation complete: {} deltas, time={}", delta_id, current_time);
+            eprintln!(
+                "[Master] Distributed simulation complete: {} deltas, time={}",
+                delta_id, current_time
+            );
         }
 
         Ok(())

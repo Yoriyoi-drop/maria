@@ -11,11 +11,19 @@ pub struct WaveformOptions {
 
 impl WaveformOptions {
     pub fn vcd_only(name: &str) -> Self {
-        WaveformOptions { vcd: true, fst: false, base_path: name.to_string() }
+        WaveformOptions {
+            vcd: true,
+            fst: false,
+            base_path: name.to_string(),
+        }
     }
 
     pub fn all(name: &str) -> Self {
-        WaveformOptions { vcd: true, fst: true, base_path: name.to_string() }
+        WaveformOptions {
+            vcd: true,
+            fst: true,
+            base_path: name.to_string(),
+        }
     }
 }
 

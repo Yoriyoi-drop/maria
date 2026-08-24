@@ -11,16 +11,16 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
-use maria_core::error::SimError;
 use maria_compiler::frontend::compile_session::{CompileSession, SessionConfig};
 use maria_compiler::frontend::module_index::EntryKind;
+use maria_core::error::SimError;
 use maria_ir::{IrDesign, LogicVal, LogicVec};
 use maria_simulator::simulator::SimulationEngine;
 
 use super::state::{
-    CompileInfo, CovergroupRow, CoverageInfo, DepRow, DiagEntry, DiagLevel, FileNode, GuiEvent,
-    InstanceRow, MacroRow, MicdInfo, ParamRow, PipelineStage, QuickFix, QuickFixKind, SimInfo,
-    SignalRow, WaveformSignal, blocking_assign_pos, word_count, STAGE_SIMULATOR,
+    blocking_assign_pos, word_count, CompileInfo, CoverageInfo, CovergroupRow, DepRow, DiagEntry,
+    DiagLevel, FileNode, GuiEvent, InstanceRow, MacroRow, MicdInfo, ParamRow, PipelineStage,
+    QuickFix, QuickFixKind, SignalRow, SimInfo, WaveformSignal, STAGE_SIMULATOR,
 };
 
 /// Scan direktori → pohon file (rekursif, sinkron).
@@ -46,11 +46,7 @@ pub fn scan_tree(root: &Path) -> Vec<FileNode> {
                 children,
             });
         }
-        nodes.sort_by(|a, b| {
-            b.is_dir
-                .cmp(&a.is_dir)
-                .then_with(|| a.name.cmp(&b.name))
-        });
+        nodes.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
         nodes
     }
     build(root)
@@ -126,10 +122,7 @@ pub fn compile_project(
         let proot = project_root.expect("micd_root hanya ada bila project_root ada");
         let pid = maria_compiler::micd::MicdDatabase::project_id(proot, paths, &[], &[]);
         let db = maria_compiler::micd::MicdDatabase::open_project_with_context(
-            micd_root,
-            &pid,
-            proot,
-            paths,
+            micd_root, &pid, proot, paths,
         );
         session.attach_micd(db);
     }
@@ -213,7 +206,6 @@ pub fn compile_project(
     let cached_files = t.cached_files;
     let processed_files = t.processed_files;
 
-
     let modules: Vec<String> = session
         .module_index
         .iter()
@@ -245,7 +237,10 @@ pub fn compile_project(
     // dengan hitungan instance. Root = module top. ──
     let mut deps = build_dep_graph(&ir_design);
     // Taruh module top di paling atas agar mudah ditemukan.
-    if let Some(pos) = deps.iter().position(|d| d.module == ir_design.top.name.as_str()) {
+    if let Some(pos) = deps
+        .iter()
+        .position(|d| d.module == ir_design.top.name.as_str())
+    {
         let root = deps.remove(pos);
         deps.insert(0, root);
     }
@@ -263,9 +258,9 @@ pub fn compile_project(
     {
         let mut add_mod = |m: &maria_ir::IrModule| {
             for s in &m.signals {
-                signal_info.entry(s.name.to_string()).or_insert_with(|| {
-                    (signal_type_str(s.kind.clone()).to_string(), s.width)
-                });
+                signal_info
+                    .entry(s.name.to_string())
+                    .or_insert_with(|| (signal_type_str(s.kind.clone()).to_string(), s.width));
             }
         };
         add_mod(&ir_design.top);
@@ -278,7 +273,10 @@ pub fn compile_project(
     // (Ctrl+Click). Precompute dari module_index sekali saat compile. ──
     let mut symbol_files: HashMap<String, PathBuf> = HashMap::new();
     for (name, kind, meta) in session.module_index.iter() {
-        if matches!(kind, EntryKind::Module | EntryKind::Package | EntryKind::Interface) {
+        if matches!(
+            kind,
+            EntryKind::Module | EntryKind::Package | EntryKind::Interface
+        ) {
             symbol_files.insert(name.to_string(), meta.file.clone());
         }
     }
@@ -351,10 +349,7 @@ pub fn compile_project(
         let mut add_mod = |m: &maria_ir::IrModule| {
             for inst in &m.sub_instances {
                 let mod_name = inst.module_name.to_string();
-                let file = module_files
-                    .get(&mod_name)
-                    .cloned()
-                    .unwrap_or_default();
+                let file = module_files.get(&mod_name).cloned().unwrap_or_default();
                 instance_index.push(InstanceRow {
                     name: inst.instance_name.to_string(),
                     module: mod_name,
@@ -464,8 +459,20 @@ fn lint_sources(paths: &[PathBuf]) -> Vec<DiagEntry> {
 fn lint_unused_signals(text: &str, fname: &str, out: &mut Vec<DiagEntry>) {
     // Kata kunci tipe yang memulai deklarasi signal internal.
     const DECL_TYPES: &[&str] = &[
-        "logic", "reg", "wire", "bit", "int", "integer", "byte", "shortint",
-        "longint", "time", "real", "tri", "logic signed", "wire signed",
+        "logic",
+        "reg",
+        "wire",
+        "bit",
+        "int",
+        "integer",
+        "byte",
+        "shortint",
+        "longint",
+        "time",
+        "real",
+        "tri",
+        "logic signed",
+        "wire signed",
     ];
     let mut declared: Vec<(usize, String)> = Vec::new();
     for (i, raw) in text.lines().enumerate() {
@@ -527,7 +534,12 @@ fn lint_unused_signals(text: &str, fname: &str, out: &mut Vec<DiagEntry>) {
         }
         for name in names {
             // Lewati nama yang terlihat seperti keyword/number.
-            if name.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true) {
+            if name
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(true)
+            {
                 continue;
             }
             if is_sv_keyword(&name) {
@@ -573,9 +585,10 @@ fn lint_blocking_in_sequential(text: &str, fname: &str, out: &mut Vec<DiagEntry>
         let first = words.first().copied().unwrap_or("");
 
         // Mulai blok sequential: `always_ff ...` atau `always @(posedge ...)`.
-        if !in_sequential && (first == "always_ff"
-            || (first == "always"
-                && (trimmed.contains("posedge") || trimmed.contains("negedge"))))
+        if !in_sequential
+            && (first == "always_ff"
+                || (first == "always"
+                    && (trimmed.contains("posedge") || trimmed.contains("negedge"))))
         {
             in_sequential = true;
             block_depth = 0;
@@ -600,8 +613,8 @@ fn lint_blocking_in_sequential(text: &str, fname: &str, out: &mut Vec<DiagEntry>
                 out.push(DiagEntry {
                     file: fname.to_string(),
                     line: line_no,
-                    message:
-                        "blocking assignment '=' di dalam blok sequential (gunakan '<=')".into(),
+                    message: "blocking assignment '=' di dalam blok sequential (gunakan '<=')"
+                        .into(),
                     level: DiagLevel::Warning,
                     fix: Some(QuickFix {
                         action: "Ubah '=' → '<='".into(),
@@ -621,15 +634,67 @@ fn lint_blocking_in_sequential(text: &str, fname: &str, out: &mut Vec<DiagEntry>
 fn is_sv_keyword(w: &str) -> bool {
     matches!(
         w,
-        "module" | "endmodule" | "interface" | "endinterface" | "package" | "endpackage"
-            | "always" | "always_ff" | "always_comb" | "always_latch" | "initial" | "final"
-            | "begin" | "end" | "if" | "else" | "for" | "while" | "repeat" | "case"
-            | "casez" | "casex" | "default" | "input" | "output" | "inout" | "parameter"
-            | "localparam" | "genvar" | "assign" | "function" | "endfunction" | "task"
-            | "endtask" | "typedef" | "enum" | "struct" | "union" | "class" | "endclass"
-            | "return" | "break" | "continue" | "logic" | "reg" | "wire" | "bit" | "int"
-            | "integer" | "byte" | "shortint" | "longint" | "time" | "real" | "tri"
-            | "signed" | "unsigned" | "var" | "void" | "import" | "export"
+        "module"
+            | "endmodule"
+            | "interface"
+            | "endinterface"
+            | "package"
+            | "endpackage"
+            | "always"
+            | "always_ff"
+            | "always_comb"
+            | "always_latch"
+            | "initial"
+            | "final"
+            | "begin"
+            | "end"
+            | "if"
+            | "else"
+            | "for"
+            | "while"
+            | "repeat"
+            | "case"
+            | "casez"
+            | "casex"
+            | "default"
+            | "input"
+            | "output"
+            | "inout"
+            | "parameter"
+            | "localparam"
+            | "genvar"
+            | "assign"
+            | "function"
+            | "endfunction"
+            | "task"
+            | "endtask"
+            | "typedef"
+            | "enum"
+            | "struct"
+            | "union"
+            | "class"
+            | "endclass"
+            | "return"
+            | "break"
+            | "continue"
+            | "logic"
+            | "reg"
+            | "wire"
+            | "bit"
+            | "int"
+            | "integer"
+            | "byte"
+            | "shortint"
+            | "longint"
+            | "time"
+            | "real"
+            | "tri"
+            | "signed"
+            | "unsigned"
+            | "var"
+            | "void"
+            | "import"
+            | "export"
     )
 }
 
@@ -693,7 +758,8 @@ pub fn build_dep_graph(design: &IrDesign) -> Vec<DepRow> {
         if module.sub_instances.is_empty() {
             continue;
         }
-        let mut children: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut children: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for inst in &module.sub_instances {
             let child = inst.module_name.to_string();
             *children.entry(child).or_insert(0) += 1;
@@ -763,12 +829,7 @@ pub fn spawn_term(tx: Sender<GuiEvent>, cmd: String, cwd: Option<PathBuf>) {
 
 /// Jalankan simulasi di worker thread. `cancel` adalah flag bersama dengan GUI:
 /// jika di-set true (tombol Stop), simulasi berhenti lebih awal.
-pub fn spawn_sim(
-    tx: Sender<GuiEvent>,
-    design: IrDesign,
-    max_time: u64,
-    cancel: Arc<AtomicBool>,
-) {
+pub fn spawn_sim(tx: Sender<GuiEvent>, design: IrDesign, max_time: u64, cancel: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         let result = run_simulation(&design, max_time, cancel);
         let _ = tx.send(GuiEvent::SimDone(result));

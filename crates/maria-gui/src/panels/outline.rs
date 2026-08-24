@@ -24,7 +24,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
 
     let Some(design) = state.design.as_ref() else {
         ui.add_space(8.0);
-        ui.label(egui::RichText::new("Compile dulu untuk melihat outline").weak().italics());
+        ui.label(
+            egui::RichText::new("Compile dulu untuk melihat outline")
+                .weak()
+                .italics(),
+        );
         return;
     };
 

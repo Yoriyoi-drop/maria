@@ -28,8 +28,8 @@ use maria_simulator::simulator::{
     DebugMode, EventKind, EventRegion, RegionEvent, SimulationEngine, SimulationLimit, StepMode,
 };
 
-use crate::mem::MemoryPort;
 use super::{CpuCore, CpuFault, CpuStep, Isa};
+use crate::mem::MemoryPort;
 
 /// Batas cycle RTL per `step()` (guard: CPU macet / reset tidak selesai).
 const MAX_CYCLES_PER_STEP: u64 = 10_000;
@@ -58,6 +58,10 @@ struct CpuPorts {
     uart_rx_wr: Option<SignalId>,
     uart_rx_din: Option<SignalId>,
     uart_rx_pending: Option<SignalId>,
+    /// Probe PC internal CPU (opsional, picorv32-specific `u_cpu.reg_pc`).
+    /// Dipakai `pc()` — lebih akurat daripada alamat fetch terakhir host,
+    /// karena picorv32 mem-prefetch 1 instruksi melewati ebreak/trap.
+    reg_pc: Option<SignalId>,
 }
 
 /// CPU RTL-linked: eksekusi instruksi terjadi di RTL (`.sv`/`.v`), bukan .rs.
@@ -75,6 +79,9 @@ pub struct RtlLinkedCpu {
     served: bool,
     served_instr: bool,
     served_addr: u64,
+    /// Transaksi yang dilayani adalah MMIO (decoder RTL yang ack — host
+    /// tidak men-drive mem_ready; penyelesaian dideteksi dari mem_valid turun).
+    served_mmio: bool,
     /// Byte yang ditulis CPU ke Direct RTL Device (UART console) selama run.
     pub console_out: Vec<u8>,
     /// Input host → device RTL (UART RX): byte di-deliver ke `rx_wr`/`rx_din`
@@ -93,7 +100,9 @@ fn compile_cpu_rtl(files: &[String], top: &str) -> Result<IrDesign, String> {
     let mut combined = String::new();
     for path in files {
         let mut pp = maria_parser::preprocessor::Preprocessor::new();
-        let processed = pp.preprocess_file(path).map_err(|e| format!("{}: {}", path, e))?;
+        let processed = pp
+            .preprocess_file(path)
+            .map_err(|e| format!("{}: {}", path, e))?;
         combined.push_str(&format!("`line 1 \"{}\"\n", path));
         combined.push_str(&processed);
         combined.push('\n');
@@ -122,9 +131,13 @@ fn compile_cpu_rtl(files: &[String], top: &str) -> Result<IrDesign, String> {
         .with_file_line_map(file_line_map);
     let design = parser.parse_design().map_err(|e| e.to_string())?;
     let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
-    let mut elaborator = maria_elaboration::Elaborator::with_source(design, source_lines, first_source);
+    let mut elaborator =
+        maria_elaboration::Elaborator::with_source(design, source_lines, first_source);
     let ir = elaborator
-        .elaborate(Some(top), maria_elaboration::ElaborateMode::StrictSimulation)
+        .elaborate(
+            Some(top),
+            maria_elaboration::ElaborateMode::StrictSimulation,
+        )
         .map_err(|e| e.to_string())?;
     Ok(ir)
 }
@@ -181,6 +194,7 @@ fn resolve_ports(design: &IrDesign) -> Result<CpuPorts, String> {
         uart_rx_wr: find("uart_rx_wr"),
         uart_rx_din: find("uart_rx_din"),
         uart_rx_pending: find("uart_rx_pending"),
+        reg_pc: find("u_cpu.reg_pc"),
     })
 }
 
@@ -205,6 +219,7 @@ impl RtlLinkedCpu {
             served: false,
             served_instr: false,
             served_addr: 0,
+            served_mmio: false,
             console_out: Vec::new(),
             pending_rx: VecDeque::new(),
             rx_wr_high: false,
@@ -215,30 +230,46 @@ impl RtlLinkedCpu {
 
     /// Baca sinyal internal CPU RTL (debug/probe). Nama hierarkis (`u_cpu.reg_pc`).
     pub fn read_signal(&self, name: &str) -> Option<u64> {
-        let id = self.design.top.signals.iter().position(|s| s.name.as_str() == name)?;
+        let id = self
+            .design
+            .top
+            .signals
+            .iter()
+            .position(|s| s.name.as_str() == name)?;
         Some(self.dbg.engine.state.read_signal(id).to_u64())
     }
 
     /// Nama semua sinyal top design (debug/probe flatten naming).
     pub fn signal_names(&self) -> Vec<String> {
-        self.design.top.signals.iter().map(|s| s.name.as_str().to_string()).collect()
+        self.design
+            .top
+            .signals
+            .iter()
+            .map(|s| s.name.as_str().to_string())
+            .collect()
     }
 
     /// Lebar sinyal top design (debug/probe).
     pub fn signal_width(&self, name: &str) -> Option<usize> {
-        let id = self.design.top.signals.iter().position(|s| s.name.as_str() == name)?;
+        let id = self
+            .design
+            .top
+            .signals
+            .iter()
+            .position(|s| s.name.as_str() == name)?;
         Some(self.design.top.signals[id].width)
     }
 
     /// Satu tick clock (high+low) DENGAN layanan bus — untuk probing manual
     /// per cycle. Tidak menunggu fetch selesai (beda dari `step()`).
     pub fn debug_tick(&mut self, mem: &mut dyn MemoryPort) -> Result<(), CpuFault> {
-        self.tick(Some(mem))
+        self.tick(Some(mem)).map(|_| ())
     }
 
     /// Engine baru + zero-kan SEMUA sinyal (hindari X di input bus / regfile).
     fn recreate_engine(&mut self) {
-        let mut engine = SimulationEngine::new_with_limit(self.design.clone(), SimulationLimit::Unlimited);
+        let mut engine =
+            SimulationEngine::new_with_limit(self.design.clone(), SimulationLimit::Unlimited);
         engine.debug_mode = DebugMode::Debug;
         engine.step_mode = StepMode::StepCycle;
         for id in 0..engine.state.signals.len() {
@@ -248,6 +279,7 @@ impl RtlLinkedCpu {
         self.dbg = Debugger { engine };
         self.cycle = 0;
         self.served = false;
+        self.served_mmio = false;
         self.last_pc = 0;
         self.console_out.clear();
         self.pending_rx.clear();
@@ -265,7 +297,10 @@ impl RtlLinkedCpu {
     /// Tulis sinyal 1-bit (level input: resetn/mem_ready — nilai dibaca saat
     /// posedge berikutnya; tidak perlu event karena tidak mendeteksi edge).
     fn poke(&mut self, id: SignalId, val: u64) {
-        self.dbg.engine.state.write_signal(id, LogicVec::from_u64(val, 1));
+        self.dbg
+            .engine
+            .state
+            .write_signal(id, LogicVec::from_u64(val, 1));
     }
 
     /// Tulis sinyal DI DALAM time step via event terjadwal (`SdfDelayedWrite`
@@ -282,19 +317,30 @@ impl RtlLinkedCpu {
             t,
             RegionEvent {
                 region: EventRegion::Active,
-                event: EventKind::SdfDelayedWrite { sig_id: id, value: val },
+                event: EventKind::SdfDelayedWrite {
+                    sig_id: id,
+                    value: val,
+                },
             },
         );
     }
 
     fn poke_val(&mut self, id: SignalId, val: u64) {
         let width = self.dbg.engine.design.top.signals[id].width;
-        self.dbg.engine.state.write_signal(id, LogicVec::from_u64(val, width));
+        self.dbg
+            .engine
+            .state
+            .write_signal(id, LogicVec::from_u64(val, width));
     }
 
     /// Baca sinyal 1-bit sebagai bool (X → false).
     fn bit(&self, id: SignalId) -> bool {
-        self.dbg.engine.state.read_signal(id).to_bool().unwrap_or(false)
+        self.dbg
+            .engine
+            .state
+            .read_signal(id)
+            .to_bool()
+            .unwrap_or(false)
     }
 
     /// Baca sinyal sebagai u64 (X → 0).
@@ -305,28 +351,58 @@ impl RtlLinkedCpu {
     /// Satu langkah engine RTL (1 time unit; posedge/negedge dipicu oleh poke).
     fn step_once(&mut self) -> Result<(), CpuFault> {
         self.cycle += 1;
-        self.dbg
-            .step_cycle()
-            .map_err(|e| CpuFault { pc: self.pc(), reason: format!("rtl step: {}", e) })
+        self.dbg.step_cycle().map_err(|e| CpuFault {
+            pc: self.pc(),
+            reason: format!("rtl step: {}", e),
+        })
     }
 
     /// Satu cycle clock penuh (high + low). Bila `mem` diberikan, layani
     /// transaksi bus yang sedang di-assert CPU.
-    fn tick(&mut self, mem: Option<&mut dyn MemoryPort>) -> Result<(), CpuFault> {
+    ///
+    /// Mengembalikan Ok(true) bila SATU fetch instruksi selesai pada tick ini
+    /// (= satu instruksi dieksekusi RTL).
+    ///
+    /// Protokol: picorv32 memakai stream valid/ready — `mem_valid` TETAP
+    /// tinggi untuk transaksi back-to-back (tidak selalu turun antar txn).
+    /// Karena itu penyelesaian transaksi non-MMIO dideteksi dari posedge
+    /// berikutnya setelah serve (ready yang kita poke di-sample CPU), bukan
+    /// dari mem_valid turun. MMIO (decoder RTL yang ack) tetap memakai
+    /// deteksi mem_valid turun.
+    fn tick(&mut self, mem: Option<&mut dyn MemoryPort>) -> Result<bool, CpuFault> {
         // ── High phase (posedge): CPU men-sampling mem_ready/mem_rdata ──
         self.schedule_write(self.ports.clk, LogicVec::from_u64(1, 1));
         self.step_once()?;
-        // Transaksi baru di-assert di posedge ini → layani (balas di posedge
-        // berikutnya).
+        let mut fetch_done = false;
+
+        // Transaksi non-MMIO yang dilayani tick sebelumnya: posedge barusan
+        // men-sample ready/rdata → transaksi SELESAI. Tutup sebelum melayani
+        // transaksi baru agar back-to-back tetap berjalan.
+        if self.served && !self.served_mmio {
+            let was_fetch = self.served_instr;
+            let addr = self.served_addr;
+            self.served = false;
+            self.served_mmio = false;
+            self.poke(self.ports.mem_ready, 0);
+            self.poke_val(self.ports.mem_rdata, 0);
+            if was_fetch {
+                // Fetch instruksi selesai = satu instruksi dieksekusi RTL.
+                self.last_pc = addr;
+                fetch_done = true;
+            }
+        }
+        // Transaksi baru di-assert CPU (termasuk back-to-back setelah
+        // penyelesaian di atas) → layani sekarang; selesai di posedge
+        // berikutnya.
         if let Some(mem) = mem {
-            if self.bit(self.ports.mem_valid) && !self.served {
+            if !self.served && self.bit(self.ports.mem_valid) {
                 self.serve(mem)?;
             }
         }
         // ── Low phase ──
         self.schedule_write(self.ports.clk, LogicVec::from_u64(0, 1));
         self.step_once()?;
-        Ok(())
+        Ok(fetch_done)
     }
 
     /// Layani transaksi bus CPU: baca → mem_rdata; tulis → mem.write per strobe.
@@ -340,6 +416,7 @@ impl RtlLinkedCpu {
         self.served_addr = addr;
         self.served = true;
         let is_mmio = self.ports.mmio_sel.map(|id| self.bit(id)).unwrap_or(false);
+        self.served_mmio = is_mmio;
         if is_mmio {
             // Direct RTL Device: RTL decoder yang ack. Host tidak men-drive
             // mem_ready/mem_rdata (hindari multi-driver). Byte UART ditangkap
@@ -365,7 +442,11 @@ impl RtlLinkedCpu {
 
     /// Tangkap byte UART RTL (tx_done pulse) → console host.
     fn capture_console(&mut self) {
-        let done = self.ports.uart_tx_done.map(|id| self.bit(id)).unwrap_or(false);
+        let done = self
+            .ports
+            .uart_tx_done
+            .map(|id| self.bit(id))
+            .unwrap_or(false);
         if done {
             if let Some(byte_id) = self.ports.uart_tx_byte {
                 let b = self.val(byte_id) as u8;
@@ -403,12 +484,14 @@ impl Default for RtlLinkedCpu {
                 uart_rx_wr: None,
                 uart_rx_din: None,
                 uart_rx_pending: None,
+                reg_pc: None,
             },
             cycle: 0,
             last_pc: 0,
             served: false,
             served_instr: false,
             served_addr: 0,
+            served_mmio: false,
             console_out: Vec::new(),
             pending_rx: VecDeque::new(),
             rx_wr_high: false,
@@ -458,7 +541,7 @@ impl CpuCore for RtlLinkedCpu {
     fn step(&mut self, mem: &mut dyn MemoryPort) -> Result<CpuStep, CpuFault> {
         let start = self.cycle;
         for _ in 0..MAX_CYCLES_PER_STEP {
-            self.tick(Some(mem))?;
+            let fetch_done = self.tick(Some(mem))?;
             // Direct RTL Device: byte UART RTL → console host.
             self.capture_console();
             // UART RX handshake: drop rx_wr 1 posedge setelah latch (edge
@@ -475,26 +558,44 @@ impl CpuCore for RtlLinkedCpu {
             }
             // Trap (ebreak/ecall/ilegal) — CPU berhenti.
             if self.bit(self.ports.trap) {
-                return Ok(CpuStep::Trap { cause: CAUSE_ECALL_M, tval: self.last_pc });
+                return Ok(CpuStep::Trap {
+                    cause: CAUSE_ECALL_M,
+                    tval: self.last_pc,
+                });
             }
-            // Transaksi yang dilayani selesai di posedge barusan (mem_valid turun).
-            if self.served && !self.bit(self.ports.mem_valid) {
+            if fetch_done {
+                return Ok(CpuStep::InstructionExecuted {
+                    cycles: self.cycle - start,
+                });
+            }
+            // Transaksi MMIO: RTL decoder yang ack — selesai saat mem_valid
+            // turun (host tidak men-drive ready).
+            if self.served && self.served_mmio && !self.bit(self.ports.mem_valid) {
                 let was_fetch = self.served_instr;
                 let addr = self.served_addr;
                 self.served = false;
-                self.poke(self.ports.mem_ready, 0);
-                self.poke_val(self.ports.mem_rdata, 0);
+                self.served_mmio = false;
                 if was_fetch {
-                    // Fetch instruksi selesai = satu instruksi dieksekusi RTL.
                     self.last_pc = addr;
-                    return Ok(CpuStep::InstructionExecuted { cycles: self.cycle - start });
+                    return Ok(CpuStep::InstructionExecuted {
+                        cycles: self.cycle - start,
+                    });
                 }
             }
         }
-        Err(CpuFault { pc: self.pc(), reason: "RTL CPU tidak progress (max cycle per step)".into() })
+        Err(CpuFault {
+            pc: self.pc(),
+            reason: "RTL CPU tidak progress (max cycle per step)".into(),
+        })
     }
 
     fn pc(&self) -> u64 {
+        // Probe PC internal RTL bila tersedia (picorv32 `u_cpu.reg_pc`) —
+        // akurat saat trap: picorv32 mem-prefetch 1 instruksi melewati ebreak
+        // sehingga alamat fetch terakhir host = ebreak + 4.
+        if let Some(id) = self.ports.reg_pc {
+            return self.dbg.engine.state.read_signal(id).to_u64();
+        }
         self.last_pc
     }
 
@@ -549,7 +650,10 @@ mod tests {
     }
 
     fn cpu_files() -> Vec<String> {
-        vec![root_of("examples/rtl/rv32_bus_wrapper.sv"), root_of("examples/rtl/picorv32.v")]
+        vec![
+            root_of("examples/rtl/rv32_bus_wrapper.sv"),
+            root_of("examples/rtl/picorv32.v"),
+        ]
     }
 
     /// SoC lengkap: picorv32 + UART + timer (semua Direct RTL Device).
@@ -564,7 +668,17 @@ mod tests {
 
     fn map() -> MemoryMap {
         let mut m = MemoryMap::new();
-        m.add(RamRegion::new(Symbol::intern("ram"), 0x8000_0000, 0x1_0000, RegionKind::Ram, false).unwrap()).unwrap();
+        m.add(
+            RamRegion::new(
+                Symbol::intern("ram"),
+                0x8000_0000,
+                0x1_0000,
+                RegionKind::Ram,
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         m
     }
 
@@ -594,14 +708,28 @@ mod tests {
 
     // ── Encoder RV32I (sama dengan interpreter) ──
     fn r(f7: u8, rs2: u8, rs1: u8, f3: u8, rd: u8, op: u32) -> u32 {
-        ((f7 as u32) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((rd as u32) << 7) | op
+        ((f7 as u32) << 25)
+            | ((rs2 as u32) << 20)
+            | ((rs1 as u32) << 15)
+            | ((f3 as u32) << 12)
+            | ((rd as u32) << 7)
+            | op
     }
     fn i(imm: i32, rs1: u8, f3: u8, rd: u8, op: u32) -> u32 {
-        ((imm as u32 & 0xfff) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((rd as u32) << 7) | op
+        ((imm as u32 & 0xfff) << 20)
+            | ((rs1 as u32) << 15)
+            | ((f3 as u32) << 12)
+            | ((rd as u32) << 7)
+            | op
     }
     fn s(imm: i32, rs2: u8, rs1: u8, f3: u8, op: u32) -> u32 {
         let imm = imm as u32 & 0xfff;
-        ((imm >> 5) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((imm & 0x1f) << 7) | op
+        ((imm >> 5) << 25)
+            | ((rs2 as u32) << 20)
+            | ((rs1 as u32) << 15)
+            | ((f3 as u32) << 12)
+            | ((imm & 0x1f) << 7)
+            | op
     }
     const ADDI: u32 = 0x13;
     const LUI: u32 = 0x37;
@@ -634,25 +762,30 @@ mod tests {
         with_big_stack(|| {
             // t0=42; a0=0x80000000; sw t0,0(a0); lw a1,0(a0); a2=a1+t0; sw a2,4(a0); ebreak
             let code = [
-                i(42, 0, 0, 5, ADDI),                       // t0 = 42
-                (0x80000u32 << 12) | (10u32 << 7) | LUI,   // a0 = 0x80000000
-                s(0, 5, 10, 2, SW),                        // mem[a0+0] = t0
-                i(0, 10, 2, 11, LW),                       // a1 = mem[a0]
-                r(0, 5, 11, 0, 12, OP),                    // a2 = a1 + t0 = 84
-                s(4, 12, 10, 2, SW),                       // mem[a0+4] = a2
-                0x0010_0073,                                // ebreak
+                i(42, 0, 0, 5, ADDI),                    // t0 = 42
+                (0x80000u32 << 12) | (10u32 << 7) | LUI, // a0 = 0x80000000
+                s(0, 5, 10, 2, SW),                      // mem[a0+0] = t0
+                i(0, 10, 2, 11, LW),                     // a1 = mem[a0]
+                r(0, 5, 11, 0, 12, OP),                  // a2 = a1 + t0 = 84
+                s(4, 12, 10, 2, SW),                     // mem[a0+4] = a2
+                0x0010_0073,                             // ebreak
             ];
             let elf = make_elf(&code_bytes(&code));
             let mut mem = map();
             crate::elf::load_elf(&elf, &mut mem).expect("load elf");
 
-            let mut cpu = RtlLinkedCpu::from_files(&cpu_files(), "rv32_bus_wrapper").expect("compile");
+            let mut cpu =
+                RtlLinkedCpu::from_files(&cpu_files(), "rv32_bus_wrapper").expect("compile");
             cpu.reset();
             let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
             let result = machine.run().expect("machine run");
             assert!(result.halted, "CPU RTL harus trap (ebreak): {:?}", result);
             // pc() = alamat fetch terakhir = ebreak (instruksi terakhir program).
-            assert_eq!(result.pc & !3, 0x8000_0018, "PC terakhir harus di ebreak (0x18)");
+            assert_eq!(
+                result.pc & !3,
+                0x8000_0018,
+                "PC terakhir harus di ebreak (0x18)"
+            );
             // Hasil komputasi RTL: a2 = 84 tersimpan di 0x80000004.
             let out = machine.mem.read(0x8000_0004, 4).expect("read");
             assert_eq!(out, 84, "CPU RTL harus menyimpan hasil 42+42=84");
@@ -673,15 +806,15 @@ mod tests {
             let code = [
                 i(0x41, 0, 0, 5, ADDI),                  // t0 = 'A'
                 (0x10000u32 << 12) | (10u32 << 7) | LUI, // a0 = 0x10000000 (UART)
-                s(0, 5, 10, 2, SW),                     // uart 'A'
+                s(0, 5, 10, 2, SW),                      // uart 'A'
                 i(0x42, 0, 0, 5, ADDI),                  // t0 = 'B'
-                s(0, 5, 10, 2, SW),                     // uart 'B'
+                s(0, 5, 10, 2, SW),                      // uart 'B'
                 i(0x43, 0, 0, 5, ADDI),                  // t0 = 'C'
-                s(0, 5, 10, 2, SW),                     // uart 'C'
+                s(0, 5, 10, 2, SW),                      // uart 'C'
                 i(42, 0, 0, 5, ADDI),                    // t0 = 42
                 (0x80000u32 << 12) | (11u32 << 7) | LUI, // a1 = 0x80000000 (RAM)
-                s(4, 5, 11, 2, SW),                     // mem[0x80000004] = 42
-                0x0010_0073,                              // ebreak
+                s(4, 5, 11, 2, SW),                      // mem[0x80000004] = 42
+                0x0010_0073,                             // ebreak
             ];
             let elf = make_elf(&code_bytes(&code));
             let mut mem = map();
@@ -694,7 +827,11 @@ mod tests {
             assert!(result.halted, "CPU RTL harus trap (ebreak): {:?}", result);
             assert_eq!(result.pc & !3, 0x8000_0028, "PC terakhir = ebreak (0x28)");
             // Byte UART RTL ditangkap host, urut.
-            assert_eq!(result.console, b"ABC", "console dari UART RTL: {:?}", result.console);
+            assert_eq!(
+                result.console, b"ABC",
+                "console dari UART RTL: {:?}",
+                result.console
+            );
             // Store non-MMIO tetap ke RAM host.
             let stored = machine.mem.read(0x8000_0004, 4).expect("read");
             assert_eq!(stored, 42, "store RAM biasa harus tetap bekerja");
@@ -714,17 +851,17 @@ mod tests {
             let code = [
                 (0x10000u32 << 12) | (10u32 << 7) | LUI, // a0 = UART base
                 (0x80000u32 << 12) | (11u32 << 7) | LUI, // a1 = RAM base
-                i(4, 10, 2, 5, LW),                     // t0 = status (0)
-                s(0, 5, 11, 2, SW),                     // ram[0] = t0
+                i(4, 10, 2, 5, LW),                      // t0 = status (0)
+                s(0, 5, 11, 2, SW),                      // ram[0] = t0
                 i(0x41, 0, 0, 5, ADDI),                  // t0 = 'A'
-                s(0, 5, 10, 2, SW),                     // uart 'A'
-                i(4, 10, 2, 6, LW),                     // t1 = status (1)
-                s(4, 6, 11, 2, SW),                     // ram[4] = t1
+                s(0, 5, 10, 2, SW),                      // uart 'A'
+                i(4, 10, 2, 6, LW),                      // t1 = status (1)
+                s(4, 6, 11, 2, SW),                      // ram[4] = t1
                 i(0x42, 0, 0, 5, ADDI),                  // t0 = 'B'
-                s(0, 5, 10, 2, SW),                     // uart 'B'
-                i(4, 10, 2, 7, LW),                     // t2 = status (2)
-                s(8, 7, 11, 2, SW),                     // ram[8] = t2
-                0x0010_0073,                              // ebreak
+                s(0, 5, 10, 2, SW),                      // uart 'B'
+                i(4, 10, 2, 7, LW),                      // t2 = status (2)
+                s(8, 7, 11, 2, SW),                      // ram[8] = t2
+                0x0010_0073,                             // ebreak
             ];
             let elf = make_elf(&code_bytes(&code));
             let mut mem = map();
@@ -736,7 +873,11 @@ mod tests {
             let result = machine.run().expect("machine run");
             assert!(result.halted, "CPU RTL harus trap (ebreak): {:?}", result);
             assert_eq!(result.pc & !3, 0x8000_0030, "PC terakhir = ebreak (0x30)");
-            assert_eq!(result.console, b"AB", "console UART RTL: {:?}", result.console);
+            assert_eq!(
+                result.console, b"AB",
+                "console UART RTL: {:?}",
+                result.console
+            );
             // Status register UART RTL yang dibaca CPU (disimpan ke RAM):
             // tx_count sebelum tulis = 0, setelah tulis 'A' = 1, 'B' = 2.
             let read = |off: u64| machine.mem.read(0x8000_0000 + off, 4).expect("read");
@@ -761,22 +902,22 @@ mod tests {
             let main = [
                 (0xFFFFFu32 << 12) | (5u32 << 7) | LUI, // lui t0, 0xFFFFF
                 ((-25i32 as u32 & 0xfff) << 20) | (5u32 << 15) | (5u32 << 7) | ADDI, // addi t0, -25 → 0xFFFFEFE7 (unmask bit 3+4)
-                r(0b0000011, 0, 5, 0, 0, 0x0B),       // maskirq t0
+                r(0b0000011, 0, 5, 0, 0, 0x0B),                                      // maskirq t0
                 (0x10001u32 << 12) | (10u32 << 7) | LUI, // lui a0, 0x10001 → timer base (0x10001000)
-                i(64, 0, 0, 6, ADDI),                 // t1 = 64 (countdown)
-                s(0, 6, 10, 2, SW),                  // timer load 64
-                0x0800_000B,                          // waitirq              (0x80000018)
-                0x0010_0073,                          // ebreak               (0x8000001C)
+                i(64, 0, 0, 6, ADDI),                    // t1 = 64 (countdown)
+                s(0, 6, 10, 2, SW),                      // timer load 64
+                0x0800_000B,                             // waitirq              (0x80000018)
+                0x0010_0073,                             // ebreak               (0x8000001C)
             ];
             // handler @0x80000100: tulis 'T' ke UART, mask semua IRQ, retirq.
             let handler = [
                 (0x10000u32 << 12) | (10u32 << 7) | LUI, // lui a0, 0x10000 → UART base
-                i(0x54, 0, 0, 6, ADDI),              // t1 = 'T'
-                s(0, 6, 10, 0, 0x23),               // sb t1, 0(a0) → UART 'T'
-                (0xFFFFFu32 << 12) | (7u32 << 7) | LUI, // lui t2, 0xFFFFF
-                i(-1, 7, 0, 7, ADDI),                // t2 = 0xFFFFFFFF
-                r(0b0000011, 0, 7, 0, 0, 0x0B),      // maskirq t2
-                r(0b0000010, 0, 0, 0, 0, 0x0B),      // retirq
+                i(0x54, 0, 0, 6, ADDI),                  // t1 = 'T'
+                s(0, 6, 10, 0, 0x23),                    // sb t1, 0(a0) → UART 'T'
+                (0xFFFFFu32 << 12) | (7u32 << 7) | LUI,  // lui t2, 0xFFFFF
+                i(-1, 7, 0, 7, ADDI),                    // t2 = 0xFFFFFFFF
+                r(0b0000011, 0, 7, 0, 0, 0x0B),          // maskirq t2
+                r(0b0000010, 0, 0, 0, 0, 0x0B),          // retirq
             ];
             let mut payload = vec![0u8; 0x120];
             for (i, w) in main.iter().enumerate() {
@@ -794,17 +935,30 @@ mod tests {
             cpu.reset();
             let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
             let result = machine.run().expect("machine run");
-            assert!(result.halted, "CPU RTL harus trap setelah retirq ke ebreak: {:?}", result);
-            assert_eq!(result.pc & !3, 0x8000_001c, "retirq harus pulang ke ebreak (0x1C)");
+            assert!(
+                result.halted,
+                "CPU RTL harus trap setelah retirq ke ebreak: {:?}",
+                result
+            );
+            assert_eq!(
+                result.pc & !3,
+                0x8000_001c,
+                "retirq harus pulang ke ebreak (0x1C)"
+            );
             // Handler IRQ timer menulis 'T' → console dari UART RTL.
-            assert_eq!(result.console, b"T", "console dari handler IRQ timer: {:?}", result.console);
+            assert_eq!(
+                result.console, b"T",
+                "console dari handler IRQ timer: {:?}",
+                result.console
+            );
         });
     }
 
     #[test]
     fn test_rtl_cpu_reset_pc_starts_at_reset_vector() {
         with_big_stack(|| {
-            let mut cpu = RtlLinkedCpu::from_files(&cpu_files(), "rv32_bus_wrapper").expect("compile");
+            let mut cpu =
+                RtlLinkedCpu::from_files(&cpu_files(), "rv32_bus_wrapper").expect("compile");
             cpu.reset();
             // Belum ada fetch → pc() = 0; setelah 1 step, fetch pertama di 0x80000000.
             let mut mem = map();
@@ -862,10 +1016,22 @@ mod tests {
             cpu.reset();
             let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
             let result = machine.run().expect("machine run");
-            assert!(result.halted, "CPU RTL harus trap setelah retirq ke ebreak: {:?}", result);
-            assert_eq!(result.pc & !3, 0x8000_001c, "retirq harus pulang ke ebreak (0x1C)");
+            assert!(
+                result.halted,
+                "CPU RTL harus trap setelah retirq ke ebreak: {:?}",
+                result
+            );
+            assert_eq!(
+                result.pc & !3,
+                0x8000_001c,
+                "retirq harus pulang ke ebreak (0x1C)"
+            );
             // Byte dari main ('A') + handler IRQ ('B') — keduanya dari UART RTL.
-            assert_eq!(result.console, b"AB", "console dari UART RTL (main + handler IRQ): {:?}", result.console);
+            assert_eq!(
+                result.console, b"AB",
+                "console dari UART RTL (main + handler IRQ): {:?}",
+                result.console
+            );
         });
     }
 
@@ -880,8 +1046,8 @@ mod tests {
             let soc_files = soc_files();
             // main @0x80000000: unmask bit 5 (UART RX) → waitirq → ebreak.
             let main = [
-                0xFFFFF2B7u32, // lui t0, 0xFFFFF
-                0xFDF28293u32, // addi t0, t0, -33 → 0xFFFFEFDF (unmask bit 5 + 12)
+                0xFFFFF2B7u32,                  // lui t0, 0xFFFFF
+                0xFDF28293u32,                  // addi t0, t0, -33 → 0xFFFFEFDF (unmask bit 5 + 12)
                 r(0b0000011, 0, 5, 0, 0, 0x0B), // maskirq t0
                 0x0800_000B,                    // waitirq              (0x8000000C)
                 0x0010_0073,                    // ebreak               (0x80000010)
@@ -890,14 +1056,14 @@ mod tests {
             // simpan ke RAM, echo ke UART TX, mask semua, retirq.
             let handler = [
                 (0x10000u32 << 12) | (10u32 << 7) | LUI, // lui a0, 0x10000 → UART base
-                i(8, 10, 2, 6, LW),                     // lw t1, 8(a0) → rx_byte
+                i(8, 10, 2, 6, LW),                      // lw t1, 8(a0) → rx_byte
                 (0x80000u32 << 12) | (11u32 << 7) | LUI, // lui a1, 0x80000 → RAM base
-                s(4, 6, 11, 2, SW),                     // sw t1, 4(a1) → ram[0x80000004]
-                s(0, 6, 10, 0, 0x23),                  // sb t1, 0(a0) → echo UART TX
-                (0xFFFFFu32 << 12) | (7u32 << 7) | LUI, // lui t2, 0xFFFFF
-                i(-1, 7, 0, 7, ADDI),                   // t2 = 0xFFFFFFFF
-                r(0b0000011, 0, 7, 0, 0, 0x0B),         // maskirq t2
-                r(0b0000010, 0, 0, 0, 0, 0x0B),         // retirq
+                s(4, 6, 11, 2, SW),                      // sw t1, 4(a1) → ram[0x80000004]
+                s(0, 6, 10, 0, 0x23),                    // sb t1, 0(a0) → echo UART TX
+                (0xFFFFFu32 << 12) | (7u32 << 7) | LUI,  // lui t2, 0xFFFFF
+                i(-1, 7, 0, 7, ADDI),                    // t2 = 0xFFFFFFFF
+                r(0b0000011, 0, 7, 0, 0, 0x0B),          // maskirq t2
+                r(0b0000010, 0, 0, 0, 0, 0x0B),          // retirq
             ];
             let mut payload = vec![0u8; 0x124];
             for (i, w) in main.iter().enumerate() {
@@ -917,13 +1083,24 @@ mod tests {
             cpu.push_uart_input(b"H");
             let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
             let result = machine.run().expect("machine run");
-            assert!(result.halted, "CPU RTL harus trap setelah retirq ke ebreak: {:?}", result);
-            assert_eq!(result.pc & !3, 0x8000_0010, "retirq harus pulang ke ebreak (0x10)");
+            assert!(
+                result.halted,
+                "CPU RTL harus trap setelah retirq ke ebreak: {:?}",
+                result
+            );
+            assert_eq!(
+                result.pc & !3,
+                0x8000_0010,
+                "retirq harus pulang ke ebreak (0x10)"
+            );
             // Echo TX: byte RX dibaca handler lalu ditulis ke UART TX → console.
             assert_eq!(result.console, b"H", "echo UART TX: {:?}", result.console);
             // Byte yang DIBACA dari device RTL (UART_BASE+8) tersimpan di RAM.
             let rx = machine.mem.read(0x8000_0004, 4).expect("read");
-            assert_eq!(rx, 0x48, "RAM harus berisi byte RX 0x48 ('H') dari UART RTL");
+            assert_eq!(
+                rx, 0x48,
+                "RAM harus berisi byte RX 0x48 ('H') dari UART RTL"
+            );
         });
     }
 }

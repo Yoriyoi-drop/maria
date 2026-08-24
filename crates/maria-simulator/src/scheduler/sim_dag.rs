@@ -14,10 +14,9 @@
 //! sekuensial setelah semua process dalam layer selesai — lock-free karena
 //! tidak ada shared mutable state antar process dalam satu layer.
 
-use std::collections::HashSet;
 use maria_ir::*;
+use std::collections::HashSet;
 use std::sync::Arc;
-
 
 // ─── Signal Access Analysis ───
 
@@ -52,7 +51,9 @@ pub(crate) fn analyze_process_access(process: &Process) -> SignalAccess {
             stmt_signal_access(body, &mut access);
             access
         }
-        Process::Sequential { clock, reset, body, .. } => {
+        Process::Sequential {
+            clock, reset, body, ..
+        } => {
             let mut access = SignalAccess::default();
             // Clock signal = read
             match clock {
@@ -85,8 +86,7 @@ pub(crate) fn analyze_process_access(process: &Process) -> SignalAccess {
 fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
     for stmt in stmts {
         match stmt {
-            IrStmt::Block { stmts: inner }
-            | IrStmt::NamedBlock { stmts: inner, .. } => {
+            IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                 stmt_signal_access(inner, access);
             }
             IrStmt::BlockingAssign { lhs, rhs, .. }
@@ -101,12 +101,22 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
             IrStmt::Release { lvalue } | IrStmt::Deassign { lvalue } => {
                 lvalue_signal_writes(lvalue, access);
             }
-            IrStmt::If { cond, true_branch, false_branch, .. } => {
+            IrStmt::If {
+                cond,
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 expr_signal_reads(cond, access);
                 stmt_signal_access(true_branch, access);
                 stmt_signal_access(false_branch, access);
             }
-            IrStmt::Case { expr: case_expr, items, default, .. } => {
+            IrStmt::Case {
+                expr: case_expr,
+                items,
+                default,
+                ..
+            } => {
                 expr_signal_reads(case_expr, access);
                 for item in items {
                     for pat in &item.labels {
@@ -116,7 +126,13 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
                 }
                 stmt_signal_access(default, access);
             }
-            IrStmt::LoopFor { init, cond, step, body, .. } => {
+            IrStmt::LoopFor {
+                init,
+                cond,
+                step,
+                body,
+                ..
+            } => {
                 if let Some(init_stmt) = init {
                     stmt_signal_access(&[init_stmt.as_ref().clone()], access);
                 }
@@ -138,7 +154,9 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
                 expr_signal_reads(count, access);
                 stmt_signal_access(body, access);
             }
-            IrStmt::Foreach { array_var, body, .. } => {
+            IrStmt::Foreach {
+                array_var, body, ..
+            } => {
                 expr_signal_reads(array_var, access);
                 stmt_signal_access(body, access);
             }
@@ -163,8 +181,20 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
                     expr_signal_reads(arg, access);
                 }
             }
-            IrStmt::Assert { cond, pass_stmt, fail_stmt, disable_iff, .. } |
-            IrStmt::Assume { cond, pass_stmt, fail_stmt, disable_iff, .. } => {
+            IrStmt::Assert {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                disable_iff,
+                ..
+            }
+            | IrStmt::Assume {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                disable_iff,
+                ..
+            } => {
                 expr_signal_reads(cond, access);
                 if let Some(di) = disable_iff {
                     expr_signal_reads(di, access);
@@ -173,12 +203,22 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
                 stmt_signal_access(fail_stmt, access);
             }
             // LANG-14: expect — baca cond + walk pass/fail stmts.
-            IrStmt::Expect { cond, pass_stmt, fail_stmt, .. } => {
+            IrStmt::Expect {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                ..
+            } => {
                 expr_signal_reads(cond, access);
                 stmt_signal_access(pass_stmt, access);
                 stmt_signal_access(fail_stmt, access);
             }
-            IrStmt::Cover { cond, pass_stmt, disable_iff, .. } => {
+            IrStmt::Cover {
+                cond,
+                pass_stmt,
+                disable_iff,
+                ..
+            } => {
                 expr_signal_reads(cond, access);
                 if let Some(di) = disable_iff {
                     expr_signal_reads(di, access);
@@ -216,8 +256,10 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
                 }
             }
             // Statements that don't access signals
-            IrStmt::SysFinish | IrStmt::Null
-            | IrStmt::Break | IrStmt::Continue
+            IrStmt::SysFinish
+            | IrStmt::Null
+            | IrStmt::Break
+            | IrStmt::Continue
             | IrStmt::WaitFork
             | IrStmt::Disable { .. } => {}
         }
@@ -260,8 +302,7 @@ fn expr_signal_reads(expr: &IrExpr, access: &mut SignalAccess) {
         | IrExpr::BitSelect(sig_id, _) => {
             access.reads.insert(*sig_id);
         }
-        IrExpr::ExprRangeSelect(inner, _, _)
-        | IrExpr::ExprBitSelect(inner, _) => {
+        IrExpr::ExprRangeSelect(inner, _, _) | IrExpr::ExprBitSelect(inner, _) => {
             expr_signal_reads(inner, access);
         }
         IrExpr::ExprPartSelect(inner, base, width) => {
@@ -288,8 +329,7 @@ fn expr_signal_reads(expr: &IrExpr, access: &mut SignalAccess) {
         IrExpr::UnaryOp(_, inner) => {
             expr_signal_reads(inner, access);
         }
-        IrExpr::BinaryOp(_, lhs, rhs)
-        | IrExpr::Cond(_, lhs, rhs) => {
+        IrExpr::BinaryOp(_, lhs, rhs) | IrExpr::Cond(_, lhs, rhs) => {
             expr_signal_reads(lhs, access);
             expr_signal_reads(rhs, access);
         }
@@ -314,12 +354,19 @@ fn expr_signal_reads(expr: &IrExpr, access: &mut SignalAccess) {
         IrExpr::Dist { expr: inner, .. } => {
             expr_signal_reads(inner, access);
         }
-        IrExpr::DpiCall { args, .. } | IrExpr::SysFunc { args, .. } | IrExpr::NewCall { args, .. } => {
+        IrExpr::DpiCall { args, .. }
+        | IrExpr::SysFunc { args, .. }
+        | IrExpr::NewCall { args, .. } => {
             for arg in args {
                 expr_signal_reads(arg, access);
             }
         }
-        IrExpr::MethodCall { obj, args, with_clause, .. } => {
+        IrExpr::MethodCall {
+            obj,
+            args,
+            with_clause,
+            ..
+        } => {
             expr_signal_reads(obj, access);
             for arg in args {
                 expr_signal_reads(arg, access);
@@ -345,9 +392,7 @@ fn expr_signal_reads(expr: &IrExpr, access: &mut SignalAccess) {
         // SignalId (HierRef/VirtualIfaceAccess/This/VifBinding) → tandai
         // has_unresolved agar proses tidak dipakai di snapshot sparse.
         IrExpr::Const(_) | IrExpr::FillLit(_) | IrExpr::String(_) => {}
-        IrExpr::This
-        | IrExpr::HierRef(_)
-        | IrExpr::VifBinding { .. } => {
+        IrExpr::This | IrExpr::HierRef(_) | IrExpr::VifBinding { .. } => {
             access.has_unresolved = true;
         }
     }
@@ -459,7 +504,7 @@ fn processes_conflict(a: &SignalAccess, b: &SignalAccess) -> bool {
     if a.writes.iter().any(|sig| b.reads.contains(sig)) {
         return true;
     }
-    // B writes, A reads (WAR) 
+    // B writes, A reads (WAR)
     if b.writes.iter().any(|sig| a.reads.contains(sig)) {
         return true;
     }
@@ -490,9 +535,7 @@ fn greedy_layering(num_processes: usize, conflict: &[HashSet<usize>]) -> Vec<Vec
 
         for &pid in &candidates {
             // Check if pid conflicts with any process already in the layer
-            let has_conflict = conflict[pid]
-                .iter()
-                .any(|other| in_layer.contains(other));
+            let has_conflict = conflict[pid].iter().any(|other| in_layer.contains(other));
             if !has_conflict {
                 layer.push(pid);
                 in_layer.insert(pid);
@@ -578,26 +621,35 @@ pub fn evaluate_layer_parallel(
     let identity: Vec<Option<usize>> = (0..signals.len()).map(Some).collect();
     let results: Vec<Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError>> = layer
         .par_iter()
-        .map(|pid| -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
-            if *pid >= processes.len() {
-                return Ok(Vec::new());
-            }
-            let process = &processes[*pid];
-            let body = match process {
-                Process::Combinational { body, .. }
-                | Process::CombReactive { body, .. } => body,
-                Process::Initial { body, .. }
-                | Process::Final { body, .. }
-                | Process::AlwaysWithDelay { body, .. } => body,
-                Process::Sequential { body, .. } => body,
-            };
+        .map(
+            |pid| -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
+                if *pid >= processes.len() {
+                    return Ok(Vec::new());
+                }
+                let process = &processes[*pid];
+                let body = match process {
+                    Process::Combinational { body, .. } | Process::CombReactive { body, .. } => {
+                        body
+                    }
+                    Process::Initial { body, .. }
+                    | Process::Final { body, .. }
+                    | Process::AlwaysWithDelay { body, .. } => body,
+                    Process::Sequential { body, .. } => body,
+                };
 
-            let mut writes: Vec<(SignalId, LogicVec)> = Vec::new();
-            let mut overlay = std::collections::HashMap::new();
-            let mut view = crate::simulator::parallel::SignalView::new(signals, &identity, &mut overlay);
-            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut view, &mut writes, &[])?;
-            Ok(writes)
-        })
+                let mut writes: Vec<(SignalId, LogicVec)> = Vec::new();
+                let mut overlay = std::collections::HashMap::new();
+                let mut view =
+                    crate::simulator::parallel::SignalView::new(signals, &identity, &mut overlay);
+                crate::simulator::parallel::evaluate_stmt_block_parallel(
+                    body,
+                    &mut view,
+                    &mut writes,
+                    &[],
+                )?;
+                Ok(writes)
+            },
+        )
         .collect();
 
     // Merge all writes
@@ -627,18 +679,26 @@ pub fn evaluate_bodies_parallel(
     let identity: Vec<Option<usize>> = (0..signals.len()).map(Some).collect();
     let results: Vec<Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError>> = layer_pids
         .par_iter()
-        .map(|&&pid| -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
-            let body = match body_map.get(&pid) {
-                Some(b) => b,
-                None => return Ok(Vec::new()),
-            };
+        .map(
+            |&&pid| -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
+                let body = match body_map.get(&pid) {
+                    Some(b) => b,
+                    None => return Ok(Vec::new()),
+                };
 
-            let mut writes: Vec<(SignalId, LogicVec)> = Vec::new();
-            let mut overlay = std::collections::HashMap::new();
-            let mut view = crate::simulator::parallel::SignalView::new(signals, &identity, &mut overlay);
-            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut view, &mut writes, &[])?;
-            Ok(writes)
-        })
+                let mut writes: Vec<(SignalId, LogicVec)> = Vec::new();
+                let mut overlay = std::collections::HashMap::new();
+                let mut view =
+                    crate::simulator::parallel::SignalView::new(signals, &identity, &mut overlay);
+                crate::simulator::parallel::evaluate_stmt_block_parallel(
+                    body,
+                    &mut view,
+                    &mut writes,
+                    &[],
+                )?;
+                Ok(writes)
+            },
+        )
         .collect();
 
     let mut all_writes: Vec<(SignalId, LogicVec)> = Vec::new();
@@ -656,9 +716,7 @@ pub fn evaluate_bodies_parallel(
 pub fn is_process_parallelizable(process: &Process) -> bool {
     matches!(
         process,
-        Process::Combinational { .. }
-            | Process::CombReactive { .. }
-            | Process::Initial { .. }
+        Process::Combinational { .. } | Process::CombReactive { .. } | Process::Initial { .. }
     )
 }
 
@@ -768,7 +826,13 @@ mod tests {
         conflict[1].insert(2);
         let layers = greedy_layering(num, &conflict);
         // 2 layers: [0, 2] dan [1] (0 dan 2 independent)
-        assert_eq!(layers.len(), 2, "expected 2 layers, got {}: {:?}", layers.len(), layers);
+        assert_eq!(
+            layers.len(),
+            2,
+            "expected 2 layers, got {}: {:?}",
+            layers.len(),
+            layers
+        );
         // Layer 0 should have 2 processes (0 and 2)
         assert_eq!(layers[0].len(), 2, "layer 0 should have 2 processes");
         // Layer 1 should have 1 process (1)
@@ -857,18 +921,46 @@ mod tests {
             top: IrModule {
                 name: Symbol::intern("top"),
                 signals: vec![
-                    SignalInfo { name: Symbol::intern("a"), width: 8, ..default_signal_info() },
-                    SignalInfo { name: Symbol::intern("b"), width: 8, ..default_signal_info() },
-                    SignalInfo { name: Symbol::intern("c"), width: 8, ..default_signal_info() },
-                    SignalInfo { name: Symbol::intern("d"), width: 8, ..default_signal_info() },
+                    SignalInfo {
+                        name: Symbol::intern("a"),
+                        width: 8,
+                        ..default_signal_info()
+                    },
+                    SignalInfo {
+                        name: Symbol::intern("b"),
+                        width: 8,
+                        ..default_signal_info()
+                    },
+                    SignalInfo {
+                        name: Symbol::intern("c"),
+                        width: 8,
+                        ..default_signal_info()
+                    },
+                    SignalInfo {
+                        name: Symbol::intern("d"),
+                        width: 8,
+                        ..default_signal_info()
+                    },
                 ],
                 inputs: vec![],
                 outputs: vec![],
                 inouts: vec![],
                 processes: vec![
-                    Process::Combinational { name: Symbol::intern("p0"), sensitivity: vec![SignalSensitivity::whole(1)], body: body_a },
-                    Process::Combinational { name: Symbol::intern("p1"), sensitivity: vec![SignalSensitivity::whole(0)], body: body_b },
-                    Process::Combinational { name: Symbol::intern("p2"), sensitivity: vec![SignalSensitivity::whole(3)], body: body_c },
+                    Process::Combinational {
+                        name: Symbol::intern("p0"),
+                        sensitivity: vec![SignalSensitivity::whole(1)],
+                        body: body_a,
+                    },
+                    Process::Combinational {
+                        name: Symbol::intern("p1"),
+                        sensitivity: vec![SignalSensitivity::whole(0)],
+                        body: body_b,
+                    },
+                    Process::Combinational {
+                        name: Symbol::intern("p2"),
+                        sensitivity: vec![SignalSensitivity::whole(3)],
+                        body: body_c,
+                    },
                 ],
                 sub_instances: vec![],
             },
@@ -894,7 +986,11 @@ mod tests {
         // p2 independent (c,d signals)
         // Expected: layer 0 = [p0, p2] or [p1, p2], then layer 1 = remaining
         assert_eq!(dag.num_processes(), 3);
-        assert!(dag.num_layers() >= 2, "should have at least 2 layers, got {}", dag.num_layers());
+        assert!(
+            dag.num_layers() >= 2,
+            "should have at least 2 layers, got {}",
+            dag.num_layers()
+        );
         // Each layer should have at most 2 processes
         for layer in dag.layers() {
             assert!(layer.len() <= 2, "layer too large: {:?}", layer);

@@ -115,28 +115,24 @@ pub fn token_family(tok: &maria_parser::lexer::Token) -> u8 {
         FillLit(_) => KIND_FILL,
         Error(_) => KIND_ERROR,
         // Keywords (unit variants berteks kata kunci SV).
-        Module | Endmodule | Input | Output | Inout | Ref | Wire | Reg | Logic
-        | Int | Integer | Signed | Unsigned | Wand | Wor | Tri | Tri0 | Tri1
-        | TriAnd | TriOr | Supply0 | Supply1 | Always | AlwaysComb | AlwaysFF
-        | AlwaysLatch | Initial | Final | Assign | Begin | End | If | Else
-        | Case | CaseX | CaseZ | Endcase | For | While | Do | Repeat | Forever
-        | PosEdge | NegEdge | Or | Param | Parameter | LocalParam | GenVar
-        | Generate | EndGenerate | Function | EndFunction | Task | EndTask
-        | Foreach | Auto | Static | Real | WReal | Time | RealTime | String
-        | Class | EndClass | Virtual | Extends | This | New | Void | Break
-        | Continue | Default | Disable | Force | Release | Deassign | Return
-        | Wait | Null | None | Some_ | And | Xor | Nand | Nor | Xnor | Buf
-        | NotGate | Module_ | Interface | EndInterface | ModPort | Program
-        | EndProgram | Fork | Join | JoinAny | JoinNone | Bit | Enum | Typedef
-        | Byte | Shortint | Longint | Struct | Union | EndEnum | Inside
-        | Unique | Priority | Unique0 | Rand | RandC | Constraint | Const
-        | Var | Solve | Assert | Assume | Cover | Expect | WaitOrder
-        | Property | Sequence | EndSequence | Package | EndPackage | Import
-        | Export | Mailbox | Semaphore | Bind | Specify | EndSpecify
-        | SpecParam | Clocking | EndClocking | Config | EndConfig | Design
-        | Liblist | Cell | Use | Instance | Covergroup | EndGroup | Coverpoint
-        | Cross | Bins | IllegalBins | IgnoreBins | Option_ | Primitive
-        | EndPrimitive | Table | EndTable | Type => KIND_KEYWORD,
+        Module | Endmodule | Input | Output | Inout | Ref | Wire | Reg | Logic | Int | Integer
+        | Signed | Unsigned | Wand | Wor | Tri | Tri0 | Tri1 | TriAnd | TriOr | Supply0
+        | Supply1 | Always | AlwaysComb | AlwaysFF | AlwaysLatch | Initial | Final | Assign
+        | Begin | End | If | Else | Case | CaseX | CaseZ | Endcase | For | While | Do | Repeat
+        | Forever | PosEdge | NegEdge | Or | Param | Parameter | LocalParam | GenVar | Generate
+        | EndGenerate | Function | EndFunction | Task | EndTask | Foreach | Auto | Static
+        | Real | WReal | Time | RealTime | String | Class | EndClass | Virtual | Extends | This
+        | New | Void | Break | Continue | Default | Disable | Force | Release | Deassign
+        | Return | Wait | Null | None | Some_ | And | Xor | Nand | Nor | Xnor | Buf | NotGate
+        | Module_ | Interface | EndInterface | ModPort | Program | EndProgram | Fork | Join
+        | JoinAny | JoinNone | Bit | Enum | Typedef | Byte | Shortint | Longint | Struct
+        | Union | EndEnum | Inside | Unique | Priority | Unique0 | Rand | RandC | Constraint
+        | Const | Var | Solve | Assert | Assume | Cover | Expect | WaitOrder | Property
+        | Sequence | EndSequence | Package | EndPackage | Import | Export | Mailbox | Semaphore
+        | Bind | Specify | EndSpecify | SpecParam | Clocking | EndClocking | Config | EndConfig
+        | Design | Liblist | Cell | Use | Instance | Covergroup | EndGroup | Coverpoint | Cross
+        | Bins | IllegalBins | IgnoreBins | Option_ | Primitive | EndPrimitive | Table
+        | EndTable | Type => KIND_KEYWORD,
         // Operator & punctuation.
         _ => KIND_OPERATOR,
     }
@@ -583,10 +579,9 @@ impl CachePopulator {
                                     deps.push(fs);
                                 }
                             }
-                            payload.symbol_uses.push((
-                                my.clone(),
-                                inst.module_name.to_string(),
-                            ));
+                            payload
+                                .symbol_uses
+                                .push((my.clone(), inst.module_name.to_string()));
                         }
                         ModuleItem::Import { package, item } => {
                             if let Some(f) = file_of(package.as_str()) {
@@ -692,11 +687,8 @@ impl CachePopulator {
         let ir_by_name: HashMap<String, &maria_ir::IrModule> = input
             .ir_design
             .map(|ir| {
-                let mut m: HashMap<String, &maria_ir::IrModule> = ir
-                    .modules
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v))
-                    .collect();
+                let mut m: HashMap<String, &maria_ir::IrModule> =
+                    ir.modules.iter().map(|(k, v)| (k.to_string(), v)).collect();
                 // Top module: proses/net ada di ir.top (post-flatten), tapi
                 // sub-instance dikonsumsi flatten → diisi dari expanded_design.
                 m.insert(ir.top.name.to_string(), &ir.top);
@@ -813,11 +805,7 @@ fn module_ports(m: &Module) -> Vec<PortInfo> {
     m.ports
         .iter()
         .map(|p| {
-            let width = p
-                .range
-                .as_ref()
-                .map(|r| r.width())
-                .unwrap_or(1);
+            let width = p.range.as_ref().map(|r| r.width()).unwrap_or(1);
             let dir = match p.direction {
                 PortDirection::Input => "input",
                 PortDirection::Output => "output",
@@ -940,10 +928,16 @@ fn elaborate_from_ast(m: &Module) -> ElaboratePayload {
 /// Hitung blok generate if/for/case secara rekursif dari satu item module.
 fn count_generate_item(item: &ModuleItem, p: &mut GeneratePayload) {
     use maria_ast::types::{CaseGenerateItem, GenerateItem};
-    let ModuleItem::Generate(gen) = item else { return };
+    let ModuleItem::Generate(gen) = item else {
+        return;
+    };
     for gi in &gen.items {
         match gi {
-            GenerateItem::If { true_items, false_items, .. } => {
+            GenerateItem::If {
+                true_items,
+                false_items,
+                ..
+            } => {
                 p.if_blocks += 1;
                 for it in true_items.iter().chain(false_items.iter()) {
                     count_generate_item(it, p);
@@ -1071,7 +1065,10 @@ mod tests {
         let path = PathBuf::from("counter.sv");
         let design = sample_design();
         let mut combined = HashMap::new();
-        combined.insert(path.clone(), "`line 1 \"counter.sv\"\nmodule counter; endmodule".to_string());
+        combined.insert(
+            path.clone(),
+            "`line 1 \"counter.sv\"\nmodule counter; endmodule".to_string(),
+        );
         let mut include_deps = HashMap::new();
         include_deps.insert(path.clone(), vec![PathBuf::from("defines.svh")]);
         let mut summary = LexerSummary {
@@ -1083,7 +1080,9 @@ mod tests {
             source_bytes: combined[&path].len() as u64,
         };
         summary.observe(&maria_parser::lexer::Token::Module);
-        summary.observe(&maria_parser::lexer::Token::Ident(Symbol::intern("counter")));
+        summary.observe(&maria_parser::lexer::Token::Ident(Symbol::intern(
+            "counter",
+        )));
         let lexer_payloads = vec![(
             path.clone(),
             LexerPayload {
@@ -1095,7 +1094,9 @@ mod tests {
                         col: 1,
                     },
                     TokenRecord {
-                        kind: token_family(&maria_parser::lexer::Token::Ident(Symbol::intern("counter"))),
+                        kind: token_family(&maria_parser::lexer::Token::Ident(Symbol::intern(
+                            "counter",
+                        ))),
                         line: 1,
                         col: 8,
                     },
@@ -1193,7 +1194,7 @@ mod tests {
                 profile: None,
                 ir_design: None,
                 expanded_design: None,
-            opt_snapshot: None,
+                opt_snapshot: None,
             };
             CachePopulator::populate(&mut layer, &input);
             layer.save().unwrap();
@@ -1338,7 +1339,7 @@ mod tests {
         let path = PathBuf::from("gen.sv");
         let design = generate_design(); // pre-expansion: ModuleItem::Generate
         let expanded = expanded_design(); // post-expansion: 2 instance langsung
-        // IR: `genmod` HANYA di ir.top (post-flatten, sub_instances kosong).
+                                          // IR: `genmod` HANYA di ir.top (post-flatten, sub_instances kosong).
         let mut ir = sample_ir();
         let mut top_ir = ir.modules.remove(&Symbol::intern("genmod")).unwrap();
         top_ir.sub_instances.clear(); // flatten mengkonsumsi sub-instance top
@@ -1411,7 +1412,10 @@ mod tests {
         assert_eq!(gen.for_blocks, 1, "satu generate-for di AST");
         assert_eq!(gen.if_blocks, 0);
         assert_eq!(gen.case_blocks, 0);
-        assert_eq!(gen.expanded_instances, 2, "dua instance hasil ekspansi generate");
+        assert_eq!(
+            gen.expanded_instances, 2,
+            "dua instance hasil ekspansi generate"
+        );
 
         // elaborate/: instance IR + port binding + param override + proses + net.
         let elab: ElaboratePayload =
@@ -1466,16 +1470,12 @@ mod tests {
 
         // Baca ulang (lapisan baru) — data bertahan lintas open.
         let mut layer2 = CacheLayer::open(&db, "pid", 0).unwrap();
-        let got_lint: LintPayload = bincode::deserialize(
-            &layer2.get(CacheCategory::Lint, "report").unwrap(),
-        )
-        .unwrap();
+        let got_lint: LintPayload =
+            bincode::deserialize(&layer2.get(CacheCategory::Lint, "report").unwrap()).unwrap();
         assert_eq!(got_lint.findings.len(), 1);
         assert_eq!(got_lint.findings[0].check, "unused");
-        let got_cov: CoveragePayload = bincode::deserialize(
-            &layer2.get(CacheCategory::Coverage, "last").unwrap(),
-        )
-        .unwrap();
+        let got_cov: CoveragePayload =
+            bincode::deserialize(&layer2.get(CacheCategory::Coverage, "last").unwrap()).unwrap();
         assert_eq!(got_cov.line_hits, 3);
         assert_eq!(got_cov.branch_covered, 2);
         let _ = std::fs::remove_dir_all(&root);
@@ -1512,10 +1512,16 @@ mod tests {
         let gen: GeneratePayload =
             bincode::deserialize(&layer.get(CacheCategory::Generate, "genmod").unwrap()).unwrap();
         assert_eq!(gen.for_blocks, 1);
-        assert_eq!(gen.expanded_instances, 0, "tanpa IR tidak ada info ekspansi");
+        assert_eq!(
+            gen.expanded_instances, 0,
+            "tanpa IR tidak ada info ekspansi"
+        );
         let elab: ElaboratePayload =
             bincode::deserialize(&layer.get(CacheCategory::Elaborate, "genmod").unwrap()).unwrap();
-        assert_eq!(elab.instance_count, 0, "fallback AST: instance di dalam blok generate tidak dihitung (belum diekspansi)");
+        assert_eq!(
+            elab.instance_count, 0,
+            "fallback AST: instance di dalam blok generate tidak dihitung (belum diekspansi)"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1562,17 +1568,13 @@ mod tests {
         layer.save().unwrap();
 
         let mut layer2 = CacheLayer::open(&db, "pid", 0).unwrap();
-        let got_sim: SimulationPayload = bincode::deserialize(
-            &layer2.get(CacheCategory::Simulation, "last").unwrap(),
-        )
-        .unwrap();
+        let got_sim: SimulationPayload =
+            bincode::deserialize(&layer2.get(CacheCategory::Simulation, "last").unwrap()).unwrap();
         assert_eq!(got_sim.end_time, 101);
         assert_eq!(got_sim.processes.sequential, 1);
         assert_eq!(got_sim.init_signals, 1);
-        let got_wave: WaveformPayload = bincode::deserialize(
-            &layer2.get(CacheCategory::Waveform, "last").unwrap(),
-        )
-        .unwrap();
+        let got_wave: WaveformPayload =
+            bincode::deserialize(&layer2.get(CacheCategory::Waveform, "last").unwrap()).unwrap();
         assert_eq!(got_wave.signals.len(), 1);
         assert_eq!(got_wave.signals[0].name, "count");
         assert_eq!(got_wave.signals[0].width, 8);
@@ -1615,17 +1617,13 @@ mod tests {
         CachePopulator::populate(&mut layer, &input);
         layer.save().unwrap();
 
-        let opt: OptimizePayload = bincode::deserialize(
-            &layer.get(CacheCategory::Optimize, "last").unwrap(),
-        )
-        .unwrap();
+        let opt: OptimizePayload =
+            bincode::deserialize(&layer.get(CacheCategory::Optimize, "last").unwrap()).unwrap();
         assert_eq!(opt.const_folds, 5);
         assert_eq!(opt.loop_unrolls, 2);
         assert_eq!(opt.unrolled_stmts, 16);
-        let expr: ExpressionPayload = bincode::deserialize(
-            &layer.get(CacheCategory::Expression, "last").unwrap(),
-        )
-        .unwrap();
+        let expr: ExpressionPayload =
+            bincode::deserialize(&layer.get(CacheCategory::Expression, "last").unwrap()).unwrap();
         assert_eq!(expr.expr_evals, 42);
         assert_eq!(expr.samples, vec![("WIDTH*8".to_string(), 256)]);
         let _ = std::fs::remove_dir_all(&root);

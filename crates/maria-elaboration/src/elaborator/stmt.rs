@@ -1,16 +1,16 @@
-use std::collections::HashMap;
-use super::Elaborator;
 use super::super::util::*;
-use maria_ast::types::{const_eval_with_params};
+use super::Elaborator;
+use maria_ast::types::const_eval_with_params;
 use maria_ast::*;
 use maria_core::diagnostics::diagnostic::DiagCode;
 use maria_core::diagnostics::suggest::suggest_name;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 use maria_ir::*;
+use std::collections::HashMap;
 
 /// Extract SignalId from IrLValue, if it's a simple signal reference.
-fn lvalue_signal_id(lv: &IrLValue) -> Option<SignalId> {
+pub(crate) fn lvalue_signal_id(lv: &IrLValue) -> Option<SignalId> {
     match lv {
         IrLValue::Signal(id, _) => Some(*id),
         IrLValue::RangeSelect(id, _, _) => Some(*id),
@@ -103,9 +103,7 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
         IrExpr::ExprBitSelect(_, _) => 1,
         // Part-select dinamis (`sig[base +: width]`): lebar = argumen `width`
         // (biasanya konstanta/param yang sudah di-fold).
-        IrExpr::ExprPartSelect(_, _, width) => {
-            ir_const_u64(width).map(|w| w as usize).unwrap_or(1)
-        }
+        IrExpr::ExprPartSelect(_, _, width) => ir_const_u64(width).map(|w| w as usize).unwrap_or(1),
         IrExpr::ArrayIndex { elem_width, .. } => *elem_width,
         IrExpr::Concat(items) => items.iter().map(|e| expr_approx_width(e, signals)).sum(),
         IrExpr::Replicate(n, inner) => n * expr_approx_width(inner, signals),
@@ -140,10 +138,7 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
                 | BinaryIrOp::LogicalAnd
                 | BinaryIrOp::LogicalOr => 1,
                 // Shift: SV result width = left operand width (LRM §11.4.10)
-                BinaryIrOp::Shl
-                | BinaryIrOp::Shr
-                | BinaryIrOp::Sshl
-                | BinaryIrOp::Sshr => wa,
+                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr => wa,
                 _ => context_width(a, wa, wb).max(context_width(b, wb, wa)),
             }
         }
@@ -164,14 +159,145 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
     }
 }
 
+/// Propagasi lebar konteks (LRM §11.8.1 "context-determined") ke dalam tree
+/// IR RHS assignment. Engine evaluasi bottom-up tanpa info target; operand
+/// dari operator context-determined (unary ±/~, aritmetika, bitwise, dan
+/// operand kiri shift) harus di-zero-extend SEBELUM dievaluasi — kalau tidak
+/// `y = -((cmp <<< 0))` dihitung di lebar 1 bit dan hasilnya salah.
+///
+/// Mekanisme: node yang self-determined-nya lebih sempit dari konteks tapi
+/// berada di posisi context-determined dibungkus `Cast{width}` (engine
+/// `resize` = zero-extend unsigned). Node `Signed` tidak pernah dibungkus.
+///
+/// Ditemukan fuzzer terarah (seed 57554764 / 59498908), divalidasi
+/// differential vs Icarus.
+pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[SignalInfo]) -> usize {
+    // Bantu: bungkus node dengan Cast{width: target} bila self-width < target.
+    fn wrap_cast(e: &mut IrExpr, target: usize, signals: &[SignalInfo]) -> usize {
+        let w = expr_approx_width(e, signals);
+        if target > w && !matches!(e, IrExpr::Signed(_) | IrExpr::FillLit(_)) {
+            let inner = std::mem::replace(e, IrExpr::FillLit(maria_core::logic::LogicVal::X));
+            *e = IrExpr::Cast {
+                width: target,
+                expr: Box::new(inner),
+            };
+            return target;
+        }
+        w
+    }
+
+    match e {
+        IrExpr::Const(lv) => {
+            if ctx > lv.width && lv.width <= 64 && ctx <= 64 {
+                let v = lv.to_u64();
+                *lv = LogicVec::from_u64(v, ctx);
+            }
+            lv.width
+        }
+        IrExpr::FillLit(_) | IrExpr::String(_) | IrExpr::Signed(_) => expr_approx_width(e, signals),
+        IrExpr::Signal(..) | IrExpr::RangeSelect(..) | IrExpr::BitSelect(..) => {
+            // Sinyal sudah terbaca selebar deklarasinya; cukup kembalikan.
+            expr_approx_width(e, signals)
+        }
+        IrExpr::UnaryOp(op, inner) => match op {
+            UnaryIrOp::Not
+            | UnaryIrOp::RedAnd
+            | UnaryIrOp::RedNand
+            | UnaryIrOp::RedOr
+            | UnaryIrOp::RedNor
+            | UnaryIrOp::RedXor
+            | UnaryIrOp::RedXnor => {
+                let w = expr_approx_width(inner, signals);
+                propagate_context_width(inner, w, signals);
+                // Self-determined 1-bit; pembungkusan jadi tugas parent.
+                wrap_cast(e, ctx, signals)
+            }
+            // Minus/BitNot/Plus context-determined → turunkan konteks,
+            // lalu pastikan OPERAN selebar konteks di runtime (Cast),
+            // karena hasil unary = lebar operan pasca-extension.
+            _ => {
+                let wi = propagate_context_width(inner, ctx.max(1), signals);
+                if wi < ctx {
+                    match inner.as_mut() {
+                        IrExpr::FillLit(_) | IrExpr::Signed(_) => {}
+                        _ => {
+                                let old = std::mem::replace(
+                                inner.as_mut(),
+                                IrExpr::FillLit(maria_core::logic::LogicVal::X),
+                            );
+                            **inner = IrExpr::Cast {
+                                width: ctx,
+                                expr: Box::new(old),
+                            };
+                        }
+                    }
+                    return ctx;
+                }
+                wi
+            }
+        },
+        IrExpr::BinaryOp(op, a, b) => {
+            let wa0 = expr_approx_width(a, signals);
+            let wb0 = expr_approx_width(b, signals);
+            match op {
+                BinaryIrOp::Eq
+                | BinaryIrOp::Neq
+                | BinaryIrOp::CaseEq
+                | BinaryIrOp::CaseNeq
+                | BinaryIrOp::EqWild
+                | BinaryIrOp::NeqWild
+                | BinaryIrOp::Lt
+                | BinaryIrOp::Le
+                | BinaryIrOp::Gt
+                | BinaryIrOp::Ge
+                | BinaryIrOp::LogicalAnd
+                | BinaryIrOp::LogicalOr => {
+                    // Operand comparison context-determined terhadap
+                    // satu sama lain + konteks.
+                    let wa1 = propagate_context_width(a, ctx.max(wb0), signals);
+                    let wb1 = propagate_context_width(b, ctx.max(wa1), signals);
+                    let _ = propagate_context_width(a, ctx.max(wb1), signals);
+                    wrap_cast(e, ctx, signals)
+                }
+                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr => {
+                    // RHS shift self-determined; LHS context-determined —
+                    // extend LHS sebelum shift agar hasil selebar konteks.
+                    let _wb = propagate_context_width(b, wb0, signals);
+                    let wa1 = propagate_context_width(a, ctx.max(wb0), signals);
+                    if wa1 >= ctx.max(wb0) {
+                        wa1
+                    } else {
+                        wrap_cast(a, ctx.max(wb0), signals);
+                        ctx.max(wb0)
+                    }
+                }
+                _ => {
+                    // Aritmetika/bitwise: kedua operand context-determined,
+                    // hasil = max keduanya (dan keduanya extend ke max).
+                    let wa1 = propagate_context_width(a, ctx.max(wb0), signals);
+                    let wb1 = propagate_context_width(b, ctx.max(wa1), signals);
+                    let w = wa1.max(wb1);
+                    let _ = propagate_context_width(a, w, signals);
+                    let _ = propagate_context_width(b, w, signals);
+                    w
+                }
+            }
+        }
+        IrExpr::Cond(_, ta, fa) => {
+            let wt = propagate_context_width(ta, ctx, signals);
+            let wf = propagate_context_width(fa, ctx, signals);
+            wt.max(wf)
+        }
+        _ => expr_approx_width(e, signals),
+    }
+}
+
 /// Check signedness mismatch between LHS and RHS at elaboration.
-fn check_signed_mismatch(
-    lhs_signal_id: Option<SignalId>,
-    rhs: &IrExpr,
-    signals: &[SignalInfo],
-) {
+fn check_signed_mismatch(lhs_signal_id: Option<SignalId>, rhs: &IrExpr, signals: &[SignalInfo]) {
     let Some(sid) = lhs_signal_id else { return };
-    let Some(lhs_sig) = signals.get(sid) else { return };
+    let Some(lhs_sig) = signals.get(sid) else {
+        return;
+    };
     let is_rhs_signed = matches!(rhs, IrExpr::Signed(_));
     if lhs_sig.is_signed && !is_rhs_signed {
         // Only warn when RHS could be determined at compile time
@@ -179,6 +305,34 @@ fn check_signed_mismatch(
 }
 
 impl Elaborator {
+    /// Terapkan lebar konteks LHS ke RHS assignment (LRM §11.8.1):
+    /// whole-RHS konstanta di-fold langsung pada lebar LHS; sisanya dapat
+    /// propagasi konteks untuk operand context-determined.
+    fn apply_lhs_context_width(
+        &self,
+        ir_lhs: &IrLValue,
+        rhs_ast: &Expr,
+        ir_rhs: &mut IrExpr,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) {
+        let lhs_w = match ir_lhs {
+            IrLValue::RangeSelect(_, hi, lo) => hi.saturating_sub(*lo).saturating_add(1),
+            _ => lvalue_signal_id(ir_lhs)
+                .and_then(|sid| signals.get(sid))
+                .map(|s| s.width)
+                .unwrap_or(0),
+        };
+        if lhs_w == 0 {
+            return;
+        }
+        if let Some(c) = try_fold_const_at_width(rhs_ast, &self.param_vals, lhs_w) {
+            *ir_rhs = c;
+        } else {
+            propagate_context_width(ir_rhs, lhs_w, signals);
+        }
+    }
+
     /// Check width mismatch between LHS signal and RHS expression at elaboration.
     /// Lebar LHS dihitung dari bentuk `IrLValue` aktual (bukan width penuh
     /// signal) — mis. `RangeSelect(sid, msb, lsb)` lebarnya `msb-lsb+1`,
@@ -198,8 +352,12 @@ impl Elaborator {
         if matches!(rhs, IrExpr::FillLit(_)) {
             return;
         }
-        let Some(sid) = lvalue_signal_id(lhs) else { return };
-        let Some(lhs_sig) = signals.get(sid) else { return };
+        let Some(sid) = lvalue_signal_id(lhs) else {
+            return;
+        };
+        let Some(lhs_sig) = signals.get(sid) else {
+            return;
+        };
         // Signal sintetis dari inlining function (temp `__func_*`) atau tanpa
         // lokasi source (line==0): lebar temp best-effort dan runtime selalu
         // menyesuaikan lebar LHS saat assign — warning di sini false-positive.
@@ -239,7 +397,11 @@ impl Elaborator {
                 let cw = lv.width.min(64);
                 let cw_mask = if cw >= 64 { u64::MAX } else { (1u64 << cw) - 1 };
                 let raw = lv.to_u64() & cw_mask;
-                let max_val = if lhs_w >= 64 { u64::MAX } else { (1u64 << lhs_w) - 1 };
+                let max_val = if lhs_w >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << lhs_w) - 1
+                };
                 if raw <= max_val {
                     return;
                 }
@@ -259,7 +421,10 @@ impl Elaborator {
             }
             self.elab_warn_at(
                 DiagCode::WidthMismatchWarning,
-                format!("width mismatch in assignment to '{}' (lhs={}, rhs={})", lhs_sig.name, lhs_w, rhs_w),
+                format!(
+                    "width mismatch in assignment to '{}' (lhs={}, rhs={})",
+                    lhs_sig.name, lhs_w, rhs_w
+                ),
                 line,
                 col,
             );
@@ -379,7 +544,11 @@ impl Elaborator {
         // statement node + waktu per konstruk. Dipakai untuk menemukan
         // bottleneck statement elaboration (bukan bagian dari build). ──
         let dbg_stmt = std::env::var("DBG_STMT").is_ok();
-        let stmt_t0 = if dbg_stmt { Some(std::time::Instant::now()) } else { None };
+        let stmt_t0 = if dbg_stmt {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let stmt_kind = stmt_kind_name(stmt);
         let out = match stmt {
             Stmt::Block { stmts } => {
@@ -426,6 +595,9 @@ impl Elaborator {
                     }
                 }
                 let lhs_sid = lvalue_signal_id(&ir_lhs);
+                // Propagasi lebar konteks LHS → operand context-determined
+                // RHS (LRM §11.8.1) sebelum evaluasi runtime.
+                self.apply_lhs_context_width(&ir_lhs, rhs, &mut ir_rhs, signal_map, signals);
                 let (lhs_line, lhs_col) = expr_location(lhs);
                 self.check_width_mismatch(&ir_lhs, &ir_rhs, signals, lhs_line, lhs_col);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
@@ -446,9 +618,11 @@ impl Elaborator {
                 };
                 let mut ir_rhs = if ir_is_vif {
                     match rhs {
-                        Expr::Ident { name, .. } if !signal_map.contains_key(name) => IrExpr::VifBinding {
-                            instance_name: *name,
-                        },
+                        Expr::Ident { name, .. } if !signal_map.contains_key(name) => {
+                            IrExpr::VifBinding {
+                                instance_name: *name,
+                            }
+                        }
                         _ => self.elaborate_expr(rhs, signal_map, signals)?,
                     }
                 } else {
@@ -469,6 +643,8 @@ impl Elaborator {
                     }
                 }
                 let lhs_sid = lvalue_signal_id(&ir_lhs);
+                // Propagasi lebar konteks LHS (lihat arm BlockingAssign).
+                self.apply_lhs_context_width(&ir_lhs, rhs, &mut ir_rhs, signal_map, signals);
                 let (lhs_line, lhs_col) = expr_location(lhs);
                 self.check_width_mismatch(&ir_lhs, &ir_rhs, signals, lhs_line, lhs_col);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
@@ -589,21 +765,27 @@ impl Elaborator {
                             } else if let Expr::Value(v) = label {
                                 let lv = match v {
                                     Value::Decimal(d) => *d,
-                                    Value::Hex { bits, .. } => maria_ast::const_eval::parse_literal(
-                                        bits.trim_start_matches("0x").trim_start_matches("0X"),
-                                        16,
-                                    )
-                                    .unwrap_or(0),
-                                    Value::Binary { bits, .. } => maria_ast::const_eval::parse_literal(
-                                        bits.trim_start_matches("0b").trim_start_matches("0B"),
-                                        2,
-                                    )
-                                    .unwrap_or(0),
-                                    Value::Octal { bits, .. } => maria_ast::const_eval::parse_literal(
-                                        bits.trim_start_matches("0o").trim_start_matches("0O"),
-                                        8,
-                                    )
-                                    .unwrap_or(0),
+                                    Value::Hex { bits, .. } => {
+                                        maria_ast::const_eval::parse_literal(
+                                            bits.trim_start_matches("0x").trim_start_matches("0X"),
+                                            16,
+                                        )
+                                        .unwrap_or(0)
+                                    }
+                                    Value::Binary { bits, .. } => {
+                                        maria_ast::const_eval::parse_literal(
+                                            bits.trim_start_matches("0b").trim_start_matches("0B"),
+                                            2,
+                                        )
+                                        .unwrap_or(0)
+                                    }
+                                    Value::Octal { bits, .. } => {
+                                        maria_ast::const_eval::parse_literal(
+                                            bits.trim_start_matches("0o").trim_start_matches("0O"),
+                                            8,
+                                        )
+                                        .unwrap_or(0)
+                                    }
                                     Value::Real(_) => 0,
                                 };
                                 if lv == case_val {
@@ -630,7 +812,8 @@ impl Elaborator {
             }
             Stmt::StmtAssign { lhs, rhs } => {
                 let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
-                let ir_rhs = self.elaborate_expr(rhs, signal_map, signals)?;
+                let mut ir_rhs = self.elaborate_expr(rhs, signal_map, signals)?;
+                self.apply_lhs_context_width(&ir_lhs, rhs, &mut ir_rhs, signal_map, signals);
                 Ok(IrStmt::BlockingAssign {
                     lhs: ir_lhs,
                     rhs: ir_rhs,
@@ -687,7 +870,9 @@ impl Elaborator {
                             with_clause: ir_with,
                         })
                     }
-                    Expr::FuncCall { name, line, col, .. } if name.starts_with("$") => {
+                    Expr::FuncCall {
+                        name, line, col, ..
+                    } if name.starts_with("$") => {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                         Ok(IrStmt::SysCall {
                             name: Symbol::intern(""),
@@ -696,7 +881,9 @@ impl Elaborator {
                             col: *col,
                         })
                     }
-                    Expr::FuncCall { name, line, col, .. } if name.ends_with("::new") => {
+                    Expr::FuncCall {
+                        name, line, col, ..
+                    } if name.ends_with("::new") => {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                         Ok(IrStmt::SysCall {
                             name: Symbol::intern(""),
@@ -705,7 +892,13 @@ impl Elaborator {
                             col: *col,
                         })
                     }
-                    Expr::FuncCall { name, args, line, col, .. } if name == "run_test" => {
+                    Expr::FuncCall {
+                        name,
+                        args,
+                        line,
+                        col,
+                        ..
+                    } if name == "run_test" => {
                         // F18: run_test("name") adalah statement BER-Efek (bukan
                         // side-effect-free) — tanpa special-case ini ia di-
                         // eliminasi diam-diam oleh arm generic di bawah.
@@ -720,7 +913,13 @@ impl Elaborator {
                             col: *col,
                         })
                     }
-                    Expr::FuncCall { name, args, line, col, .. } => {
+                    Expr::FuncCall {
+                        name,
+                        args,
+                        line,
+                        col,
+                        ..
+                    } => {
                         // VERIF-07: UVM DB calls (`uvm_config_db::set`, `uvm_resource_db::set`/
                         // get/exists/write_by_name/read_by_name, uvm_cmdline_processor::*) adalah
                         // statement BER-Efek — jangan eliminasi sebagai side-effect-free.
@@ -767,7 +966,12 @@ impl Elaborator {
                     }
                 }
             }
-            Stmt::SysCall { name, args, line, col } => {
+            Stmt::SysCall {
+                name,
+                args,
+                line,
+                col,
+            } => {
                 // F42: syscall waveform dump ($dumpvars/$dumpall/$dumpfile/...) —
                 // argumen berupa path hierarkis module (`$dumpvars(0, tb_top)`)
                 // yang bukan signal. Toleransi: arg tak ter-resolve menjadi
@@ -787,22 +991,20 @@ impl Elaborator {
                 if dump_syscalls.contains(&name.as_str()) {
                     let ir_args: Vec<IrExpr> = args
                         .iter()
-                        .map(|a| {
-                            match self.elaborate_expr(a, signal_map, signals) {
-                                Ok(ir) => ir,
-                                Err(e) => {
-                                    self.elab_warn_at(
-                                        DiagCode::ModuleNotFound,
-                                        format!(
-                                            "$({}) argument not resolvable — treated as 0: {}",
-                                            name.as_str(),
-                                            e
-                                        ),
-                                        expr_location(a).0,
-                                        expr_location(a).1,
-                                    );
-                                    IrExpr::Const(LogicVec::from_u64(0, 32))
-                                }
+                        .map(|a| match self.elaborate_expr(a, signal_map, signals) {
+                            Ok(ir) => ir,
+                            Err(e) => {
+                                self.elab_warn_at(
+                                    DiagCode::ModuleNotFound,
+                                    format!(
+                                        "$({}) argument not resolvable — treated as 0: {}",
+                                        name.as_str(),
+                                        e
+                                    ),
+                                    expr_location(a).0,
+                                    expr_location(a).1,
+                                );
+                                IrExpr::Const(LogicVec::from_u64(0, 32))
                             }
                         })
                         .collect();
@@ -836,7 +1038,10 @@ impl Elaborator {
                     None => vec![],
                 };
                 // @(*) — wildcard: treat as immediate (block), bukan blocking event.
-                if events.iter().any(|e| matches!(e, SensitivityEvent::Wildcard)) {
+                if events
+                    .iter()
+                    .any(|e| matches!(e, SensitivityEvent::Wildcard))
+                {
                     return Ok(IrStmt::Block { stmts: body });
                 }
                 // Dukung multi-event `@(a or b)` / `@(posedge a or posedge b)`:
@@ -869,7 +1074,8 @@ impl Elaborator {
                                         // degrade warning + skip, bukan hard error.
                                         self.elab_warn_at(
                                             DiagCode::NotImplemented,
-                                            "cannot resolve signal in @(...) — event skipped".to_string(),
+                                            "cannot resolve signal in @(...) — event skipped"
+                                                .to_string(),
                                             expr_location(expr).0,
                                             expr_location(expr).1,
                                         );
@@ -887,7 +1093,8 @@ impl Elaborator {
                                     None => {
                                         self.elab_warn_at(
                                             DiagCode::NotImplemented,
-                                            "cannot resolve signal in @(...) — event skipped".to_string(),
+                                            "cannot resolve signal in @(...) — event skipped"
+                                                .to_string(),
                                             expr_location(expr).0,
                                             expr_location(expr).1,
                                         );
@@ -902,7 +1109,8 @@ impl Elaborator {
                                 None => {
                                     self.elab_warn_at(
                                         DiagCode::NotImplemented,
-                                        "cannot resolve signal in @(...) — event skipped".to_string(),
+                                        "cannot resolve signal in @(...) — event skipped"
+                                            .to_string(),
                                         expr_location(expr).0,
                                         expr_location(expr).1,
                                     );
@@ -1034,7 +1242,8 @@ impl Elaborator {
                         self.elab_warn_at(
                             DiagCode::SimulationError,
                             format!("non-constant delay evaluated as 1: {}", e),
-                            l, c,
+                            l,
+                            c,
                         );
                         1
                     }
@@ -1069,7 +1278,10 @@ impl Elaborator {
                     &|stmts, var_name, iter_val| {
                         let subst_stmts = substitute_loop_var_in_stmts(stmts, var_name, iter_val);
                         if std::env::var("DBG_LOOP").is_ok() {
-                            eprintln!("[DBG-LOOP] iter {}={} body={:?}", var_name, iter_val, subst_stmts);
+                            eprintln!(
+                                "[DBG-LOOP] iter {}={} body={:?}",
+                                var_name, iter_val, subst_stmts
+                            );
                         }
                         self.elaborate_stmt_block(&subst_stmts, signal_map, known_modules, signals)
                             .map_err(|e| e.to_string())
@@ -1170,7 +1382,10 @@ impl Elaborator {
                     return Ok(IrStmt::Null);
                 };
                 let sig_info = signals.get(*sig_id).ok_or_else(|| {
-                    self.elab_diag(DiagCode::ModuleNotFound, format!("signal info not found for '{}'", array_var))
+                    self.elab_diag(
+                        DiagCode::ModuleNotFound,
+                        format!("signal info not found for '{}'", array_var),
+                    )
                 })?;
                 if sig_info.is_dynamic || sig_info.is_queue {
                     let ir_body =
@@ -1192,7 +1407,10 @@ impl Elaborator {
                         let (l, c) = (0, 0);
                         self.elab_warn_at(
                             DiagCode::NotImplemented,
-                            format!("'{}' is not an array, cannot use foreach — loop skipped", array_var),
+                            format!(
+                                "'{}' is not an array, cannot use foreach — loop skipped",
+                                array_var
+                            ),
                             l,
                             c,
                         );
@@ -1204,7 +1422,8 @@ impl Elaborator {
                         .cloned()
                         .unwrap_or_else(|| Symbol::intern("i"));
                     for i in 0..n {
-                        let subst_stmts = substitute_loop_var_in_stmts(stmts, iv.as_str(), i as i64);
+                        let subst_stmts =
+                            substitute_loop_var_in_stmts(stmts, iv.as_str(), i as i64);
                         all_stmts.extend(self.elaborate_stmt_block(
                             &subst_stmts,
                             signal_map,
@@ -1303,7 +1522,15 @@ impl Elaborator {
                 } else {
                     CaseType::Priority
                 };
-                self.elaborate_case_raw(expr, items, default, ct, signal_map, known_modules, signals)
+                self.elaborate_case_raw(
+                    expr,
+                    items,
+                    default,
+                    ct,
+                    signal_map,
+                    known_modules,
+                    signals,
+                )
             }
             Stmt::CaseInside {
                 expr,
@@ -1502,10 +1729,9 @@ impl Elaborator {
                 // clock_event (immediate, bukan concurrent SVA) yang di-eval;
                 // assertion concurrent butuh semantik waktu simulasi.
                 if clock_event.is_none() {
-                    if let Ok(val) = maria_ast::types::const_eval_with_params(
-                        cond,
-                        &self.param_vals,
-                    ) {
+                    if let Ok(val) =
+                        maria_ast::types::const_eval_with_params(cond, &self.param_vals)
+                    {
                         if val == 0 {
                             self.elab_warn_at(
                                 maria_core::diagnostics::DiagCode::AssertionFailed,
@@ -1615,10 +1841,10 @@ impl Elaborator {
                     if let Some(idx) = signal_map.get(name) {
                         sig_ids.push(*idx);
                     } else {
-                        return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
-                            "wait_order: signal '{}' not found",
-                            name
-                        )));
+                        return Err(self.elab_diag(
+                            DiagCode::ModuleNotFound,
+                            format!("wait_order: signal '{}' not found", name),
+                        ));
                     }
                 }
                 let failure = match fail_stmt {
@@ -1718,15 +1944,18 @@ impl Elaborator {
     ) -> Result<IrLValue, SimError> {
         match expr {
             Expr::Ident { name, line, col } => {
-                let sig_id = signal_map
-                    .get(name)
-                    .ok_or_else(|| {
-                        let candidates: Vec<&str> = signal_map.keys().map(|s| s.as_str()).collect();
-                        let hint = suggest_name(name.as_str(), candidates.into_iter())
-                            .map(|(s, _)| format!(" — did you mean '{}'?", s))
-                            .unwrap_or_default();
-                        self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found{}", name, hint), *line, *col)
-                    })?;
+                let sig_id = signal_map.get(name).ok_or_else(|| {
+                    let candidates: Vec<&str> = signal_map.keys().map(|s| s.as_str()).collect();
+                    let hint = suggest_name(name.as_str(), candidates.into_iter())
+                        .map(|(s, _)| format!(" — did you mean '{}'?", s))
+                        .unwrap_or_default();
+                    self.elab_diag_at(
+                        DiagCode::UndefinedSignal,
+                        format!("signal '{}' not found{}", name, hint),
+                        *line,
+                        *col,
+                    )
+                })?;
                 Ok(IrLValue::Signal(*sig_id, 0))
             }
             Expr::RangeSelect {
@@ -1886,18 +2115,14 @@ impl Elaborator {
                                 sig_id,
                                 index,
                                 elem_width,
-                                bit: Box::new(IrExpr::Const(LogicVec::from_u64(
-                                    idx as u64,
-                                    64,
-                                ))),
+                                bit: Box::new(IrExpr::Const(LogicVec::from_u64(idx as u64, 64))),
                             })
                         } else {
                             // `arr[i][j]` dengan j runtime (packed multidimensi,
                             // mis. `seeds_q[seed_idx][rd_idx]` di
                             // flash_ctrl_lcmgr) — bit dievaluasi saat write di
                             // engine (offset = i * elem_width + j).
-                            let bit_expr =
-                                self.elaborate_expr(bs_index, signal_map, signals)?;
+                            let bit_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
                             Ok(IrLValue::ArrayBitSelect {
                                 sig_id,
                                 index,
@@ -1942,8 +2167,7 @@ impl Elaborator {
                         if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
                             Ok(IrLValue::BitSelect(sid, inner_bit + idx as usize))
                         } else {
-                            let index_expr =
-                                self.elaborate_expr(bs_index, signal_map, signals)?;
+                            let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
                             Ok(IrLValue::ArrayBitSelect {
                                 sig_id: sid,
                                 index: Box::new(index_expr),
@@ -2058,10 +2282,7 @@ impl Elaborator {
                                 let base_adj = IrExpr::BinaryOp(
                                     BinaryIrOp::Add,
                                     Box::new(base_ir),
-                                    Box::new(IrExpr::Const(LogicVec::from_u64(
-                                        offset as u64,
-                                        32,
-                                    ))),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(offset as u64, 32))),
                                 );
                                 Ok(IrLValue::ExprPartSelect {
                                     sig_id: sid,
@@ -2167,8 +2388,10 @@ impl Elaborator {
                 if std::env::var("MARIA_DBG_HIER").is_ok() && !hier_name.is_empty() {
                     let in_sigmap = signal_map.contains_key(&Symbol::intern(&hier_name));
                     let in_signals = signals.iter().any(|s| s.name.as_str() == hier_name);
-                    eprintln!("[DBG-HIER] lvalue hier_name='{}' sigmap={} signals={} obj={:?}",
-                        hier_name, in_sigmap, in_signals, obj);
+                    eprintln!(
+                        "[DBG-HIER] lvalue hier_name='{}' sigmap={} signals={} obj={:?}",
+                        hier_name, in_sigmap, in_signals, obj
+                    );
                 }
                 if let Some(&sig_id) = signal_map.get(&Symbol::intern(&hier_name)) {
                     return Ok(IrLValue::Signal(sig_id, 0));
@@ -2226,7 +2449,10 @@ impl Elaborator {
                                 expr_location(expr).0,
                                 expr_location(expr).1,
                             );
-                            return Ok(IrLValue::ObjectField { sig_id, field: *field });
+                            return Ok(IrLValue::ObjectField {
+                                sig_id,
+                                field: *field,
+                            });
                         }
                         // Class object handle: obj = signal berisi obj id → field.
                         if sig_info.class_name.is_some() {
@@ -2272,7 +2498,9 @@ impl Elaborator {
                         if !hier_name.is_empty() {
                             let base_is_signal =
                                 Self::collect_member_chain(obj, *field, &self.param_vals)
-                                    .map(|(base, _)| signal_map.contains_key(&Symbol::intern(&base)))
+                                    .map(|(base, _)| {
+                                        signal_map.contains_key(&Symbol::intern(&base))
+                                    })
                                     .unwrap_or(false);
                             if !base_is_signal {
                                 return Ok(IrLValue::HierRef(Symbol::intern(&hier_name)));
@@ -2330,7 +2558,7 @@ impl Elaborator {
                     expr_location(expr).0,
                     expr_location(expr).1,
                 ))
-            },
+            }
         }
     }
 
@@ -2400,10 +2628,7 @@ impl Elaborator {
         let mut cur = obj;
         loop {
             match cur {
-                Expr::MemberAccess {
-                    obj: inner,
-                    field,
-                } => {
+                Expr::MemberAccess { obj: inner, field } => {
                     chain.push(ChainStep::Field(*field));
                     cur = inner;
                 }
@@ -2442,8 +2667,7 @@ impl Elaborator {
         }
         let mut offset = 0usize;
         let mut width = 1usize;
-        let mut cur_fields: Option<Vec<StructFieldInfo>> =
-            Some(base_info.struct_fields.clone());
+        let mut cur_fields: Option<Vec<StructFieldInfo>> = Some(base_info.struct_fields.clone());
         let mut last_field: Option<StructFieldInfo> = None;
         let mut ok = true;
         for (i, step) in chain.iter().enumerate() {
@@ -2612,15 +2836,25 @@ fn stmt_source_line(s: &Stmt) -> usize {
     use crate::util::generate::expr_location;
     match s {
         Stmt::SysCall { line, .. } => *line,
-        Stmt::Assert { cond, .. } | Stmt::Assume { cond, .. } | Stmt::Cover { cond, .. }
+        Stmt::Assert { cond, .. }
+        | Stmt::Assume { cond, .. }
+        | Stmt::Cover { cond, .. }
         | Stmt::Expect { cond, .. } => expr_location(cond).0,
-        Stmt::BlockingAssign { lhs, .. } | Stmt::NonBlockingAssign { lhs, .. }
-        | Stmt::StmtAssign { lhs, .. } | Stmt::Force { lhs, .. } => expr_location(lhs).0,
-        Stmt::IfElse { cond, .. } | Stmt::UniqueIf { cond, .. } | Stmt::PriorityIf { cond, .. }
+        Stmt::BlockingAssign { lhs, .. }
+        | Stmt::NonBlockingAssign { lhs, .. }
+        | Stmt::StmtAssign { lhs, .. }
+        | Stmt::Force { lhs, .. } => expr_location(lhs).0,
+        Stmt::IfElse { cond, .. }
+        | Stmt::UniqueIf { cond, .. }
+        | Stmt::PriorityIf { cond, .. }
         | Stmt::Wait { cond, .. } => expr_location(cond).0,
-        Stmt::Case { expr, .. } | Stmt::CaseX { expr, .. } | Stmt::CaseZ { expr, .. }
-        | Stmt::UniqueCase { expr, .. } | Stmt::PriorityCase { expr, .. }
-        | Stmt::Unique0Case { expr, .. } | Stmt::CaseInside { expr, .. }
+        Stmt::Case { expr, .. }
+        | Stmt::CaseX { expr, .. }
+        | Stmt::CaseZ { expr, .. }
+        | Stmt::UniqueCase { expr, .. }
+        | Stmt::PriorityCase { expr, .. }
+        | Stmt::Unique0Case { expr, .. }
+        | Stmt::CaseInside { expr, .. }
         | Stmt::StmtCase { expr, .. } => expr_location(expr).0,
         Stmt::LoopWhile { cond, .. } | Stmt::DoWhile { cond, .. } => expr_location(cond).0,
         Stmt::LoopFor { cond, .. } => cond.as_ref().map(|c| expr_location(c).0).unwrap_or(0),
@@ -2632,8 +2866,9 @@ fn stmt_source_line(s: &Stmt) -> usize {
                 maria_ast::SensitivityEvent::PosEdge(ex)
                 | maria_ast::SensitivityEvent::NegEdge(ex)
                 | maria_ast::SensitivityEvent::Level(ex) => expr_location(ex).0,
-                maria_ast::SensitivityEvent::Wildcard
-                | maria_ast::SensitivityEvent::Iff { .. } => 0,
+                maria_ast::SensitivityEvent::Wildcard | maria_ast::SensitivityEvent::Iff { .. } => {
+                    0
+                }
             })
             .unwrap_or(0),
         Stmt::Return(Some(e)) => expr_location(e).0,
@@ -2711,7 +2946,12 @@ pub(crate) fn stmt_dbg_dump(module: &str) {
     }
     let sum_ns: u64 = total.iter().map(|(_, (_, t))| *t).sum();
     let sum_n: u64 = total.iter().map(|(_, (n, _))| *n).sum();
-    eprintln!("[DBG-STMT] {}: {} stmts in {:.2}s", module, sum_n, sum_ns as f64 / 1e9);
+    eprintln!(
+        "[DBG-STMT] {}: {} stmts in {:.2}s",
+        module,
+        sum_n,
+        sum_ns as f64 / 1e9
+    );
     let mut sorted: Vec<_> = total.into_iter().collect();
     sorted.sort_by_key(|(_, (_, t))| std::cmp::Reverse(*t));
     for (k, (n, t)) in sorted.iter().take(10) {
@@ -2724,4 +2964,3 @@ pub(crate) fn stmt_dbg_dump(module: &str) {
         );
     }
 }
-

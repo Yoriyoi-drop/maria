@@ -66,9 +66,7 @@ pub enum ForeignEvent {
     /// Awal time step berikutnya (NextTimeStep).
     NextTimeStep,
     /// Callback terdaftar (mis. after-delay) siap dieksekusi.
-    Callback {
-        callback_id: u64,
-    },
+    Callback { callback_id: u64 },
     /// End of simulation (vhpiCbEndOfSimulation / cbEndOfSimulation).
     EndOfSimulation,
 }

@@ -6,10 +6,10 @@
 
 use super::super::SimulationEngine;
 use super::super::MAX_LOOP_ITER;
-use maria_core::error::SimError;
-use maria_ir::*;
-use maria_core::Symbol;
 use crate::simulator::types::*;
+use maria_core::error::SimError;
+use maria_core::Symbol;
+use maria_ir::*;
 use std::collections::HashMap;
 
 impl SimulationEngine {

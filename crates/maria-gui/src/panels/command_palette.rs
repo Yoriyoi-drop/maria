@@ -51,7 +51,11 @@ const ACTIONS: &[(&str, &str, PaletteAction)] = &[
     ("Open Terminal", "", PaletteAction::ShowTerminal),
     ("Open Architecture", "", PaletteAction::ShowArchitecture),
     ("Open Dependency", "", PaletteAction::ShowDependency),
-    ("Toggle Outline", "Ctrl+Shift+O", PaletteAction::ToggleOutline),
+    (
+        "Toggle Outline",
+        "Ctrl+Shift+O",
+        PaletteAction::ToggleOutline,
+    ),
     ("Open Search", "", PaletteAction::ShowSearch),
     ("Clear Console", "", PaletteAction::ClearConsole),
     ("Generate Module…", "", PaletteAction::GenerateModule),
@@ -97,7 +101,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 }
             }
             if filtered.is_empty() {
-                ui.label(egui::RichText::new("Tidak ada perintah yang cocok").weak().italics());
+                ui.label(
+                    egui::RichText::new("Tidak ada perintah yang cocok")
+                        .weak()
+                        .italics(),
+                );
                 return;
             }
             if state.palette_selected >= filtered.len() {

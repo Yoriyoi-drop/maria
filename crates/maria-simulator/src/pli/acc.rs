@@ -21,8 +21,12 @@ pub struct AccHandle {
 }
 
 impl AccHandle {
-    pub const NULL: AccHandle = AccHandle { ptr: std::ptr::null_mut() };
-    pub fn is_null(&self) -> bool { self.ptr.is_null() }
+    pub const NULL: AccHandle = AccHandle {
+        ptr: std::ptr::null_mut(),
+    };
+    pub fn is_null(&self) -> bool {
+        self.ptr.is_null()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +36,10 @@ pub(crate) enum AccObject {
     Port(SignalId, usize),
     Module(usize, Symbol),
     Scope(String),
-    Iterator { items: Vec<AccHandle>, cursor: usize },
+    Iterator {
+        items: Vec<AccHandle>,
+        cursor: usize,
+    },
     TfArg(u32, i32),
 }
 
@@ -50,11 +57,15 @@ fn register(kind: AccObject) -> AccHandle {
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     acc_objects().lock().unwrap().insert(id, kind);
-    AccHandle { ptr: id as *mut std::ffi::c_void }
+    AccHandle {
+        ptr: id as *mut std::ffi::c_void,
+    }
 }
 
 fn lookup(h: AccHandle) -> Option<AccObject> {
-    if h.is_null() { return None; }
+    if h.is_null() {
+        return None;
+    }
     let id = h.ptr as u64;
     acc_objects().lock().unwrap().get(&id).cloned()
 }
@@ -86,26 +97,33 @@ pub fn acc_handle_signal(name: &str) -> AccHandle {
             }
         }
         AccHandle::NULL
-    }).unwrap_or(AccHandle::NULL)
+    })
+    .unwrap_or(AccHandle::NULL)
 }
 
 /// acc_handle_tfarg(n) — argumen task/function ke-n sebagai handle signal.
 pub fn acc_handle_tfarg(n: i32) -> AccHandle {
     let inst = super::tf::tf_getinstance();
-    if inst == 0 { return AccHandle::NULL; }
+    if inst == 0 {
+        return AccHandle::NULL;
+    }
     register(AccObject::TfArg(inst, n))
 }
 
 /// acc_fetch_value(handle, format, delay) — baca nilai signal.
 /// format `'b'` (binary) → string biner, `'d'`/`'h'` → desimal/hex.
 pub fn acc_fetch_value(handle: AccHandle, format: u8, _delay: i32) -> String {
-    let obj = match lookup(handle) { Some(o) => o, None => return String::new() };
+    let obj = match lookup(handle) {
+        Some(o) => o,
+        None => return String::new(),
+    };
     match &obj {
         AccObject::Signal(sig_id, _) | AccObject::Port(sig_id, _) => {
             super::super::vpi::with_vpi_engine(|engine| {
                 let val = engine.state.read_signal(*sig_id).clone();
                 acc_format_value(&val, format)
-            }).unwrap_or_default()
+            })
+            .unwrap_or_default()
         }
         AccObject::TfArg(inst, n) => {
             let v = super::tf::tf_getlongp(*inst, *n);
@@ -127,24 +145,37 @@ pub fn acc_format_value(lv: &LogicVec, format: u8) -> String {
         'o' => format!("{:o}", lv.to_u64()),
         _ => {
             // binary MSB-first
-            lv.bits.iter().rev().map(|b| match b {
-                LogicVal::Zero => '0',
-                LogicVal::One => '1',
-                LogicVal::X => 'x',
-                LogicVal::Z => 'z',
-            }).collect()
+            lv.bits
+                .iter()
+                .rev()
+                .map(|b| match b {
+                    LogicVal::Zero => '0',
+                    LogicVal::One => '1',
+                    LogicVal::X => 'x',
+                    LogicVal::Z => 'z',
+                })
+                .collect()
         }
     }
 }
 
 /// acc_fetch_name(handle) — nama local.
 pub fn acc_fetch_name(handle: AccHandle) -> String {
-    let obj = match lookup(handle) { Some(o) => o, None => return String::new() };
+    let obj = match lookup(handle) {
+        Some(o) => o,
+        None => return String::new(),
+    };
     match &obj {
         AccObject::Signal(sig_id, _) | AccObject::Port(sig_id, _) => {
             super::super::vpi::with_vpi_engine(|e| {
-                e.design.top.signals.get(*sig_id).map(|s| s.name.to_string())
-            }).flatten().unwrap_or_default()
+                e.design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| s.name.to_string())
+            })
+            .flatten()
+            .unwrap_or_default()
         }
         AccObject::Module(_, name) => name.as_str().to_string(),
         AccObject::Scope(name) => name.clone(),
@@ -154,14 +185,21 @@ pub fn acc_fetch_name(handle: AccHandle) -> String {
 
 /// acc_fetch_fullname(handle) — nama hierarkis penuh.
 pub fn acc_fetch_fullname(handle: AccHandle) -> String {
-    let obj = match lookup(handle) { Some(o) => o, None => return String::new() };
+    let obj = match lookup(handle) {
+        Some(o) => o,
+        None => return String::new(),
+    };
     match &obj {
         AccObject::Signal(sig_id, _) | AccObject::Port(sig_id, _) => {
             super::super::vpi::with_vpi_engine(|e| {
-                e.design.top.signals.get(*sig_id).map(|s| {
-                    format!("{}.{}", e.design.top.name.as_str(), s.name.as_str())
-                })
-            }).flatten().unwrap_or_default()
+                e.design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| format!("{}.{}", e.design.top.name.as_str(), s.name.as_str()))
+            })
+            .flatten()
+            .unwrap_or_default()
         }
         AccObject::Module(_, name) => name.as_str().to_string(),
         _ => String::new(),
@@ -171,7 +209,10 @@ pub fn acc_fetch_fullname(handle: AccHandle) -> String {
 /// acc_fetch_type(handle) — jenis object (char code Verilog: n=net, r=reg,
 /// p=port, m=module, ...).
 pub fn acc_fetch_type(handle: AccHandle) -> u8 {
-    let obj = match lookup(handle) { Some(o) => o, None => return 0 };
+    let obj = match lookup(handle) {
+        Some(o) => o,
+        None => return 0,
+    };
     match &obj {
         AccObject::Signal(_, _) => b'r', // register/var
         AccObject::Port(_, _) => b'p',
@@ -183,27 +224,42 @@ pub fn acc_fetch_type(handle: AccHandle) -> u8 {
 
 /// acc_next(type, handle) — iterasi signal modul (accNextSignal).
 pub fn acc_next(vpi_type: u8, ref_handle: AccHandle) -> AccHandle {
-    let obj = match lookup(ref_handle) { Some(o) => o, None => return AccHandle::NULL };
+    let obj = match lookup(ref_handle) {
+        Some(o) => o,
+        None => return AccHandle::NULL,
+    };
     match &obj {
-        AccObject::Module(_, _) => {
-            super::super::vpi::with_vpi_engine(|engine| {
-                let items: Vec<AccHandle> = engine.design.top.signals.iter().enumerate()
-                    .filter(|(_, s)| match vpi_type {
-                        b'n' => s.kind == SignalKind::Wire,
-                        b'r' => s.kind == SignalKind::Reg || s.kind == SignalKind::Logic,
-                        _ => true,
-                    })
-                    .map(|(i, _)| register(AccObject::Signal(i, 0)))
-                    .collect();
-                if items.is_empty() { return AccHandle::NULL; }
-                register(AccObject::Iterator { items, cursor: 0 })
-            }).unwrap_or(AccHandle::NULL)
-        }
+        AccObject::Module(_, _) => super::super::vpi::with_vpi_engine(|engine| {
+            let items: Vec<AccHandle> = engine
+                .design
+                .top
+                .signals
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| match vpi_type {
+                    b'n' => s.kind == SignalKind::Wire,
+                    b'r' => s.kind == SignalKind::Reg || s.kind == SignalKind::Logic,
+                    _ => true,
+                })
+                .map(|(i, _)| register(AccObject::Signal(i, 0)))
+                .collect();
+            if items.is_empty() {
+                return AccHandle::NULL;
+            }
+            register(AccObject::Iterator { items, cursor: 0 })
+        })
+        .unwrap_or(AccHandle::NULL),
         AccObject::Iterator { items, cursor } => {
             let idx = *cursor;
-            if idx >= items.len() { return AccHandle::NULL; }
+            if idx >= items.len() {
+                return AccHandle::NULL;
+            }
             // update cursor di registry
-            if let Some(o) = acc_objects().lock().unwrap().get_mut(&(ref_handle.ptr as u64)) {
+            if let Some(o) = acc_objects()
+                .lock()
+                .unwrap()
+                .get_mut(&(ref_handle.ptr as u64))
+            {
                 if let AccObject::Iterator { cursor: c, .. } = o {
                     *c = idx + 1;
                 }
@@ -228,7 +284,10 @@ mod tests {
         assert_eq!(acc_format_value(&lv, b'd'), "11");
         assert_eq!(acc_format_value(&lv, b'h'), "b");
         // x/z
-        let lvx = LogicVec { width: 2, bits: vec![LogicVal::X, LogicVal::One] };
+        let lvx = LogicVec {
+            width: 2,
+            bits: vec![LogicVal::X, LogicVal::One],
+        };
         assert_eq!(acc_format_value(&lvx, b'b'), "1x");
     }
 

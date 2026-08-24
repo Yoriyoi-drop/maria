@@ -40,7 +40,10 @@ unsafe impl Sync for VhpiObject {}
 impl VhpiObject {
     pub fn new(kind: VhpiObjectKind) -> Self {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-        VhpiObject { kind, id: NEXT_ID.fetch_add(1, Ordering::SeqCst) }
+        VhpiObject {
+            kind,
+            id: NEXT_ID.fetch_add(1, Ordering::SeqCst),
+        }
     }
 }
 
@@ -52,9 +55,15 @@ pub struct VhpiHandle {
 }
 
 impl VhpiHandle {
-    pub const NULL: VhpiHandle = VhpiHandle { ptr: std::ptr::null_mut() };
-    pub fn is_null(&self) -> bool { self.ptr.is_null() }
-    pub fn is_valid(&self) -> bool { !self.ptr.is_null() }
+    pub const NULL: VhpiHandle = VhpiHandle {
+        ptr: std::ptr::null_mut(),
+    };
+    pub fn is_null(&self) -> bool {
+        self.ptr.is_null()
+    }
+    pub fn is_valid(&self) -> bool {
+        !self.ptr.is_null()
+    }
 }
 
 fn vhpi_objects() -> &'static Mutex<std::collections::HashMap<u64, VhpiObject>> {
@@ -66,7 +75,9 @@ pub(crate) fn register_object(kind: VhpiObjectKind) -> VhpiHandle {
     let obj = VhpiObject::new(kind);
     let id = obj.id;
     vhpi_objects().lock().unwrap().insert(id, obj);
-    VhpiHandle { ptr: id as *mut std::ffi::c_void }
+    VhpiHandle {
+        ptr: id as *mut std::ffi::c_void,
+    }
 }
 
 /// Ekspos registrasi object untuk test e2e (maria-tests) — pola sama dgn
@@ -76,17 +87,25 @@ pub fn register_object_for_test(kind: VhpiObjectKind) -> VhpiHandle {
 }
 
 pub(crate) fn lookup(handle: VhpiHandle) -> Option<VhpiObject> {
-    if handle.is_null() { return None; }
+    if handle.is_null() {
+        return None;
+    }
     let id = handle.ptr as u64;
     vhpi_objects().lock().unwrap().get(&id).cloned()
 }
 
 /// vhpi_release_handle(handle) — bebaskan object.
 pub fn vhpi_release_handle(handle: VhpiHandle) -> i32 {
-    if handle.is_null() { return 0; }
+    if handle.is_null() {
+        return 0;
+    }
     let id = handle.ptr as u64;
     let mut reg = vhpi_objects().lock().unwrap();
-    if reg.remove(&id).is_some() { 1 } else { 0 }
+    if reg.remove(&id).is_some() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Bersihkan semua (end of simulation).
@@ -95,7 +114,8 @@ pub(crate) fn vhpi_clear_all_objects() {
 }
 
 /// Akses registry untuk iterator scan (mutate cursor). Dipakai iterator.rs.
-pub(crate) fn vhpi_objects_for_scan() -> std::sync::MutexGuard<'static, std::collections::HashMap<u64, VhpiObject>> {
+pub(crate) fn vhpi_objects_for_scan(
+) -> std::sync::MutexGuard<'static, std::collections::HashMap<u64, VhpiObject>> {
     vhpi_objects().lock().unwrap()
 }
 

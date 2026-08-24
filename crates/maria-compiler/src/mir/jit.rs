@@ -16,11 +16,11 @@ use crate::mir::mir::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use cranelift::codegen::ir::UserFuncName;
 use cranelift::prelude::*;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
-use cranelift::codegen::ir::UserFuncName;
 
 /// Compiled MIR process: native function pointer + metadata.
 pub struct CompiledMirProcess {
@@ -68,7 +68,11 @@ impl MirJitCompiler {
 
     /// Compile a MirProcess to native code.
     /// Returns CompiledMirProcess with function pointer.
-    pub fn compile_process(&mut self, process: &MirProcess, n_signals: usize) -> Option<CompiledMirProcess> {
+    pub fn compile_process(
+        &mut self,
+        process: &MirProcess,
+        n_signals: usize,
+    ) -> Option<CompiledMirProcess> {
         let hash = Self::process_hash(process);
 
         // Check cache
@@ -119,7 +123,7 @@ impl MirJitCompiler {
             builder.seal_block(entry_block);
 
             let sigs_ptr = builder.block_params(entry_block)[0]; // *const u64
-            let out_ptr = builder.block_params(entry_block)[1];  // *mut u64
+            let out_ptr = builder.block_params(entry_block)[1]; // *mut u64
             let _n_sigs_param = builder.block_params(entry_block)[2]; // u64
 
             // Allocate register slots as Cranelift stack slots
@@ -133,7 +137,10 @@ impl MirJitCompiler {
 
             // Phase 1: Pre-scan instructions untuk collect all Label positions
             // Map label numbers → instruction index and Cranelift block
-            let mut label_to_block: std::collections::HashMap<usize, cranelift::codegen::ir::Block> = std::collections::HashMap::new();
+            let mut label_to_block: std::collections::HashMap<
+                usize,
+                cranelift::codegen::ir::Block,
+            > = std::collections::HashMap::new();
             let mut label_positions: Vec<usize> = Vec::new();
             for (idx, instr) in process.instrs.iter().enumerate() {
                 if let MirInstr::Label(l) = instr {
@@ -203,7 +210,13 @@ impl MirJitCompiler {
                         }
                         i += 1;
                     }
-                    MirInstr::Binary { op, dest, lhs, rhs, width } => {
+                    MirInstr::Binary {
+                        op,
+                        dest,
+                        lhs,
+                        rhs,
+                        width,
+                    } => {
                         if *dest < n_regs && *lhs < n_regs && *rhs < n_regs {
                             let lv = builder.use_var(reg_slots[*lhs]);
                             let rv = builder.use_var(reg_slots[*rhs]);
@@ -270,7 +283,12 @@ impl MirJitCompiler {
                         }
                         i += 1;
                     }
-                    MirInstr::Unary { op, dest, operand, width } => {
+                    MirInstr::Unary {
+                        op,
+                        dest,
+                        operand,
+                        width,
+                    } => {
                         if *dest < n_regs && *operand < n_regs {
                             let val = builder.use_var(reg_slots[*operand]);
                             let result = match op {
@@ -288,26 +306,28 @@ impl MirJitCompiler {
                         }
                         i += 1;
                     }
-                    MirInstr::Branch { cond, then_label, else_label } => {
+                    MirInstr::Branch {
+                        cond,
+                        then_label,
+                        else_label,
+                    } => {
                         if *cond < n_regs {
                             let cond_val = builder.use_var(reg_slots[*cond]);
                             let zero = builder.ins().iconst(types::I64, 0);
                             let is_true = builder.ins().icmp(IntCC::NotEqual, cond_val, zero);
-                            let then_block = label_to_block.get(then_label)
-                                .copied()
-                                .unwrap_or(end_block);
-                            let else_block = label_to_block.get(else_label)
-                                .copied()
-                                .unwrap_or(end_block);
-                            builder.ins().brif(is_true, then_block, &[], else_block, &[]);
+                            let then_block =
+                                label_to_block.get(then_label).copied().unwrap_or(end_block);
+                            let else_block =
+                                label_to_block.get(else_label).copied().unwrap_or(end_block);
+                            builder
+                                .ins()
+                                .brif(is_true, then_block, &[], else_block, &[]);
                         }
                         last_was_terminator = true;
                         i += 1;
                     }
                     MirInstr::Jump { label } => {
-                        let target_block = label_to_block.get(label)
-                            .copied()
-                            .unwrap_or(end_block);
+                        let target_block = label_to_block.get(label).copied().unwrap_or(end_block);
                         builder.ins().jump(target_block, &[]);
                         last_was_terminator = true;
                         i += 1;
@@ -349,7 +369,8 @@ impl MirJitCompiler {
         }
 
         let fn_name_str = format!("mir_jit_{:x}", hash);
-        let id = self.module
+        let id = self
+            .module
             .declare_function(&fn_name_str, Linkage::Local, &func.signature)
             .ok()?;
 
@@ -370,12 +391,15 @@ impl MirJitCompiler {
             n_signals: n_sigs_for_function,
         };
 
-        self.cache.lock().unwrap().insert(hash, CompiledMirProcess {
-            name: compiled.name.clone(),
-            code_ptr: compiled.code_ptr,
-            n_regs: compiled.n_regs,
-            n_signals: compiled.n_signals,
-        });
+        self.cache.lock().unwrap().insert(
+            hash,
+            CompiledMirProcess {
+                name: compiled.name.clone(),
+                code_ptr: compiled.code_ptr,
+                n_regs: compiled.n_regs,
+                n_signals: compiled.n_signals,
+            },
+        );
 
         Some(compiled)
     }
@@ -408,7 +432,11 @@ impl MirJitCompiler {
     ) -> u64 {
         type MirProcessFn = unsafe extern "C" fn(*const u64, *mut u64, u64) -> u64;
         let func: MirProcessFn = std::mem::transmute(code_ptr);
-        func(signal_vals.as_ptr(), out_vals.as_mut_ptr(), signal_vals.len() as u64)
+        func(
+            signal_vals.as_ptr(),
+            out_vals.as_mut_ptr(),
+            signal_vals.len() as u64,
+        )
     }
 
     /// Clear the compilation cache (for testing/reloading).
@@ -439,9 +467,11 @@ mod tests {
         MirProcess {
             name: Symbol::intern("test_const"),
             sensitivity: MirSensitivity::AlwaysComb,
-            instrs: vec![
-                MirInstr::Const { dest: 0, value: 42, width: 32 },
-            ],
+            instrs: vec![MirInstr::Const {
+                dest: 0,
+                value: 42,
+                width: 32,
+            }],
         }
     }
 
@@ -453,7 +483,13 @@ mod tests {
             instrs: vec![
                 MirInstr::Load { dest: 0, signal: 0 },
                 MirInstr::Load { dest: 1, signal: 1 },
-                MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 0, rhs: 1, width: 32 },
+                MirInstr::Binary {
+                    op: MirBinOp::Add,
+                    dest: 2,
+                    lhs: 0,
+                    rhs: 1,
+                    width: 32,
+                },
             ],
         }
     }
@@ -465,8 +501,18 @@ mod tests {
             sensitivity: MirSensitivity::AlwaysComb,
             instrs: vec![
                 MirInstr::Load { dest: 0, signal: 0 },
-                MirInstr::Const { dest: 1, value: 1, width: 32 },
-                MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 0, rhs: 1, width: 32 },
+                MirInstr::Const {
+                    dest: 1,
+                    value: 1,
+                    width: 32,
+                },
+                MirInstr::Binary {
+                    op: MirBinOp::Add,
+                    dest: 2,
+                    lhs: 0,
+                    rhs: 1,
+                    width: 32,
+                },
                 MirInstr::Store { signal: 0, src: 2 },
             ],
         }
@@ -479,9 +525,21 @@ mod tests {
             sensitivity: MirSensitivity::AlwaysComb,
             instrs: vec![
                 MirInstr::Load { dest: 0, signal: 0 },
-                MirInstr::Const { dest: 1, value: 10, width: 32 },
-                MirInstr::Const { dest: 2, value: 20, width: 32 },
-                MirInstr::Branch { cond: 0, then_label: 1, else_label: 2 },
+                MirInstr::Const {
+                    dest: 1,
+                    value: 10,
+                    width: 32,
+                },
+                MirInstr::Const {
+                    dest: 2,
+                    value: 20,
+                    width: 32,
+                },
+                MirInstr::Branch {
+                    cond: 0,
+                    then_label: 1,
+                    else_label: 2,
+                },
                 MirInstr::Label(1),
                 MirInstr::Store { signal: 1, src: 1 },
                 MirInstr::Jump { label: 3 },
@@ -599,12 +657,32 @@ mod tests {
             sensitivity: MirSensitivity::AlwaysComb,
             instrs: vec![
                 MirInstr::Load { dest: 0, signal: 0 },
-                MirInstr::Const { dest: 1, value: 1, width: 32 },
-                MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 0, rhs: 1, width: 32 },
+                MirInstr::Const {
+                    dest: 1,
+                    value: 1,
+                    width: 32,
+                },
+                MirInstr::Binary {
+                    op: MirBinOp::Add,
+                    dest: 2,
+                    lhs: 0,
+                    rhs: 1,
+                    width: 32,
+                },
                 MirInstr::Store { signal: 0, src: 2 },
                 MirInstr::Load { dest: 3, signal: 1 },
-                MirInstr::Const { dest: 4, value: 2, width: 32 },
-                MirInstr::Binary { op: MirBinOp::Mul, dest: 5, lhs: 3, rhs: 4, width: 32 },
+                MirInstr::Const {
+                    dest: 4,
+                    value: 2,
+                    width: 32,
+                },
+                MirInstr::Binary {
+                    op: MirBinOp::Mul,
+                    dest: 5,
+                    lhs: 3,
+                    rhs: 4,
+                    width: 32,
+                },
                 MirInstr::Store { signal: 1, src: 5 },
             ],
         };
@@ -628,7 +706,12 @@ mod tests {
             sensitivity: MirSensitivity::AlwaysComb,
             instrs: vec![
                 MirInstr::Load { dest: 0, signal: 0 },
-                MirInstr::Unary { op: MirUnOp::Not, dest: 1, operand: 0, width: 8 },
+                MirInstr::Unary {
+                    op: MirUnOp::Not,
+                    dest: 1,
+                    operand: 0,
+                    width: 8,
+                },
                 MirInstr::Store { signal: 0, src: 1 },
             ],
         };

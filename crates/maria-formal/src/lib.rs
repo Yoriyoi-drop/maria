@@ -8,8 +8,8 @@
 //! Uses z3 0.20 thread-local context — constructors take no `&Context` argument.
 //! Usage: `cargo run -- --formal --formal-bound 10 test.sv`
 
-pub mod sat;
 pub mod bmc;
+pub mod sat;
 
 #[cfg(test)]
 pub mod tests;
@@ -88,7 +88,11 @@ impl FormalEngine {
 
     /// Zero-extend narrower operand to match wider one for Z3 BV operations.
     /// Returns (a, b) with equal widths.
-    pub fn zero_extend_match(&self, a: &z3::ast::BV, b: &z3::ast::BV) -> (z3::ast::BV, z3::ast::BV) {
+    pub fn zero_extend_match(
+        &self,
+        a: &z3::ast::BV,
+        b: &z3::ast::BV,
+    ) -> (z3::ast::BV, z3::ast::BV) {
         let a_size = a.get_size();
         let b_size = b.get_size();
         if a_size == b_size {

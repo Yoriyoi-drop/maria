@@ -8,6 +8,8 @@
 //! - `search`  — cari sinyal by pola wildcard (WAV-10)
 //! - `tree`    — index hierarki scope + sinyal (WAV-08)
 //! - `stats`   — statistik per sinyal: toggle, transitions, aktivitas (WAV-17)
+//! - `decode`  — protokol-aware decode transaksi bus dari VCD: apb /
+//!               axi4lite / ahb (WAV-16)
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -63,18 +65,33 @@ pub enum WaveArgs {
     Stats {
         input: String,
     },
+    Decode {
+        /// VCD input
+        input: String,
+        /// Protokol bus: apb (default) | axi4lite | ahb
+        proto: String,
+    },
 }
 
 /// Jalankan mwave.
 pub fn run(args: &WaveArgs) -> Result<(), SimError> {
     match args {
         WaveArgs::Merge { inputs, output } => merge(inputs, output.as_deref()),
-        WaveArgs::Export { input, format, output } => export(input, format, output.as_deref()),
-        WaveArgs::Filter { input, signals, output } => filter(input, signals, output.as_deref()),
+        WaveArgs::Export {
+            input,
+            format,
+            output,
+        } => export(input, format, output.as_deref()),
+        WaveArgs::Filter {
+            input,
+            signals,
+            output,
+        } => filter(input, signals, output.as_deref()),
         WaveArgs::Compare { a, b } => compare(a, b),
         WaveArgs::Search { input, patterns } => search(input, patterns),
         WaveArgs::Tree { input } => tree(input),
         WaveArgs::Stats { input } => stats(input),
+        WaveArgs::Decode { input, proto } => decode(input, proto),
     }
 }
 
@@ -85,8 +102,7 @@ fn err(msg: impl Into<String>) -> SimError {
 /// ── Parser VCD ──
 
 fn parse_vcd(path: &str) -> Result<VcdData, SimError> {
-    let src = std::fs::read_to_string(path)
-        .map_err(|e| err(format!("{}: {}", path, e)))?;
+    let src = std::fs::read_to_string(path).map_err(|e| err(format!("{}: {}", path, e)))?;
     let lines: Vec<&str> = src.lines().map(|l| l.trim()).collect();
 
     let mut signals: Vec<VcdSignal> = Vec::new();
@@ -174,7 +190,10 @@ fn parse_vcd(path: &str) -> Result<VcdData, SimError> {
     }
 
     if signals.is_empty() {
-        return Err(err(format!("{}: bukan file VCD valid (tidak ada $var)", path)));
+        return Err(err(format!(
+            "{}: bukan file VCD valid (tidak ada $var)",
+            path
+        )));
     }
 
     Ok(VcdData {
@@ -233,7 +252,10 @@ fn write_vcd(
             }
             prev_scope = Some(sig.scope.clone());
         }
-        let id = id_map.get(&sig.id).cloned().unwrap_or_else(|| sig.id.clone());
+        let id = id_map
+            .get(&sig.id)
+            .cloned()
+            .unwrap_or_else(|| sig.id.clone());
         let range = if sig.width > 1 {
             format!(" [{}:0]", sig.width - 1)
         } else {
@@ -264,8 +286,7 @@ fn write_vcd(
         }
     }
 
-    std::fs::write(out_path, out)
-        .map_err(|e| err(format!("{}: {}", out_path, e)))?;
+    std::fs::write(out_path, out).map_err(|e| err(format!("{}: {}", out_path, e)))?;
     Ok(())
 }
 
@@ -330,7 +351,10 @@ fn export(input: &str, format: &str, output: Option<&str>) -> Result<(), SimErro
     match format {
         "csv" => export_csv(&data, &out_path),
         "txt" => export_txt(&data, &out_path),
-        other => Err(err(format!("format tidak dikenal: '{}' (pilih csv|txt)", other))),
+        other => Err(err(format!(
+            "format tidak dikenal: '{}' (pilih csv|txt)",
+            other
+        ))),
     }
 }
 
@@ -387,9 +411,14 @@ fn export_csv(data: &VcdData, out_path: &str) -> Result<(), SimError> {
         out.push('\n');
     }
 
-    std::fs::write(out_path, out)
-        .map_err(|e| err(format!("{}: {}", out_path, e)))?;
-    println!("  exported {} → {} ({}, {} baris)", input_name(data), out_path, "csv", times.len());
+    std::fs::write(out_path, out).map_err(|e| err(format!("{}: {}", out_path, e)))?;
+    println!(
+        "  exported {} → {} ({}, {} baris)",
+        input_name(data),
+        out_path,
+        "csv",
+        times.len()
+    );
     Ok(())
 }
 
@@ -403,8 +432,7 @@ fn export_txt(data: &VcdData, out_path: &str) -> Result<(), SimError> {
             out.push_str(&format!("    #{} = {}\n", t, v));
         }
     }
-    std::fs::write(out_path, out)
-        .map_err(|e| err(format!("{}: {}", out_path, e)))?;
+    std::fs::write(out_path, out).map_err(|e| err(format!("{}: {}", out_path, e)))?;
     println!("  exported {} → {}", input_name(data), out_path);
     Ok(())
 }
@@ -419,7 +447,10 @@ fn full_name(s: &VcdSignal) -> String {
 }
 
 fn input_name(data: &VcdData) -> String {
-    data.signals.first().map(|_| "vcd".to_string()).unwrap_or_default()
+    data.signals
+        .first()
+        .map(|_| "vcd".to_string())
+        .unwrap_or_default()
 }
 
 /// ── filter ──
@@ -456,7 +487,11 @@ fn filter(input: &str, keep: &[String], output: Option<&str>) -> Result<(), SimE
     if signals.is_empty() {
         return Err(err(format!(
             "tidak ada sinyal yang cocok — sinyal yang ada: {}",
-            data.signals.iter().map(|s| full_name(s)).collect::<Vec<_>>().join(", ")
+            data.signals
+                .iter()
+                .map(|s| full_name(s))
+                .collect::<Vec<_>>()
+                .join(", ")
         )));
     }
 
@@ -470,12 +505,10 @@ fn filter(input: &str, keep: &[String], output: Option<&str>) -> Result<(), SimE
         let _ = i;
     }
 
-    let out_path = output
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            let base = input.rsplit('/').next().unwrap_or(input);
-            format!("filtered_{}", base)
-        });
+    let out_path = output.map(|s| s.to_string()).unwrap_or_else(|| {
+        let base = input.rsplit('/').next().unwrap_or(input);
+        format!("filtered_{}", base)
+    });
     write_vcd(&out_path, &data.timescale, &signals, &changes, &id_map)?;
     println!(
         "  filtered {} → {} ({} sinyal dipertahankan)",
@@ -514,11 +547,23 @@ fn compare(a: &str, b: &str) -> Result<(), SimError> {
     println!("    max_time:  {} vs {}", r.max_time_a, r.max_time_b);
     println!("    total mismatch: {}", r.mismatches.len());
     for (name, t, fa, fb, cnt) in &r.mismatches {
-        let fa_s = if fa.len() == 1 { fa.clone() } else { format!("b{} ", fa) };
-        let fb_s = if fb.len() == 1 { fb.clone() } else { format!("b{} ", fb) };
+        let fa_s = if fa.len() == 1 {
+            fa.clone()
+        } else {
+            format!("b{} ", fa)
+        };
+        let fb_s = if fb.len() == 1 {
+            fb.clone()
+        } else {
+            format!("b{} ", fb)
+        };
         println!(
             "      {}  first t={}  a={} b={}  ({} sample berbeda)",
-            name, t, fa_s.trim_end(), fb_s.trim_end(), cnt
+            name,
+            t,
+            fa_s.trim_end(),
+            fb_s.trim_end(),
+            cnt
         );
     }
     for n in &r.only_a {
@@ -543,22 +588,24 @@ struct CompareResult {
 /// Logika perbandingan dua VCD: timeline per signal, sample per unit waktu.
 fn compare_data(da: &VcdData, db: &VcdData) -> CompareResult {
     // Indeks signal per nama penuh (scope.name).
-    let idx_a: HashMap<String, &VcdSignal> =
-        da.signals.iter().map(|s| (full_name(s), s)).collect();
-    let idx_b: HashMap<String, &VcdSignal> =
-        db.signals.iter().map(|s| (full_name(s), s)).collect();
+    let idx_a: HashMap<String, &VcdSignal> = da.signals.iter().map(|s| (full_name(s), s)).collect();
+    let idx_b: HashMap<String, &VcdSignal> = db.signals.iter().map(|s| (full_name(s), s)).collect();
 
     // Timeline per signal: (time, value) terurut dari changes.
     let mut tl_a: HashMap<String, Vec<(u64, String)>> = HashMap::new();
     for (t, id, val) in &da.changes {
         if let Some(sig) = da.signals.iter().find(|s| &s.id == id) {
-            tl_a.entry(full_name(sig)).or_default().push((*t, val.clone()));
+            tl_a.entry(full_name(sig))
+                .or_default()
+                .push((*t, val.clone()));
         }
     }
     let mut tl_b: HashMap<String, Vec<(u64, String)>> = HashMap::new();
     for (t, id, val) in &db.changes {
         if let Some(sig) = db.signals.iter().find(|s| &s.id == id) {
-            tl_b.entry(full_name(sig)).or_default().push((*t, val.clone()));
+            tl_b.entry(full_name(sig))
+                .or_default()
+                .push((*t, val.clone()));
         }
     }
 
@@ -647,26 +694,19 @@ fn search(input: &str, patterns: &[String]) -> Result<(), SimError> {
     let mut found: Vec<(&VcdSignal, String)> = Vec::new();
     for sig in &data.signals {
         let full = full_name(sig);
-        let hit = pats.iter().any(|p| {
-            wildcard_match(p, &sig.name) || wildcard_match(p, &full)
-        });
+        let hit = pats
+            .iter()
+            .any(|p| wildcard_match(p, &sig.name) || wildcard_match(p, &full));
         if hit {
             found.push((sig, full));
         }
     }
 
     if found.is_empty() {
-        println!(
-            "  tidak ada sinyal yang cocok dengan: {}",
-            pats.join(", ")
-        );
+        println!("  tidak ada sinyal yang cocok dengan: {}", pats.join(", "));
         return Ok(());
     }
-    println!(
-        "  {} sinyal cocok dengan: {}",
-        found.len(),
-        pats.join(", ")
-    );
+    println!("  {} sinyal cocok dengan: {}", found.len(), pats.join(", "));
     for (sig, full) in &found {
         println!(
             "    {}  width={}  scope={}",
@@ -697,7 +737,12 @@ fn tree(input: &str) -> Result<(), SimError> {
         scopes.entry(sig.scope.clone()).or_default().push(sig);
     }
 
-    println!("  waveform tree: {} ({} signal, {} scope)", input, data.signals.len(), scopes.len());
+    println!(
+        "  waveform tree: {} ({} signal, {} scope)",
+        input,
+        data.signals.len(),
+        scopes.len()
+    );
     for (scope, sigs) in &scopes {
         // Indentasi scope: 4 + 2 per kedalaman (pohon hierarki).
         let indent = "    ".repeat(scope.len().saturating_add(1));
@@ -744,7 +789,13 @@ fn stats(input: &str) -> Result<(), SimError> {
     let r = stats_data(&data);
 
     // ── Laporan ──
-    println!("  stats: {} ({} sinyal, max_time={}, timescale={})", input, r.len(), data.max_time, data.timescale);
+    println!(
+        "  stats: {} ({} sinyal, max_time={}, timescale={})",
+        input,
+        r.len(),
+        data.max_time,
+        data.timescale
+    );
     println!(
         "  {:<22} {:<5} {:<7} {:<7} {:<10} {:<7} {}",
         "signal", "width", "toggle", "change", "first", "last", "activity%"
@@ -766,7 +817,10 @@ fn stats(input: &str) -> Result<(), SimError> {
             s.name, s.width, s.toggles, s.changes, s.first, s.last, act
         );
     }
-    println!("  total toggle: {} ({} sinyal stuck / 0 aktivitas)", total_toggle, stuck);
+    println!(
+        "  total toggle: {} ({} sinyal stuck / 0 aktivitas)",
+        total_toggle, stuck
+    );
     Ok(())
 }
 
@@ -870,6 +924,375 @@ fn _pathbuf(s: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// ── Protocol-aware decode (WAV-16) ──
+///
+/// Dekode transaksi bus dari timeline VCD. Mendukung:
+/// - `apb`      — AMBA 3/4 APB (psel/penable/pwrite/paddr/pwdata/prdata/pready)
+/// - `axi4lite` — AXI4-Lite (aw/w/b channel + ar/r channel, handshake valid/ready)
+/// - `ahb`      — AHB-Lite single transfer (htrans NONSEQ/SEQ + hready pipelining)
+
+/// Satu transaksi ter-dekode dari waveform.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodedTx {
+    /// nomor urut transaksi (1-based)
+    pub index: usize,
+    /// "WRITE" | "READ"
+    pub kind: &'static str,
+    pub start: u64,
+    pub end: u64,
+    pub addr: u64,
+    /// wdata (write) atau rdata (read)
+    pub data: u64,
+    /// response AXI4-Lite (bresp/rresp), None utk APB/AHB
+    pub resp: Option<u64>,
+}
+
+/// Cari sinyal by nama komponen terakhir (case-sensitive dulu, lalu case-insensitive).
+fn find_signal<'a>(data: &'a VcdData, name: &str) -> Option<&'a VcdSignal> {
+    let last = |s: &VcdSignal| full_name(s).rsplit('.').next().unwrap_or("").to_string();
+    data.signals.iter().find(|s| last(s) == name).or_else(|| {
+        data.signals
+            .iter()
+            .find(|s| last(s).eq_ignore_ascii_case(name))
+    })
+}
+
+/// Timeline (time, nilai) untuk satu sinyal, sorted by time.
+fn timeline_of(data: &VcdData, sig: &VcdSignal) -> Vec<(u64, String)> {
+    let mut tl: Vec<(u64, String)> = data
+        .changes
+        .iter()
+        .filter(|(_, id, _)| id == &sig.id)
+        .map(|(t, _, v)| (*t, v.clone()))
+        .collect();
+    tl.sort_by_key(|(t, _)| *t);
+    tl
+}
+
+/// Nilai sinyal pada waktu t (perubahan terakhir ≤ t; "x" bila belum ada).
+fn sample_at(tl: &[(u64, String)], t: u64) -> String {
+    let mut v = String::from("x");
+    for (tt, val) in tl {
+        if *tt <= t {
+            v = val.clone();
+        } else {
+            break;
+        }
+    }
+    v
+}
+
+/// Konversi string bit ("0101") → u64 (bit x/z dianggap 0).
+fn bits_val(bits: &str) -> u64 {
+    let mut v = 0u64;
+    for c in bits.chars() {
+        v = (v << 1) | u64::from(c == '1');
+    }
+    v
+}
+
+/// Union sorted-unik dari waktu perubahan beberapa timeline.
+fn union_times(tls: &[&[(u64, String)]]) -> Vec<u64> {
+    let mut ts: Vec<u64> = tls
+        .iter()
+        .flat_map(|tl| tl.iter().map(|(t, _)| *t))
+        .collect();
+    ts.sort_unstable();
+    ts.dedup();
+    ts
+}
+
+/// Decode APB: SETUP (psel=1, penable=0) → ACCESS (psel=1, penable=1),
+/// selesai saat pready=1. pready tidak ada → diasumsikan selalu 1.
+pub fn apb_decode(data: &VcdData) -> Result<Vec<DecodedTx>, SimError> {
+    for n in ["psel", "penable", "pwrite", "paddr"] {
+        if find_signal(data, n).is_none() {
+            return Err(err(format!("decode apb: sinyal '{}' tidak ditemukan", n)));
+        }
+    }
+    let tl = |n: &str| {
+        find_signal(data, n)
+            .map(|s| timeline_of(data, s))
+            .unwrap_or_default()
+    };
+    let psel = tl("psel");
+    let penable = tl("penable");
+    let pwrite = tl("pwrite");
+    let paddr = tl("paddr");
+    let pwdata = tl("pwdata");
+    let prdata = tl("prdata");
+    // pready absent → selalu ready (AMBA: tanpa wait state).
+    let pready = find_signal(data, "pready")
+        .map(|s| timeline_of(data, s))
+        .unwrap_or_else(|| vec![(0, "1".to_string())]);
+
+    let times = union_times(&[&psel, &penable, &pready]);
+    let mut out: Vec<DecodedTx> = Vec::new();
+    // transaksi berjalan: (write, start, addr, wdata)
+    let mut cur: Option<(bool, u64, u64, u64)> = None;
+
+    for &t in &times {
+        let sel = sample_at(&psel, t) == "1";
+        let en = sample_at(&penable, t) == "1";
+        let rdy = sample_at(&pready, t) == "1";
+
+        if sel && !en {
+            // fase SETUP — mulai transaksi baru
+            cur = Some((
+                sample_at(&pwrite, t) == "1",
+                t,
+                bits_val(&sample_at(&paddr, t)),
+                bits_val(&sample_at(&pwdata, t)),
+            ));
+        } else if sel && en && rdy {
+            // ACCESS dengan pready=1 — transaksi selesai
+            if let Some((write, start, addr, wdata)) = cur.take() {
+                let data_v = if write {
+                    wdata
+                } else {
+                    bits_val(&sample_at(&prdata, t))
+                };
+                out.push(DecodedTx {
+                    index: out.len() + 1,
+                    kind: if write { "WRITE" } else { "READ" },
+                    start,
+                    end: t,
+                    addr,
+                    data: data_v,
+                    resp: None,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Handshake valid/ready pada waktu t.
+fn handshake(vld: &[(u64, String)], rdy: &[(u64, String)], t: u64) -> bool {
+    sample_at(vld, t) == "1" && sample_at(rdy, t) == "1"
+}
+
+/// Decode AXI4-Lite: write (aw/w/b) + read (ar/r) channel handshake valid/ready.
+pub fn axi4lite_decode(data: &VcdData) -> Result<Vec<DecodedTx>, SimError> {
+    let tl = |n: &str| {
+        find_signal(data, n)
+            .map(|s| timeline_of(data, s))
+            .unwrap_or_default()
+    };
+    let has_write = find_signal(data, "awvalid").is_some();
+    let has_read = find_signal(data, "arvalid").is_some();
+    if !has_write && !has_read {
+        return Err(err(
+            "decode axi4lite: tidak ada channel write (awvalid) / read (arvalid)",
+        ));
+    }
+
+    let mut txs: Vec<DecodedTx> = Vec::new();
+
+    if has_write {
+        let awv = tl("awvalid");
+        let awr = tl("awready");
+        let wv = tl("wvalid");
+        let wr = tl("wready");
+        let bv = tl("bvalid");
+        let br = tl("bready");
+        let awaddr = tl("awaddr");
+        let wdata = tl("wdata");
+        let bresp = tl("bresp");
+
+        let mut addr: Option<(u64, u64)> = None; // (start, addr)
+        let mut wdat = 0u64;
+        let mut have_wdata = false;
+        let mut times = union_times(&[&awv, &awr, &wv, &wr, &bv, &br]);
+        times.sort_unstable();
+
+        for &t in &times {
+            if handshake(&awv, &awr, t) {
+                addr = Some((t, bits_val(&sample_at(&awaddr, t))));
+                have_wdata = false;
+            }
+            if handshake(&wv, &wr, t) && !have_wdata {
+                wdat = bits_val(&sample_at(&wdata, t));
+                have_wdata = true;
+            }
+            if handshake(&bv, &br, t) {
+                if let Some((start, a)) = addr.take() {
+                    txs.push(DecodedTx {
+                        index: 0,
+                        kind: "WRITE",
+                        start,
+                        end: t,
+                        addr: a,
+                        data: wdat,
+                        resp: Some(bits_val(&sample_at(&bresp, t))),
+                    });
+                }
+            }
+        }
+    }
+
+    if has_read {
+        let arv = tl("arvalid");
+        let arr = tl("arready");
+        let rv = tl("rvalid");
+        let rr = tl("rready");
+        let araddr = tl("araddr");
+        let rdata = tl("rdata");
+        let rresp = tl("rresp");
+
+        let mut addr: Option<(u64, u64)> = None;
+        let mut times = union_times(&[&arv, &arr, &rv, &rr]);
+        times.sort_unstable();
+
+        for &t in &times {
+            if handshake(&arv, &arr, t) {
+                addr = Some((t, bits_val(&sample_at(&araddr, t))));
+            }
+            if handshake(&rv, &rr, t) {
+                if let Some((start, a)) = addr.take() {
+                    txs.push(DecodedTx {
+                        index: 0,
+                        kind: "READ",
+                        start,
+                        end: t,
+                        addr: a,
+                        data: bits_val(&sample_at(&rdata, t)),
+                        resp: Some(bits_val(&sample_at(&rresp, t))),
+                    });
+                }
+            }
+        }
+    }
+
+    txs.sort_by_key(|tx| tx.end);
+    for (i, tx) in txs.iter_mut().enumerate() {
+        tx.index = i + 1;
+    }
+    Ok(txs)
+}
+
+/// Decode AHB-Lite single transfer: alamat phase saat htrans=NONSEQ("10")/
+/// SEQ("11") dengan hready=1; data phase selesai pada hready=1 berikutnya.
+pub fn ahb_decode(data: &VcdData) -> Result<Vec<DecodedTx>, SimError> {
+    for n in ["htrans", "haddr", "hwrite", "hready"] {
+        if find_signal(data, n).is_none() {
+            return Err(err(format!("decode ahb: sinyal '{}' tidak ditemukan", n)));
+        }
+    }
+    let tl = |n: &str| {
+        find_signal(data, n)
+            .map(|s| timeline_of(data, s))
+            .unwrap_or_default()
+    };
+    let htrans = tl("htrans");
+    let haddr = tl("haddr");
+    let hwrite = tl("hwrite");
+    let hready = tl("hready");
+    let hwdata = tl("hwdata");
+    let hrdata = tl("hrdata");
+
+    let is_addr_phase = |tr: &str| tr == "10" || tr == "11"; // NONSEQ | SEQ
+
+    let times = union_times(&[&htrans, &hready]);
+    let mut out: Vec<DecodedTx> = Vec::new();
+    // transaksi menunggu data phase: (write, start, addr)
+    let mut cur: Option<(bool, u64, u64)> = None;
+
+    for &t in &times {
+        let tr = sample_at(&htrans, t);
+        let rdy = sample_at(&hready, t) == "1";
+
+        match cur.take() {
+            None => {
+                if is_addr_phase(&tr) && rdy {
+                    cur = Some((
+                        sample_at(&hwrite, t) == "1",
+                        t,
+                        bits_val(&sample_at(&haddr, t)),
+                    ));
+                }
+            }
+            Some((write, start, addr)) => {
+                if rdy {
+                    let data_v = if write {
+                        bits_val(&sample_at(&hwdata, t))
+                    } else {
+                        bits_val(&sample_at(&hrdata, t))
+                    };
+                    out.push(DecodedTx {
+                        index: out.len() + 1,
+                        kind: if write { "WRITE" } else { "READ" },
+                        start,
+                        end: t,
+                        addr,
+                        data: data_v,
+                        resp: None,
+                    });
+                } else {
+                    cur = Some((write, start, addr));
+                }
+                // Pipelining: address phase transfer baru bisa dimulai pada
+                // cycle yang sama dengan data phase sebelumnya selesai.
+                if rdy && is_addr_phase(&tr) {
+                    cur = Some((
+                        sample_at(&hwrite, t) == "1",
+                        t,
+                        bits_val(&sample_at(&haddr, t)),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Subcommand `decode` — dekode transaksi protokol bus dari VCD (WAV-16).
+fn decode(input: &str, proto: &str) -> Result<(), SimError> {
+    let data = parse_vcd(input)?;
+    let p = proto.to_ascii_lowercase().replace('_', "");
+    let txs = match p.as_str() {
+        "apb" => apb_decode(&data)?,
+        "axi4lite" | "axi-lite" | "axilite" => axi4lite_decode(&data)?,
+        "ahb" | "ahblite" | "ahb-lite" => ahb_decode(&data)?,
+        other => {
+            return Err(err(format!(
+                "protokol tidak dikenal: '{}' (pilihan: apb | axi4lite | ahb)",
+                other
+            )))
+        }
+    };
+
+    println!(
+        "  decode: {} (proto={}, {} sinyal, max_time={})",
+        input,
+        proto,
+        data.signals.len(),
+        data.max_time
+    );
+    for tx in &txs {
+        let dir = if tx.kind == "WRITE" { "wdata" } else { "rdata" };
+        match tx.resp {
+            Some(r) => println!(
+                "  #{:<3} {:<5} [{:>5}..{:>5}] addr=0x{:x} {}=0x{:x} resp=0x{:x}",
+                tx.index, tx.kind, tx.start, tx.end, tx.addr, dir, tx.data, r
+            ),
+            None => println!(
+                "  #{:<3} {:<5} [{:>5}..{:>5}] addr=0x{:x} {}=0x{:x}",
+                tx.index, tx.kind, tx.start, tx.end, tx.addr, dir, tx.data
+            ),
+        }
+    }
+    let nw = txs.iter().filter(|t| t.kind == "WRITE").count();
+    let nr = txs.len() - nw;
+    println!(
+        "  total: {} transaksi ({} write, {} read)",
+        txs.len(),
+        nw,
+        nr
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -960,7 +1383,11 @@ mod tests {
             *scopes.entry(sig.scope.clone()).or_insert(0) += 1;
         }
         assert_eq!(scopes.len(), 2, "2 scope: {}", data.signals.len());
-        assert_eq!(scopes.get(&vec!["top".to_string()]), Some(&1), "top punya 1 signal");
+        assert_eq!(
+            scopes.get(&vec!["top".to_string()]),
+            Some(&1),
+            "top punya 1 signal"
+        );
         assert_eq!(
             scopes.get(&vec!["top".to_string(), "sub".to_string()]),
             Some(&1),
@@ -990,9 +1417,7 @@ mod tests {
         let names: Vec<String> = data
             .signals
             .iter()
-            .filter(|s| {
-                wildcard_match("c*", &s.name) || wildcard_match("*extra*", &s.name)
-            })
+            .filter(|s| wildcard_match("c*", &s.name) || wildcard_match("*extra*", &s.name))
             .map(full_name)
             .collect();
         assert!(names.contains(&"top.clk".to_string()));
@@ -1054,5 +1479,187 @@ mod tests {
         assert_eq!(cnt.changes, 1, "hanya inisialisasi");
         assert_eq!(cnt.activity, 0, "aktivitas 0");
         let _ = std::fs::remove_file("/tmp/__stuck.vcd");
+    }
+
+    /// Helper: bangun file VCD dari definisi $var + body mentah (WAV-16).
+    /// vars: (id, width, name) — semua di scope `top`.
+    fn vcd_proto(vars: &[(&str, usize, &str)], body: &str) -> String {
+        let mut s = String::from("$timescale 1ns $end\n$scope module top $end\n");
+        for (id, w, name) in vars {
+            s.push_str(&format!("$var wire {} {} {}  $end\n", w, id, name));
+        }
+        s.push_str("$upscope $end\n$enddefinitions $end\n");
+        s.push_str(body);
+        s
+    }
+
+    #[test]
+    fn test_apb_decode_write_read_and_wait_state() {
+        // TX1 WRITE 0x10<=0xAB (pready langsung 1).
+        // TX2 READ 0x40 dengan WAIT STATE: penable t=60, pready=0 t=60,
+        // pready=1 t=70 → transaksi selesai di t=70, rdata=0x51.
+        let src = vcd_proto(
+            &[
+                ("!", 1, "psel"),
+                ("\"", 1, "penable"),
+                ("#", 1, "pwrite"),
+                ("$", 1, "pready"),
+                ("%", 8, "paddr"),
+                ("&", 8, "pwdata"),
+                ("'", 8, "prdata"),
+            ],
+            "#0\n0!\n0\"\n0#\n1$\nb00000000 %\nb00000000 &\nb00000000 '\n\
+             #10\n1!\n1#\nb00010000 %\nb10101011 &\n\
+             #20\n1\"\n\
+             #30\n0!\n0\"\n0#\n\
+             #50\n1!\n0#\nb01000000 %\nb01010001 '\n\
+             #60\n1\"\n0$\n\
+             #70\n1$\n\
+             #80\n0!\n0\"\n",
+        );
+        std::fs::write("/tmp/__dec_apb.vcd", src).unwrap();
+        let data = parse_vcd("/tmp/__dec_apb.vcd").unwrap();
+        let txs = apb_decode(&data).expect("apb decode ok");
+        assert_eq!(txs.len(), 2, "2 transaksi APB");
+
+        let w = &txs[0];
+        assert_eq!(w.kind, "WRITE");
+        assert_eq!(w.start, 10);
+        assert_eq!(w.end, 20);
+        assert_eq!(w.addr, 0x10);
+        assert_eq!(w.data, 0xAB);
+        assert_eq!(w.resp, None);
+
+        let r = &txs[1];
+        assert_eq!(r.kind, "READ");
+        assert_eq!(r.start, 50);
+        assert_eq!(r.end, 70, "wait state: selesai saat pready naik t=70");
+        assert_eq!(r.addr, 0x40);
+        assert_eq!(r.data, 0x51);
+        let _ = std::fs::remove_file("/tmp/__dec_apb.vcd");
+    }
+
+    #[test]
+    fn test_axi4lite_decode_write_and_read_channels() {
+        // Write: aw handshake t=10, w handshake t=10, b handshake t=20.
+        // Read : ar handshake t=40, r handshake t=50 (rresp=2 → 0b10).
+        let src = vcd_proto(
+            &[
+                ("a", 1, "awvalid"),
+                ("b", 1, "awready"),
+                ("c", 8, "awaddr"),
+                ("d", 1, "wvalid"),
+                ("e", 1, "wready"),
+                ("f", 8, "wdata"),
+                ("g", 1, "bvalid"),
+                ("h", 1, "bready"),
+                ("i", 2, "bresp"),
+                ("j", 1, "arvalid"),
+                ("k", 1, "arready"),
+                ("l", 8, "araddr"),
+                ("m", 1, "rvalid"),
+                ("n", 1, "rready"),
+                ("o", 8, "rdata"),
+                ("p", 2, "rresp"),
+            ],
+            "#0\n0a\n1b\n0d\n1e\n0g\n1h\nb00 i\n0j\n1k\n1n\nb00 p\n\
+             #10\n1a\nb00110000 c\n1d\nb11011110 f\n\
+             #20\n0a\n0d\n1g\nb01 i\n\
+             #30\n0g\n\
+             #40\n1j\nb01010000 l\n\
+             #50\n0j\n1m\nb01110111 o\nb10 p\n\
+             #60\n0m\n",
+        );
+        std::fs::write("/tmp/__dec_axi.vcd", src).unwrap();
+        let data = parse_vcd("/tmp/__dec_axi.vcd").unwrap();
+        let mut txs = axi4lite_decode(&data).expect("axi decode ok");
+        assert_eq!(txs.len(), 2, "1 write + 1 read");
+        txs.sort_by_key(|t| t.start);
+
+        let w = &txs[0];
+        assert_eq!(w.kind, "WRITE");
+        assert_eq!(w.start, 10);
+        assert_eq!(w.end, 20);
+        assert_eq!(w.addr, 0x30);
+        assert_eq!(w.data, 0xDE);
+        assert_eq!(w.resp, Some(0b01), "bresp OKAY=01 tercatat");
+
+        let r = &txs[1];
+        assert_eq!(r.kind, "READ");
+        assert_eq!(r.start, 40);
+        assert_eq!(r.end, 50);
+        assert_eq!(r.addr, 0x50);
+        assert_eq!(r.data, 0x77);
+        assert_eq!(r.resp, Some(0b10));
+        let _ = std::fs::remove_file("/tmp/__dec_axi.vcd");
+    }
+
+    #[test]
+    fn test_ahb_decode_single_transfers() {
+        // WRITE: addr phase NONSEQ t=10, data phase selesai t=20 (hwdata).
+        // READ : addr phase NONSEQ t=40, data phase selesai t=50 (hrdata).
+        let src = vcd_proto(
+            &[
+                ("a", 2, "htrans"),
+                ("b", 1, "hwrite"),
+                ("c", 1, "hready"),
+                ("d", 8, "haddr"),
+                ("e", 8, "hwdata"),
+                ("f", 8, "hrdata"),
+            ],
+            "#0\nb00 a\n0b\n1c\nb00000000 d\ne\nf\n\
+             #10\nb10 a\n1b\nb01100000 d\n\
+             #20\nb00 a\nb10011010 e\n\
+             #40\nb10 a\n0b\nb01100100 d\nb00111110 f\n\
+             #50\nb00 a\n",
+        );
+        std::fs::write("/tmp/__dec_ahb.vcd", src).unwrap();
+        let data = parse_vcd("/tmp/__dec_ahb.vcd").unwrap();
+        let txs = ahb_decode(&data).expect("ahb decode ok");
+        assert_eq!(txs.len(), 2, "2 transfer AHB");
+
+        let w = &txs[0];
+        assert_eq!(w.kind, "WRITE");
+        assert_eq!(w.start, 10);
+        assert_eq!(w.end, 20);
+        assert_eq!(w.addr, 0x60);
+        assert_eq!(w.data, 0x9A);
+
+        let r = &txs[1];
+        assert_eq!(r.kind, "READ");
+        assert_eq!(r.start, 40);
+        assert_eq!(r.end, 50);
+        assert_eq!(r.addr, 0x64);
+        assert_eq!(r.data, 0x3E);
+        let _ = std::fs::remove_file("/tmp/__dec_ahb.vcd");
+    }
+
+    #[test]
+    fn test_decode_missing_signal_errors() {
+        // VCD tanpa psel → apb_decode error jelas.
+        let src = vcd_proto(
+            &[("\"", 1, "penable"), ("#", 1, "pwrite"), ("$", 8, "paddr")],
+            "#0\n0\"\n0#\n",
+        );
+        std::fs::write("/tmp/__dec_miss.vcd", src).unwrap();
+        let data = parse_vcd("/tmp/__dec_miss.vcd").unwrap();
+        let e = apb_decode(&data).expect_err("psel hilang harus error");
+        assert!(
+            format!("{}", e).contains("psel"),
+            "pesan menyebut sinyal yang hilang"
+        );
+        let _ = std::fs::remove_file("/tmp/__dec_miss.vcd");
+    }
+
+    #[test]
+    fn test_sample_at_and_bits_val() {
+        let tl = vec![(0u64, "0".to_string()), (10, "1".to_string())];
+        assert_eq!(sample_at(&tl, 5), "0", "sebelum perubahan kedua");
+        assert_eq!(sample_at(&tl, 10), "1");
+        assert_eq!(sample_at(&tl, 99), "1", "nilai bertahan");
+        assert_eq!(sample_at(&[], 0), "x", "timeline kosong → x");
+        assert_eq!(bits_val("1010"), 0xA);
+        assert_eq!(bits_val("00000000"), 0);
+        assert_eq!(bits_val("xxxx"), 0, "x dianggap 0");
     }
 }

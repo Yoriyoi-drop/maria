@@ -200,5 +200,8 @@ fn synth_tool_emit_mapped_netlist_smoke() {
     };
     maria_api::tools::synth::run(&args).expect("maria synth --emit-netlist --tech-map");
     assert!(dir.join("counter_p4.tech.v").exists(), "tech netlist file");
-    assert!(dir.join("counter_p4.tech.mvnet").exists(), "tech mvnet file");
+    assert!(
+        dir.join("counter_p4.tech.mvnet").exists(),
+        "tech mvnet file"
+    );
 }

@@ -17,7 +17,7 @@ pub mod lower;
 pub mod print;
 pub mod sir;
 
-pub use lower::{LowerResult, lower};
+pub use lower::{lower, LowerResult};
 pub use print::{render_sir, value_label};
 pub use sir::{
     NodeId, PortDir, PortId, RegisterId, ResetSpec, SirModule, SirNode, SirNodeKind, SirPort,

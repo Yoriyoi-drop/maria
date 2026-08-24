@@ -86,13 +86,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         ui.separator();
         let cyc = layout.nodes.iter().filter(|n| n.in_cycle).count();
         ui.label(
-            egui::RichText::new(format!(
-                "{} node · {} siklus",
-                layout.nodes.len(),
-                cyc
-            ))
-            .weak()
-            .size(11.0),
+            egui::RichText::new(format!("{} node · {} siklus", layout.nodes.len(), cyc))
+                .weak()
+                .size(11.0),
         );
     });
     ui.separator();
@@ -103,8 +99,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let canvas = egui::vec2(layout.width, layout.height);
-            let (crect, cresp) =
-                ui.allocate_exact_size(canvas, egui::Sense::click());
+            let (crect, cresp) = ui.allocate_exact_size(canvas, egui::Sense::click());
             let painter = ui.painter_at(crect);
 
             // ── Edge (di belakang node) ──
@@ -188,10 +183,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
 
 /// Rect layar node (posisi absolut dalam canvas).
 fn node_rect(node: &DepGraphNode) -> egui::Rect {
-    egui::Rect::from_min_size(
-        egui::pos2(node.x, node.y),
-        egui::vec2(node.w, node.h),
-    )
+    egui::Rect::from_min_size(egui::pos2(node.x, node.y), egui::vec2(node.w, node.h))
 }
 
 /// Potong nama module agar muat dalam lebar node (elipsis).
@@ -208,19 +200,17 @@ fn truncate(name: &str, max_w: f32) -> String {
 
 /// Gambar satu edge: cubic bezier dari sisi kanan parent ke sisi kiri child
 /// + label jumlah instance + panah di ujung.
-fn draw_edge(
-    painter: &egui::Painter,
-    layout: &DepGraphLayout,
-    i: usize,
-    j: usize,
-    count: usize,
-) {
+fn draw_edge(painter: &egui::Painter, layout: &DepGraphLayout, i: usize, j: usize, count: usize) {
     let a = &layout.nodes[i];
     let b = &layout.nodes[j];
     let p0 = egui::pos2(a.x + a.w, a.y + a.h / 2.0);
     let p3 = egui::pos2(b.x, b.y + b.h / 2.0);
     let same_col = (p3.x - p0.x).abs() < 1.0;
-    let dx = if same_col { 60.0 } else { (p3.x - p0.x).abs() * 0.5 };
+    let dx = if same_col {
+        60.0
+    } else {
+        (p3.x - p0.x).abs() * 0.5
+    };
     let (c1, c2) = if same_col {
         // Edge antar node sekolom (siklus) — lekuk ke bawah.
         (
@@ -269,10 +259,7 @@ fn draw_node_tooltip(painter: &egui::Painter, layout: &DepGraphLayout, i: usize)
     let node = &layout.nodes[i];
     let name = node.name.clone();
     let edges: usize = node.edges.iter().map(|(_, n)| n).sum();
-    let mut lines: Vec<String> = vec![
-        format!("module {}", name),
-        format!("{} dependency", edges),
-    ];
+    let mut lines: Vec<String> = vec![format!("module {}", name), format!("{} dependency", edges)];
     if node.in_cycle {
         lines.push("⚠ bagian dari SIKLUS dependensi".to_string());
     }
@@ -289,10 +276,8 @@ fn draw_node_tooltip(painter: &egui::Painter, layout: &DepGraphLayout, i: usize)
         .min(280.0);
     let h = lines.len() as f32 * line_h + pad * 2.0;
 
-    let mut rect = egui::Rect::from_min_size(
-        egui::pos2(node.x, node.y + node.h + 6.0),
-        egui::vec2(w, h),
-    );
+    let mut rect =
+        egui::Rect::from_min_size(egui::pos2(node.x, node.y + node.h + 6.0), egui::vec2(w, h));
     // Jangan keluar canvas
     if rect.bottom() > layout.height - 4.0 {
         rect = rect.translate(egui::vec2(0.0, -(h + node.h + 12.0)));
@@ -308,7 +293,11 @@ fn draw_node_tooltip(painter: &egui::Painter, layout: &DepGraphLayout, i: usize)
         rect = rect.translate(egui::vec2(0.0, 4.0 - rect.top()));
     }
 
-    painter.rect_filled(rect, egui::CornerRadius::same(6), egui::Color32::from_rgb(15, 18, 24));
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::same(6),
+        egui::Color32::from_rgb(15, 18, 24),
+    );
     painter.rect_stroke(
         rect,
         egui::CornerRadius::same(6),
@@ -384,7 +373,13 @@ fn build_layout(deps: &[DepRow]) -> DepGraphLayout {
     let mut children: Vec<Vec<(usize, usize)>> = Vec::new();
     let mut parents: Vec<Vec<usize>> = Vec::new();
     for row in deps {
-        let p = ensure_index(&mut index, &mut names, &mut children, &mut parents, &row.module);
+        let p = ensure_index(
+            &mut index,
+            &mut names,
+            &mut children,
+            &mut parents,
+            &row.module,
+        );
         for (c, n) in &row.children {
             let ci = ensure_index(&mut index, &mut names, &mut children, &mut parents, c);
             children[p].push((ci, *n));
@@ -460,7 +455,9 @@ fn build_layout(deps: &[DepRow]) -> DepGraphLayout {
     let mut nodes: Vec<DepGraphNode> = Vec::with_capacity(n);
     let mut pos_of: HashMap<usize, usize> = HashMap::new();
     for l in 0..=max_layer {
-        let Some(list) = by_layer.get(&l) else { continue };
+        let Some(list) = by_layer.get(&l) else {
+            continue;
+        };
         for (k, &i) in list.iter().enumerate() {
             pos_of.insert(i, nodes.len());
             let w = node_width(&names[i]);
@@ -552,19 +549,13 @@ mod tests {
     fn row(module: &str, children: &[(&str, usize)]) -> DepRow {
         DepRow {
             module: module.to_string(),
-            children: children
-                .iter()
-                .map(|(c, n)| (c.to_string(), *n))
-                .collect(),
+            children: children.iter().map(|(c, n)| (c.to_string(), *n)).collect(),
         }
     }
 
     #[test]
     fn layout_puts_root_in_first_layer() {
-        let deps = vec![
-            row("cpu", &[("axi", 1)]),
-            row("axi", &[("dram", 2)]),
-        ];
+        let deps = vec![row("cpu", &[("axi", 1)]), row("axi", &[("dram", 2)])];
         let layout = build_layout(&deps);
         assert_eq!(layout.nodes.len(), 3);
         let cpu = layout.nodes.iter().find(|n| n.name == "cpu").unwrap();

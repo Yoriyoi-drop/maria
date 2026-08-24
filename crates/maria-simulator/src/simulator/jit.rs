@@ -158,12 +158,20 @@ pub mod intrinsics {
 
     /// Equality: a == b
     pub fn eq(a: u64, b: u64) -> u64 {
-        if a == b { 1 } else { 0 }
+        if a == b {
+            1
+        } else {
+            0
+        }
     }
 
     /// Less-than: a < b
     pub fn lt(a: u64, b: u64) -> u64 {
-        if a < b { 1 } else { 0 }
+        if a < b {
+            1
+        } else {
+            0
+        }
     }
 }
 

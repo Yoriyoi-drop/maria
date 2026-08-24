@@ -4,7 +4,7 @@
 
 use crate::compile_str;
 use maria_compiler::frontend::compile_session::{CompileSession, SessionConfig};
-use maria_compiler::profiling::{Profiler, Phase, PhaseTimer, Counter};
+use maria_compiler::profiling::{Counter, Phase, PhaseTimer, Profiler};
 use std::time::Instant;
 
 #[test]
@@ -25,10 +25,13 @@ fn bench_compile_counter_sv() {
 fn bench_compile_100_modules() {
     let mut source = String::new();
     for i in 0..100 {
-        source.push_str(&format!(r#"module m_{}(input clk, output reg [3:0] q);
+        source.push_str(&format!(
+            r#"module m_{}(input clk, output reg [3:0] q);
             always_ff @(posedge clk) q <= q + 4'h1;
         endmodule
-"#, i));
+"#,
+            i
+        ));
     }
     let start = Instant::now();
     let _ = compile_str(&source).unwrap();
@@ -63,7 +66,9 @@ fn bench_session_50_files() {
         let content = format!(
             "module mod_{}(input clk, output reg [7:0] q);\n\
              always_ff @(posedge clk) q <= q + 8'h1;\n\
-             endmodule\n", i);
+             endmodule\n",
+            i
+        );
         std::fs::write(&path, &content).unwrap();
         sources.push(path);
     }
@@ -90,6 +95,9 @@ fn bench_string_intern_speed() {
         let _sym = Symbol::intern(&s);
     }
     let elapsed = start.elapsed();
-    eprintln!("20K unique symbols: {:?} ({:.0} symbols/sec)",
-        elapsed, 20000.0 / elapsed.as_secs_f64());
+    eprintln!(
+        "20K unique symbols: {:?} ({:.0} symbols/sec)",
+        elapsed,
+        20000.0 / elapsed.as_secs_f64()
+    );
 }

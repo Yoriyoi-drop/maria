@@ -10,8 +10,8 @@
 //!
 //! ──────────────────────────────────────────────────────────────────────────────
 
-use maria_ir::*;
 use maria_ast::*;
+use maria_ir::*;
 
 /// Mapping operator unary AST ke operator unary IR.
 pub fn map_unary_op(op: &UnaryOp) -> Result<UnaryIrOp, String> {

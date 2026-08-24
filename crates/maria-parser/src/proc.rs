@@ -4,11 +4,11 @@
 // parse_function, parse_task, parse_generate_block/Item/BlockBody
 
 use super::Parser;
-use maria_ast::*;
+use crate::lexer::*;
 use maria_ast::types::const_eval_simple;
+use maria_ast::*;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::lexer::*;
 
 impl Parser {
     /// Skip dimensi unpacked array setelah nama port/deklarasi:
@@ -329,12 +329,17 @@ impl Parser {
                 self.advance();
                 Some(Box::new(DataType::Signed(Box::new(DataType::Logic))))
             }
-    Token::Ident(name) if self.type_param_names.contains(name) => {
-        let tp_name = *name;
-        self.advance();
-        Some(Box::new(DataType::UserDefined(tp_name)))
-    }
-            Token::Ident(_) if matches!(self.peek_ahead(1), Token::Ident(_) | Token::LBrack | Token::Scope) => {
+            Token::Ident(name) if self.type_param_names.contains(name) => {
+                let tp_name = *name;
+                self.advance();
+                Some(Box::new(DataType::UserDefined(tp_name)))
+            }
+            Token::Ident(_)
+                if matches!(
+                    self.peek_ahead(1),
+                    Token::Ident(_) | Token::LBrack | Token::Scope
+                ) =>
+            {
                 let first = self.expect_ident()?;
                 let tp_name = if self.peek() == &Token::Scope {
                     self.advance();
@@ -366,9 +371,7 @@ impl Parser {
                 self.advance();
                 Symbol::intern("new")
             }
-            _ => {
-                return Err(self.err("expected function name"))
-            }
+            _ => return Err(self.err("expected function name")),
         };
         // Handle out-of-body method: class_name :: method_name
         let name = if self.peek() == &Token::Scope {
@@ -467,8 +470,7 @@ impl Parser {
                 let mut expr_range = None;
                 let mut range = None;
                 if let Some(er) = self.parse_port_dims()? {
-                    if let (Ok(m), Ok(l)) =
-                        (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                    if let (Ok(m), Ok(l)) = (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
                     {
                         range = Some(Range {
                             msb: m as usize,
@@ -665,9 +667,17 @@ impl Parser {
                     let decl = self.parse_decl()?;
                     decls.push(decl);
                 }
-                Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time
-                | Token::String | Token::Real | Token::RealTime | Token::WReal
-                | Token::Mailbox | Token::Semaphore => {
+                Token::Bit
+                | Token::Byte
+                | Token::Shortint
+                | Token::Longint
+                | Token::Time
+                | Token::String
+                | Token::Real
+                | Token::RealTime
+                | Token::WReal
+                | Token::Mailbox
+                | Token::Semaphore => {
                     let decl = self.parse_decl()?;
                     decls.push(decl);
                 }
@@ -745,7 +755,15 @@ impl Parser {
         // Parse statements until endfunction — sisa body setelah `begin...end`
         // (atau body penuh bila tidak ada blok begin).
         loop {
-            if matches!(self.peek(), Token::EndFunction | Token::End | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::Eof) {
+            if matches!(
+                self.peek(),
+                Token::EndFunction
+                    | Token::End
+                    | Token::EndClass
+                    | Token::EndInterface
+                    | Token::EndPackage
+                    | Token::Eof
+            ) {
                 break;
             }
             stmts.push(self.parse_stmt()?);
@@ -812,8 +830,8 @@ impl Parser {
         if self.peek() == &Token::LParen {
             self.advance();
             while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
-                // Comma setelah default value (mis. `task f(uint a = 10, int b)`) 
-                // tidak dikonsumsi oleh inner ident loop — consume di sini agar 
+                // Comma setelah default value (mis. `task f(uint a = 10, int b)`)
+                // tidak dikonsumsi oleh inner ident loop — consume di sini agar
                 // loop tidak berputar tanpa progres.
                 if self.peek() == &Token::Comma {
                     self.advance();
@@ -875,8 +893,7 @@ impl Parser {
                     continue;
                 }
                 let range: Option<Range> = if let Ok(Some(er)) = self.parse_port_dims() {
-                    if let (Ok(m), Ok(l)) =
-                        (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                    if let (Ok(m), Ok(l)) = (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
                     {
                         Some(Range {
                             msb: m as usize,
@@ -1068,10 +1085,22 @@ impl Parser {
                     }
                     self.skip_semi();
                 }
-                Token::Wire | Token::Reg | Token::Logic | Token::Int | Token::Integer
-                | Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time
-                | Token::String | Token::Real | Token::RealTime | Token::WReal
-                | Token::Mailbox | Token::Semaphore => {
+                Token::Wire
+                | Token::Reg
+                | Token::Logic
+                | Token::Int
+                | Token::Integer
+                | Token::Bit
+                | Token::Byte
+                | Token::Shortint
+                | Token::Longint
+                | Token::Time
+                | Token::String
+                | Token::Real
+                | Token::RealTime
+                | Token::WReal
+                | Token::Mailbox
+                | Token::Semaphore => {
                     decls.push(self.parse_decl()?);
                 }
                 Token::Ident(_) => {
@@ -1135,7 +1164,15 @@ impl Parser {
             }
         }
         loop {
-            if matches!(self.peek(), Token::EndTask | Token::End | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::Eof) {
+            if matches!(
+                self.peek(),
+                Token::EndTask
+                    | Token::End
+                    | Token::EndClass
+                    | Token::EndInterface
+                    | Token::EndPackage
+                    | Token::Eof
+            ) {
                 break;
             }
             stmts.push(self.parse_stmt()?);
@@ -1192,7 +1229,13 @@ impl Parser {
                 let cond = self.parse_expr(0)?;
                 if std::env::var("DBG_GEN_IF").is_ok() {
                     let (df, dl) = self.resolve_source_file(self.peek_line());
-                    eprintln!("DBG-GEN-IF: parse generate-if {}:{} line {}: {:?}", df, dl, self.peek_line(), format!("{:?}", cond));
+                    eprintln!(
+                        "DBG-GEN-IF: parse generate-if {}:{} line {}: {:?}",
+                        df,
+                        dl,
+                        self.peek_line(),
+                        format!("{:?}", cond)
+                    );
                 }
                 self.expect(Token::RParen)?;
                 let (true_label, true_items) = self.parse_generate_block_body()?;
@@ -1253,9 +1296,7 @@ impl Parser {
                         self.advance();
                         *n
                     }
-                    _ => {
-                        return Err(self.err("expected genvar name"))
-                    }
+                    _ => return Err(self.err("expected genvar name")),
                 };
                 // Parse init: i = <expr>
                 let _init = if self.peek() != &Token::Semi {
@@ -1263,7 +1304,11 @@ impl Parser {
                     let init_expr = self.parse_expr(0)?;
                     self.expect(Token::Semi)?;
                     Some(Stmt::BlockingAssign {
-                        lhs: Expr::Ident { name: var, line: 0, col: 0 },
+                        lhs: Expr::Ident {
+                            name: var,
+                            line: 0,
+                            col: 0,
+                        },
                         rhs: init_expr,
                         delay: None,
                     })
@@ -1410,5 +1455,4 @@ impl Parser {
             }
         }
     }
-
 }

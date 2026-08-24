@@ -6,7 +6,9 @@ pub struct DpiInfo {
 
 impl DpiInfo {
     pub fn detect() -> Self {
-        DpiInfo { available: cfg!(feature = "dpi") }
+        DpiInfo {
+            available: cfg!(feature = "dpi"),
+        }
     }
 }
 

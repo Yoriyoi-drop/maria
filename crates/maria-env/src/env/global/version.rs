@@ -3,7 +3,10 @@ use super::build::BuildInfo;
 /// String versi lengkap untuk output CLI/GUI, mis. "maria 0.3.0 (debug, x86_64-unknown-linux-gnu)".
 pub fn version_string() -> String {
     let b = BuildInfo::current();
-    format!("{} {} ({}, {})", b.crate_name, b.version, b.profile, b.target)
+    format!(
+        "{} {} ({}, {})",
+        b.crate_name, b.version, b.profile, b.target
+    )
 }
 
 #[cfg(test)]

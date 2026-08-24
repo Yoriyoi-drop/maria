@@ -1,10 +1,10 @@
 use super::super::SequenceAttempt;
 use super::super::SimulationEngine;
+use crate::simulator::types::*;
 use crate::simulator::util::*;
 use maria_core::error::SimError;
-use maria_ir::*;
 use maria_core::Symbol;
-use crate::simulator::types::*;
+use maria_ir::*;
 use rand::Rng;
 
 /// Cap iterasi loop AST (method/task context) untuk mencegah hang ketika loop
@@ -26,10 +26,17 @@ impl SimulationEngine {
     /// (ContinueAstBlock dgn fork_id → event.rs fork_decrement) — tanpa ini,
     /// `fork drv.run(); ...; join` di module initial selesai premature
     /// (F24 limitation: HANDSHAKE tercetak sebelum driver selesai).
-    pub(crate) fn fork_branch_end(&mut self, fid: usize, all_consumed: bool) -> Result<(), SimError> {
+    pub(crate) fn fork_branch_end(
+        &mut self,
+        fid: usize,
+        all_consumed: bool,
+    ) -> Result<(), SimError> {
         self.active_fork_id = None;
         if std::env::var("DBG_UVM").is_ok() {
-            eprintln!("[DBG-F26] branch_end fid={} consumed={} suspended={}", fid, all_consumed, self.task_suspended);
+            eprintln!(
+                "[DBG-F26] branch_end fid={} consumed={} suspended={}",
+                fid, all_consumed, self.task_suspended
+            );
         }
         if self.task_suspended {
             self.task_suspended = false;
@@ -157,16 +164,19 @@ impl SimulationEngine {
                                 }
                                 if !later.is_empty() {
                                     let pid = self.current_process_id;
-                                    self.push_event(delay_t, RegionEvent {
-                                        region: EventRegion::Active,
-                                        event: EventKind::ContinueBlock(Continuation {
-                                            stmts_to_exec: later,
-                                            stmts_remaining: vec![],
-                                            fork_id,
-                                            process_id: pid,
-                                            process_name: self.current_process_name.clone(),
-                                        }),
-                                    });
+                                    self.push_event(
+                                        delay_t,
+                                        RegionEvent {
+                                            region: EventRegion::Active,
+                                            event: EventKind::ContinueBlock(Continuation {
+                                                stmts_to_exec: later,
+                                                stmts_remaining: vec![],
+                                                fork_id,
+                                                process_id: pid,
+                                                process_name: self.current_process_name.clone(),
+                                            }),
+                                        },
+                                    );
                                 }
                                 return Ok(false);
                             }
@@ -195,16 +205,19 @@ impl SimulationEngine {
                                 }
                                 if !later.is_empty() {
                                     let pid = self.current_process_id;
-                                    self.push_event(delay_t, RegionEvent {
-                                        region: EventRegion::Active,
-                                        event: EventKind::ContinueBlock(Continuation {
-                                            stmts_to_exec: later,
-                                            stmts_remaining: vec![],
-                                            fork_id,
-                                            process_id: pid,
-                                            process_name: self.current_process_name.clone(),
-                                        }),
-                                    });
+                                    self.push_event(
+                                        delay_t,
+                                        RegionEvent {
+                                            region: EventRegion::Active,
+                                            event: EventKind::ContinueBlock(Continuation {
+                                                stmts_to_exec: later,
+                                                stmts_remaining: vec![],
+                                                fork_id,
+                                                process_id: pid,
+                                                process_name: self.current_process_name.clone(),
+                                            }),
+                                        },
+                                    );
                                 }
                                 return Ok(false);
                             }
@@ -223,20 +236,22 @@ impl SimulationEngine {
                     let delay_val = *delay as usize;
                     let delay_t = self.state.time as usize + delay_val;
                     self.ensure_events(delay_t);
-                        let mut later: Vec<IrStmt> = body.clone();
-                        let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
-                        later.extend(remaining);
-                        if let Some(loop_cont) = &self.loop_continuation {
-                            later.extend(loop_cont.clone());
-                        }
-                        if !later.is_empty() {
-                            let region = if delay_val == 0 {
-                                EventRegion::Inactive
-                            } else {
-                                EventRegion::Active
-                            };
-                            let pid = self.current_process_id;
-                            self.push_event(delay_t, RegionEvent {
+                    let mut later: Vec<IrStmt> = body.clone();
+                    let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
+                    later.extend(remaining);
+                    if let Some(loop_cont) = &self.loop_continuation {
+                        later.extend(loop_cont.clone());
+                    }
+                    if !later.is_empty() {
+                        let region = if delay_val == 0 {
+                            EventRegion::Inactive
+                        } else {
+                            EventRegion::Active
+                        };
+                        let pid = self.current_process_id;
+                        self.push_event(
+                            delay_t,
+                            RegionEvent {
                                 region,
                                 event: EventKind::ContinueBlock(Continuation {
                                     stmts_to_exec: later,
@@ -245,8 +260,9 @@ impl SimulationEngine {
                                     process_id: pid,
                                     process_name: self.current_process_name.clone(),
                                 }),
-                            });
-                        }
+                            },
+                        );
+                    }
                     return Ok(false);
                 }
                 IrStmt::EventControl { sigs, body, iff } => {
@@ -773,9 +789,7 @@ impl SimulationEngine {
                                     .classes
                                     .get(&class_sym)
                                     .map(|cd| {
-                                        cd.constraints
-                                            .iter()
-                                            .any(|(bn, st, _)| bn == field && *st)
+                                        cd.constraints.iter().any(|(bn, st, _)| bn == field && *st)
                                     })
                                     .unwrap_or(false);
                                 if is_static {
@@ -792,11 +806,11 @@ impl SimulationEngine {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
                             if sig.is_dynamic || sig.is_queue || sig.is_associative {
-                                let _ =                                    self.evaluate_array_method(
-                                        *id,
-                                        sig,
-                                        method.as_str(),
-                                        args,
+                                let _ = self.evaluate_array_method(
+                                    *id,
+                                    sig,
+                                    method.as_str(),
+                                    args,
                                     with_clause.as_deref(),
                                 )?;
                                 continue;
@@ -816,7 +830,8 @@ impl SimulationEngine {
                                         } else {
                                             cn.to_string()
                                         };
-                                        let new_id = self.state.alloc_object(Symbol::intern(&class_for_obj));
+                                        let new_id =
+                                            self.state.alloc_object(Symbol::intern(&class_for_obj));
                                         self.state.write_signal(
                                             *id,
                                             LogicVec::from_u64(new_id as u64, 64),
@@ -1013,7 +1028,9 @@ impl SimulationEngine {
                 } => {
                     let cond_val = self.evaluate_ast_expr(cond)?;
                     if cond_val.to_bool().unwrap_or(false) {
-                        if !self.evaluate_ast_block_with_delay_fork(&[*true_branch.clone()], fork_id)? {
+                        if !self
+                            .evaluate_ast_block_with_delay_fork(&[*true_branch.clone()], fork_id)?
+                        {
                             return Ok(false);
                         }
                     } else if let Some(fb) = false_branch {
@@ -1263,7 +1280,9 @@ impl SimulationEngine {
                     stmts: inner,
                 } => {
                     if let Some(init_stmt) = init {
-                        if !self.evaluate_ast_block_with_delay_fork(&[*init_stmt.clone()], fork_id)? {
+                        if !self
+                            .evaluate_ast_block_with_delay_fork(&[*init_stmt.clone()], fork_id)?
+                        {
                             // F26: init suspend — blok BELUM selesai.
                             return Ok(false);
                         }
@@ -1310,7 +1329,9 @@ impl SimulationEngine {
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) {
                             if let Some(s) = step {
-                                if !self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)? {
+                                if !self
+                                    .evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)?
+                                {
                                     return Ok(false);
                                 }
                             }
@@ -1367,8 +1388,7 @@ impl SimulationEngine {
                             )),
                             stmts: inner.clone(),
                         }]);
-                        let completed =
-                            self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        let completed = self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
                         self.ast_loop_continuation = old_loop_cont;
                         if !completed {
                             // F26: body suspend — blok BELUM selesai (lihat
@@ -1389,27 +1409,29 @@ impl SimulationEngine {
                     let d = delay_val.to_u64() as usize;
                     let delay_t = self.state.time as usize + d;
                     self.ensure_events(delay_t);
-                        let remaining: Vec<maria_ast::Stmt> = {
-                            let mut v = Vec::new();
-                            v.push(*body.clone());
-                            if i + 1 < stmts.len() {
-                                v.extend(stmts[i + 1..].iter().cloned());
-                            }
-                            // F18: delay di dalam loop AST (forever/while) harus
-                            // mengulang saat resume — sama seperti jalur IR
-                            // (IrStmt::Delay append loop_continuation) dan
-                            // get_next_item blocking.
-                            if let Some(lc) = &self.ast_loop_continuation {
-                                v.extend(lc.clone());
-                            }
-                            v
-                        };
-                        let region = if d == 0 {
-                            EventRegion::Inactive
-                        } else {
-                            EventRegion::Active
-                        };
-                        self.push_event(delay_t, RegionEvent {
+                    let remaining: Vec<maria_ast::Stmt> = {
+                        let mut v = Vec::new();
+                        v.push(*body.clone());
+                        if i + 1 < stmts.len() {
+                            v.extend(stmts[i + 1..].iter().cloned());
+                        }
+                        // F18: delay di dalam loop AST (forever/while) harus
+                        // mengulang saat resume — sama seperti jalur IR
+                        // (IrStmt::Delay append loop_continuation) dan
+                        // get_next_item blocking.
+                        if let Some(lc) = &self.ast_loop_continuation {
+                            v.extend(lc.clone());
+                        }
+                        v
+                    };
+                    let region = if d == 0 {
+                        EventRegion::Inactive
+                    } else {
+                        EventRegion::Active
+                    };
+                    self.push_event(
+                        delay_t,
+                        RegionEvent {
                             region,
                             event: EventKind::ContinueAstBlock(
                                 remaining,
@@ -1417,7 +1439,8 @@ impl SimulationEngine {
                                 self.current_this,
                                 self.current_method,
                             ),
-                        });
+                        },
+                    );
                     return Ok(false);
                 }
                 maria_ast::Stmt::EventControl { events, stmt: body } => {
@@ -1583,9 +1606,8 @@ impl SimulationEngine {
                                             }
                                             continue;
                                         }
-                                        let mut wait_stmts: Vec<maria_ast::Stmt> = vec![
-                                            maria_ast::Stmt::Expr { expr: expr.clone() },
-                                        ];
+                                        let mut wait_stmts: Vec<maria_ast::Stmt> =
+                                            vec![maria_ast::Stmt::Expr { expr: expr.clone() }];
                                         wait_stmts.extend(stmts[i + 1..].to_vec());
                                         if let Some(lc) = &self.ast_loop_continuation {
                                             wait_stmts.extend(lc.clone());
@@ -1639,9 +1661,8 @@ impl SimulationEngine {
                                         .map(|v| v.to_u64() as ObjId)
                                         .unwrap_or(0);
                                     if seqr != 0 && self.uvm_seq_finish_blocks(seqr, item_id) {
-                                        let mut wait_stmts: Vec<maria_ast::Stmt> = vec![
-                                            maria_ast::Stmt::Expr { expr: expr.clone() },
-                                        ];
+                                        let mut wait_stmts: Vec<maria_ast::Stmt> =
+                                            vec![maria_ast::Stmt::Expr { expr: expr.clone() }];
                                         wait_stmts.extend(stmts[i + 1..].to_vec());
                                         if let Some(lc) = &self.ast_loop_continuation {
                                             wait_stmts.extend(lc.clone());
@@ -1696,16 +1717,15 @@ impl SimulationEngine {
                                 wait_stmts.extend(lc.clone());
                             }
                             let key = (inst_name, field_name);
-                            self.uvm_config_db_waiters
-                                .entry(key)
-                                .or_default()
-                                .push(crate::simulator::types::UvmSyncWaiter {
+                            self.uvm_config_db_waiters.entry(key).or_default().push(
+                                crate::simulator::types::UvmSyncWaiter {
                                     continuation: wait_stmts,
                                     fork_id,
                                     this: self.current_this,
                                     method: self.current_method,
                                     wait_label: "wait_modified".to_string(),
-                                });
+                                },
+                            );
                             return Ok(false);
                         }
                     }
@@ -1735,9 +1755,7 @@ impl SimulationEngine {
                             let is_fifo = self
                                 .state
                                 .get_object(eid)
-                                .map(|o| {
-                                    self.is_uvm_tlm_fifo_hierarchy(o.class_name.as_str())
-                                })
+                                .map(|o| self.is_uvm_tlm_fifo_hierarchy(o.class_name.as_str()))
                                 .unwrap_or(false);
                             // ── F23: uvm_tlm_fifo ──
                             // `fifo.get(item);` / `fifo.put(item);` — hanya utk
@@ -1745,8 +1763,7 @@ impl SimulationEngine {
                             // get/put tetap via execute_method). `get`/`peek`
                             // menulis item ke lvalue arg setelah pop.
                             if is_fifo && is_fifo_op {
-                                let mut remaining: Vec<maria_ast::Stmt> =
-                                    stmts[i + 1..].to_vec();
+                                let mut remaining: Vec<maria_ast::Stmt> = stmts[i + 1..].to_vec();
                                 if let Some(lc) = &self.ast_loop_continuation {
                                     remaining.extend(lc.clone());
                                 }
@@ -1796,9 +1813,7 @@ impl SimulationEngine {
                                         if let Some(item_arg) = args.first() {
                                             let item = self.evaluate_ast_expr(item_arg)?;
                                             let item_id = item.to_u64() as ObjId;
-                                            if let Some(fd) =
-                                                self.uvm_tlm_fifo_data.get_mut(&eid)
-                                            {
+                                            if let Some(fd) = self.uvm_tlm_fifo_data.get_mut(&eid) {
                                                 if fd.queue.len() < fd.capacity {
                                                     fd.queue.push_back(item_id);
                                                 }
@@ -1823,8 +1838,7 @@ impl SimulationEngine {
                                 .map(|o| o.class_name == "__mailbox")
                                 .unwrap_or(false);
                             if is_mailbox && is_fifo_op {
-                                let mut remaining: Vec<maria_ast::Stmt> =
-                                    stmts[i + 1..].to_vec();
+                                let mut remaining: Vec<maria_ast::Stmt> = stmts[i + 1..].to_vec();
                                 if let Some(lc) = &self.ast_loop_continuation {
                                     remaining.extend(lc.clone());
                                 }
@@ -1894,16 +1908,12 @@ impl SimulationEngine {
                                     // tanpa suspend. Hanya get_next_item yang block.
                                     if m == "try_next_item" {
                                         if let Some(lhs) = args.first() {
-                                            self.write_ast_lvalue(
-                                                lhs,
-                                                LogicVec::from_u64(0, 64),
-                                            )?;
+                                            self.write_ast_lvalue(lhs, LogicVec::from_u64(0, 64))?;
                                         }
                                         continue;
                                     }
-                                    let mut wait_stmts: Vec<maria_ast::Stmt> = vec![
-                                        maria_ast::Stmt::Expr { expr: expr.clone() },
-                                    ];
+                                    let mut wait_stmts: Vec<maria_ast::Stmt> =
+                                        vec![maria_ast::Stmt::Expr { expr: expr.clone() }];
                                     wait_stmts.extend(stmts[i + 1..].to_vec());
                                     if let Some(lc) = &self.ast_loop_continuation {
                                         wait_stmts.extend(lc.clone());
@@ -1928,8 +1938,7 @@ impl SimulationEngine {
                                 }
                                 continue;
                             }
-                            if is_finish && self.is_uvm_sequence_hierarchy(eid_class.as_str())
-                            {
+                            if is_finish && self.is_uvm_sequence_hierarchy(eid_class.as_str()) {
                                 let seqr = self
                                     .state
                                     .get_object(eid)
@@ -1943,9 +1952,8 @@ impl SimulationEngine {
                                     .map(|v| v.to_u64() as ObjId)
                                     .unwrap_or(0);
                                 if seqr != 0 && self.uvm_seq_finish_blocks(seqr, item_id) {
-                                    let mut wait_stmts: Vec<maria_ast::Stmt> = vec![
-                                        maria_ast::Stmt::Expr { expr: expr.clone() },
-                                    ];
+                                    let mut wait_stmts: Vec<maria_ast::Stmt> =
+                                        vec![maria_ast::Stmt::Expr { expr: expr.clone() }];
                                     wait_stmts.extend(stmts[i + 1..].to_vec());
                                     if let Some(lc) = &self.ast_loop_continuation {
                                         wait_stmts.extend(lc.clone());
@@ -1975,8 +1983,7 @@ impl SimulationEngine {
                                     .iter()
                                     .map(|a| self.evaluate_ast_expr(a))
                                     .collect::<Result<_, _>>()?;
-                                let mut remaining: Vec<maria_ast::Stmt> =
-                                    stmts[i + 1..].to_vec();
+                                let mut remaining: Vec<maria_ast::Stmt> = stmts[i + 1..].to_vec();
                                 if let Some(lc) = &self.ast_loop_continuation {
                                     remaining.extend(lc.clone());
                                 }
@@ -2093,11 +2100,10 @@ impl SimulationEngine {
                             self.ast_fork_cont.insert(fid, remaining);
                             for p in processes {
                                 self.fork_branch_begin(fid);
-                                let all_consumed = self
-                                    .evaluate_ast_block_with_delay_fork(
-                                        std::slice::from_ref(p),
-                                        Some(fid),
-                                    )?;
+                                let all_consumed = self.evaluate_ast_block_with_delay_fork(
+                                    std::slice::from_ref(p),
+                                    Some(fid),
+                                )?;
                                 self.fork_branch_end(fid, all_consumed)?;
                             }
                         }
@@ -2107,11 +2113,10 @@ impl SimulationEngine {
                             let mut any_immediate = false;
                             for p in processes {
                                 self.fork_branch_begin(fid);
-                                let all_consumed = self
-                                    .evaluate_ast_block_with_delay_fork(
-                                        std::slice::from_ref(p),
-                                        Some(fid),
-                                    )?;
+                                let all_consumed = self.evaluate_ast_block_with_delay_fork(
+                                    std::slice::from_ref(p),
+                                    Some(fid),
+                                )?;
                                 if all_consumed && !self.task_suspended {
                                     any_immediate = true;
                                 }
@@ -2124,11 +2129,10 @@ impl SimulationEngine {
                         maria_ast::JoinType::JoinNone => {
                             for p in processes {
                                 self.fork_branch_begin(fid);
-                                let all_consumed = self
-                                    .evaluate_ast_block_with_delay_fork(
-                                        std::slice::from_ref(p),
-                                        Some(fid),
-                                    )?;
+                                let all_consumed = self.evaluate_ast_block_with_delay_fork(
+                                    std::slice::from_ref(p),
+                                    Some(fid),
+                                )?;
                                 self.fork_branch_end(fid, all_consumed)?;
                             }
                             self.fork_groups[fid].fired = true;
@@ -2354,7 +2358,8 @@ impl SimulationEngine {
                                         "assertion failed",
                                         a_l,
                                         a_c,
-                                    );                                    if !fail_stmt.is_empty() {
+                                    );
+                                    if !fail_stmt.is_empty() {
                                         self.evaluate_stmt_block(fail_stmt)?;
                                     }
                                 }
@@ -2429,7 +2434,8 @@ impl SimulationEngine {
                                     "assumption violated",
                                     a_l,
                                     a_c,
-                                );                                if !fail_stmt.is_empty() {
+                                );
+                                if !fail_stmt.is_empty() {
                                     self.evaluate_stmt_block(fail_stmt)?;
                                 }
                             }
@@ -2581,9 +2587,7 @@ impl SimulationEngine {
                                     .classes
                                     .get(&class_sym)
                                     .map(|cd| {
-                                        cd.constraints
-                                            .iter()
-                                            .any(|(bn, st, _)| bn == field && *st)
+                                        cd.constraints.iter().any(|(bn, st, _)| bn == field && *st)
                                     })
                                     .unwrap_or(false);
                                 if is_static {
@@ -2600,11 +2604,11 @@ impl SimulationEngine {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
                             if sig.is_dynamic || sig.is_queue || sig.is_associative {
-                                let _ =                                    self.evaluate_array_method(
-                                        *id,
-                                        sig,
-                                        method.as_str(),
-                                        args,
+                                let _ = self.evaluate_array_method(
+                                    *id,
+                                    sig,
+                                    method.as_str(),
+                                    args,
                                     with_clause.as_deref(),
                                 )?;
                                 continue;
@@ -2623,7 +2627,8 @@ impl SimulationEngine {
                                         } else {
                                             cn.to_string()
                                         };
-                                        let new_id = self.state.alloc_object(Symbol::intern(&class_for_obj));
+                                        let new_id =
+                                            self.state.alloc_object(Symbol::intern(&class_for_obj));
                                         self.state.write_signal(
                                             *id,
                                             LogicVec::from_u64(new_id as u64, 64),
@@ -2663,17 +2668,19 @@ impl SimulationEngine {
                     let delay_val = *delay as usize;
                     let delay_t = self.state.time as usize + delay_val;
                     self.ensure_events(delay_t);
-                        let mut later: Vec<IrStmt> = body.clone();
-                        let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
-                        later.extend(remaining);
-                        if !later.is_empty() {
-                            let region = if delay_val == 0 {
-                                EventRegion::Inactive
-                            } else {
-                                EventRegion::Active
-                            };
-                            let pid = self.current_process_id;
-                            self.push_event(delay_t, RegionEvent {
+                    let mut later: Vec<IrStmt> = body.clone();
+                    let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
+                    later.extend(remaining);
+                    if !later.is_empty() {
+                        let region = if delay_val == 0 {
+                            EventRegion::Inactive
+                        } else {
+                            EventRegion::Active
+                        };
+                        let pid = self.current_process_id;
+                        self.push_event(
+                            delay_t,
+                            RegionEvent {
                                 region,
                                 event: EventKind::ContinueBlock(Continuation {
                                     stmts_to_exec: later,
@@ -2682,8 +2689,9 @@ impl SimulationEngine {
                                     process_id: pid,
                                     process_name: self.current_process_name.clone(),
                                 }),
-                            });
-                        }
+                            },
+                        );
+                    }
                     return Ok(());
                 }
                 IrStmt::EventControl { sigs, body, iff } => {
@@ -2896,5 +2904,4 @@ impl SimulationEngine {
         }
         false
     }
-
 }

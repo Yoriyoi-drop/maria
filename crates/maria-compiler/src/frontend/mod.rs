@@ -4,10 +4,10 @@
 pub mod compile_session;
 pub mod discovery;
 pub mod io;
+pub mod lexer; // byte-level lexer
 pub mod module_index;
 pub mod package_resolver;
-pub mod lexer; // byte-level lexer
-pub mod simd;   // SIMD-accelerated lexer ops
+pub mod simd; // SIMD-accelerated lexer ops
 
 // Re-export FastLexer at top level
 pub use lexer::FastLexer;

@@ -34,7 +34,7 @@ use std::collections::{HashMap, HashSet};
 use maria_core::intern::Symbol;
 use maria_core::LogicVal;
 use maria_netlist::cell::{CellInstance, CellKind, PinConn};
-use maria_netlist::net::{Netlist, NetId, PortDir};
+use maria_netlist::net::{NetId, Netlist, PortDir};
 use maria_sir::{ResetSpec, SirModule, SirNodeKind, SirRegister, SirValue};
 use maria_tech::TechArch;
 
@@ -144,7 +144,12 @@ impl BitFn {
 
     /// Kumpulkan leaf (vid, bit) — sudah di-resolve ke vid kanonik, dedup,
     /// tanpa `Const`. Bila bukan konstanta → masukkan.
-    fn collect(&self, leaves: &mut Vec<(usize, usize)>, seen: &mut HashSet<(usize, usize)>, sir: &SirModule) {
+    fn collect(
+        &self,
+        leaves: &mut Vec<(usize, usize)>,
+        seen: &mut HashSet<(usize, usize)>,
+        sir: &SirModule,
+    ) {
         match self {
             BitFn::Const(_) => {}
             BitFn::Leaf(vid, bit) => {
@@ -379,8 +384,7 @@ fn expand_simple_depth(sir: &SirModule, f: &BitFn, depth: usize) -> BitFn {
                 )))
                 .simplify(),
                 SirNodeKind::Ge => {
-                    BitFn::Not(Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw)))
-                        .simplify()
+                    BitFn::Not(Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw))).simplify()
                 }
                 SirNodeKind::ReduceAnd | SirNodeKind::ReduceOr | SirNodeKind::ReduceXor => {
                     reduce_fn(sir, node.inputs[0], opw, &node.kind)
@@ -429,8 +433,11 @@ fn expand_simple_depth(sir: &SirModule, f: &BitFn, depth: usize) -> BitFn {
 
 /// Equality bit: `a_i == b_i`.
 fn eq_bit(sir: &SirModule, a: usize, b: usize, i: usize) -> BitFn {
-    BitFn::Not(Box::new(BitFn::Xor(Box::new(val_bit(sir, a, i)), Box::new(val_bit(sir, b, i)))))
-        .simplify()
+    BitFn::Not(Box::new(BitFn::Xor(
+        Box::new(val_bit(sir, a, i)),
+        Box::new(val_bit(sir, b, i)),
+    )))
+    .simplify()
 }
 
 /// Ripple less-than (unsigned): `a < b`.
@@ -439,7 +446,11 @@ fn lt_fn(sir: &SirModule, a: usize, b: usize, w: usize) -> BitFn {
     for i in (0..w).rev() {
         let ai = val_bit(sir, a, i);
         let bi = val_bit(sir, b, i);
-        let lt = BitFn::And(Box::new(BitFn::Not(Box::new(ai.clone()))), Box::new(bi.clone())).simplify();
+        let lt = BitFn::And(
+            Box::new(BitFn::Not(Box::new(ai.clone()))),
+            Box::new(bi.clone()),
+        )
+        .simplify();
         let eq = eq_bit(sir, a, b, i);
         acc = BitFn::Mux(Box::new(eq), Box::new(acc), Box::new(lt)).simplify();
     }
@@ -510,7 +521,10 @@ impl<'a> TechMapper<'a> {
     }
 
     fn tie_const(&mut self, val: bool) -> OneBit {
-        OneBit { net: self.const_net(val as u64, 1), bit: None }
+        OneBit {
+            net: self.const_net(val as u64, 1),
+            bit: None,
+        }
     }
 
     /// Net nilai SIR — materialisasi konstanta bila belum ada.
@@ -536,7 +550,10 @@ impl<'a> TechMapper<'a> {
         if w <= 1 {
             OneBit { net, bit: None }
         } else {
-            OneBit { net, bit: Some(bit) }
+            OneBit {
+                net,
+                bit: Some(bit),
+            }
         }
     }
 
@@ -549,20 +566,35 @@ impl<'a> TechMapper<'a> {
             if i >= self.lut_inputs {
                 break;
             }
-            pins.push(PinConn { net: inp.net, pin: format!("i{}", i), bit: inp.bit });
+            pins.push(PinConn {
+                net: inp.net,
+                pin: format!("i{}", i),
+                bit: inp.bit,
+            });
         }
         let tie = self.const_net(0, 1);
         for i in inputs.len().min(self.lut_inputs)..self.lut_inputs {
-            pins.push(PinConn { net: tie, pin: format!("i{}", i), bit: None });
+            pins.push(PinConn {
+                net: tie,
+                pin: format!("i{}", i),
+                bit: None,
+            });
         }
         let mut cell = CellInstance::new(Symbol::intern(&name), CellKind::Lut { init }, 1);
         cell.in_width = 1;
         cell.inputs = pins;
-        cell.outputs = vec![PinConn { net: out, pin: "o".into(), bit: None }];
+        cell.outputs = vec![PinConn {
+            net: out,
+            pin: "o".into(),
+            bit: None,
+        }];
         self.nl.add_cell(cell);
         self.lut_counter += 1;
         self.lut_count += 1;
-        OneBit { net: out, bit: None }
+        OneBit {
+            net: out,
+            bit: None,
+        }
     }
 
     /// Pack satu `BitFn` → sumber 1-bit (net LUT / leaf / konstanta).
@@ -639,10 +671,18 @@ impl<'a> TechMapper<'a> {
         cell.inputs = (0..w)
             .map(|i| {
                 let b = &bits[w - 1 - i];
-                PinConn { net: b.net, pin: format!("p{}", i), bit: b.bit }
+                PinConn {
+                    net: b.net,
+                    pin: format!("p{}", i),
+                    bit: b.bit,
+                }
             })
             .collect();
-        cell.outputs = vec![PinConn { net, pin: "y".into(), bit: None }];
+        cell.outputs = vec![PinConn {
+            net,
+            pin: "y".into(),
+            bit: None,
+        }];
         self.nl.add_cell(cell);
         net
     }
@@ -663,22 +703,38 @@ impl<'a> TechMapper<'a> {
             let mut cell = CellInstance::new(name, CellKind::Concat, w);
             cell.in_width = w;
             cell.inputs = vec![
-                PinConn { net: pad, pin: "p0".into(), bit: None },
-                PinConn { net: cur, pin: "p1".into(), bit: None },
+                PinConn {
+                    net: pad,
+                    pin: "p0".into(),
+                    bit: None,
+                },
+                PinConn {
+                    net: cur,
+                    pin: "p1".into(),
+                    bit: None,
+                },
             ];
-            cell.outputs = vec![PinConn { net: ext, pin: "y".into(), bit: None }];
+            cell.outputs = vec![PinConn {
+                net: ext,
+                pin: "y".into(),
+                bit: None,
+            }];
             self.nl.add_cell(cell);
             ext
         } else {
             let slice = self.nl.add_net(name, w);
-            let mut cell = CellInstance::new(
-                name,
-                CellKind::Slice { msb: w - 1, lsb: 0 },
-                w,
-            );
+            let mut cell = CellInstance::new(name, CellKind::Slice { msb: w - 1, lsb: 0 }, w);
             cell.in_width = cw;
-            cell.inputs = vec![PinConn { net: cur, pin: "a".into(), bit: None }];
-            cell.outputs = vec![PinConn { net: slice, pin: "y".into(), bit: None }];
+            cell.inputs = vec![PinConn {
+                net: cur,
+                pin: "a".into(),
+                bit: None,
+            }];
+            cell.outputs = vec![PinConn {
+                net: slice,
+                pin: "y".into(),
+                bit: None,
+            }];
             self.nl.add_cell(cell);
             slice
         }
@@ -695,9 +751,15 @@ impl<'a> TechMapper<'a> {
         let bits: Vec<OneBit> = (0..w)
             .map(|i| {
                 if i >= j {
-                    OneBit { net: src, bit: Some(i - j) }
+                    OneBit {
+                        net: src,
+                        bit: Some(i - j),
+                    }
                 } else {
-                    OneBit { net: tie, bit: None }
+                    OneBit {
+                        net: tie,
+                        bit: None,
+                    }
                 }
             })
             .collect();
@@ -713,13 +775,33 @@ impl<'a> TechMapper<'a> {
         let mut cell = CellInstance::new(Symbol::intern(&name), CellKind::Carry4, w);
         cell.in_width = w;
         cell.inputs = vec![
-            PinConn { net: self.const_net(0, 1), pin: "ci".into(), bit: None },
-            PinConn { net: a, pin: "a".into(), bit: None },
-            PinConn { net: b, pin: "b".into(), bit: None },
+            PinConn {
+                net: self.const_net(0, 1),
+                pin: "ci".into(),
+                bit: None,
+            },
+            PinConn {
+                net: a,
+                pin: "a".into(),
+                bit: None,
+            },
+            PinConn {
+                net: b,
+                pin: "b".into(),
+                bit: None,
+            },
         ];
         cell.outputs = vec![
-            PinConn { net: s, pin: "s".into(), bit: None },
-            PinConn { net: co, pin: "co".into(), bit: None },
+            PinConn {
+                net: s,
+                pin: "s".into(),
+                bit: None,
+            },
+            PinConn {
+                net: co,
+                pin: "co".into(),
+                bit: None,
+            },
         ];
         self.nl.add_cell(cell);
         self.carry_slices += (w + 3) / 4;
@@ -745,13 +827,33 @@ impl<'a> TechMapper<'a> {
         let mut cell = CellInstance::new(Symbol::intern(&name), CellKind::Carry4, w);
         cell.in_width = w;
         cell.inputs = vec![
-            PinConn { net: self.const_net(sub as u64, 1), pin: "ci".into(), bit: None },
-            PinConn { net: a_ext, pin: "a".into(), bit: None },
-            PinConn { net: b_in, pin: "b".into(), bit: None },
+            PinConn {
+                net: self.const_net(sub as u64, 1),
+                pin: "ci".into(),
+                bit: None,
+            },
+            PinConn {
+                net: a_ext,
+                pin: "a".into(),
+                bit: None,
+            },
+            PinConn {
+                net: b_in,
+                pin: "b".into(),
+                bit: None,
+            },
         ];
         cell.outputs = vec![
-            PinConn { net: s, pin: "s".into(), bit: None },
-            PinConn { net: co, pin: "co".into(), bit: None },
+            PinConn {
+                net: s,
+                pin: "s".into(),
+                bit: None,
+            },
+            PinConn {
+                net: co,
+                pin: "co".into(),
+                bit: None,
+            },
         ];
         self.nl.add_cell(cell);
         self.carry_slices += (w + 3) / 4;
@@ -765,7 +867,13 @@ impl<'a> TechMapper<'a> {
         self.gen_counter += 1;
         let mut bits = Vec::with_capacity(w);
         for i in 0..w {
-            let out = self.emit_lut(0x1, vec![OneBit { net: ext, bit: Some(i) }]);
+            let out = self.emit_lut(
+                0x1,
+                vec![OneBit {
+                    net: ext,
+                    bit: Some(i),
+                }],
+            );
             bits.push(out);
         }
         self.concat_bits(name.as_str(), w, bits)
@@ -825,7 +933,16 @@ impl<'a> TechMapper<'a> {
                 let sel = self.bit_of(b_vid, j);
                 let mut bits = Vec::with_capacity(w);
                 for i in 0..w {
-                    let out = self.emit_lut(0x8, vec![sel, OneBit { net: shifted, bit: Some(i) }]);
+                    let out = self.emit_lut(
+                        0x8,
+                        vec![
+                            sel,
+                            OneBit {
+                                net: shifted,
+                                bit: Some(i),
+                            },
+                        ],
+                    );
                     bits.push(out);
                 }
                 self.concat_bits(&format!("g{}", self.gen_counter), w, bits)
@@ -877,22 +994,28 @@ impl<'a> TechMapper<'a> {
             SirNodeKind::Ne => {
                 let mut acc = BitFn::Const(false);
                 for k in 0..opw {
-                    let x = BitFn::Xor(Box::new(val_bit(sir, node.inputs[0], k)), Box::new(val_bit(sir, node.inputs[1], k)));
+                    let x = BitFn::Xor(
+                        Box::new(val_bit(sir, node.inputs[0], k)),
+                        Box::new(val_bit(sir, node.inputs[1], k)),
+                    );
                     acc = BitFn::Or(Box::new(acc), Box::new(x)).simplify();
                 }
                 acc
             }
             SirNodeKind::Lt => lt_fn(sir, node.inputs[0], node.inputs[1], opw),
-            SirNodeKind::Le => {
-                BitFn::Or(Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw)), Box::new(eq_fn(sir, node.inputs[0], node.inputs[1], opw)))
-                    .simplify()
-            }
+            SirNodeKind::Le => BitFn::Or(
+                Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw)),
+                Box::new(eq_fn(sir, node.inputs[0], node.inputs[1], opw)),
+            )
+            .simplify(),
             SirNodeKind::Gt => BitFn::Not(Box::new(BitFn::Or(
                 Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw)),
                 Box::new(eq_fn(sir, node.inputs[0], node.inputs[1], opw)),
             )))
             .simplify(),
-            SirNodeKind::Ge => BitFn::Not(Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw))).simplify(),
+            SirNodeKind::Ge => {
+                BitFn::Not(Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw))).simplify()
+            }
             SirNodeKind::ReduceAnd | SirNodeKind::ReduceOr | SirNodeKind::ReduceXor => {
                 reduce_fn(sir, node.inputs[0], opw, &node.kind)
             }
@@ -920,9 +1043,12 @@ impl<'a> TechMapper<'a> {
                 }
             }
             SirNodeKind::Buffer => val_bit(sir, node.inputs[0], i),
-            SirNodeKind::Add | SirNodeKind::Sub | SirNodeKind::Mul | SirNodeKind::Div | SirNodeKind::Mod | SirNodeKind::TriState => {
-                BitFn::Const(false)
-            }
+            SirNodeKind::Add
+            | SirNodeKind::Sub
+            | SirNodeKind::Mul
+            | SirNodeKind::Div
+            | SirNodeKind::Mod
+            | SirNodeKind::TriState => BitFn::Const(false),
         }
     }
 
@@ -975,7 +1101,11 @@ impl<'a> TechMapper<'a> {
                 continue;
             }
             for i in 0..w {
-                bits[i] = BitFn::Mux(Box::new(sel.clone()), Box::new(shifted_at(i)), Box::new(bits[i].clone()));
+                bits[i] = BitFn::Mux(
+                    Box::new(sel.clone()),
+                    Box::new(shifted_at(i)),
+                    Box::new(bits[i].clone()),
+                );
             }
         }
         bits
@@ -993,8 +1123,16 @@ impl<'a> TechMapper<'a> {
                 let out = self.nl.add_net(name, 1);
                 let mut cell = CellInstance::new(name, CellKind::Buffer, 1);
                 cell.in_width = 1;
-                cell.inputs = vec![PinConn { net: packed.net, pin: "a".into(), bit: Some(b) }];
-                cell.outputs = vec![PinConn { net: out, pin: "y".into(), bit: None }];
+                cell.inputs = vec![PinConn {
+                    net: packed.net,
+                    pin: "a".into(),
+                    bit: Some(b),
+                }];
+                cell.outputs = vec![PinConn {
+                    net: out,
+                    pin: "y".into(),
+                    bit: None,
+                }];
                 self.nl.add_cell(cell);
                 out
             } else {
@@ -1030,7 +1168,7 @@ impl<'a> TechMapper<'a> {
             }
             SirNodeKind::Mul => self.map_mul(nid),
             SirNodeKind::Div | SirNodeKind::Mod | SirNodeKind::TriState => {
-        let w = node.width.max(1);
+                let w = node.width.max(1);
                 self.skipped.push(format!(
                     "node n{} ({}) — belum di-map fase 4; nilai di-tie 0",
                     nid,
@@ -1046,13 +1184,17 @@ impl<'a> TechMapper<'a> {
     /// Net register Q + FF bit nets (Q = leaf untuk konsumen, dibuat dulu).
     fn make_reg_q(&mut self, r: &SirRegister, w: usize) -> (NetId, Vec<NetId>) {
         if w == 1 {
-            let q = self.nl.add_net(Symbol::intern(&format!("{}_q", r.name.as_str())), 1);
+            let q = self
+                .nl
+                .add_net(Symbol::intern(&format!("{}_q", r.name.as_str())), 1);
             return (q, vec![q]);
         }
         let name = Symbol::intern(&format!("{}_q", r.name.as_str()));
         let mut bits = Vec::with_capacity(w);
         for i in 0..w {
-            let b = self.nl.add_net(Symbol::intern(&format!("{}_q{}", r.name.as_str(), i)), 1);
+            let b = self
+                .nl
+                .add_net(Symbol::intern(&format!("{}_q{}", r.name.as_str(), i)), 1);
             bits.push(OneBit { net: b, bit: None });
         }
         let bit_nets: Vec<NetId> = bits.iter().map(|b| b.net).collect();
@@ -1077,17 +1219,37 @@ impl<'a> TechMapper<'a> {
                 let name = Symbol::intern(&format!("ff_{}_{}", ff.reg_name.as_str(), i));
                 let mut cell = CellInstance::new(name, kind, 1);
                 cell.in_width = 1;
-                cell.inputs.push(PinConn { net: clk, pin: "c".into(), bit: None });
+                cell.inputs.push(PinConn {
+                    net: clk,
+                    pin: "c".into(),
+                    bit: None,
+                });
                 if let Some(n) = rst {
-                    cell.inputs.push(PinConn { net: n, pin: "r".into(), bit: None });
+                    cell.inputs.push(PinConn {
+                        net: n,
+                        pin: "r".into(),
+                        bit: None,
+                    });
                 }
                 if let Some(n) = en {
-                    cell.inputs.push(PinConn { net: n, pin: "ce".into(), bit: None });
+                    cell.inputs.push(PinConn {
+                        net: n,
+                        pin: "ce".into(),
+                        bit: None,
+                    });
                 }
                 let d_pin = if ff.width > 1 {
-                    PinConn { net: d, pin: "d".into(), bit: Some(i) }
+                    PinConn {
+                        net: d,
+                        pin: "d".into(),
+                        bit: Some(i),
+                    }
                 } else {
-                    PinConn { net: d, pin: "d".into(), bit: None }
+                    PinConn {
+                        net: d,
+                        pin: "d".into(),
+                        bit: None,
+                    }
                 };
                 cell.inputs.push(d_pin);
                 cell.outputs.push(PinConn {
@@ -1142,7 +1304,8 @@ impl<'a> TechMapper<'a> {
                 }
                 let ready = node.inputs.iter().all(|&v| {
                     let rv = resolve_vid(self.sir, v);
-                    matches!(&self.sir.values[rv], SirValue::Const(_)) || self.value_net[rv].is_some()
+                    matches!(&self.sir.values[rv], SirValue::Const(_))
+                        || self.value_net[rv].is_some()
                 });
                 if ready {
                     self.map_one_node(nid);
@@ -1177,8 +1340,16 @@ impl<'a> TechMapper<'a> {
                 p.width.max(1),
             );
             cell.in_width = p.width.max(1);
-            cell.inputs = vec![PinConn { net: src, pin: "a".into(), bit: None }];
-            cell.outputs = vec![PinConn { net: port_net, pin: "y".into(), bit: None }];
+            cell.inputs = vec![PinConn {
+                net: src,
+                pin: "a".into(),
+                bit: None,
+            }];
+            cell.outputs = vec![PinConn {
+                net: port_net,
+                pin: "y".into(),
+                bit: None,
+            }];
             self.nl.add_cell(cell);
             self.nl.add_port(p.name, PortDir::Output, p.width);
         }
@@ -1219,7 +1390,10 @@ impl<'a> TechMapper<'a> {
                 if !live_cell[cid] || c.kind.is_sequential() {
                     continue;
                 }
-                let dead = c.outputs.iter().all(|o| loads[o.net] == 0 && !nets[o.net].is_io);
+                let dead = c
+                    .outputs
+                    .iter()
+                    .all(|o| loads[o.net] == 0 && !nets[o.net].is_io);
                 if dead {
                     live_cell[cid] = false;
                     changed = true;
@@ -1260,12 +1434,20 @@ impl<'a> TechMapper<'a> {
             nc.inputs = c
                 .inputs
                 .iter()
-                .map(|p| PinConn { net: net_map[p.net], pin: p.pin.clone(), bit: p.bit })
+                .map(|p| PinConn {
+                    net: net_map[p.net],
+                    pin: p.pin.clone(),
+                    bit: p.bit,
+                })
                 .collect();
             nc.outputs = c
                 .outputs
                 .iter()
-                .map(|p| PinConn { net: net_map[p.net], pin: p.pin.clone(), bit: p.bit })
+                .map(|p| PinConn {
+                    net: net_map[p.net],
+                    pin: p.pin.clone(),
+                    bit: p.bit,
+                })
                 .collect();
             new_nl.add_cell(nc);
         }
@@ -1275,11 +1457,7 @@ impl<'a> TechMapper<'a> {
 
 /// Jenis sel FF untuk bit ke-`i` (per-bit FF, reset value dari spec).
 fn ff_kind(ff: &PendingFf, _i: usize) -> CellKind {
-    let reset_value = ff
-        .reset
-        .as_ref()
-        .map(|rs| rs.value.to_u64())
-        .unwrap_or(0);
+    let reset_value = ff.reset.as_ref().map(|rs| rs.value.to_u64()).unwrap_or(0);
     match (&ff.reset, ff.enable) {
         (Some(rs), Some(_)) => CellKind::DffRE {
             reset_value,
@@ -1303,19 +1481,17 @@ pub fn tech_map(sir: &SirModule, arch: &dyn TechArch) -> TechMapResult {
     let ff_count = m.nl.cells.iter().filter(|c| c.kind.is_sequential()).count();
     // Hitung ulang dari netlist final (setelah DCE) — counter lama bisa
     // kelebihan (LUT intermediate dihapus).
-    let lut_count = m
-        .nl
-        .cells
-        .iter()
-        .filter(|c| matches!(c.kind, CellKind::Lut { .. }))
-        .count();
-    let carry4_count = m
-        .nl
-        .cells
-        .iter()
-        .filter(|c| matches!(c.kind, CellKind::Carry4))
-        .map(|c| (c.width.max(1) + 3) / 4)
-        .sum();
+    let lut_count =
+        m.nl.cells
+            .iter()
+            .filter(|c| matches!(c.kind, CellKind::Lut { .. }))
+            .count();
+    let carry4_count =
+        m.nl.cells
+            .iter()
+            .filter(|c| matches!(c.kind, CellKind::Carry4))
+            .map(|c| (c.width.max(1) + 3) / 4)
+            .sum();
     TechMapResult {
         netlist: m.nl,
         lut_count,
@@ -1354,9 +1530,17 @@ mod tests {
     fn bitfn_init_table_or_not() {
         let sir = tiny_sir();
         let o = BitFn::Or(Box::new(BitFn::Leaf(0, 0)), Box::new(BitFn::Leaf(1, 0)));
-        assert_eq!(o.init_table(&vec![(0, 0), (1, 0)], &sir), 0xE, "a|b → init 0xE");
+        assert_eq!(
+            o.init_table(&vec![(0, 0), (1, 0)], &sir),
+            0xE,
+            "a|b → init 0xE"
+        );
         let n = BitFn::Not(Box::new(BitFn::Leaf(0, 0)));
-        assert_eq!(n.init_table(&vec![(0, 0)], &sir), 0x1, "~a → init bit0 (input di i0, high tie 0)");
+        assert_eq!(
+            n.init_table(&vec![(0, 0)], &sir),
+            0x1,
+            "~a → init bit0 (input di i0, high tie 0)"
+        );
     }
 
     #[test]
@@ -1377,15 +1561,31 @@ mod tests {
         let a = BitFn::Leaf(0, 0);
         let t = BitFn::Const(true);
         let f = BitFn::Const(false);
-        assert_eq!(BitFn::And(Box::new(a.clone()), Box::new(f.clone())).simplify(), f);
-        assert_eq!(BitFn::And(Box::new(a.clone()), Box::new(t.clone())).simplify(), a);
+        assert_eq!(
+            BitFn::And(Box::new(a.clone()), Box::new(f.clone())).simplify(),
+            f
+        );
+        assert_eq!(
+            BitFn::And(Box::new(a.clone()), Box::new(t.clone())).simplify(),
+            a
+        );
         let nn = BitFn::Not(Box::new(BitFn::Not(Box::new(a.clone())))).simplify();
         assert_eq!(nn, a);
-        assert_eq!(BitFn::Xor(Box::new(a.clone()), Box::new(a.clone())).simplify(), f);
-        assert_eq!(BitFn::Or(Box::new(a.clone()), Box::new(t.clone())).simplify(), t);
+        assert_eq!(
+            BitFn::Xor(Box::new(a.clone()), Box::new(a.clone())).simplify(),
+            f
+        );
+        assert_eq!(
+            BitFn::Or(Box::new(a.clone()), Box::new(t.clone())).simplify(),
+            t
+        );
         // a ^ ~a → 1
         assert_eq!(
-            BitFn::Xor(Box::new(a.clone()), Box::new(BitFn::Not(Box::new(a.clone())))).simplify(),
+            BitFn::Xor(
+                Box::new(a.clone()),
+                Box::new(BitFn::Not(Box::new(a.clone())))
+            )
+            .simplify(),
             t.clone()
         );
         // mux(t, a, a) → a
@@ -1429,7 +1629,8 @@ mod tests {
         };
         m.inputs.push(mk("clk", maria_sir::PortDir::Input, 0, 1));
         m.inputs.push(mk("rst_n", maria_sir::PortDir::Input, 1, 1));
-        m.outputs.push(mk("count", maria_sir::PortDir::Output, 2, 8));
+        m.outputs
+            .push(mk("count", maria_sir::PortDir::Output, 2, 8));
         m
     }
 
@@ -1447,7 +1648,10 @@ mod tests {
         // Semua net internal di-drive; net konstanta punya const_value.
         for net in &res.netlist.nets {
             if net.driver.is_none() && net.const_value.is_none() && !net.is_io {
-                panic!("net {} mengambang (tanpa driver/konstanta)", net.name.as_str());
+                panic!(
+                    "net {} mengambang (tanpa driver/konstanta)",
+                    net.name.as_str()
+                );
             }
         }
     }
@@ -1534,8 +1738,13 @@ mod tests {
         // counter → CARRY4 + FF; or → LUT. Emisi gabungan: dua top di satu
         // string hanya untuk memeriksa keberadaan definisi modul.
         let mut v = maria_netlist::emit_verilog(&tech_map(&counter_sir(), &arch).netlist);
-        v.push_str(&maria_netlist::emit_verilog(&tech_map(&or_sir(), &arch).netlist));
-        assert!(v.contains("module CARRY4 #(parameter W = 4)"), "modul CARRY4");
+        v.push_str(&maria_netlist::emit_verilog(
+            &tech_map(&or_sir(), &arch).netlist,
+        ));
+        assert!(
+            v.contains("module CARRY4 #(parameter W = 4)"),
+            "modul CARRY4"
+        );
         assert!(v.contains("always_comb"), "LUT pakai always_comb case");
         assert!(v.contains("module DFFR_"), "modul FF reset");
         assert!(v.contains(".ci("), "koneksi carry-in");

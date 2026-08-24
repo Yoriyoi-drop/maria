@@ -26,7 +26,8 @@ pub fn extract(design: &IrDesign) -> MhirDesign {
         ..Default::default()
     };
 
-    mhir.modules.push(extract_module(&design.top, design, &locator, lines));
+    mhir.modules
+        .push(extract_module(&design.top, design, &locator, lines));
 
     let mut names: Vec<Symbol> = design.modules.keys().copied().collect();
     names.sort_by_key(|s| s.as_str().to_string());
@@ -35,7 +36,8 @@ pub fn extract(design: &IrDesign) -> MhirDesign {
             continue;
         }
         if let Some(m) = design.modules.get(&n) {
-            mhir.modules.push(extract_module(m, design, &locator, lines));
+            mhir.modules
+                .push(extract_module(m, design, &locator, lines));
         }
     }
     mhir
@@ -73,7 +75,8 @@ fn extract_module(
                 });
             }
             if let Some(r) = reset {
-                let rname = signal_name(module, r.signal).unwrap_or_else(|| Symbol::intern("<unknown>"));
+                let rname =
+                    signal_name(module, r.signal).unwrap_or_else(|| Symbol::intern("<unknown>"));
                 if !reset_names.contains(&rname) {
                     reset_names.push(rname);
                     out.resets.push(ResetDesc {
@@ -89,7 +92,9 @@ fn extract_module(
     // ── Register (inferensi FF: target NBA di proses Sequential) ──
     let mut seen_regs: Vec<Symbol> = Vec::new();
     for proc in &module.processes {
-        let (Some(clock), Some(reset)) = (proc_clock_name(module, proc), proc_reset_name(module, proc)) else {
+        let (Some(clock), Some(reset)) =
+            (proc_clock_name(module, proc), proc_reset_name(module, proc))
+        else {
             continue;
         };
         let body = match proc {
@@ -98,7 +103,9 @@ fn extract_module(
         };
         for_each_nba(body, &mut |lhs| {
             for sig_id in lvalue_signal_ids(lhs) {
-                let Some(sig) = module.signals.get(sig_id) else { return };
+                let Some(sig) = module.signals.get(sig_id) else {
+                    return;
+                };
                 if !seen_regs.contains(&sig.name) {
                     seen_regs.push(sig.name);
                     out.registers.push(MhirRegister {
@@ -120,10 +127,18 @@ fn extract_module(
     // yang merupakan memory sungguhan (mis. `mem [0:1023]` → depth 1024).
     for sig in &module.signals {
         if sig.array_depth > 1 {
-            let kind = if sig.is_const { MemoryKind::Rom } else { MemoryKind::Ram };
+            let kind = if sig.is_const {
+                MemoryKind::Rom
+            } else {
+                MemoryKind::Ram
+            };
             out.memories.push(MhirMemory {
                 name: sig.name,
-                elem_width: if sig.elem_width > 0 { sig.elem_width } else { sig.width },
+                elem_width: if sig.elem_width > 0 {
+                    sig.elem_width
+                } else {
+                    sig.width
+                },
                 depth: sig.array_depth,
                 dims: sig.array_dims.clone(),
                 kind,
@@ -173,7 +188,9 @@ fn proc_clock_name(module: &IrModule, proc: &Process) -> Option<Symbol> {
 /// Nama reset dari proses `Sequential` (None bila tanpa reset).
 fn proc_reset_name(module: &IrModule, proc: &Process) -> Option<Symbol> {
     match proc {
-        Process::Sequential { reset, .. } => reset.as_ref().map(|r| signal_name(module, r.signal).unwrap_or_else(|| Symbol::intern("<unknown>"))),
+        Process::Sequential { reset, .. } => reset
+            .as_ref()
+            .map(|r| signal_name(module, r.signal).unwrap_or_else(|| Symbol::intern("<unknown>"))),
         _ => None,
     }
 }
@@ -228,7 +245,11 @@ fn for_each_nba(stmts: &[IrStmt], f: &mut dyn FnMut(&IrLValue)) {
             | IrStmt::Delay { body: inner, .. }
             | IrStmt::Wait { body: inner, .. }
             | IrStmt::EventControl { body: inner, .. } => for_each_nba(inner, f),
-            IrStmt::If { true_branch, false_branch, .. } => {
+            IrStmt::If {
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 for_each_nba(true_branch, f);
                 for_each_nba(false_branch, f);
             }
@@ -261,17 +282,29 @@ fn module_ports(design: &IrDesign, module_name: Symbol) -> Vec<PortDesc> {
     let mut ports = Vec::new();
     for &id in &m.inputs {
         if let Some(s) = m.signals.get(id) {
-            ports.push(PortDesc { name: s.name, direction: PortDir::Input, width: s.width });
+            ports.push(PortDesc {
+                name: s.name,
+                direction: PortDir::Input,
+                width: s.width,
+            });
         }
     }
     for &id in &m.outputs {
         if let Some(s) = m.signals.get(id) {
-            ports.push(PortDesc { name: s.name, direction: PortDir::Output, width: s.width });
+            ports.push(PortDesc {
+                name: s.name,
+                direction: PortDir::Output,
+                width: s.width,
+            });
         }
     }
     for &id in &m.inouts {
         if let Some(s) = m.signals.get(id) {
-            ports.push(PortDesc { name: s.name, direction: PortDir::Inout, width: s.width });
+            ports.push(PortDesc {
+                name: s.name,
+                direction: PortDir::Inout,
+                width: s.width,
+            });
         }
     }
     ports
@@ -297,7 +330,8 @@ pub fn apply_address_map(mhir: &mut MhirDesign, entries: &[(Symbol, AddressRegio
         }
     }
     // Deterministik: urutkan by base (tie → nama).
-    mhir.address_map.sort_by_key(|(n, r)| (r.base, n.as_str().to_string()));
+    mhir.address_map
+        .sort_by_key(|(n, r)| (r.base, n.as_str().to_string()));
 }
 
 #[cfg(test)]
@@ -391,16 +425,32 @@ endmodule
     fn test_extract_register_ff_inference() {
         let design = compile(SOC);
         let mhir = extract(&design);
-        let cpu = mhir.modules.iter().find(|m| m.name.as_str() == "cpu_core").unwrap();
-        let pc = cpu.registers.iter().find(|r| r.name.as_str() == "pc").expect("register pc");
+        let cpu = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "cpu_core")
+            .unwrap();
+        let pc = cpu
+            .registers
+            .iter()
+            .find(|r| r.name.as_str() == "pc")
+            .expect("register pc");
         assert_eq!(pc.width, 32);
         assert_eq!(pc.clock.map(|c| c.as_str()), Some("clk"));
         assert_eq!(pc.reset.map(|r| r.as_str()), Some("rst_n"));
         // Back-pointer ter-resolve: baris deklarasi pc di cpu_core.
         assert!(pc.back.line > 0, "back-pointer pc: {:?}", pc.back);
 
-        let uart = mhir.modules.iter().find(|m| m.name.as_str() == "uart").unwrap();
-        let dr = uart.registers.iter().find(|r| r.name.as_str() == "data_reg").expect("register data_reg");
+        let uart = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "uart")
+            .unwrap();
+        let dr = uart
+            .registers
+            .iter()
+            .find(|r| r.name.as_str() == "data_reg")
+            .expect("register data_reg");
         assert_eq!(dr.width, 8);
         assert!(dr.back.line > 0);
     }
@@ -409,7 +459,11 @@ endmodule
     fn test_extract_clock_and_reset() {
         let design = compile(SOC);
         let mhir = extract(&design);
-        let cpu = mhir.modules.iter().find(|m| m.name.as_str() == "cpu_core").unwrap();
+        let cpu = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "cpu_core")
+            .unwrap();
         assert_eq!(cpu.clocks.len(), 1);
         assert_eq!(cpu.clocks[0].name.as_str(), "clk");
         assert_eq!(cpu.clocks[0].edge, ClockEdgeKind::PosEdge);
@@ -423,7 +477,11 @@ endmodule
     fn test_extract_continuous_assign_is_not_register() {
         let design = compile(SOC);
         let mhir = extract(&design);
-        let top = mhir.modules.iter().find(|m| m.name.as_str() == "soc").unwrap();
+        let top = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "soc")
+            .unwrap();
         // uart_data/tx hanya di-assign continuous (`assign`) → bukan register.
         // (cpu_pc TIDAK dicek: setelah flatten, port output u_cpu alias ke
         // cpu_pc sehingga register pc anak terlihat menulis cpu_pc — benar.)
@@ -435,12 +493,24 @@ endmodule
     fn test_extract_memory_arrays() {
         let design = compile(SOC);
         let mhir = extract(&design);
-        let top = mhir.modules.iter().find(|m| m.name.as_str() == "soc").unwrap();
-        let mem = top.memories.iter().find(|m| m.name.as_str() == "mem").expect("mem");
+        let top = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "soc")
+            .unwrap();
+        let mem = top
+            .memories
+            .iter()
+            .find(|m| m.name.as_str() == "mem")
+            .expect("mem");
         assert_eq!(mem.elem_width, 32);
         assert_eq!(mem.depth, 1024);
         assert_eq!(mem.kind, MemoryKind::Ram);
-        let rom = top.memories.iter().find(|m| m.name.as_str() == "rom").expect("rom");
+        let rom = top
+            .memories
+            .iter()
+            .find(|m| m.name.as_str() == "rom")
+            .expect("rom");
         assert_eq!(rom.elem_width, 16);
         assert_eq!(rom.depth, 256);
         assert_eq!(rom.kind, MemoryKind::Ram, "bukan const → Ram");
@@ -450,17 +520,38 @@ endmodule
     fn test_extract_devices_and_ports() {
         let design = compile(SOC);
         let mhir = extract(&design);
-        let top = mhir.modules.iter().find(|m| m.name.as_str() == "soc").unwrap();
-        let cpu = top.devices.iter().find(|d| d.name.as_str() == "u_cpu").expect("u_cpu");
+        let top = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "soc")
+            .unwrap();
+        let cpu = top
+            .devices
+            .iter()
+            .find(|d| d.name.as_str() == "u_cpu")
+            .expect("u_cpu");
         assert_eq!(cpu.kind, DeviceKind::Cpu);
         assert_eq!(cpu.module.as_str(), "cpu_core");
         assert!(cpu.back.line > 0, "back-pointer instance");
-        assert!(cpu.ports.iter().any(|p| p.name.as_str() == "pc" && p.direction == PortDir::Output && p.width == 32));
+        assert!(cpu
+            .ports
+            .iter()
+            .any(|p| p.name.as_str() == "pc" && p.direction == PortDir::Output && p.width == 32));
 
-        let uart = top.devices.iter().find(|d| d.name.as_str() == "u_uart").expect("u_uart");
+        let uart = top
+            .devices
+            .iter()
+            .find(|d| d.name.as_str() == "u_uart")
+            .expect("u_uart");
         assert_eq!(uart.kind, DeviceKind::Uart);
-        assert!(uart.ports.iter().any(|p| p.name.as_str() == "data_in" && p.direction == PortDir::Input));
-        assert!(uart.ports.iter().any(|p| p.name.as_str() == "tx" && p.direction == PortDir::Output));
+        assert!(uart
+            .ports
+            .iter()
+            .any(|p| p.name.as_str() == "data_in" && p.direction == PortDir::Input));
+        assert!(uart
+            .ports
+            .iter()
+            .any(|p| p.name.as_str() == "tx" && p.direction == PortDir::Output));
     }
 
     #[test]
@@ -468,17 +559,43 @@ endmodule
         let design = compile(SOC);
         let mut mhir = extract(&design);
         let entries = vec![
-            (Symbol::intern("u_uart"), AddressRegion { base: 0x1000_0000, size: 0x1000 }),
-            (Symbol::intern("u_cpu"), AddressRegion { base: 0x0000_0000, size: 0x1000 }),
+            (
+                Symbol::intern("u_uart"),
+                AddressRegion {
+                    base: 0x1000_0000,
+                    size: 0x1000,
+                },
+            ),
+            (
+                Symbol::intern("u_cpu"),
+                AddressRegion {
+                    base: 0x0000_0000,
+                    size: 0x1000,
+                },
+            ),
         ];
         apply_address_map(&mut mhir, &entries);
         assert_eq!(mhir.address_map.len(), 2);
         // Urut by base: u_cpu (0) dulu, lalu u_uart (0x10000000).
         assert_eq!(mhir.address_map[0].0.as_str(), "u_cpu");
         assert_eq!(mhir.address_map[1].0.as_str(), "u_uart");
-        let top = mhir.modules.iter().find(|m| m.name.as_str() == "soc").unwrap();
-        let uart = top.devices.iter().find(|d| d.name.as_str() == "u_uart").unwrap();
-        assert_eq!(uart.mmio, Some(AddressRegion { base: 0x1000_0000, size: 0x1000 }));
+        let top = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "soc")
+            .unwrap();
+        let uart = top
+            .devices
+            .iter()
+            .find(|d| d.name.as_str() == "u_uart")
+            .unwrap();
+        assert_eq!(
+            uart.mmio,
+            Some(AddressRegion {
+                base: 0x1000_0000,
+                size: 0x1000
+            })
+        );
     }
 
     #[test]
@@ -486,9 +603,32 @@ endmodule
         let design = compile(SOC);
         let mut mhir = extract(&design);
         // Cocok via nama MODULE (bukan instance): uart → semua instance uart.
-        apply_address_map(&mut mhir, &[(Symbol::intern("uart"), AddressRegion { base: 0x2000, size: 0x100 })]);
-        let top = mhir.modules.iter().find(|m| m.name.as_str() == "soc").unwrap();
-        let uart = top.devices.iter().find(|d| d.name.as_str() == "u_uart").unwrap();
-        assert_eq!(uart.mmio, Some(AddressRegion { base: 0x2000, size: 0x100 }));
+        apply_address_map(
+            &mut mhir,
+            &[(
+                Symbol::intern("uart"),
+                AddressRegion {
+                    base: 0x2000,
+                    size: 0x100,
+                },
+            )],
+        );
+        let top = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "soc")
+            .unwrap();
+        let uart = top
+            .devices
+            .iter()
+            .find(|d| d.name.as_str() == "u_uart")
+            .unwrap();
+        assert_eq!(
+            uart.mmio,
+            Some(AddressRegion {
+                base: 0x2000,
+                size: 0x100
+            })
+        );
     }
 }

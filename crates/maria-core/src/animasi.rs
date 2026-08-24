@@ -351,7 +351,10 @@ fn build_lines(st: &AnimState, frame: u64, final_frame: bool) -> Vec<String> {
         lines.push(phase_line(name, &st.phases[i]));
     }
 
-    let files_s = format!("{}{}{}/{}{}", BOLD, st.files_done, RESET, GRAY, st.files_total);
+    let files_s = format!(
+        "{}{}{}/{}{}",
+        BOLD, st.files_done, RESET, GRAY, st.files_total
+    );
     let mods_s = format!("{}{}{}", BOLD, st.modules, RESET);
     let toks_s = format!("{}{}{}", BOLD, fmt_count(st.tokens), RESET);
     let mem_s = format!("{}{}MB{}", BOLD, st.memory, RESET);
@@ -378,9 +381,17 @@ fn build_lines(st: &AnimState, frame: u64, final_frame: bool) -> Vec<String> {
         let warn_color = if st.warnings > 0 { YELLOW } else { GREEN };
         lines.push(format!(
             "  {}Errors {}{}{}  {}Warnings {}{}{}  {}Time {:.2}s{}",
-            GRAY, err_color, st.errors, RESET,
-            GRAY, warn_color, st.warnings, RESET,
-            BOLD, elapsed, RESET,
+            GRAY,
+            err_color,
+            st.errors,
+            RESET,
+            GRAY,
+            warn_color,
+            st.warnings,
+            RESET,
+            BOLD,
+            elapsed,
+            RESET,
         ));
     }
     lines
@@ -408,18 +419,14 @@ fn phase_line(name: &str, info: &PhaseInfo) -> String {
         PhaseStatus::Idle => (GRAY, String::new()),
         PhaseStatus::Running => (BRIGHT_GREEN, format!("{}", info.progress)),
         PhaseStatus::Done => (GREEN, "✓".to_string()),
-        PhaseStatus::Warn => (
-            YELLOW,
-            format!("▲ {} warn", info.warn_count),
-        ),
+        PhaseStatus::Warn => (YELLOW, format!("▲ {} warn", info.warn_count)),
         PhaseStatus::Error => (RED, "✖ error".to_string()),
     };
 
     let label = format!("{} ", name);
     format!(
         "{}{}{}{} {}{}{}",
-        label, color, bar, RESET,
-        color, BOLD, status_text,
+        label, color, bar, RESET, color, BOLD, status_text,
     ) + RESET
 }
 
@@ -485,8 +492,15 @@ mod tests {
     fn test_clock_line() {
         let l1 = clock_line(0);
         let l2 = clock_line(1);
-        assert!(l1.contains("CLK"), "clock line harus memuat label CLK: {:?}", l1);
-        assert!(l1.contains('▁') || l1.contains('▔'), "clock harus memuat bentuk gelombang");
+        assert!(
+            l1.contains("CLK"),
+            "clock line harus memuat label CLK: {:?}",
+            l1
+        );
+        assert!(
+            l1.contains('▁') || l1.contains('▔'),
+            "clock harus memuat bentuk gelombang"
+        );
         assert_ne!(l1, l2, "clock harus bergeser tiap frame");
     }
 

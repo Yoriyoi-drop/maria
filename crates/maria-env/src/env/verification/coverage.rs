@@ -39,7 +39,10 @@ pub struct CoverageSummary {
 }
 
 /// Bangun ringkasan dari map stats engine (key `branch_percent`, `line_percent`).
-pub fn coverage_summary(stats: &std::collections::HashMap<String, f64>, groups: usize) -> CoverageSummary {
+pub fn coverage_summary(
+    stats: &std::collections::HashMap<String, f64>,
+    groups: usize,
+) -> CoverageSummary {
     CoverageSummary {
         branch_percent: stats.get("branch_percent").copied().unwrap_or(0.0),
         line_percent: stats.get("line_percent").copied().unwrap_or(0.0),

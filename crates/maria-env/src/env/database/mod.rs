@@ -11,8 +11,8 @@ mod micd;
 mod symbol_db;
 
 pub use database::DatabaseContext;
-pub use micd::{project_id_for, open_database, default_database_root, database_root_for};
-pub use symbol_db::{locate_symbol, symbol_names, symbol_count};
-pub use graph_db::{def_of, deps_of, file_dep_count};
-pub use metadata_db::{file_meta, recompiled_count, file_count};
 pub use diagnostics_db::{diag_count, total_diag_count};
+pub use graph_db::{def_of, deps_of, file_dep_count};
+pub use metadata_db::{file_count, file_meta, recompiled_count};
+pub use micd::{database_root_for, default_database_root, open_database, project_id_for};
+pub use symbol_db::{locate_symbol, symbol_count, symbol_names};

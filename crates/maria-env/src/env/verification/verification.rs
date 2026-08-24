@@ -14,10 +14,7 @@ pub struct VerificationContext {
 }
 
 impl VerificationContext {
-    pub fn from_config(
-        lint: LintChecks,
-        coverage: CoverageSettings,
-    ) -> Self {
+    pub fn from_config(lint: LintChecks, coverage: CoverageSettings) -> Self {
         VerificationContext {
             lint,
             coverage,

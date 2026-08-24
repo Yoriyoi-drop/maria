@@ -32,7 +32,10 @@ fn rtl_to_netlist(source: &str) -> maria_netlist::Netlist {
 fn phase5_alu_timing_matches_manual() {
     let nl = rtl_to_netlist(&example("alu.sv"));
     let c = maria_timing::Constraint {
-        clocks: vec![maria_timing::ClockSpec { name: "clk".into(), period_ns: 10.0 }],
+        clocks: vec![maria_timing::ClockSpec {
+            name: "clk".into(),
+            period_ns: 10.0,
+        }],
         input_delay_ns: 2.0,
         output_delay_ns: 1.0,
         ..Default::default()
@@ -68,14 +71,21 @@ fn phase5_alu_timing_matches_manual() {
     assert_eq!(a.lut, 8, "alu → 8 LUT6");
     assert_eq!(a.carry4, 2, "a+b 8-bit → 2 CARRY4 slice");
     assert_eq!(a.ff, 0);
-    assert!((a.area_units - 12.35).abs() < 1e-9, "area = 8+4+0.1+0.25 = 12.35, dapat {}", a.area_units);
+    assert!(
+        (a.area_units - 12.35).abs() < 1e-9,
+        "area = 8+4+0.1+0.25 = 12.35, dapat {}",
+        a.area_units
+    );
 }
 
 #[test]
 fn phase5_counter_ff_endpoints_and_wns() {
     let nl = rtl_to_netlist(&example("counter.sv"));
     let c = maria_timing::Constraint {
-        clocks: vec![maria_timing::ClockSpec { name: "clk".into(), period_ns: 10.0 }],
+        clocks: vec![maria_timing::ClockSpec {
+            name: "clk".into(),
+            period_ns: 10.0,
+        }],
         ..Default::default()
     };
     let r = maria_timing::analyze(&nl, &c, &maria_timing::TimingOptions::default());
@@ -83,10 +93,17 @@ fn phase5_counter_ff_endpoints_and_wns() {
     assert_eq!(r.endpoints.iter().filter(|e| e.kind == "ff").count(), 8);
     assert_eq!(r.endpoints.iter().filter(|e| e.kind == "out").count(), 1);
     // Periode 10ns cukup → WNS positif, tidak ada violation.
-    assert!(r.wns_ns > 0.0, "WNS counter harus positif, dapat {}", r.wns_ns);
+    assert!(
+        r.wns_ns > 0.0,
+        "WNS counter harus positif, dapat {}",
+        r.wns_ns
+    );
     assert!((r.tns_ns).abs() < 1e-9);
     // Critical path harus berakhir di FF-D.
-    assert!(r.critical_paths.iter().any(|p| p.to.starts_with("ff_")), "path ke FF");
+    assert!(
+        r.critical_paths.iter().any(|p| p.to.starts_with("ff_")),
+        "path ke FF"
+    );
     // Area: 8 FF bit.
     let a = maria_timing::estimate_area(&nl);
     assert_eq!(a.ff, 8, "counter 8-bit → 8 FF bit");
@@ -101,5 +118,9 @@ fn phase5_constraint_false_path_skipped() {
     let c = maria_timing::parse_constraints(text);
     assert!(c.is_false_path("rst_n", "q"), "rst_n harus false path");
     assert!(!c.is_false_path("a", "q"), "a bukan false path");
-    assert_eq!(c.cycle_multiplier("reg_a", "reg_b"), 1, "tanpa multicycle → 1");
+    assert_eq!(
+        c.cycle_multiplier("reg_a", "reg_b"),
+        1,
+        "tanpa multicycle → 1"
+    );
 }

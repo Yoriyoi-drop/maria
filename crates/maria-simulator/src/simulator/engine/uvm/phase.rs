@@ -12,11 +12,11 @@
 //! 1 file = 1 tanggung jawab: hanya uvm_phase.
 
 use super::super::SimulationEngine;
-use maria_core::Symbol;
+use crate::simulator::util::{logicvec_to_string, string_to_logicvec};
+use maria_compiler::hir::{LogicVec, ObjId};
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
-use crate::simulator::util::{logicvec_to_string, string_to_logicvec};
+use maria_core::Symbol;
 
 impl SimulationEngine {
     /// Argumen fase: objek uvm_phase handle (dibuat sekali, di-cache) —
@@ -46,17 +46,12 @@ impl SimulationEngine {
             "new" => Ok(LogicVec::from_u64(obj_id as u64, 64)),
             // Nama phase saat ini (yang sedang/sudah dijalankan run_phase_tree).
             "get_name" => Ok(string_to_logicvec(
-                &self.uvm_current_phase
-                    .clone()
-                    .unwrap_or_default(),
+                &self.uvm_current_phase.clone().unwrap_or_default(),
             )),
             // VERIF-05: jump ke fase target — set uvm_phase_jump; run_phase_tree
             // memulai ulang dari fase target saat dipanggil berikutnya.
             "jump" => {
-                let target = args
-                    .first()
-                    .map(logicvec_to_string)
-                    .unwrap_or_default();
+                let target = args.first().map(logicvec_to_string).unwrap_or_default();
                 if target.is_empty() {
                     self.emit_warning(
                         DiagCode::DpiError,

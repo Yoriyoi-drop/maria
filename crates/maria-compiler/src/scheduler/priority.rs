@@ -12,8 +12,7 @@ use super::work_stealing::Task;
 // ─── Priority ───
 
 /// Priority levels untuk task scheduling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Priority {
     /// Low priority — cache eviction, diagnostics flush
     Low = 0,

@@ -1,8 +1,8 @@
+use crate::simulator::*;
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 use maria_ir::*;
-use crate::simulator::*;
 
 /// Debugger wrapper untuk SimulationEngine.
 /// Menyediakan API high-level untuk debug, step, breakpoint, dll.
@@ -176,7 +176,8 @@ impl Debugger {
         let sym = Symbol::intern(name);
         // Try the new SignalHistoryStore first, fall back to pre-computed timeline
         let history = crate::simulator::signal_history::SignalHistoryStore::get_history(
-            &self.engine.signal_history, &sym
+            &self.engine.signal_history,
+            &sym,
         );
         if history.is_empty() {
             return format!("no timeline data for '{}'\n", name);
@@ -294,7 +295,10 @@ impl Debugger {
             self.engine.step_mode = StepMode::Paused;
             Ok(())
         } else {
-            Err(SimError::with_diag(DiagCode::DebuggerError, "no snapshot available for reverse step"))
+            Err(SimError::with_diag(
+                DiagCode::DebuggerError,
+                "no snapshot available for reverse step",
+            ))
         }
     }
 
@@ -312,10 +316,10 @@ impl Debugger {
             }
             self.engine.snapshots.pop();
         }
-        Err(SimError::with_diag(DiagCode::DebuggerError, format!(
-            "no snapshot at or before time {}",
-            target_time
-        )))
+        Err(SimError::with_diag(
+            DiagCode::DebuggerError,
+            format!("no snapshot at or before time {}", target_time),
+        ))
     }
 
     pub fn get_module_names(&self) -> Vec<String> {

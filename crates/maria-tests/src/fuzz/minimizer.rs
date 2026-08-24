@@ -48,57 +48,48 @@ impl TestcaseMinimizer {
         Self::default()
     }
 
-    pub fn minimize(&self, input: &GenInput, check_fn: impl Fn(&GenInput) -> bool) -> MinimizeResult {
+    pub fn minimize(
+        &self,
+        input: &GenInput,
+        check_fn: impl Fn(&GenInput) -> bool,
+    ) -> MinimizeResult {
         let mut current = input.clone();
         let mut steps = Vec::new();
-        let mut iteration = 0;
+        // Counter increment SETIAP sukses reduksi. Versi lama memakai
+        // `continue` sebelum `iteration += 1` sehingga max_iterations tak
+        // pernah tercapai (loop hanya berhenti saat tak ada strategi membaik).
+        let mut iterations_used = 0usize;
 
-        while iteration < self.max_iterations && check_fn(&current) {
-            let mut improved = false;
+        while iterations_used < self.max_iterations && check_fn(&current) {
+            // Coba ketiga strategi secara berurutan; pertama yang sukses dipakai.
+            let next = if current.w > 1 {
+                self.try_reduce_width(&current, &check_fn)
+                    .map(|c| (MinimizeAction::ReduceWidth, c))
+            } else {
+                None
+            }
+            .or_else(|| {
+                self.try_simplify_expr(&current, &check_fn)
+                    .map(|c| (MinimizeAction::SimplifyExpression, c))
+            })
+            .or_else(|| {
+                self.try_reduce_stimulus(&current, &check_fn)
+                    .map(|c| (MinimizeAction::ReduceStimulus, c))
+            });
 
-            if current.w > 1 {
-                if let Some(smaller) = self.try_reduce_width(&current, &check_fn) {
+            match next {
+                Some((action, smaller)) => {
                     steps.push(MinimizeStep {
-                        action: MinimizeAction::ReduceWidth,
+                        action,
                         before: current.clone(),
                         after: smaller.clone(),
                         still_fails: check_fn(&smaller),
                     });
                     current = smaller;
-                    improved = true;
-                    continue;
+                    iterations_used += 1;
                 }
+                None => break,
             }
-
-            if let Some(simpler) = self.try_simplify_expr(&current, &check_fn) {
-                steps.push(MinimizeStep {
-                    action: MinimizeAction::SimplifyExpression,
-                    before: current.clone(),
-                    after: simpler.clone(),
-                    still_fails: check_fn(&simpler),
-                });
-                current = simpler;
-                improved = true;
-                continue;
-            }
-
-            if let Some(reduced) = self.try_reduce_stimulus(&current, &check_fn) {
-                steps.push(MinimizeStep {
-                    action: MinimizeAction::ReduceStimulus,
-                    before: current.clone(),
-                    after: reduced.clone(),
-                    still_fails: check_fn(&reduced),
-                });
-                current = reduced;
-                improved = true;
-                continue;
-            }
-
-            if !improved {
-                break;
-            }
-
-            iteration += 1;
         }
 
         MinimizeResult {
@@ -109,16 +100,25 @@ impl TestcaseMinimizer {
         }
     }
 
-    fn try_reduce_width(&self, input: &GenInput, check_fn: &impl Fn(&GenInput) -> bool) -> Option<GenInput> {
+    fn try_reduce_width(
+        &self,
+        input: &GenInput,
+        check_fn: &impl Fn(&GenInput) -> bool,
+    ) -> Option<GenInput> {
         let current_w = input.w;
-        let candidates = [1, 2, 4, 8, 16, 32, 64].into_iter()
+        let candidates = [1, 2, 4, 8, 16, 32, 64]
+            .into_iter()
             .filter(|&w| w < current_w)
             .collect::<Vec<_>>();
 
         for &new_w in &candidates {
             let mut candidate = input.clone();
             candidate.w = new_w;
-            let mask = if new_w >= 64 { u64::MAX } else { (1u64 << new_w) - 1 };
+            let mask = if new_w >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << new_w) - 1
+            };
             candidate.a &= mask;
             candidate.b &= mask;
             candidate.expr = self.rescale_expr(&input.expr, current_w, new_w);
@@ -131,9 +131,15 @@ impl TestcaseMinimizer {
     }
 
     fn rescale_expr(&self, expr: &super::expr::Expr, old_w: u32, new_w: u32) -> super::expr::Expr {
-        use super::expr::{Expr, BinOp, UnOp};
+        use super::expr::{BinOp, Expr, UnOp};
         match expr {
-            Expr::Lit(v) => Expr::Lit(v & if new_w >= 64 { u64::MAX } else { (1u64 << new_w) - 1 }),
+            Expr::Lit(v) => Expr::Lit(
+                v & if new_w >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << new_w) - 1
+                },
+            ),
             Expr::Var(c) => Expr::Var(*c),
             Expr::Un(op, inner) => Expr::Un(*op, Box::new(self.rescale_expr(inner, old_w, new_w))),
             Expr::Bin(op, lhs, rhs) => Expr::Bin(
@@ -144,7 +150,11 @@ impl TestcaseMinimizer {
         }
     }
 
-    fn try_simplify_expr(&self, input: &GenInput, check_fn: &impl Fn(&GenInput) -> bool) -> Option<GenInput> {
+    fn try_simplify_expr(
+        &self,
+        input: &GenInput,
+        check_fn: &impl Fn(&GenInput) -> bool,
+    ) -> Option<GenInput> {
         let simplified = self.simplify_expr(&input.expr);
         if simplified != input.expr {
             let mut candidate = input.clone();
@@ -157,7 +167,7 @@ impl TestcaseMinimizer {
     }
 
     fn simplify_expr(&self, expr: &super::expr::Expr) -> super::expr::Expr {
-        use super::expr::{Expr, BinOp, UnOp};
+        use super::expr::{BinOp, Expr, UnOp};
         match expr {
             Expr::Bin(op, lhs, rhs) => {
                 let simplified_lhs = self.simplify_expr(lhs);
@@ -203,9 +213,22 @@ impl TestcaseMinimizer {
                         (Expr::Lit(v), r) | (r, Expr::Lit(v)) if *v != 0 => Expr::Lit(1),
                         _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
                     },
-                    BinOp::Div | BinOp::Mod | BinOp::Shl | BinOp::Shr | BinOp::Sshl | BinOp::Sshr
-                    | BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
-                    | BinOp::CaseEq | BinOp::CaseNeq | BinOp::Power | BinOp::Inside
+                    BinOp::Div
+                    | BinOp::Mod
+                    | BinOp::Shl
+                    | BinOp::Shr
+                    | BinOp::Sshl
+                    | BinOp::Sshr
+                    | BinOp::Eq
+                    | BinOp::Ne
+                    | BinOp::Lt
+                    | BinOp::Le
+                    | BinOp::Gt
+                    | BinOp::Ge
+                    | BinOp::CaseEq
+                    | BinOp::CaseNeq
+                    | BinOp::Power
+                    | BinOp::Inside
                     | BinOp::Concat => match (&simplified_lhs, &simplified_rhs) {
                         (Expr::Lit(_), Expr::Lit(_)) => expr.clone(),
                         _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
@@ -226,13 +249,21 @@ impl TestcaseMinimizer {
         }
     }
 
-    fn try_reduce_stimulus(&self, input: &GenInput, check_fn: &impl Fn(&GenInput) -> bool) -> Option<GenInput> {
+    fn try_reduce_stimulus(
+        &self,
+        input: &GenInput,
+        check_fn: &impl Fn(&GenInput) -> bool,
+    ) -> Option<GenInput> {
         let test_values = [0u64, 1, !0u64];
 
         for &a in &test_values {
             for &b in &test_values {
                 let mut candidate = input.clone();
-                let mask = if input.w >= 64 { u64::MAX } else { (1u64 << input.w) - 1 };
+                let mask = if input.w >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << input.w) - 1
+                };
                 candidate.a = a & mask;
                 candidate.b = b & mask;
                 if check_fn(&candidate) {
@@ -272,7 +303,11 @@ impl TestcaseMinimizer {
         current
     }
 
-    fn try_remove_unused_lines(&self, source: &str, check_fn: &impl Fn(&str) -> bool) -> Option<String> {
+    fn try_remove_unused_lines(
+        &self,
+        source: &str,
+        check_fn: &impl Fn(&str) -> bool,
+    ) -> Option<String> {
         let lines: Vec<&str> = source.lines().collect();
         for i in 0..lines.len() {
             let mut new_lines = lines.clone();
@@ -285,10 +320,18 @@ impl TestcaseMinimizer {
         None
     }
 
-    fn try_reduce_constants(&self, source: &str, check_fn: &impl Fn(&str) -> bool) -> Option<String> {
-        let test_values = ["0", "1", "1'b0", "1'b1", "8'h00", "8'hFF", "16'h0000", "16'hFFFF"];
+    fn try_reduce_constants(
+        &self,
+        source: &str,
+        check_fn: &impl Fn(&str) -> bool,
+    ) -> Option<String> {
+        let test_values = [
+            "0", "1", "1'b0", "1'b1", "8'h00", "8'hFF", "16'h0000", "16'hFFFF",
+        ];
         for val in test_values {
-            let candidate = source.replace("16'h", &format!("{}", val)).replace("8'h", &format!("{}", val));
+            let candidate = source
+                .replace("16'h", &format!("{}", val))
+                .replace("8'h", &format!("{}", val));
             if candidate != source && check_fn(&candidate) {
                 return Some(candidate);
             }
@@ -296,7 +339,11 @@ impl TestcaseMinimizer {
         None
     }
 
-    fn try_simplify_expressions(&self, source: &str, check_fn: &impl Fn(&str) -> bool) -> Option<String> {
+    fn try_simplify_expressions(
+        &self,
+        source: &str,
+        check_fn: &impl Fn(&str) -> bool,
+    ) -> Option<String> {
         let simplifications = [
             (" + 0", ""),
             (" - 0", ""),

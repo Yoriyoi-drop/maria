@@ -26,14 +26,14 @@ use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::category::CacheCategory;
-use super::index::{CacheIndex, CacheIndexEntry};
-use super::manifest::CacheManifest;
-use super::stats::CategoryStats;
 use super::super::format::{MdbReader, MdbWriter, KIND_MANIFEST, KIND_STATS};
 use super::super::lock::acquire_write_lock;
 use super::super::txn;
 use super::super::verify::now_ns;
+use super::category::CacheCategory;
+use super::index::{CacheIndex, CacheIndexEntry};
+use super::manifest::CacheManifest;
+use super::stats::CategoryStats;
 use crate::cache::compute_checksum;
 
 /// Key singleton manifest & stats di file MDB masing-masing.
@@ -98,7 +98,10 @@ impl CategoryStore {
         let _ = std::fs::create_dir_all(root.join(DIR_STATS));
 
         // Crash recovery (Kritik 5): journal tersisa → validasi store.
-        txn::recover(&root.to_path_buf(), &root.join(DIR_JOURNAL).join("journal.mdb"));
+        txn::recover(
+            &root.to_path_buf(),
+            &root.join(DIR_JOURNAL).join("journal.mdb"),
+        );
 
         let mut st = CategoryStore {
             category,
@@ -166,7 +169,9 @@ impl CategoryStore {
     pub fn object_path(&self, content_hash: u64, large: bool) -> PathBuf {
         let ext = if large { BLOB_EXT } else { OBJ_EXT };
         let dir = if large { DIR_BLOBS } else { DIR_OBJECTS };
-        self.root.join(dir).join(format!("{:016x}.{}", content_hash, ext))
+        self.root
+            .join(dir)
+            .join(format!("{:016x}.{}", content_hash, ext))
     }
 
     // ── API ──
@@ -182,12 +187,7 @@ impl CategoryStore {
         let path = self.object_path(content_hash, large);
         if !path.exists() {
             if let Err(e) = self.write_object(&path, bytes) {
-                eprintln!(
-                    "[cache] {} put {}: {}",
-                    self.category.name(),
-                    key,
-                    e
-                );
+                eprintln!("[cache] {} put {}: {}", self.category.name(), key, e);
                 return None;
             }
         }
@@ -322,11 +322,7 @@ impl CategoryStore {
         .map_err(|e| io::Error::other(e.to_string()))?;
 
         // Intent transaksi: daftar store MDB yang ikut (path absolut).
-        let names = vec![
-            self.index_path(),
-            self.manifest_path(),
-            self.stats_path(),
-        ];
+        let names = vec![self.index_path(), self.manifest_path(), self.stats_path()];
         txn::write_journal(&self.journal_path(), &names)?;
 
         // Update manifest.
@@ -335,7 +331,8 @@ impl CategoryStore {
         self.manifest.updated_ns = now_ns();
 
         // Commit MDB (tiap file atomik temp+rename).
-        self.index.save(&self.index_path(), self.category.compression())?;
+        self.index
+            .save(&self.index_path(), self.category.compression())?;
         self.write_manifest()?;
         self.write_stats()?;
 
@@ -500,15 +497,12 @@ impl CategoryStore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::manifest::CACHE_SCHEMA_VERSION;
+    use super::*;
 
     fn test_root(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "maria_cache_store_{}_{}",
-            std::process::id(),
-            name
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("maria_cache_store_{}_{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -517,7 +511,15 @@ mod tests {
     fn test_open_creates_uniform_layout() {
         let root = test_root("layout");
         let st = CategoryStore::open(&root, CacheCategory::Parser, 0);
-        for d in [DIR_OBJECTS, DIR_BLOBS, DIR_TEMP, DIR_LOCK, DIR_INDEX, DIR_JOURNAL, DIR_STATS] {
+        for d in [
+            DIR_OBJECTS,
+            DIR_BLOBS,
+            DIR_TEMP,
+            DIR_LOCK,
+            DIR_INDEX,
+            DIR_JOURNAL,
+            DIR_STATS,
+        ] {
             assert!(root.join(d).is_dir(), "{} harus ada", d);
         }
         assert_eq!(st.len(), 0);

@@ -1,12 +1,12 @@
-use std::collections::HashMap;
+use super::super::util::*;
 use super::Elaborator;
 use super::BUILTIN_UVM_CLASSES;
-use super::super::util::*;
 use maria_ast::types::{const_eval_simple, const_eval_with_params};
 use maria_ast::*;
 use maria_core::diagnostics::diagnostic::DiagCode;
 use maria_core::diagnostics::suggest::suggest_name;
 use maria_core::error::SimError;
+use std::collections::HashMap;
 
 use maria_core::intern::Symbol;
 use maria_ir::*;
@@ -61,7 +61,11 @@ impl Elaborator {
                 obj: inner,
                 field: inner_field,
             } => {
-                format!("{}.{}", Self::build_hier_name(inner, inner_field.as_str()), field)
+                format!(
+                    "{}.{}",
+                    Self::build_hier_name(inner, inner_field.as_str()),
+                    field
+                )
             }
             _ => String::new(),
         }
@@ -145,17 +149,24 @@ impl Elaborator {
                 if let Some(&val) = self.pkg_param_ctx.get(name) {
                     return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
                 }
-                let sig_id = signal_map
-                    .get(name)
-                    .ok_or_else(|| {
-                        let mut candidates: Vec<&str> = signal_map.keys().map(|s| s.as_str()).collect();
-                        for k in self.param_vals.keys() { candidates.push(k.as_str()); }
-                        for k in self.pkg_param_ctx.keys() { candidates.push(k.as_str()); }
-                        let hint = suggest_name(name.as_str(), candidates.into_iter())
-                            .map(|(s, _)| format!(" — did you mean '{}'?", s))
-                            .unwrap_or_default();
-                        self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found{}", name, hint), *line, *col)
-                    })?;
+                let sig_id = signal_map.get(name).ok_or_else(|| {
+                    let mut candidates: Vec<&str> = signal_map.keys().map(|s| s.as_str()).collect();
+                    for k in self.param_vals.keys() {
+                        candidates.push(k.as_str());
+                    }
+                    for k in self.pkg_param_ctx.keys() {
+                        candidates.push(k.as_str());
+                    }
+                    let hint = suggest_name(name.as_str(), candidates.into_iter())
+                        .map(|(s, _)| format!(" — did you mean '{}'?", s))
+                        .unwrap_or_default();
+                    self.elab_diag_at(
+                        DiagCode::UndefinedSignal,
+                        format!("signal '{}' not found{}", name, hint),
+                        *line,
+                        *col,
+                    )
+                })?;
                 Ok(IrExpr::Signal(*sig_id, 0))
             }
             Expr::ScopedIdent {
@@ -191,10 +202,12 @@ impl Elaborator {
                                         )));
                                     }
                                 }
-                                return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
-                                    "package param '{}.{}' has no default",
-                                    package, item
-                                ), *line, *col));
+                                return Err(self.elab_diag_at(
+                                    DiagCode::ParamMismatch,
+                                    format!("package param '{}.{}' has no default", package, item),
+                                    *line,
+                                    *col,
+                                ));
                             }
                             PackageItem::Typedef(td) => {
                                 // `pkg::TypeName` dipakai sebagai ekspresi (mis. cast atau
@@ -228,18 +241,25 @@ impl Elaborator {
                                 return Ok(IrExpr::Const(LogicVec::from_u64(0, 64)));
                             }
                             _ => {
-                                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
-                                    "'{}' is not a constant in package '{}'",
-                                    item, package
-                                ), *line, *col))
+                                return Err(self.elab_diag_at(
+                                    DiagCode::ModuleNotFound,
+                                    format!(
+                                        "'{}' is not a constant in package '{}'",
+                                        item, package
+                                    ),
+                                    *line,
+                                    *col,
+                                ))
                             }
                         }
                     }
                 }
-                Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
-                    "'{}' not found in package '{}'",
-                    item, package
-                ), *line, *col))
+                Err(self.elab_diag_at(
+                    DiagCode::ModuleNotFound,
+                    format!("'{}' not found in package '{}'", item, package),
+                    *line,
+                    *col,
+                ))
             }
             Expr::RangeSelect {
                 expr: inner,
@@ -308,7 +328,8 @@ impl Elaborator {
                 // ter-fold: `pkg::ARR[idx]` harus memilih ELEMEN (lebar elem_w),
                 // bukan bit tunggal. Tanpa ini `PRESENT_SBOX4[x[k*4 +: 4]]`
                 // menjadi part-select lebar 1 → nilai sbox salah + WR0102 palsu.
-                if let Some((arr_const, elem_w)) = self.pkg_array_param_element(inner, &inner_expr) {
+                if let Some((arr_const, elem_w)) = self.pkg_array_param_element(inner, &inner_expr)
+                {
                     let index_expr = self.elaborate_expr(index, signal_map, signals)?;
                     let base_expr = IrExpr::BinaryOp(
                         BinaryIrOp::Mul,
@@ -386,18 +407,12 @@ impl Elaborator {
                             let base_expr = IrExpr::BinaryOp(
                                 BinaryIrOp::Mul,
                                 Box::new(index_expr),
-                                Box::new(IrExpr::Const(LogicVec::from_u64(
-                                    elem_w as u64,
-                                    32,
-                                ))),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(elem_w as u64, 32))),
                             );
                             Ok(IrExpr::ExprPartSelect(
                                 Box::new(IrExpr::RangeSelect(*sid, *outer_msb, *outer_lsb)),
                                 Box::new(base_expr),
-                                Box::new(IrExpr::Const(LogicVec::from_u64(
-                                    elem_w as u64,
-                                    32,
-                                ))),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(elem_w as u64, 32))),
                             ))
                         }
                     } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
@@ -445,7 +460,8 @@ impl Elaborator {
                     self.elab_diag_at(
                         DiagCode::SimulationError,
                         format!("cannot evaluate replication count: {}", e),
-                        l, c,
+                        l,
+                        c,
                     )
                 })? as usize;
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
@@ -542,17 +558,27 @@ impl Elaborator {
                 }
             }
             Expr::Paren(inner) => self.elaborate_expr(inner, signal_map, signals),
-            Expr::FuncCall { name, args, line, col, .. } if name.starts_with("$") => match name.as_str() {
+            Expr::FuncCall {
+                name,
+                args,
+                line,
+                col,
+                ..
+            } if name.starts_with("$") => match name.as_str() {
                 "$signed" => {
                     if args.len() != 1 {
-                        return Err(self.elab_diag(DiagCode::ParamMismatch, "$signed requires exactly one argument"));
+                        return Err(self.elab_diag(
+                            DiagCode::ParamMismatch,
+                            "$signed requires exactly one argument",
+                        ));
                     }
                     let inner = self.elaborate_expr(&args[0], signal_map, signals)?;
                     Ok(IrExpr::Signed(Box::new(inner)))
                 }
                 "$unsigned" => {
                     if args.len() != 1 {
-                        return Err(self.elab_diag(DiagCode::ParamMismatch,
+                        return Err(self.elab_diag(
+                            DiagCode::ParamMismatch,
                             "$unsigned requires exactly one argument",
                         ));
                     }
@@ -611,7 +637,10 @@ impl Elaborator {
                 "$high" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(DiagCode::ModuleNotFound, "$high argument must resolve to a signal")
+                            self.elab_diag(
+                                DiagCode::ModuleNotFound,
+                                "$high argument must resolve to a signal",
+                            )
                         })?;
                         let info = &signals[sig_id];
                         let high = info.msb.max(info.lsb);
@@ -623,7 +652,10 @@ impl Elaborator {
                 "$low" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(DiagCode::ModuleNotFound, "$low argument must resolve to a signal")
+                            self.elab_diag(
+                                DiagCode::ModuleNotFound,
+                                "$low argument must resolve to a signal",
+                            )
                         })?;
                         let info = &signals[sig_id];
                         let low = info.msb.min(info.lsb);
@@ -635,7 +667,10 @@ impl Elaborator {
                 "$left" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(DiagCode::ModuleNotFound, "$left argument must resolve to a signal")
+                            self.elab_diag(
+                                DiagCode::ModuleNotFound,
+                                "$left argument must resolve to a signal",
+                            )
                         })?;
                         let info = &signals[sig_id];
                         Ok(IrExpr::Const(LogicVec::from_u64(info.msb as u64, 32)))
@@ -646,7 +681,10 @@ impl Elaborator {
                 "$right" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(DiagCode::ModuleNotFound, "$right argument must resolve to a signal")
+                            self.elab_diag(
+                                DiagCode::ModuleNotFound,
+                                "$right argument must resolve to a signal",
+                            )
                         })?;
                         let info = &signals[sig_id];
                         Ok(IrExpr::Const(LogicVec::from_u64(info.lsb as u64, 32)))
@@ -657,7 +695,10 @@ impl Elaborator {
                 "$size" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(DiagCode::ModuleNotFound, "$size argument must resolve to a signal")
+                            self.elab_diag(
+                                DiagCode::ModuleNotFound,
+                                "$size argument must resolve to a signal",
+                            )
                         })?;
                         let info = &signals[sig_id];
                         // $size mengembalikan jumlah elemen pada dimensi pertama.
@@ -690,7 +731,8 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$countones requires one argument"))
+                        Err(self
+                            .elab_diag(DiagCode::ParamMismatch, "$countones requires one argument"))
                     }
                 }
                 "$countbits" => {
@@ -709,7 +751,8 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$countbits requires one argument"))
+                        Err(self
+                            .elab_diag(DiagCode::ParamMismatch, "$countbits requires one argument"))
                     }
                 }
                 "$dimensions" => {
@@ -733,7 +776,10 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$dimensions requires one argument"))
+                        Err(self.elab_diag(
+                            DiagCode::ParamMismatch,
+                            "$dimensions requires one argument",
+                        ))
                     }
                 }
                 "$onehot" => {
@@ -754,7 +800,8 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$onehot requires one argument"))
+                        Err(self
+                            .elab_diag(DiagCode::ParamMismatch, "$onehot requires one argument"))
                     }
                 }
                 "$isunknown" => {
@@ -775,7 +822,8 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$isunknown requires one argument"))
+                        Err(self
+                            .elab_diag(DiagCode::ParamMismatch, "$isunknown requires one argument"))
                     }
                 }
                 "$onehot0" => {
@@ -796,7 +844,8 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$onehot0 requires one argument"))
+                        Err(self
+                            .elab_diag(DiagCode::ParamMismatch, "$onehot0 requires one argument"))
                     }
                 }
                 "$cast" => {
@@ -818,7 +867,8 @@ impl Elaborator {
                         let type_name = self.resolve_typename_for_expr(arg, signal_map, signals);
                         Ok(IrExpr::Const(LogicVec::from_string(&type_name)))
                     } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$typename requires one argument"))
+                        Err(self
+                            .elab_diag(DiagCode::ParamMismatch, "$typename requires one argument"))
                     }
                 }
                 _ => {
@@ -863,7 +913,9 @@ impl Elaborator {
                             .map(|a| self.elaborate_expr(a, signal_map, signals))
                             .collect();
                         let ir_with = match with_clause {
-                            Some(wc) => Some(Box::new(self.elaborate_expr(wc, signal_map, signals)?)),
+                            Some(wc) => {
+                                Some(Box::new(self.elaborate_expr(wc, signal_map, signals)?))
+                            }
                             None => None,
                         };
                         return Ok(IrExpr::MethodCall {
@@ -974,7 +1026,8 @@ impl Elaborator {
                                     "field '{}' not found in struct type (width {})",
                                     field, sig_info.width
                                 ),
-                                fl, fc,
+                                fl,
+                                fc,
                             );
                             return Ok(IrExpr::MemberAccess {
                                 obj: Box::new(IrExpr::Signal(sig_id, 0)),
@@ -991,9 +1044,9 @@ impl Elaborator {
                         field: *field,
                     }),
                     Err(_) => {
-            // If obj can't be elaborated (e.g., instance name), emit a HierRef
-            // that the engine can resolve at runtime using the flattened signal list
-            Ok(IrExpr::HierRef(Symbol::intern(&hier_name)))
+                        // If obj can't be elaborated (e.g., instance name), emit a HierRef
+                        // that the engine can resolve at runtime using the flattened signal list
+                        Ok(IrExpr::HierRef(Symbol::intern(&hier_name)))
                     }
                 }
             }
@@ -1049,10 +1102,14 @@ impl Elaborator {
                     match const_eval_params(ss, &self.param_vals) {
                         Ok(v) if v > 0 => Some(v as usize),
                         Ok(_) => {
-                            return Err(self.elab_diag(DiagCode::ParamMismatch, "streaming slice_size must be > 0"))
+                            return Err(self.elab_diag(
+                                DiagCode::ParamMismatch,
+                                "streaming slice_size must be > 0",
+                            ))
                         }
                         Err(_) => {
-                            return Err(self.elab_diag(DiagCode::ParamMismatch,
+                            return Err(self.elab_diag(
+                                DiagCode::ParamMismatch,
                                 "slice_size must be a constant expression",
                             ))
                         }
@@ -1132,7 +1189,7 @@ impl Elaborator {
             }
             Expr::Cast { dtype, expr: inner } => {
                 let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
-                let cast_width = match                        parse_type_spec_str(dtype.as_str()) {
+                let cast_width = match parse_type_spec_str(dtype.as_str()) {
                     Some(dt) => self.resolve_type_width(&dt).unwrap_or(1),
                     // Identifier (parameter/typedef package) — resolve width
                     // agar runtime tidak resize ke 1 bit (data loss). Mis.
@@ -1162,7 +1219,13 @@ impl Elaborator {
                     expr: Box::new(inner_ir),
                 })
             }
-            Expr::FuncCall { name, args, line, col, .. } if name.starts_with("process::") => {
+            Expr::FuncCall {
+                name,
+                args,
+                line,
+                col,
+                ..
+            } if name.starts_with("process::") => {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -1227,7 +1290,13 @@ impl Elaborator {
                     args: ir_args?,
                 })
             }
-            Expr::FuncCall { name, args, line, col, .. } if name == "uvm_factory::set_type_override_by_type" => {
+            Expr::FuncCall {
+                name,
+                args,
+                line,
+                col,
+                ..
+            } if name == "uvm_factory::set_type_override_by_type" => {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -1239,22 +1308,27 @@ impl Elaborator {
                     col: *col,
                 })
             }
-            Expr::FuncCall { name, args, line, col, .. }
-                if name == "uvm_config_db::set"
-                    || name == "uvm_config_db::get"
-                    || name == "uvm_resource_db::set"
-                    || name == "uvm_resource_db::get"
-                    || name == "uvm_resource_db::exists"
-                    || name == "uvm_resource_db::read_by_name"
-                    || name == "uvm_resource_db::write_by_name"
-                    || name == "uvm_cmdline_processor::get"
-                    || name == "uvm_root::get"
-                    || name == "uvm_root::get_top"
-                    || name == "uvm_root::run_test"
-                    || name == "uvm_tr_database::get_db"
-                    || name == "uvm_tr_database::get_stream"
-                    || name == "uvm_tr_database::get_tr_count"
-                    || name == "uvm_tr_database::set_stream" =>
+            Expr::FuncCall {
+                name,
+                args,
+                line,
+                col,
+                ..
+            } if name == "uvm_config_db::set"
+                || name == "uvm_config_db::get"
+                || name == "uvm_resource_db::set"
+                || name == "uvm_resource_db::get"
+                || name == "uvm_resource_db::exists"
+                || name == "uvm_resource_db::read_by_name"
+                || name == "uvm_resource_db::write_by_name"
+                || name == "uvm_cmdline_processor::get"
+                || name == "uvm_root::get"
+                || name == "uvm_root::get_top"
+                || name == "uvm_root::run_test"
+                || name == "uvm_tr_database::get_db"
+                || name == "uvm_tr_database::get_stream"
+                || name == "uvm_tr_database::get_tr_count"
+                || name == "uvm_tr_database::set_stream" =>
             {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
@@ -1267,12 +1341,32 @@ impl Elaborator {
                     line: *line,
                     col: *col,
                 })
-            }                    Expr::FuncCall { name, args, line, col } if name != "new" && name.contains("::") => {
-                        let fl = if *line > 0 { *line } else { expr_location(expr).0 };
-                        let fc = if *col > 0 { *col } else { expr_location(expr).1 };
-                        self.elaborate_package_func_call(name.as_str(), args, signal_map, signals, fl, fc)
             }
-            Expr::FuncCall { name, args, line, col, .. } if name == "run_test" => {
+            Expr::FuncCall {
+                name,
+                args,
+                line,
+                col,
+            } if name != "new" && name.contains("::") => {
+                let fl = if *line > 0 {
+                    *line
+                } else {
+                    expr_location(expr).0
+                };
+                let fc = if *col > 0 {
+                    *col
+                } else {
+                    expr_location(expr).1
+                };
+                self.elaborate_package_func_call(name.as_str(), args, signal_map, signals, fl, fc)
+            }
+            Expr::FuncCall {
+                name,
+                args,
+                line,
+                col,
+                ..
+            } if name == "run_test" => {
                 // F18: run_test → IrExpr::SysFunc — dispatch engine menciptakan
                 // objek test & menjalankan fase UVM (run_uvm_test). Jalur
                 // statement terpisah di stmt.rs (IrStmt::SysCall).
@@ -1298,7 +1392,8 @@ impl Elaborator {
                             .zip(args.iter())
                             .map(|(p, a)| (*p, a))
                             .collect();
-                        let body = maria_ast::inline_util::substitute_let_args(ld.expr.clone(), &map);
+                        let body =
+                            maria_ast::inline_util::substitute_let_args(ld.expr.clone(), &map);
                         return self.elaborate_expr(&body, signal_map, signals);
                     }
                 }
@@ -1308,7 +1403,15 @@ impl Elaborator {
                             .iter()
                             .any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == *name))
                     });
-                    eprintln!("DBG-PKG: aes_circ_byte_shift module={:?} func_exists={} import_sets={:?}", self.current_module, func_exists, self.collect_import_sets().iter().map(|(p,i)| format!("{}::{}", p.as_str(), i.as_str())).collect::<Vec<_>>());
+                    eprintln!(
+                        "DBG-PKG: aes_circ_byte_shift module={:?} func_exists={} import_sets={:?}",
+                        self.current_module,
+                        func_exists,
+                        self.collect_import_sets()
+                            .iter()
+                            .map(|(p, i)| format!("{}::{}", p.as_str(), i.as_str()))
+                            .collect::<Vec<_>>()
+                    );
                 }
                 let is_dpi = self
                     .design
@@ -1361,9 +1464,14 @@ impl Elaborator {
                     }
                     // Plain-name package function via import (pkg::* / pkg::item)
                     let (fl, fc) = expr_location(expr);
-                    if let Some(ir) =
-                        self.elaborate_imported_package_func_call(name.as_str(), args, signal_map, signals, fl, fc)?
-                    {
+                    if let Some(ir) = self.elaborate_imported_package_func_call(
+                        name.as_str(),
+                        args,
+                        signal_map,
+                        signals,
+                        fl,
+                        fc,
+                    )? {
                         return Ok(ir);
                     }
                     // Fungsi eksternal/DPI yang TIDAK terdaftar (mis.
@@ -1411,7 +1519,12 @@ impl Elaborator {
             // di-discard menjadi FillLit 0). Member access tetap di-const-eval
             // benar lewat arm MemberAccess + key param_vals.
             Expr::StructLit { .. } => Ok(IrExpr::FillLit(maria_ir::LogicVal::Zero)),
-            _ => Err(self.elab_diag_at(DiagCode::ModuleNotFound, "expression type not yet supported".to_string(), expr_location(expr).0, expr_location(expr).1)),
+            _ => Err(self.elab_diag_at(
+                DiagCode::ModuleNotFound,
+                "expression type not yet supported".to_string(),
+                expr_location(expr).0,
+                expr_location(expr).1,
+            )),
         }
     }
 
@@ -1424,9 +1537,14 @@ impl Elaborator {
         line: usize,
         col: usize,
     ) -> Result<IrExpr, SimError> {
-        let (pkg_name, func_name) = name
-            .split_once("::")
-            .ok_or_else(|| self.elab_diag_at(DiagCode::ModuleNotFound, format!("invalid function name '{}'", name), line, col))?;
+        let (pkg_name, func_name) = name.split_once("::").ok_or_else(|| {
+            self.elab_diag_at(
+                DiagCode::ModuleNotFound,
+                format!("invalid function name '{}'", name),
+                line,
+                col,
+            )
+        })?;
         self.elaborate_package_func(pkg_name, func_name, args, signal_map, signals, line, col)
     }
 
@@ -1438,7 +1556,11 @@ impl Elaborator {
         if let Some(mod_name) = self.current_module {
             if let Some(module) = self.design.modules.iter().find(|m| m.name == mod_name) {
                 for item in &module.items {
-                    if let ModuleItem::Import { package, item: import_item } = item {
+                    if let ModuleItem::Import {
+                        package,
+                        item: import_item,
+                    } = item
+                    {
                         import_sets.push((*package, *import_item));
                     }
                 }
@@ -1471,7 +1593,15 @@ impl Elaborator {
                     && matches!(pkg_items.get(&name_sym), Some(PackageItem::Function(_)))
             };
             if matched {
-                let ir = self.elaborate_package_func(package.as_str(), name, args, signal_map, signals, line, col)?;
+                let ir = self.elaborate_package_func(
+                    package.as_str(),
+                    name,
+                    args,
+                    signal_map,
+                    signals,
+                    line,
+                    col,
+                )?;
                 return Ok(Some(ir));
             }
         }
@@ -1481,7 +1611,15 @@ impl Elaborator {
         if let Some(inline_pkg) = self.inline_func_pkg.get() {
             if let Some(pkg_items) = self.package_symbols.get(&inline_pkg) {
                 if matches!(pkg_items.get(&name_sym), Some(PackageItem::Function(_))) {
-                    let ir = self.elaborate_package_func(inline_pkg.as_str(), name, args, signal_map, signals, line, col)?;
+                    let ir = self.elaborate_package_func(
+                        inline_pkg.as_str(),
+                        name,
+                        args,
+                        signal_map,
+                        signals,
+                        line,
+                        col,
+                    )?;
                     return Ok(Some(ir));
                 }
             }
@@ -1499,7 +1637,15 @@ impl Elaborator {
                     seen.push(pkg);
                     if let Some(pkg_items) = self.package_symbols.get(&pkg) {
                         if matches!(pkg_items.get(&name_sym), Some(PackageItem::Function(_))) {
-                            let ir = self.elaborate_package_func(pkg.as_str(), name, args, signal_map, signals, line, col)?;
+                            let ir = self.elaborate_package_func(
+                                pkg.as_str(),
+                                name,
+                                args,
+                                signal_map,
+                                signals,
+                                line,
+                                col,
+                            )?;
                             return Ok(Some(ir));
                         }
                     }
@@ -1538,11 +1684,15 @@ impl Elaborator {
 
         for (package, item) in candidates {
             let qname = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
-            let Some(elems) = self.pkg_const_arrays.get(&qname) else { continue };
+            let Some(elems) = self.pkg_const_arrays.get(&qname) else {
+                continue;
+            };
             if elems.is_empty() {
                 continue;
             }
-            let Some(pkg_items) = self.package_symbols.get(&package) else { continue };
+            let Some(pkg_items) = self.package_symbols.get(&package) else {
+                continue;
+            };
             let elem_width: usize = match pkg_items.get(&item) {
                 Some(PackageItem::Param(p)) => {
                     if let Some((msb, lsb)) = &p.range {
@@ -1625,14 +1775,23 @@ impl Elaborator {
                 }
             })
             .ok_or_else(|| {
-                self.elab_diag_at(DiagCode::ModuleNotFound, format!("function '{}::{}' has no return expression", pkg_name, func_name), line, col)
+                self.elab_diag_at(
+                    DiagCode::ModuleNotFound,
+                    format!(
+                        "function '{}::{}' has no return expression",
+                        pkg_name, func_name
+                    ),
+                    line,
+                    col,
+                )
             })?;
 
         // Function body hanya boleh inline bila berisi TEPAT satu statement
         // `return <expr>;`. Fungsi dengan assignment/lokal/loop (mis. mubi4_and
         // yang menulis `out[k]` dalam loop) tidak bisa di-inline sederhana —
         // pakai pemanggilan runtime agar statement body dieksekusi di engine.
-        let body_is_trivial = func.stmts.len() == 1 && matches!(func.stmts.first(), Some(Stmt::Return(_)));
+        let body_is_trivial =
+            func.stmts.len() == 1 && matches!(func.stmts.first(), Some(Stmt::Return(_)));
         if !body_is_trivial {
             let ir_args: Result<Vec<IrExpr>, SimError> = args
                 .iter()
@@ -1667,13 +1826,21 @@ impl Elaborator {
             for (item_name, item) in items {
                 if let PackageItem::Param(p) = item {
                     if let Some(expr) = &p.default {
-                        result = Self::substitute_ident_in_expr(result, item_name.as_str(), expr.clone());
+                        result = Self::substitute_ident_in_expr(
+                            result,
+                            item_name.as_str(),
+                            expr.clone(),
+                        );
                     }
                 }
             }
             // Substitute enum member names with their constant values
             for (member_name, member_value) in &enum_member_values {
-                result = Self::substitute_ident_in_expr(result, member_name.as_str(), member_value.clone());
+                result = Self::substitute_ident_in_expr(
+                    result,
+                    member_name.as_str(),
+                    member_value.clone(),
+                );
             }
         }
 
@@ -1811,10 +1978,20 @@ impl Elaborator {
                             line,
                             col,
                         },
-                        _ => Expr::ScopedIdent { package, item, line, col },
+                        _ => Expr::ScopedIdent {
+                            package,
+                            item,
+                            line,
+                            col,
+                        },
                     }
                 } else {
-                    Expr::ScopedIdent { package, item, line, col }
+                    Expr::ScopedIdent {
+                        package,
+                        item,
+                        line,
+                        col,
+                    }
                 }
             }
             Expr::Cast { dtype, expr: inner } => Expr::Cast {
@@ -1862,7 +2039,12 @@ impl Elaborator {
                     replacement.clone(),
                 )),
             },
-            Expr::FuncCall { name: n, args: a, line, col } => Expr::FuncCall {
+            Expr::FuncCall {
+                name: n,
+                args: a,
+                line,
+                col,
+            } => Expr::FuncCall {
                 name: n,
                 args: a
                     .into_iter()
@@ -1963,15 +2145,27 @@ impl Elaborator {
         match expr {
             Expr::Ident { name, line, col } => signal_map
                 .get(name)
-                .ok_or_else(|| self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found", name), *line, *col))
+                .ok_or_else(|| {
+                    self.elab_diag_at(
+                        DiagCode::UndefinedSignal,
+                        format!("signal '{}' not found", name),
+                        *line,
+                        *col,
+                    )
+                })
                 .copied(),
-            Expr::MethodCall { .. } => Err(self.elab_diag(DiagCode::ModuleNotFound,
+            Expr::MethodCall { .. } => Err(self.elab_diag(
+                DiagCode::ModuleNotFound,
                 "method calls cannot resolve to a signal",
             )),
-            Expr::MemberAccess { .. } => Err(self.elab_diag(DiagCode::ModuleNotFound,
+            Expr::MemberAccess { .. } => Err(self.elab_diag(
+                DiagCode::ModuleNotFound,
                 "member access cannot resolve to a signal",
             )),
-            _ => Err(self.elab_diag(DiagCode::ModuleNotFound, "expected simple signal identifier")),
+            _ => Err(self.elab_diag(
+                DiagCode::ModuleNotFound,
+                "expected simple signal identifier",
+            )),
         }
     }
 
@@ -2055,13 +2249,32 @@ impl Elaborator {
             signals,
             &self.param_vals,
             &self.package_symbols,
-        ).map_err(|e| self.elab_diag(maria_core::diagnostics::diagnostic::DiagCode::WidthMismatch, format!("width computation failed for port '{}': {}", hint_name, e)))?;
+        )
+        .map_err(|e| {
+            self.elab_diag(
+                maria_core::diagnostics::diagnostic::DiagCode::WidthMismatch,
+                format!("width computation failed for port '{}': {}", hint_name, e),
+            )
+        })?;
         let width = if width_val > 0 { width_val } else { 1 };
         if width > 1_000_000 {
-            eprintln!("[DBG-WIDTH] port '{}' huge width {} expr={:?} in module {}", hint_name, width, expr, self.current_module.map(|s| s.as_str()).unwrap_or("?"));
+            eprintln!(
+                "[DBG-WIDTH] port '{}' huge width {} expr={:?} in module {}",
+                hint_name,
+                width,
+                expr,
+                self.current_module.map(|s| s.as_str()).unwrap_or("?")
+            );
             if let Expr::Concat(items) = expr {
                 for it in items {
-                    let w = compute_expr_width(it, signal_map, signals, &self.param_vals, &self.package_symbols).unwrap_or(0);
+                    let w = compute_expr_width(
+                        it,
+                        signal_map,
+                        signals,
+                        &self.param_vals,
+                        &self.package_symbols,
+                    )
+                    .unwrap_or(0);
                     eprintln!("[DBG-WIDTH]   item {:?} width={}", it, w);
                 }
             }
@@ -2246,7 +2459,11 @@ impl Elaborator {
         })
     }
 
-    pub(crate) fn resolve_typedef_width(&self, dtype: &DataType, range: Option<&ExprRange>) -> usize {
+    pub(crate) fn resolve_typedef_width(
+        &self,
+        dtype: &DataType,
+        range: Option<&ExprRange>,
+    ) -> usize {
         self.resolve_typedef_width_dims(dtype, range, &[], &self.param_vals)
     }
 
@@ -2264,10 +2481,8 @@ impl Elaborator {
         let mut total = 1usize;
         let mut any = false;
         let eval = |er: &ExprRange, total: &mut usize, any: &mut bool| {
-            let msb = const_eval_params(&er.msb, params)
-                .or_else(|_| const_eval_simple(&er.msb));
-            let lsb = const_eval_params(&er.lsb, params)
-                .or_else(|_| const_eval_simple(&er.lsb));
+            let msb = const_eval_params(&er.msb, params).or_else(|_| const_eval_simple(&er.msb));
+            let lsb = const_eval_params(&er.lsb, params).or_else(|_| const_eval_simple(&er.lsb));
             if let (Ok(msb), Ok(lsb)) = (msb, lsb) {
                 let w = if msb >= lsb {
                     (msb - lsb + 1) as usize
@@ -2359,15 +2574,16 @@ impl Elaborator {
         if elem_w == 0 {
             return None;
         }
-        let mask = if elem_w >= 64 { u64::MAX } else { (1u64 << elem_w) - 1 };
+        let mask = if elem_w >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << elem_w) - 1
+        };
         let mut acc: u64 = 0;
         for (i, v) in elems.iter().enumerate() {
             acc |= (*v as u64 & mask) << (i * elem_w);
         }
-        Some((
-            IrExpr::Const(LogicVec::from_u64(acc, total_w)),
-            elem_w,
-        ))
+        Some((IrExpr::Const(LogicVec::from_u64(acc, total_w)), elem_w))
     }
 
     fn resolve_typename_for_expr(
@@ -2400,7 +2616,9 @@ impl Elaborator {
             Expr::Value(v) => match v {
                 maria_ast::Value::Decimal(_) => "int".to_string(),
                 maria_ast::Value::Real(_) => "real".to_string(),
-                maria_ast::Value::Binary { .. } | maria_ast::Value::Hex { .. } | maria_ast::Value::Octal { .. } => "logic".to_string(),
+                maria_ast::Value::Binary { .. }
+                | maria_ast::Value::Hex { .. }
+                | maria_ast::Value::Octal { .. } => "logic".to_string(),
             },
             Expr::String(_) => "string".to_string(),
             Expr::BitSelect { expr: inner, .. } | Expr::RangeSelect { expr: inner, .. } => {
@@ -2465,6 +2683,3 @@ fn sub_elem_width_from_packed(
 //
 // CATATAN: parse_type_spec_str() sudah dipindahkan ke src/elaboration/util/type_util.rs
 // dan di-re-export via util/mod.rs.
-
-
-

@@ -1227,7 +1227,22 @@ WAV-17: ✅ Signal statistics (toggle/rise/fall/X/Z) (Low)
 WAV-15: ✅ Waveform export (VERIF batch ROUND 58) — mwave `export`
            (VCD → CSV/TXT, wave.rs export/export_csv/export_txt) +
            CsvWaveWriter --waveform-csv (daftar lama ✅).
-WAV-16:[] No protocol-aware waveform decode (AHB, AXI, APB) (High)
+WAV-16: ✅ Protocol-aware waveform decode — mwave `decode` (2026-08-24):
+           `maria mwave decode <vcd> --proto apb|axi4lite|ahb` — dekode
+           transaksi bus dari timeline VCD (wave.rs). APB: SETUP
+           (psel&!penable, latch addr/wdata/dir) → ACCESS selesai saat
+           pready=1 (pready absen = selalu ready); wait-state didukung.
+           AXI4-Lite: handshake valid/ready per channel (aw+w→b untuk write,
+           ar→r untuk read, resp bresp/rresp tercatat), transaksi merge-sort
+           by end-time. AHB-Lite: address phase NONSEQ/SEQ dgn hready=1,
+           data phase selesai di hready=1 berikutnya (pipelining back-to-back
+           ditangani). Sinyal dicari by nama komponen terakhir (case-
+           insensitive fallback) sehingga scope nested tetap ketemu. Output:
+           daftar transaksi (index/kind/start/end/addr/data/resp) + summary
+           write/read. 5 test unit inline wave.rs (apb write+read+wait-state,
+           axi4lite 2 channel + resp, ahb single transfer, error sinyal
+           hilang, helper sample_at/bits_val) + demo e2e .sv → VCD → decode:
+           apb_demo.sv (4 tx benar), axi_demo.sv (3 tx), ahb_demo.sv (2 tx).
 WAV-17: ✅ No waveform statistics (ROUND 46) — mwave stats (toggle count,
            transitions, first/last change, activity%, stuck detection)
            + src/waveform/statistics.rs (--signal-stats, daftar lama ✅).
@@ -3526,6 +3541,83 @@ Detail perbaikan per round:
    - Tests baru ROUND 76: +2 (NBA conflict + single writer)
    - Audit items ditandai [x]: PARSER-03, ELAB-06, SIM-14,
      PERF-14, WAV-12, VERIF-33, PARSER-02 (7 item)
+
+═══ ROUND 84 — WAV-16 mwave decode + FIX BUG ENGINE & EMU RTL CPU (2026-08-24) ═══
+
+✅ WAV-16 PROTOCOL-AWARE WAVEFORM DECODE — DIIMPLEMENTASIKAN (baru):
+   - crates/maria-tools/src/wave.rs: subcommand `decode` — dekode transaksi
+     bus dari timeline VCD. Tiga protokol:
+     • apb      — SETUP (psel&!penable → latch addr/wdata/dir) → ACCESS
+                  selesai saat pready=1; pready absen = selalu ready;
+                  wait-state (pready=0) ditangani (transaksi selesai saat
+                  pready naik, rdata di-sample di cycle itu).
+     • axi4lite — handshake valid/ready per channel: write aw+w→b, read
+                  ar→r; resp bresp/rresp tercatat di DecodedTx.resp;
+                  transaksi merge-sort by end-time lalu re-index.
+     • ahb      — AHB-Lite single transfer: address phase NONSEQ("10")/
+                  SEQ("11") dgn hready=1, data phase selesai di hready=1
+                  berikutnya; pipelining back-to-back (addr phase baru pada
+                  cycle yang sama dgn data phase sebelumnya) ditangani.
+   - Helper: find_signal (nama komponen terakhir, fallback case-insensitive
+     → sinyal di scope nested tetap ketemu), timeline_of, sample_at (nilai
+     @t = perubahan terakhir ≤ t), bits_val, union_times.
+   - CLI: MwaveCmd::Decode { input, --proto apb|axi4lite|ahb } (cli.rs +
+     dispatch main.rs). AGENTS.md mwave row di-update.
+   - Demo e2e .sv dulu (sesuai aturan): apb_demo.sv (task apb_write/apb_read,
+     VCD via maria run) → decode 4 transaksi benar (WRITE 0x10=0xAB,
+     WRITE 0x24=0x3C, READ 0x40=0x51, READ 0x44=0x55); axi_demo.sv → 3 tx
+     (2 WRITE + 1 READ dgn resp OKAY); ahb_demo.sv → 2 tx benar. Jalur error
+     proto tak dikenal + sinyal hilang terverifikasi pesan jelas.
+   - Test resmi (5 unit inline wave.rs): test_apb_decode_write_read_and_wait_
+     state (termasuk wait-state pready), test_axi4lite_decode_write_and_read_
+     channels (resp OKAY/SLVERR), test_ahb_decode_single_transfers,
+     test_decode_missing_signal_errors, test_sample_at_and_bits_val.
+
+✅ FIX BUG — RtlLinkedCpu bus protocol (8 test cpu::rtl FAIL/hang → PASS):
+   Gejala: test_rtl_cpu_runs_elf_program dkk gagal (nilai salah) +
+   test_rtl_cpu_irq_timer/irq_uart_tx hang >60s.
+   Akar masalah 3 lapis:
+   1. PROTOCOL VIOLATION (rtl.rs): picorv32 memakai stream valid/ready —
+      `mem_valid` TETAP tinggi utk transaksi back-to-back. Host menunggu
+      `!mem_valid` sbg penyelesaian → tidak pernah terjadi setelah txn
+      pertama → mem_ready mentok 1 → semua fetch berikutnya selesai instan
+      dgn mem_rdata BASI (mem_rdata_q stuck di instruksi pertama; CPU
+      eksekusi instruksi sama berulang sambil prefetch jalan). Fix:
+      penyelesaian non-MMIO deterministik — serve (poke ready+rdata) → posedge
+      berikutnya = selesai (close ready, catat fetch) → transaksi baru bisa
+      dilayani di tick yang sama; MMIO (decoder RTL yang ack) tetap deteksi
+      valid turun. Field served_mmio baru.
+   2. SHIFT CONTEXT WIDTH (engine, global): `decoded_imm <= mem_rdata_q[31:12]
+      << 12` dievaluasi dalam lebar operand 20-bit → semua bit high terbuang
+      (LUI menghasilkan 0 bukan 0x80000000). IEEE 1800-2017 §11.6: width
+      ekspresi RHS assignment = max(width LHS, self-determined). Fix:
+      eval_assign_rhs kini evaluasi via evaluate_expr_ctx(expr, width_lhs) —
+      operand shift di-extend ke width konteks SEBELUM digeser (Sshr signed =
+      sign-extend via is_signed_expr, sisanya zero; dispatch >>> signed/
+      unsigned identik dgn jalur evaluate_expr_impl). Berlaku global untuk
+      SEMUA assignment (blocking/NBA/continuous).
+   3. pc() SEMANTIK: picorv32 mem-prefetch 1 instruksi MELEWATI ebreak →
+      alamat fetch terakhir host = ebreak+4. Fix: CpuPorts.reg_pc (opsional,
+      probe `u_cpu.reg_pc`) — pc() membaca reg_pc internal RTL bila tersedia,
+      fallback last_pc.
+   Hasil: 8/8 test cpu::rtl pass (compile/ports, runs_elf, mmio_uart_console,
+   mmio_read_status, irq_timer, irq_uart_tx, uart_rx_bidirectional,
+   reset_pc_starts_at_reset_vector) — maria-emu 70/70 pass.
+
+✅ FIX BUG — test_resize_extend (maria-simulator packed_eval): test menuntut
+   extend X padahal PackedLogicVec::resize zero-extend by design (dokumentasi
+   + konsisten dgn LogicVec::resize + semantik assignment Verilog). Test
+   diperbaiki (bits[4]/bits[7] = Zero), bukan implementasinya.
+
+✅ CLEANUP — hapus crates/maria-tests/examples/mdme_run.rs: import
+   `maria_tests::mdme` yang TIDAK PERNAH ada di tree (modul mdme tidak
+   pernah di-commit) → example mati permanen dan memblokir
+   `cargo test --workspace` (E0432).
+
+📊 VERIFIKASI ROUND 84:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2110 passed, 0 failed
+   - Demo WAV-16: /tmp/opencode/wav16_demo/{apb,axi,ahb}_demo.sv → decode OK
 
 ========================================
 END OF AUDIT REPORT

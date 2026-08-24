@@ -13,11 +13,11 @@
 //! 1 file = 1 tanggung jawab: hanya sinkronisasi & primitif konkurensi.
 
 use super::super::SimulationEngine;
-use maria_core::diagnostics::DiagCode;
-use maria_core::error::SimError;
-use maria_compiler::hir::{LogicVec, ObjId};
 use crate::simulator::types::*;
 use crate::simulator::util::*;
+use maria_compiler::hir::{LogicVec, ObjId};
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
 use maria_core::Symbol;
 
 impl SimulationEngine {
@@ -211,13 +211,16 @@ impl SimulationEngine {
                 if e.triggered {
                     return Ok(false);
                 }
-                self.uvm_sync_waiters.entry(obj_id).or_default().push(UvmSyncWaiter {
-                    continuation,
-                    fork_id,
-                    this,
-                    method: method_opt,
-                    wait_label: "wait_trigger".to_string(),
-                });
+                self.uvm_sync_waiters
+                    .entry(obj_id)
+                    .or_default()
+                    .push(UvmSyncWaiter {
+                        continuation,
+                        fork_id,
+                        this,
+                        method: method_opt,
+                        wait_label: "wait_trigger".to_string(),
+                    });
                 Ok(true)
             }
             "wait_on" => {
@@ -229,13 +232,16 @@ impl SimulationEngine {
                 if e.on {
                     return Ok(false);
                 }
-                self.uvm_sync_waiters.entry(obj_id).or_default().push(UvmSyncWaiter {
-                    continuation,
-                    fork_id,
-                    this,
-                    method: method_opt,
-                    wait_label: "wait_on".to_string(),
-                });
+                self.uvm_sync_waiters
+                    .entry(obj_id)
+                    .or_default()
+                    .push(UvmSyncWaiter {
+                        continuation,
+                        fork_id,
+                        this,
+                        method: method_opt,
+                        wait_label: "wait_on".to_string(),
+                    });
                 Ok(true)
             }
             "wait_for" => {
@@ -250,13 +256,16 @@ impl SimulationEngine {
                     self.uvm_release_waiters(obj_id)?;
                     return Ok(false);
                 }
-                self.uvm_sync_waiters.entry(obj_id).or_default().push(UvmSyncWaiter {
-                    continuation,
-                    fork_id,
-                    this,
-                    method: method_opt,
-                    wait_label: "wait_for".to_string(),
-                });
+                self.uvm_sync_waiters
+                    .entry(obj_id)
+                    .or_default()
+                    .push(UvmSyncWaiter {
+                        continuation,
+                        fork_id,
+                        this,
+                        method: method_opt,
+                        wait_label: "wait_for".to_string(),
+                    });
                 Ok(true)
             }
             "wait_for_count" => {
@@ -270,13 +279,16 @@ impl SimulationEngine {
                     self.uvm_release_waiters(obj_id)?;
                     return Ok(false);
                 }
-                self.uvm_sync_waiters.entry(obj_id).or_default().push(UvmSyncWaiter {
-                    continuation,
-                    fork_id,
-                    this,
-                    method: method_opt,
-                    wait_label: "wait_for_count".to_string(),
-                });
+                self.uvm_sync_waiters
+                    .entry(obj_id)
+                    .or_default()
+                    .push(UvmSyncWaiter {
+                        continuation,
+                        fork_id,
+                        this,
+                        method: method_opt,
+                        wait_label: "wait_for_count".to_string(),
+                    });
                 Ok(true)
             }
             _ => Ok(false),
@@ -294,12 +306,7 @@ impl SimulationEngine {
                 t,
                 RegionEvent {
                     region: EventRegion::Active,
-                    event: EventKind::ContinueAstBlock(
-                        w.continuation,
-                        w.fork_id,
-                        w.this,
-                        w.method,
-                    ),
+                    event: EventKind::ContinueAstBlock(w.continuation, w.fork_id, w.this, w.method),
                 },
             );
         }
@@ -327,10 +334,16 @@ impl SimulationEngine {
             }
             "put" => {
                 if args.is_empty() {
-                    return Err(self.diag_error(DiagCode::DpiError, "mailbox::put expects 1 argument"));
+                    return Err(
+                        self.diag_error(DiagCode::DpiError, "mailbox::put expects 1 argument")
+                    );
                 }
                 let bound = self.mailbox_bounds.get(&obj_id).copied().unwrap_or(0);
-                let len = self.mailbox_queues.get(&obj_id).map(|q| q.len()).unwrap_or(0);
+                let len = self
+                    .mailbox_queues
+                    .get(&obj_id)
+                    .map(|q| q.len())
+                    .unwrap_or(0);
                 if bound > 0 && len >= bound {
                     // Bounded + penuh di konteks ekspresi (non-blocking): warning,
                     // item dibuang (semantics try_put). Jalur statement blocking
@@ -379,10 +392,16 @@ impl SimulationEngine {
             }
             "try_put" => {
                 if args.is_empty() {
-                    return Err(self.diag_error(DiagCode::DpiError, "mailbox::try_put expects 1 argument"));
+                    return Err(
+                        self.diag_error(DiagCode::DpiError, "mailbox::try_put expects 1 argument")
+                    );
                 }
                 let bound = self.mailbox_bounds.get(&obj_id).copied().unwrap_or(0);
-                let len = self.mailbox_queues.get(&obj_id).map(|q| q.len()).unwrap_or(0);
+                let len = self
+                    .mailbox_queues
+                    .get(&obj_id)
+                    .map(|q| q.len())
+                    .unwrap_or(0);
                 if bound > 0 && len >= bound {
                     return Ok(LogicVec::from_u64(0, 1));
                 }
@@ -409,10 +428,10 @@ impl SimulationEngine {
                     .ok_or_else(|| err.clone())?;
                 Ok(LogicVec::from_u64(q.len() as u64, 32))
             }
-            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
-                "unknown mailbox method: {}",
-                method
-            ))),
+            _ => Err(self.diag_error(
+                DiagCode::NotImplemented,
+                format!("unknown mailbox method: {}", method),
+            )),
         }
     }
 
@@ -457,13 +476,16 @@ impl SimulationEngine {
             }
             _ => return Ok(false),
         }
-        self.uvm_sync_waiters.entry(obj_id).or_default().push(UvmSyncWaiter {
-            continuation,
-            fork_id,
-            this,
-            method: method_opt,
-            wait_label: method.to_string(),
-        });
+        self.uvm_sync_waiters
+            .entry(obj_id)
+            .or_default()
+            .push(UvmSyncWaiter {
+                continuation,
+                fork_id,
+                this,
+                method: method_opt,
+                wait_label: method.to_string(),
+            });
         Ok(true)
     }
 
@@ -492,12 +514,7 @@ impl SimulationEngine {
                 t,
                 RegionEvent {
                     region: EventRegion::Active,
-                    event: EventKind::ContinueAstBlock(
-                        w.continuation,
-                        w.fork_id,
-                        w.this,
-                        w.method,
-                    ),
+                    event: EventKind::ContinueAstBlock(w.continuation, w.fork_id, w.this, w.method),
                 },
             );
         }
@@ -534,7 +551,10 @@ impl SimulationEngine {
                     .get_mut(&obj_id)
                     .ok_or_else(|| err.clone())?;
                 if *c < key_count {
-                    return Err(self.diag_error(DiagCode::MemoryOutOfBounds, "semaphore::get: insufficient keys"));
+                    return Err(self.diag_error(
+                        DiagCode::MemoryOutOfBounds,
+                        "semaphore::get: insufficient keys",
+                    ));
                 }
                 *c -= key_count;
                 Ok(LogicVec::from_u64(*c as u64, 32))
@@ -559,10 +579,9 @@ impl SimulationEngine {
                 } else {
                     1
                 };
-                let c = self
-                    .semaphore_counts
-                    .get_mut(&obj_id)
-                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "semaphore not initialized"))?;
+                let c = self.semaphore_counts.get_mut(&obj_id).ok_or_else(|| {
+                    SimError::with_diag(DiagCode::NullHandle, "semaphore not initialized")
+                })?;
                 if *c >= key_count {
                     *c -= key_count;
                     Ok(LogicVec::from_u64(1, 1))
@@ -570,10 +589,10 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(0, 1))
                 }
             }
-            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
-                "unknown semaphore method: {}",
-                method
-            ))),
+            _ => Err(self.diag_error(
+                DiagCode::NotImplemented,
+                format!("unknown semaphore method: {}", method),
+            )),
         }
     }
 
@@ -632,10 +651,10 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
-            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
-                "unknown process method: {}",
-                method
-            ))),
+            _ => Err(self.diag_error(
+                DiagCode::NotImplemented,
+                format!("unknown process method: {}", method),
+            )),
         }
     }
 }

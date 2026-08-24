@@ -40,7 +40,12 @@ mod tests {
 
     #[test]
     fn accepts_plain_sources() {
-        for p in ["counter.sv", "top.svh", "rtl/ibex_core.sv", "plain.tpl_notes"] {
+        for p in [
+            "counter.sv",
+            "top.svh",
+            "rtl/ibex_core.sv",
+            "plain.tpl_notes",
+        ] {
             assert!(
                 !is_template_source(Path::new(p)),
                 "tidak boleh terdeteksi: {}",

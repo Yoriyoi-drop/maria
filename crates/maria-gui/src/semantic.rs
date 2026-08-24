@@ -74,47 +74,146 @@ pub fn color(kind: SemKind) -> Color32 {
         SemKind::Keyword => rgb(0x56, 0x9c, 0xd6),
         SemKind::Type => rgb(0x4e, 0xc9, 0xb0),
         SemKind::SysFunc => rgb(0x56, 0xb6, 0xc2),
-        SemKind::Module => rgb(0x61, 0xaf, 0xef), // biru
+        SemKind::Module => rgb(0x61, 0xaf, 0xef),    // biru
         SemKind::Interface => rgb(0xc6, 0x78, 0xdd), // ungu
-        SemKind::Package => rgb(0x56, 0xb6, 0xc2), // cyan
+        SemKind::Package => rgb(0x56, 0xb6, 0xc2),   // cyan
         SemKind::Parameter => rgb(0xd1, 0x9a, 0x66), // oranye
-        SemKind::Signal => rgb(0xe0, 0xe0, 0xe0), // putih
-        SemKind::Clock => rgb(0xe5, 0xc0, 0x7b), // kuning
-        SemKind::Reset => rgb(0xe0, 0x6c, 0x75), // merah
-        SemKind::Typedef => rgb(0x98, 0xc3, 0x79), // hijau
-        SemKind::Enum => rgb(0x0f, 0xb9, 0xb1), // teal
+        SemKind::Signal => rgb(0xe0, 0xe0, 0xe0),    // putih
+        SemKind::Clock => rgb(0xe5, 0xc0, 0x7b),     // kuning
+        SemKind::Reset => rgb(0xe0, 0x6c, 0x75),     // merah
+        SemKind::Typedef => rgb(0x98, 0xc3, 0x79),   // hijau
+        SemKind::Enum => rgb(0x0f, 0xb9, 0xb1),      // teal
         SemKind::Punct => rgb(0x80, 0x84, 0x8e),
     }
 }
 
 /// Keyword struktural + kontrol SystemVerilog.
 const SV_KEYWORDS: &[&str] = &[
-    "module", "endmodule", "interface", "endinterface", "package", "endpackage",
-    "program", "endprogram", "class", "endclass", "function", "endfunction",
-    "task", "endtask", "property", "endproperty", "sequence", "endsequence",
-    "clocking", "endclocking", "checker", "endchecker", "primitive", "endprimitive",
-    "config", "endconfig", "generate", "endgenerate", "specify", "endspecify",
-    "input", "output", "inout", "ref", "import", "export", "bind", "modport",
-    "always", "always_comb", "always_ff", "always_latch", "initial", "final",
-    "assign", "deassign", "force", "release",
-    "if", "else", "case", "casex", "casez", "endcase",
-    "for", "while", "repeat", "forever", "do",
-    "begin", "end", "fork", "join", "join_any", "join_none",
-    "disable", "wait", "assert", "assume", "cover",
-    "rand", "randc", "constraint", "solve", "before", "dist",
-    "unique", "priority", "new", "this", "super", "extends", "implements",
-    "default", "global", "defparam", "signed", "unsigned", "genvar",
-    "automatic", "static", "virtual", "pure", "typedef", "enum",
-    "struct", "union", "return", "break", "continue",
-    "void", "local", "extern", "protected", "var", "parameter", "localparam",
-    "posedge", "negedge", "edge", "iff", "inside", "with", "within",
-    "first_match", "foreach", "intersect", "throughout", "matches",
+    "module",
+    "endmodule",
+    "interface",
+    "endinterface",
+    "package",
+    "endpackage",
+    "program",
+    "endprogram",
+    "class",
+    "endclass",
+    "function",
+    "endfunction",
+    "task",
+    "endtask",
+    "property",
+    "endproperty",
+    "sequence",
+    "endsequence",
+    "clocking",
+    "endclocking",
+    "checker",
+    "endchecker",
+    "primitive",
+    "endprimitive",
+    "config",
+    "endconfig",
+    "generate",
+    "endgenerate",
+    "specify",
+    "endspecify",
+    "input",
+    "output",
+    "inout",
+    "ref",
+    "import",
+    "export",
+    "bind",
+    "modport",
+    "always",
+    "always_comb",
+    "always_ff",
+    "always_latch",
+    "initial",
+    "final",
+    "assign",
+    "deassign",
+    "force",
+    "release",
+    "if",
+    "else",
+    "case",
+    "casex",
+    "casez",
+    "endcase",
+    "for",
+    "while",
+    "repeat",
+    "forever",
+    "do",
+    "begin",
+    "end",
+    "fork",
+    "join",
+    "join_any",
+    "join_none",
+    "disable",
+    "wait",
+    "assert",
+    "assume",
+    "cover",
+    "rand",
+    "randc",
+    "constraint",
+    "solve",
+    "before",
+    "dist",
+    "unique",
+    "priority",
+    "new",
+    "this",
+    "super",
+    "extends",
+    "implements",
+    "default",
+    "global",
+    "defparam",
+    "signed",
+    "unsigned",
+    "genvar",
+    "automatic",
+    "static",
+    "virtual",
+    "pure",
+    "typedef",
+    "enum",
+    "struct",
+    "union",
+    "return",
+    "break",
+    "continue",
+    "void",
+    "local",
+    "extern",
+    "protected",
+    "var",
+    "parameter",
+    "localparam",
+    "posedge",
+    "negedge",
+    "edge",
+    "iff",
+    "inside",
+    "with",
+    "within",
+    "first_match",
+    "foreach",
+    "intersect",
+    "throughout",
+    "matches",
 ];
 
 /// Tipe data SystemVerilog.
 const SV_TYPES: &[&str] = &[
-    "bit", "logic", "reg", "wire", "byte", "int", "integer", "longint",
-    "shortint", "time", "real", "realtime", "string", "event",
+    "bit", "logic", "reg", "wire", "byte", "int", "integer", "longint", "shortint", "time", "real",
+    "realtime", "string", "event",
 ];
 
 fn is_keyword(w: &str) -> bool {
@@ -168,7 +267,11 @@ fn lex(text: &str) -> Vec<Tok> {
             while i < n && b[i] != b'\n' {
                 i += 1;
             }
-            toks.push(Tok { start: s, end: i, kind: SemKind::Comment });
+            toks.push(Tok {
+                start: s,
+                end: i,
+                kind: SemKind::Comment,
+            });
             continue;
         }
 
@@ -180,7 +283,11 @@ fn lex(text: &str) -> Vec<Tok> {
                 i += 1;
             }
             i = (i + 2).min(n);
-            toks.push(Tok { start: s, end: i, kind: SemKind::Comment });
+            toks.push(Tok {
+                start: s,
+                end: i,
+                kind: SemKind::Comment,
+            });
             continue;
         }
 
@@ -195,7 +302,11 @@ fn lex(text: &str) -> Vec<Tok> {
                 i += 1;
             }
             i = (i + 1).min(n);
-            toks.push(Tok { start: s, end: i, kind: SemKind::String });
+            toks.push(Tok {
+                start: s,
+                end: i,
+                kind: SemKind::String,
+            });
             continue;
         }
 
@@ -206,7 +317,11 @@ fn lex(text: &str) -> Vec<Tok> {
             while i < n && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
                 i += 1;
             }
-            toks.push(Tok { start: s, end: i, kind: SemKind::Macro });
+            toks.push(Tok {
+                start: s,
+                end: i,
+                kind: SemKind::Macro,
+            });
             continue;
         }
 
@@ -217,7 +332,11 @@ fn lex(text: &str) -> Vec<Tok> {
             while i < n && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
                 i += 1;
             }
-            toks.push(Tok { start: s, end: i, kind: SemKind::SysFunc });
+            toks.push(Tok {
+                start: s,
+                end: i,
+                kind: SemKind::SysFunc,
+            });
             continue;
         }
 
@@ -225,14 +344,15 @@ fn lex(text: &str) -> Vec<Tok> {
         if c.is_ascii_digit() {
             let s = i;
             while i < n
-                && (b[i].is_ascii_alphanumeric()
-                    || b[i] == b'\''
-                    || b[i] == b'_'
-                    || b[i] == b'.')
+                && (b[i].is_ascii_alphanumeric() || b[i] == b'\'' || b[i] == b'_' || b[i] == b'.')
             {
                 i += 1;
             }
-            toks.push(Tok { start: s, end: i, kind: SemKind::Number });
+            toks.push(Tok {
+                start: s,
+                end: i,
+                kind: SemKind::Number,
+            });
             continue;
         }
 
@@ -250,14 +370,22 @@ fn lex(text: &str) -> Vec<Tok> {
             } else {
                 SemKind::Signal // sementara; klasifikasi di `classify`
             };
-            toks.push(Tok { start: s, end: i, kind });
+            toks.push(Tok {
+                start: s,
+                end: i,
+                kind,
+            });
             continue;
         }
 
         // ── Punctuation (1 byte) ──
         let s = i;
         i += 1;
-        toks.push(Tok { start: s, end: i, kind: SemKind::Punct });
+        toks.push(Tok {
+            start: s,
+            end: i,
+            kind: SemKind::Punct,
+        });
     }
 
     toks
@@ -402,7 +530,9 @@ pub fn identifier_at(text: &str, byte_idx: usize) -> Option<(String, SemKind)> {
     }
     let mut toks = lex(text);
     classify(&mut toks, text);
-    let t = toks.iter().find(|t| byte_idx >= t.start && byte_idx < t.end)?;
+    let t = toks
+        .iter()
+        .find(|t| byte_idx >= t.start && byte_idx < t.end)?;
     match t.kind {
         SemKind::Signal
         | SemKind::Clock

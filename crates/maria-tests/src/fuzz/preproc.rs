@@ -101,7 +101,10 @@ fn fuzz_preproc_include_cycle_and_eof() {
         "hang pada include cycle"
     );
 
-    let top_self = format!("`include \"{}/self.svh\"\nmodule m; endmodule", dir.display());
+    let top_self = format!(
+        "`include \"{}/self.svh\"\nmodule m; endmodule",
+        dir.display()
+    );
     let t2 = top_self;
     assert!(
         with_timeout(move || crate::compile_str(&t2).is_ok()).is_some(),

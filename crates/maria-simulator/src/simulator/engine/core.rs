@@ -1,17 +1,19 @@
 use super::SimulationEngine;
 use super::SimulationLimit;
 use super::EVENT_COMPACT_THRESHOLD;
-use maria_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext, SourceSnippet};
-use maria_core::error::SimError;
-use maria_ir::*;
+use crate::foreign::{ForeignEvent, ForeignKind};
 use crate::scheduler::clock_domain::ClockDomain;
 use crate::simulator::parallel::ParallelConfig;
 use crate::simulator::sdf::SdfData;
 use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
-use maria_core::Symbol;
-use crate::foreign::{ForeignEvent, ForeignKind};
 use crate::waveform::{CsvWaveWriter, FstWaveWriter, SignalStats, VcdWriter};
+use maria_core::diagnostics::diagnostic::{
+    DiagCode, DiagLevel, Diagnostic, RuntimeContext, SourceSnippet,
+};
+use maria_core::error::SimError;
+use maria_core::Symbol;
+use maria_ir::*;
 use rand::SeedableRng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -219,6 +221,7 @@ impl SimulationEngine {
             cosim_state: None,
             cosim_signals: Vec::new(),
             foreign_events: Vec::new(),
+            event_alloc_exceeded: false,
             signal_delays: std::collections::HashMap::new(),
             power_intent: None,
             process_body_cache: HashMap::new(),
@@ -336,7 +339,13 @@ impl SimulationEngine {
     }
 
     /// Emit error diagnostic dengan posisi source (line, col).
-    pub fn diag_error_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) -> SimError {
+    pub fn diag_error_at(
+        &self,
+        code: DiagCode,
+        message: impl Into<String>,
+        line: usize,
+        col: usize,
+    ) -> SimError {
         let msg: String = message.into();
         let mut diag = Diagnostic::new(DiagLevel::Error, code, msg)
             .with_runtime_context(self.runtime_context())
@@ -347,7 +356,12 @@ impl SimulationEngine {
                 if line <= source_lines.len() {
                     let source_line = &source_lines[line - 1];
                     let (file, display_line) = self.resolve_source_location(line);
-                    diag = diag.with_source_snippet(SourceSnippet::new(file, display_line, col, source_line));
+                    diag = diag.with_source_snippet(SourceSnippet::new(
+                        file,
+                        display_line,
+                        col,
+                        source_line,
+                    ));
                 }
             }
         }
@@ -356,7 +370,13 @@ impl SimulationEngine {
     }
 
     /// Emit warning diagnostic dengan posisi source (line, col).
-    pub fn diag_warn_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) {
+    pub fn diag_warn_at(
+        &self,
+        code: DiagCode,
+        message: impl Into<String>,
+        line: usize,
+        col: usize,
+    ) {
         let msg: String = message.into();
         let mut diag = Diagnostic::new(DiagLevel::Warning, code, msg)
             .with_runtime_context(self.runtime_context())
@@ -366,7 +386,12 @@ impl SimulationEngine {
                 if line <= source_lines.len() {
                     let source_line = &source_lines[line - 1];
                     let (file, display_line) = self.resolve_source_location(line);
-                    diag = diag.with_source_snippet(SourceSnippet::new(file, display_line, col, source_line));
+                    diag = diag.with_source_snippet(SourceSnippet::new(
+                        file,
+                        display_line,
+                        col,
+                        source_line,
+                    ));
                 }
             }
         }
@@ -380,7 +405,13 @@ impl SimulationEngine {
     }
 
     /// Emit fatal diagnostic dengan posisi source.
-    pub fn diag_fatal_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) -> SimError {
+    pub fn diag_fatal_at(
+        &self,
+        code: DiagCode,
+        message: impl Into<String>,
+        line: usize,
+        col: usize,
+    ) -> SimError {
         let msg: String = message.into();
         let mut diag = Diagnostic::new(DiagLevel::Fatal, code, msg)
             .with_runtime_context(self.runtime_context())
@@ -390,7 +421,12 @@ impl SimulationEngine {
                 if line <= source_lines.len() {
                     let source_line = &source_lines[line - 1];
                     let (file, display_line) = self.resolve_source_location(line);
-                    diag = diag.with_source_snippet(SourceSnippet::new(file, display_line, col, source_line));
+                    diag = diag.with_source_snippet(SourceSnippet::new(
+                        file,
+                        display_line,
+                        col,
+                        source_line,
+                    ));
                 }
             }
         }
@@ -464,9 +500,18 @@ impl SimulationEngine {
 
     /// Ensure the events Vec is large enough to hold events at time `t`.
     /// Indeks relatif terhadap `events_base` (lihat `retire_events`).
+    ///
+    /// Guard OOM: delay ekstrem (`#9000000000000000000`) meminta resize
+    /// miliaran slot → capacity-overflow panic / alokasi puluhan GB.
+    /// Melebihi MAX_EVENT_SPAN → set `event_alloc_exceeded` (run loop akan
+    /// abort dengan diagnostic), TIDAK mengalokasi.
     pub fn ensure_events(&mut self, t: usize) {
         let idx = t - self.events_base;
         if idx >= self.events.len() {
+            if idx > crate::simulator::engine::MAX_EVENT_SPAN {
+                self.event_alloc_exceeded = true;
+                return;
+            }
             self.events.resize(idx + 1, Vec::new());
         }
     }
@@ -657,7 +702,8 @@ impl SimulationEngine {
                 let _old_locals = std::mem::replace(&mut self.method_locals, wf.locals.clone());
                 self.current_this = wf.this;
                 self.current_method = wf.method;
-                let completed = self.evaluate_ast_block_with_delay_fork(&wf.ast_continuation, None)?;
+                let completed =
+                    self.evaluate_ast_block_with_delay_fork(&wf.ast_continuation, None)?;
                 self.ast_return_pending = false;
                 if completed {
                     let keep = wf.base_len.saturating_sub(1).min(self.method_locals.len());
@@ -692,6 +738,10 @@ impl SimulationEngine {
         let idx = t - self.events_base;
         if idx >= self.events.len() {
             self.ensure_events(t);
+            // ensure_events bisa menolak (span ekstrem) — jangan index.
+            if idx >= self.events.len() {
+                return;
+            }
         }
         self.events[t - self.events_base].push(event);
     }
@@ -702,7 +752,7 @@ impl SimulationEngine {
         self.use_timing_wheel = enabled;
         if enabled && self.timing_wheel.is_none() {
             self.timing_wheel = Some(
-                crate::simulator::engine::scheduler::timing_wheel::HierarchicalTimingWheel::new()
+                crate::simulator::engine::scheduler::timing_wheel::HierarchicalTimingWheel::new(),
             );
         }
     }
@@ -845,14 +895,21 @@ impl SimulationEngine {
         let mut last_active_wall = std::time::Instant::now();
         let mut stall_warned = false;
 
-        while self.running
-            && self.sim_limit.allows(self.state.time)
-            && !self.is_cancelled()
-        {
+        while self.running && self.sim_limit.allows(self.state.time) && !self.is_cancelled() {
             let step_start_events = self.sim_perf.counters.events_processed;
             let t = self.state.time as usize;
-            // events_base konstan selama satu time step (hanya berubah di
-            // retire_events, yang dipanggil setelah step selesai).
+
+            // ── Guard: event di luar jendela alokasi → abort graceful ──
+            if self.event_alloc_exceeded {
+                return Err(SimError::with_diag(
+                    DiagCode::InternalError,
+                    format!(
+                        "delay/event scheduled beyond MAX_EVENT_SPAN ({} ticks from current window) \
+                         — gunakan delay lebih kecil atau aktifkan timing wheel",
+                        10_000_000
+                    ),
+                ));
+            }
             let base = self.events_base;
 
             // ── Timing wheel: advance to current time ──
@@ -915,7 +972,12 @@ impl SimulationEngine {
             // ── IEEE 1800 stratified event loop ──
             self.sim_perf.counters.time_steps += 1;
             let mut delta_count = 0u64;
-            crate::dbg_sim!(1, "time-step {} delta-loop start (events[same-time]={})", t, self.events.len());
+            crate::dbg_sim!(
+                1,
+                "time-step {} delta-loop start (events[same-time]={})",
+                t,
+                self.events.len()
+            );
             loop {
                 self.sim_perf.counters.delta_cycles += 1;
                 crate::dbg_sim!(3, "t={} delta={} region-loop", t, delta_count);
@@ -961,8 +1023,30 @@ impl SimulationEngine {
                             // Postponed region: process once per time step, does NOT re-circulate
                             self.ensure_events(t);
                             let mut to_process = Vec::new();
+                            self.events[t - base].retain(|re| {
+                                if re.region == EventRegion::Postponed {
+                                    to_process.push(re.event.clone());
+                                    false
+                                } else {
+                                    true
+                                }
+                            });
+                            if !to_process.is_empty() {
+                                for event in to_process {
+                                    self.process_event(event, t)?;
+                                }
+                            }
+                        }
+                        EventRegion::Observed => {
+                            // Observed region: evaluate concurrent assertions (SVA).
+                            // Process any assertion-evaluation events scheduled here.
+                            self.ensure_events(t);
+                            let mut matched = true;
+                            while matched {
+                                matched = false;
+                                let mut to_process = Vec::new();
                                 self.events[t - base].retain(|re| {
-                                    if re.region == EventRegion::Postponed {
+                                    if re.region == EventRegion::Observed {
                                         to_process.push(re.event.clone());
                                         false
                                     } else {
@@ -970,104 +1054,84 @@ impl SimulationEngine {
                                     }
                                 });
                                 if !to_process.is_empty() {
+                                    activity = true;
+                                    matched = true;
                                     for event in to_process {
                                         self.process_event(event, t)?;
                                     }
                                 }
-                        }
-                        EventRegion::Observed => {
-                            // Observed region: evaluate concurrent assertions (SVA).
-                            // Process any assertion-evaluation events scheduled here.
-                            self.ensure_events(t);
-                                let mut matched = true;
-                                while matched {
-                                    matched = false;
-                                    let mut to_process = Vec::new();
-                                    self.events[t - base].retain(|re| {
-                                        if re.region == EventRegion::Observed {
-                                            to_process.push(re.event.clone());
-                                            false
-                                        } else {
-                                            true
-                                        }
-                                    });
-                                    if !to_process.is_empty() {
-                                        activity = true;
-                                        matched = true;
-                                        for event in to_process {
-                                            self.process_event(event, t)?;
-                                        }
-                                    }
-                                }
+                            }
                         }
                         EventRegion::Active | EventRegion::Inactive => {
                             self.ensure_events(t);
                             loop {
-                                    let events: Vec<RegionEvent> = self.events[t - base]
-                                        .drain(..)
-                                        .filter(|re| re.region == region)
-                                        .collect();
-                                    self.sim_perf.counters.events_processed += events.len() as u64;
-                                    if events.is_empty() {
-                                        break;
-                                    }
-                                    activity = true;
+                                let events: Vec<RegionEvent> = self.events[t - base]
+                                    .drain(..)
+                                    .filter(|re| re.region == region)
+                                    .collect();
+                                self.sim_perf.counters.events_processed += events.len() as u64;
+                                if events.is_empty() {
+                                    break;
+                                }
+                                activity = true;
 
-                                    // ── DAG-Parallel: batch EvalProcess events ──
-                                    // Hanya Combinational/CombReactive/Initial yang aman
-                                    // di-paralelkan. Sequential, AlwaysWithDelay, dan Final
-                                    // butuh event loop semantics (clock edges, delay).
-                                    if self.use_dag_parallel && self.sim_dag.is_some() {
-                                        let mut eval_pids: Vec<usize> = Vec::new();
-                                        let mut other_events: Vec<RegionEvent> = Vec::new();
-                                        for re in events {
-                                            if let EventKind::EvalProcess(pid) = re.event {
-                                                if pid < self.design.top.processes.len()
-                                                    && {
-                                                        // Safe access with bounds check
-                                                        let process = self.design.top.processes.get(pid)
-                                                            .expect("process pid bounds check failed in DAG loop");
-                                                        crate::scheduler::is_process_parallelizable(process)
-                                                    }
-                                                {
-                                                    eval_pids.push(pid);
-                                                } else {
-                                                    other_events.push(re);
-                                                }
+                                // ── DAG-Parallel: batch EvalProcess events ──
+                                // Hanya Combinational/CombReactive/Initial yang aman
+                                // di-paralelkan. Sequential, AlwaysWithDelay, dan Final
+                                // butuh event loop semantics (clock edges, delay).
+                                if self.use_dag_parallel && self.sim_dag.is_some() {
+                                    let mut eval_pids: Vec<usize> = Vec::new();
+                                    let mut other_events: Vec<RegionEvent> = Vec::new();
+                                    for re in events {
+                                        if let EventKind::EvalProcess(pid) = re.event {
+                                            if pid < self.design.top.processes.len() && {
+                                                // Safe access with bounds check
+                                                let process = self
+                                                    .design
+                                                    .top
+                                                    .processes
+                                                    .get(pid)
+                                                    .expect(
+                                                    "process pid bounds check failed in DAG loop",
+                                                );
+                                                crate::scheduler::is_process_parallelizable(process)
+                                            } {
+                                                eval_pids.push(pid);
                                             } else {
                                                 other_events.push(re);
                                             }
-                                        }
-
-                                        // Process non-EvalProcess events sequentially
-                                        for re in other_events {
-                                            self.process_event(re.event, t)?;
-                                        }
-
-                                        // Process EvalProcess events via DAG parallel
-                                        if !eval_pids.is_empty() {
-                                            // SIM-25: jalur DAG-parallel tidak lewat
-                                            // process_event → hitung di sini agar counter
-                                            // processes_evaluated akurat.
-                                            self.sim_perf.counters.processes_evaluated +=
-                                                eval_pids.len() as u64;
-                                            self.evaluate_eval_processes_parallel(
-                                                &eval_pids,
-                                            )?;
-                                        }
-                                    } else {
-                                        // Sequential: process all events one by one
-                                        for re in events {
-                                            self.process_event(re.event, t)?;
+                                        } else {
+                                            other_events.push(re);
                                         }
                                     }
 
-                                    // Inactive re-drains; Active drains once (outer loop
-                                    // re-circulates if new events appear later)
-                                    if region == EventRegion::Active {
-                                        break;
+                                    // Process non-EvalProcess events sequentially
+                                    for re in other_events {
+                                        self.process_event(re.event, t)?;
+                                    }
+
+                                    // Process EvalProcess events via DAG parallel
+                                    if !eval_pids.is_empty() {
+                                        // SIM-25: jalur DAG-parallel tidak lewat
+                                        // process_event → hitung di sini agar counter
+                                        // processes_evaluated akurat.
+                                        self.sim_perf.counters.processes_evaluated +=
+                                            eval_pids.len() as u64;
+                                        self.evaluate_eval_processes_parallel(&eval_pids)?;
+                                    }
+                                } else {
+                                    // Sequential: process all events one by one
+                                    for re in events {
+                                        self.process_event(re.event, t)?;
                                     }
                                 }
+
+                                // Inactive re-drains; Active drains once (outer loop
+                                // re-circulates if new events appear later)
+                                if region == EventRegion::Active {
+                                    break;
+                                }
+                            }
                         }
                         EventRegion::Nba => {
                             // NBA region: commit pending non-blocking assignments
@@ -1176,11 +1240,18 @@ impl SimulationEngine {
                 }
 
                 if delta_count > self.delta_limit {
-                    let changed_names: Vec<String> = deltas.iter().take(16).map(|id| {
-                        self.design.top.signals.get(*id)
-                            .map(|s| s.name.as_str().to_string())
-                            .unwrap_or_else(|| format!("#{}", id))
-                    }).collect();
+                    let changed_names: Vec<String> = deltas
+                        .iter()
+                        .take(16)
+                        .map(|id| {
+                            self.design
+                                .top
+                                .signals
+                                .get(*id)
+                                .map(|s| s.name.as_str().to_string())
+                                .unwrap_or_else(|| format!("#{}", id))
+                        })
+                        .collect();
                     let mut diag = Diagnostic::new(
                         DiagLevel::Error,
                         DiagCode::InfiniteDelta,
@@ -1199,11 +1270,16 @@ impl SimulationEngine {
                         RuntimeContext::new()
                             .with_time(format!("{} ns", self.state.time))
                             .with_delta(delta_count)
-                            .with_module(self.current_instance_path.as_deref().unwrap_or("top"))
+                            .with_module(self.current_instance_path.as_deref().unwrap_or("top")),
                     );
                     return Err(SimError::Diagnostic(diag));
                 }
-                let report_interval = if self.delta_limit >= 100_000 { 100_000 } else { self.delta_limit / 10 }.max(1);
+                let report_interval = if self.delta_limit >= 100_000 {
+                    100_000
+                } else {
+                    self.delta_limit / 10
+                }
+                .max(1);
                 if delta_count > 0 && delta_count.is_multiple_of(report_interval) {
                     eprintln!(
                         "warning: {} delta cycles at time {} (limit {})",
@@ -1232,17 +1308,25 @@ impl SimulationEngine {
                         if !self.osc_state_hashes.insert(hv) {
                             // Kumpulkan nama sinyal yang berubah di delta ini
                             // untuk diagnostic — membantu user melacak loop.
-                            let changed_names: Vec<String> = deltas.iter().take(16).map(|id| {
-                                self.design.top.signals.get(*id)
-                                    .map(|s| s.name.as_str().to_string())
-                                    .unwrap_or_else(|| format!("#{}", id))
-                            }).collect();
+                            let changed_names: Vec<String> = deltas
+                                .iter()
+                                .take(16)
+                                .map(|id| {
+                                    self.design
+                                        .top
+                                        .signals
+                                        .get(*id)
+                                        .map(|s| s.name.as_str().to_string())
+                                        .unwrap_or_else(|| format!("#{}", id))
+                                })
+                                .collect();
                             // Kumpulkan process writer untuk sinyal berubah —
                             // petunjuk ke always_comb/assign yang membentuk loop.
                             let mut writers: Vec<String> = Vec::new();
                             for id in deltas.iter().take(16) {
                                 if let Some(&Some(writer_id)) = self.signal_writers.get(id) {
-                                    let pname = if let Some(obj) = self.state.get_object(writer_id) {
+                                    let pname = if let Some(obj) = self.state.get_object(writer_id)
+                                    {
                                         obj.class_name.as_str().to_string()
                                     } else {
                                         format!("process#{}", writer_id)
@@ -1267,16 +1351,16 @@ impl SimulationEngine {
                                 ));
                             }
                             if !writers.is_empty() {
-                                diag = diag.with_note(format!(
-                                    "process penulis: {}",
-                                    writers.join(", ")
-                                ));
+                                diag = diag
+                                    .with_note(format!("process penulis: {}", writers.join(", ")));
                             }
                             diag = diag.with_runtime_context(
                                 RuntimeContext::new()
                                     .with_time(format!("{} ns", self.state.time))
                                     .with_delta(delta_count)
-                                    .with_module(self.current_instance_path.as_deref().unwrap_or("top"))
+                                    .with_module(
+                                        self.current_instance_path.as_deref().unwrap_or("top"),
+                                    ),
                             );
                             return Err(SimError::Diagnostic(diag));
                         }
@@ -1285,28 +1369,32 @@ impl SimulationEngine {
                 }
 
                 // Check pending $wait conditions
-                if !self.pending_waits.is_empty() && !deltas.is_empty()
+                if !self.pending_waits.is_empty()
+                    && !deltas.is_empty()
                     && self.process_pending_waits(&deltas)?
                 {
                     activity = true;
                 }
 
                 // Check pending blocking event control @(sig)
-                if !self.pending_events.is_empty() && !deltas.is_empty()
+                if !self.pending_events.is_empty()
+                    && !deltas.is_empty()
                     && self.process_pending_events(&deltas)?
                 {
                     activity = true;
                 }
 
                 // Check pending blocking event control @(sig) jalur AST (UVM task)
-                if !self.pending_ast_events.is_empty() && !deltas.is_empty()
+                if !self.pending_ast_events.is_empty()
+                    && !deltas.is_empty()
                     && self.process_pending_ast_events(&deltas)?
                 {
                     activity = true;
                 }
 
                 // Check pending wait_order conditions
-                if !self.pending_wait_orders.is_empty() && !deltas.is_empty()
+                if !self.pending_wait_orders.is_empty()
+                    && !deltas.is_empty()
                     && self.process_pending_wait_orders(&deltas)?
                 {
                     activity = true;
@@ -1316,22 +1404,21 @@ impl SimulationEngine {
                 // Postponed events do NOT re-circulate (they fire once per time step)
                 self.ensure_events(t);
                 let has_remaining = self.events[t - base].iter().any(|re| {
-                        matches!(
-                            re.region,
-                            EventRegion::PreActive
-                                | EventRegion::Active
-                                | EventRegion::Inactive
-                                | EventRegion::PreNba
-                                | EventRegion::Nba
-                                | EventRegion::PostNba
-                                | EventRegion::PreObserved
-                                | EventRegion::Observed
-                                | EventRegion::PostObserved
-                                | EventRegion::Reactive
-                                | EventRegion::PostReactive
-                        )
-                    })
-                    || !self.nba_pending.is_empty();
+                    matches!(
+                        re.region,
+                        EventRegion::PreActive
+                            | EventRegion::Active
+                            | EventRegion::Inactive
+                            | EventRegion::PreNba
+                            | EventRegion::Nba
+                            | EventRegion::PostNba
+                            | EventRegion::PreObserved
+                            | EventRegion::Observed
+                            | EventRegion::PostObserved
+                            | EventRegion::Reactive
+                            | EventRegion::PostReactive
+                    )
+                }) || !self.nba_pending.is_empty();
 
                 if has_remaining {
                     activity = true;
@@ -1358,7 +1445,13 @@ impl SimulationEngine {
                 if pi.enabled {
                     // Auto-bind supply net values from design signals with matching names
                     for net_name in pi.supply_nets.keys() {
-                        if let Some(sig_id) = self.design.top.signals.iter().position(|s| s.name.as_str() == *net_name) {
+                        if let Some(sig_id) = self
+                            .design
+                            .top
+                            .signals
+                            .iter()
+                            .position(|s| s.name.as_str() == *net_name)
+                        {
                             let val = self.state.read_signal(sig_id);
                             let is_high = val.to_bool().unwrap_or(false);
                             pi.supply_values.insert(net_name.clone(), is_high);
@@ -1449,11 +1542,25 @@ impl SimulationEngine {
                     // Poll incoming signals from external simulator
                     if cs.data_ready {
                         for (sig_id, val_bytes) in cs.incoming_signals.drain(..) {
-                            if let Some(inner) = self.cosim_signals.iter().find(|(id, _, _)| *id as u32 == sig_id) {
+                            if let Some(inner) = self
+                                .cosim_signals
+                                .iter()
+                                .find(|(id, _, _)| *id as u32 == sig_id)
+                            {
                                 let sid = inner.0;
                                 if sid < self.state.signals.len() {
-                                    let width = self.design.top.signals.get(sid).map(|s| s.width).unwrap_or(1);
-                                    let val = u64::from_le_bytes(val_bytes[..8.min(val_bytes.len())].try_into().unwrap_or([0u8; 8]));
+                                    let width = self
+                                        .design
+                                        .top
+                                        .signals
+                                        .get(sid)
+                                        .map(|s| s.width)
+                                        .unwrap_or(1);
+                                    let val = u64::from_le_bytes(
+                                        val_bytes[..8.min(val_bytes.len())]
+                                            .try_into()
+                                            .unwrap_or([0u8; 8]),
+                                    );
                                     let lv = LogicVec::from_u64(val, width);
                                     if *self.state.read_signal(sid) != lv {
                                         self.state.write_signal(sid, lv);
@@ -1711,7 +1818,10 @@ impl SimulationEngine {
             if never_changed && !sig.init_val.all_x() && !sig.init_val.all_z() {
                 self.emit_warning(
                     DiagCode::UnusedSignal,
-                    format!("unused signal '{}' never changed during simulation", sig_name),
+                    format!(
+                        "unused signal '{}' never changed during simulation",
+                        sig_name
+                    ),
                 );
             }
 
@@ -1724,7 +1834,10 @@ impl SimulationEngine {
                 if !has_real_change {
                     self.emit_warning(
                         DiagCode::ClockNeverToggles,
-                        format!("clock signal '{}' never toggled during simulation", sig_name),
+                        format!(
+                            "clock signal '{}' never toggled during simulation",
+                            sig_name
+                        ),
                     );
                 }
             }
@@ -1760,10 +1873,7 @@ impl SimulationEngine {
     ///
     /// Setiap process bekerja pada snapshot sinyal sendiri (clone).
     /// Tidak ada shared mutable state antar process dalam satu layer.
-    fn evaluate_eval_processes_parallel(
-        &mut self,
-        pids: &[usize],
-    ) -> Result<(), SimError> {
+    fn evaluate_eval_processes_parallel(&mut self, pids: &[usize]) -> Result<(), SimError> {
         // Gunakan cached process bodies + DAG layers + signal snapshot
         // untuk menghindari clone bodies setiap cycle.
         // process_body_cache dibangun sekali di run() — tidak ada clone per cycle.
@@ -1778,8 +1888,12 @@ impl SimulationEngine {
         };
         // Snapshot Arc: per-process `signals.to_vec()` = Arc clone (cheap,
         // tanpa deep-copy semua sinyal) — deep-copy hanya sinyal yang diakses.
-        let signal_snapshot: Vec<Arc<LogicVec>> =
-            self.state.signals.iter().map(|lv| Arc::new(lv.clone())).collect();
+        let signal_snapshot: Vec<Arc<LogicVec>> = self
+            .state
+            .signals
+            .iter()
+            .map(|lv| Arc::new(lv.clone()))
+            .collect();
 
         // Evaluate each layer sequentially (processes WITHIN a layer are parallel)
         // Pass process_body_cache langsung — zero clone per cycle
@@ -1820,7 +1934,11 @@ impl SimulationEngine {
             .iter()
             .filter_map(|&pid| {
                 if pid < self.design.top.processes.len() {
-                    if let Process::Sequential { body, .. } = self.design.top.processes.get(pid)
+                    if let Process::Sequential { body, .. } = self
+                        .design
+                        .top
+                        .processes
+                        .get(pid)
                         .expect("process pid out of bounds in clock domain eval")
                     {
                         return Some((pid, body.clone()));
@@ -1836,13 +1954,15 @@ impl SimulationEngine {
             .iter()
             .filter_map(|&pid| {
                 if pid < self.design.top.processes.len() {
-                    match self.design.top.processes.get(pid)
+                    match self
+                        .design
+                        .top
+                        .processes
+                        .get(pid)
                         .expect("process pid out of bounds in follower bodies")
                     {
                         Process::Combinational { body, .. }
-                        | Process::CombReactive { body, .. } => {
-                            Some((pid, body.clone()))
-                        }
+                        | Process::CombReactive { body, .. } => Some((pid, body.clone())),
                         _ => None,
                     }
                 } else {
@@ -1909,10 +2029,13 @@ impl SimulationEngine {
         for (pid, process) in processes.iter().enumerate() {
             if let Process::Initial { name, .. } = process {
                 if name.as_str().starts_with("decl_init_") {
-                    self.push_event(t, RegionEvent {
-                        region: EventRegion::Active,
-                        event: EventKind::EvalProcess(pid),
-                    });
+                    self.push_event(
+                        t,
+                        RegionEvent {
+                            region: EventRegion::Active,
+                            event: EventKind::EvalProcess(pid),
+                        },
+                    );
                 }
             }
         }
@@ -1925,10 +2048,13 @@ impl SimulationEngine {
                         continue;
                     }
                 }
-                self.push_event(t, RegionEvent {
-                    region: EventRegion::Active,
-                    event: EventKind::EvalProcess(pid),
-                });
+                self.push_event(
+                    t,
+                    RegionEvent {
+                        region: EventRegion::Active,
+                        event: EventKind::EvalProcess(pid),
+                    },
+                );
             }
         }
 
@@ -1938,20 +2064,26 @@ impl SimulationEngine {
                 process,
                 Process::Combinational { .. } | Process::CombReactive { .. }
             ) {
-                self.push_event(t, RegionEvent {
-                    region: EventRegion::Active,
-                    event: EventKind::EvalProcess(pid),
-                });
+                self.push_event(
+                    t,
+                    RegionEvent {
+                        region: EventRegion::Active,
+                        event: EventKind::EvalProcess(pid),
+                    },
+                );
             }
         }
 
         // Pass 3: AlwaysWithDelay (time-0 processes that schedule future events)
         for (pid, process) in processes.iter().enumerate() {
             if matches!(process, Process::AlwaysWithDelay { .. }) {
-                self.push_event(t, RegionEvent {
-                    region: EventRegion::Active,
-                    event: EventKind::EvalProcess(pid),
-                });
+                self.push_event(
+                    t,
+                    RegionEvent {
+                        region: EventRegion::Active,
+                        event: EventKind::EvalProcess(pid),
+                    },
+                );
             }
         }
 
@@ -2098,13 +2230,14 @@ impl SimulationEngine {
                     // Read-Write Synch: VPI cbReadWriteSynch + VHPI vhpiCbReadWriteSynch
                     crate::vpi::with_vpi_engine(|engine| {
                         crate::vpi::callback::fire_value_change_callbacks(
-                            "", &crate::vpi::types::t_vpi_value::default(),
-                            &crate::vpi::types::t_vpi_value::default()
+                            "",
+                            &crate::vpi::types::t_vpi_value::default(),
+                            &crate::vpi::types::t_vpi_value::default(),
                         );
                     });
                     crate::vhpi::object::with_vhpi_engine(|engine| {
                         crate::vhpi::callback::dispatch_callback(
-                            crate::vhpi::callback::vhpiCbReadWriteSynch
+                            crate::vhpi::callback::vhpiCbReadWriteSynch,
                         );
                     });
                 }
@@ -2112,13 +2245,14 @@ impl SimulationEngine {
                     // Read-Only Synch: VPI cbReadOnlySynch + VHPI vhpiCbReadOnlySynch
                     crate::vpi::with_vpi_engine(|engine| {
                         crate::vpi::callback::fire_value_change_callbacks(
-                            "", &crate::vpi::types::t_vpi_value::default(),
-                            &crate::vpi::types::t_vpi_value::default()
+                            "",
+                            &crate::vpi::types::t_vpi_value::default(),
+                            &crate::vpi::types::t_vpi_value::default(),
                         );
                     });
                     crate::vhpi::object::with_vhpi_engine(|engine| {
                         crate::vhpi::callback::dispatch_callback(
-                            crate::vhpi::callback::vhpiCbReadOnlySynch
+                            crate::vhpi::callback::vhpiCbReadOnlySynch,
                         );
                     });
                 }
@@ -2126,7 +2260,7 @@ impl SimulationEngine {
                     // Next Time Step: VHPI vhpiCbNextTimeStep
                     crate::vhpi::object::with_vhpi_engine(|engine| {
                         crate::vhpi::callback::dispatch_callback(
-                            crate::vhpi::callback::vhpiCbNextTimeStep
+                            crate::vhpi::callback::vhpiCbNextTimeStep,
                         );
                     });
                 }
@@ -2137,13 +2271,14 @@ impl SimulationEngine {
                     // End of simulation: VPI cbEndOfSimulation + VHPI vhpiCbEndOfSimulation
                     crate::vpi::with_vpi_engine(|engine| {
                         crate::vpi::callback::fire_value_change_callbacks(
-                            "", &crate::vpi::types::t_vpi_value::default(),
-                            &crate::vpi::types::t_vpi_value::default()
+                            "",
+                            &crate::vpi::types::t_vpi_value::default(),
+                            &crate::vpi::types::t_vpi_value::default(),
                         );
                     });
                     crate::vhpi::object::with_vhpi_engine(|engine| {
                         crate::vhpi::callback::dispatch_callback(
-                            crate::vhpi::callback::vhpiCbEndOfSimulation
+                            crate::vhpi::callback::vhpiCbEndOfSimulation,
                         );
                     });
                 }

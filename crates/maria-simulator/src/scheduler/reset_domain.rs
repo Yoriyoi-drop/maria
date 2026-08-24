@@ -19,11 +19,9 @@
 //! 4. **Report** — output text: jumlah domain, sinyal per domain, daftar
 //!    crossing (src → dst) + skor severity.
 
-use std::collections::{HashMap, HashSet};
+use crate::scheduler::cdc::{collect_stmt_signal_reads, collect_writes_from_stmts};
 use maria_ir::*;
-use crate::scheduler::cdc::{
-    collect_stmt_signal_reads, collect_writes_from_stmts,
-};
+use std::collections::{HashMap, HashSet};
 
 /// Severity crossing reset-domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -269,7 +267,11 @@ impl ResetDomainAnalysis {
     /// Report text (human-readable).
     pub fn report(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("Reset-Domain Crossing Analysis — {} domain, {} crossing\n", self.domains.len(), self.crossings.len()));
+        out.push_str(&format!(
+            "Reset-Domain Crossing Analysis — {} domain, {} crossing\n",
+            self.domains.len(),
+            self.crossings.len()
+        ));
         for d in &self.domains {
             let pol = if d.polarity { "posedge" } else { "negedge" };
             out.push_str(&format!(
@@ -319,8 +321,7 @@ mod tests {
 
     #[test]
     fn test_no_crossing_single_reset_domain() {
-        let a = rdc(
-            r#"
+        let a = rdc(r#"
 module top(input logic clk, input logic rst_n, input logic d);
     logic q;
     always_ff @(posedge clk or negedge rst_n) begin
@@ -328,16 +329,18 @@ module top(input logic clk, input logic rst_n, input logic d);
         else q <= d;
     end
 endmodule
-"#,
+"#);
+        assert!(
+            a.crossings.is_empty(),
+            "satu domain reset → no crossing: {}",
+            a.report()
         );
-        assert!(a.crossings.is_empty(), "satu domain reset → no crossing: {}", a.report());
     }
 
     #[test]
     fn test_crossing_two_reset_domains() {
         // Sinyal `q_a` di-reset oleh rst_a, dibaca flop domain rst_b → crossing.
-        let a = rdc(
-            r#"
+        let a = rdc(r#"
 module top(
     input logic clk, input logic rst_a_n, input logic rst_b_n, input logic d
 );
@@ -351,8 +354,7 @@ module top(
         else q_b <= q_a;   // q_a dari domain reset rst_a → crossing
     end
 endmodule
-"#,
-        );
+"#);
         assert_eq!(a.domains.len(), 2, "2 domain reset: {}", a.report());
         assert!(
             a.crossings.iter().any(|c| c.signal_name == "q_a"),
@@ -368,8 +370,7 @@ endmodule
     fn test_async_reader_domain_medium() {
         // q_a ditulis domain rst_a; proses TANPA reset membaca q_a → severity
         // Medium (tidak ada sinkronisasi reset).
-        let a = rdc(
-            r#"
+        let a = rdc(r#"
 module top(input logic clk, input logic rst_a_n, input logic d);
     logic q_a, out;
     always_ff @(posedge clk or negedge rst_a_n) begin
@@ -380,8 +381,7 @@ module top(input logic clk, input logic rst_a_n, input logic d);
         out <= q_a;   // pembaca tanpa reset
     end
 endmodule
-"#,
-        );
+"#);
         assert!(
             a.crossings.iter().any(|c| c.signal_name == "q_a"),
             "q_a crossing ke domain none: {}",
@@ -391,8 +391,7 @@ endmodule
 
     #[test]
     fn test_multibit_crossing_critical() {
-        let a = rdc(
-            r#"
+        let a = rdc(r#"
 module top(
     input logic clk, input logic rst_a_n, input logic rst_b_n,
     input logic [3:0] d
@@ -407,8 +406,7 @@ module top(
         else b_bus <= a_bus;   // 4-bit crossing → Critical
     end
 endmodule
-"#,
-        );
+"#);
         let c = a
             .crossings
             .iter()

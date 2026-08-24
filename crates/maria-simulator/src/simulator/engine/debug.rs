@@ -1,8 +1,7 @@
+use crate::simulator::types::*;
 /// Debug and breakpoint functionality for SimulationEngine.
 /// Contains signal history tracking, breakpoint checking, and watchpoint logic.
 use maria_core::error::SimError;
-use crate::simulator::types::*;
-
 
 use super::SimulationEngine;
 

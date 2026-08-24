@@ -121,7 +121,10 @@ pub fn parse_constraints(text: &str) -> Constraint {
                     after.and_then(parse_ns)
                 })
                 .unwrap_or(10.0);
-            c.clocks.push(ClockSpec { name, period_ns: period });
+            c.clocks.push(ClockSpec {
+                name,
+                period_ns: period,
+            });
             continue;
         }
 
@@ -141,7 +144,11 @@ pub fn parse_constraints(text: &str) -> Constraint {
 
         // ── max_fanout N ──
         if let Some(rest) = norm.strip_prefix("max_fanout") {
-            if let Some(n) = rest.split_whitespace().next().and_then(|t| t.parse::<u32>().ok()) {
+            if let Some(n) = rest
+                .split_whitespace()
+                .next()
+                .and_then(|t| t.parse::<u32>().ok())
+            {
                 c.max_fanout = Some(n);
             }
             continue;
@@ -194,7 +201,10 @@ fn extract_attr(rest: &str, key: &str) -> Option<String> {
                 return toks.get(i + 2).map(|s| s.to_string());
             }
             // toleran: `from rst` tanpa `=`
-            return toks.get(i + 1).filter(|v| v != &&"=").map(|s| s.to_string());
+            return toks
+                .get(i + 1)
+                .filter(|v| v != &&"=")
+                .map(|s| s.to_string());
         }
     }
     None
@@ -274,8 +284,8 @@ mod tests {
     fn chip_mcs_file_roundtrip() {
         // Reproduksi e2e: file chip.mcs lengkap harus menghasilkan false path
         // HANYA untuk signal berisi "rst", bukan untuk "y".
-        let text = std::fs::read_to_string("examples/synth/chip.mcs")
-            .unwrap_or_else(|_| String::new());
+        let text =
+            std::fs::read_to_string("examples/synth/chip.mcs").unwrap_or_else(|_| String::new());
         if text.is_empty() {
             return; // file belum ada di konteks test — skip
         }

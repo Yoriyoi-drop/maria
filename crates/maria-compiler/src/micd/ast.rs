@@ -44,8 +44,8 @@ pub fn deserialize_ir(bytes: &[u8]) -> Option<maria_ir::IrDesign> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::CompileSession;
     use crate::frontend::compile_session::SessionConfig;
+    use crate::frontend::CompileSession;
 
     /// Resolve path relatif ke root workspace (cwd test = direktori crate).
     fn root_rel(rel: &str) -> std::path::PathBuf {

@@ -511,7 +511,12 @@ pub(crate) fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<Symbol, Symbol>) 
                 .collect(),
             default: default.map(|d| Box::new(rename_in_stmt(&d, rename_map))),
         },
-        Stmt::SysCall { name, args, line, col } => Stmt::SysCall {
+        Stmt::SysCall {
+            name,
+            args,
+            line,
+            col,
+        } => Stmt::SysCall {
             name,
             args: args
                 .into_iter()
@@ -822,10 +827,7 @@ pub(crate) fn rename_in_sequence(
             Box::new(rename_in_sequence(*l, rename_map)),
             Box::new(rename_in_sequence(*r, rename_map)),
         ),
-        Sequence::Repeat(s, n) => Sequence::Repeat(
-            Box::new(rename_in_sequence(*s, rename_map)),
-            n,
-        ),
+        Sequence::Repeat(s, n) => Sequence::Repeat(Box::new(rename_in_sequence(*s, rename_map)), n),
         Sequence::Implication(ante, cons) => Sequence::Implication(
             Box::new(rename_in_sequence(*ante, rename_map)),
             Box::new(rename_in_sequence(*cons, rename_map)),
@@ -835,9 +837,18 @@ pub(crate) fn rename_in_sequence(
 
 pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -> Expr {
     match expr {
-        Expr::Ident { name, .. } => rename_map
-            .get(&name)
-            .map_or(Expr::Ident { name, line: 0, col: 0 }, |n| Expr::Ident { name: *n, line: 0, col: 0 }),
+        Expr::Ident { name, .. } => rename_map.get(&name).map_or(
+            Expr::Ident {
+                name,
+                line: 0,
+                col: 0,
+            },
+            |n| Expr::Ident {
+                name: *n,
+                line: 0,
+                col: 0,
+            },
+        ),
         Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
             op,
             lhs: Box::new(rename_in_expr(*lhs, rename_map)),
@@ -889,7 +900,12 @@ pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -
             base: Box::new(rename_in_expr(*base, rename_map)),
             width: Box::new(rename_in_expr(*width, rename_map)),
         },
-        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
+        Expr::FuncCall {
+            name,
+            args,
+            line,
+            col,
+        } => Expr::FuncCall {
             name: rename_map.get(&name).cloned().unwrap_or(name),
             args: args
                 .into_iter()
@@ -973,7 +989,11 @@ pub fn substitute_let_args(expr: Expr, map: &HashMap<Symbol, &Expr>) -> Expr {
     match expr {
         Expr::Ident { name, .. } => match map.get(&name) {
             Some(repl) => (*repl).clone(),
-            None => Expr::Ident { name, line: 0, col: 0 },
+            None => Expr::Ident {
+                name,
+                line: 0,
+                col: 0,
+            },
         },
         Expr::RangeSelect { expr, msb, lsb } => Expr::RangeSelect {
             expr: Box::new(substitute_let_args(*expr, map)),
@@ -1018,7 +1038,12 @@ pub fn substitute_let_args(expr: Expr, map: &HashMap<Symbol, &Expr>) -> Expr {
             false_expr: Box::new(substitute_let_args(*false_expr, map)),
         },
         Expr::Paren(inner) => Expr::Paren(Box::new(substitute_let_args(*inner, map))),
-        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
+        Expr::FuncCall {
+            name,
+            args,
+            line,
+            col,
+        } => Expr::FuncCall {
             name,
             args: args
                 .into_iter()

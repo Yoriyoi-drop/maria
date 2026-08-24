@@ -1,36 +1,41 @@
+pub mod core;
 pub mod coverage;
 pub mod debug;
 pub mod engine_utils;
-pub mod waveform;
-pub mod core;
+pub mod eval;
 pub mod mir;
 pub mod scheduler;
-pub mod eval;
-pub mod uvm;
 pub mod sequence;
+pub mod uvm;
+pub mod waveform;
 
-use maria_core::diagnostics::DiagSink;
-use maria_ir::*;
+use crate::foreign::{ForeignEvent, ForeignKind};
 use crate::scheduler::clock_domain::ClockDomainAnalysis;
 use crate::scheduler::SimulationDag;
 use crate::simulator::arena::SimulationArena;
 use crate::simulator::parallel::ParallelConfig;
-use crate::foreign::{ForeignEvent, ForeignKind};
+use maria_core::diagnostics::DiagSink;
+use maria_ir::*;
 
 use crate::simulator::sdf::TimingCheck;
 use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
-use maria_core::Symbol;
 use crate::waveform::{CsvWaveWriter, FstWaveWriter, SignalStats, VcdWriter};
+use maria_core::Symbol;
 use rand::rngs::StdRng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
-
 
 /// Maks iterasi loop runtime tanpa delay sebelum dihentikan (anti-hang).
 /// Loop testbench yang sah hampir selalu < 100k iterasi; loop tanpa delay
 /// yang lebih besar hampir pasti tak disengaja (infinite loop).
 pub(crate) const MAX_LOOP_ITER: usize = 100_000;
+
+/// Batas jangkauan slot event dari `events_base`. Event dengan delay lebih
+/// jauh dari ini (mis. `#9000000000000000000`) tidak dialokasikan — run loop
+/// abort dengan diagnostic alih-alih resize miliaran slot (OOM/panic).
+/// 10M slot ≈ 240MB worst-case; desain nyata menengah jauh di bawah ini.
+pub(crate) const MAX_EVENT_SPAN: usize = 10_000_000;
 
 /// Jumlah slot time-step yang dipertahankan di `events` sebelum leading
 /// retired slots di-drain (lihat `SimulationEngine::retire_events`).
@@ -229,7 +234,8 @@ pub struct SimulationEngine {
     pub uvm_config_db_data: HashMap<(String, String), LogicVec>,
     /// VERIF-06: waiter blocking `uvm_config_db::wait_modified(inst, field)`
     /// — keyed by (inst, field); release saat `set` dipanggil utk key tsb.
-    pub uvm_config_db_waiters: HashMap<(String, String), Vec<crate::simulator::types::UvmSyncWaiter>>,
+    pub uvm_config_db_waiters:
+        HashMap<(String, String), Vec<crate::simulator::types::UvmSyncWaiter>>,
     /// F21: uvm_event data per objek (triggered/on).
     pub uvm_event_data: HashMap<ObjId, UvmEventData>,
     /// F21: uvm_barrier data per objek (threshold/count).
@@ -463,6 +469,9 @@ pub struct SimulationEngine {
     /// registered callbacks, end of simulation). Processed by scheduler in
     /// appropriate IEEE 1800 region.
     pub foreign_events: Vec<ForeignEvent>,
+    /// Flag: ada event dijadwalkan di luar jendela alokasi (MAX_EVENT_SPAN).
+    /// Run loop memeriksanya → abort dengan diagnostic, bukan panic/OOM.
+    pub event_alloc_exceeded: bool,
 
     /// Per-path signal delays from SDF annotation: "cell_name:from->to" → SignalDelay
     pub signal_delays: std::collections::HashMap<String, crate::simulator::state::SignalDelay>,
@@ -476,7 +485,8 @@ pub struct SimulationEngine {
 
     /// Hierarchical timing wheel for O(1) event scheduling (replaces Vec<Vec<RegionEvent>>).
     /// When enabled, events are stored in the timing wheel instead of `events: Vec<Vec<RegionEvent>>`.
-    pub timing_wheel: Option<crate::simulator::engine::scheduler::timing_wheel::HierarchicalTimingWheel>,
+    pub timing_wheel:
+        Option<crate::simulator::engine::scheduler::timing_wheel::HierarchicalTimingWheel>,
 
     /// Whether to use the timing wheel for event scheduling.
     pub use_timing_wheel: bool,

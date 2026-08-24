@@ -202,9 +202,7 @@ fn apply(state: &mut GuiState, root: PathBuf, ws: WorkspaceState) {
     state.show_bottom = ws.show_bottom;
     // Tinggi panel bawah di-restore; clamp minimal agar tab bar tidak hilang
     // (clamp maksimal dilakukan per-frame di app.rs terhadap tinggi window).
-    state.bottom_height = ws
-        .bottom_height
-        .max(crate::splitter::BOTTOM_MIN_HEIGHT);
+    state.bottom_height = ws.bottom_height.max(crate::splitter::BOTTOM_MIN_HEIGHT);
     state.show_outline = ws.show_outline;
     state.wave_zoom = ws.wave_zoom.max(0.5);
     state.wave_hidden = ws.wave_hidden.into_iter().collect();
@@ -239,10 +237,7 @@ mod tests {
     #[test]
     fn rel_or_abs_prefers_relative() {
         let root = Path::new("/proj");
-        assert_eq!(
-            rel_or_abs(root, Path::new("/proj/src/a.sv")),
-            "src/a.sv"
-        );
+        assert_eq!(rel_or_abs(root, Path::new("/proj/src/a.sv")), "src/a.sv");
         assert_eq!(rel_or_abs(root, Path::new("/other/x.sv")), "/other/x.sv");
     }
 

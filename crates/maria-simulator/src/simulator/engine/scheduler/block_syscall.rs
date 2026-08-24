@@ -4,16 +4,15 @@
 //! Menangani semua $system tasks seperti $display, $fopen, $readmemh, dll.
 
 use super::super::SimulationEngine;
-use maria_core::Symbol;
-use crate::waveform::VcdWriter;
 use crate::simulator::util::*;
+use crate::waveform::VcdWriter;
+use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
+use maria_core::Symbol;
 use maria_ir::*;
 use rand::Rng;
 use rand::SeedableRng;
 use std::io::Write;
-use maria_core::diagnostics::DiagCode;
-
 
 impl SimulationEngine {
     /// Handle a SysCall statement during block evaluation (with delay/fork context).
@@ -59,10 +58,7 @@ impl SimulationEngine {
                 .iter()
                 .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                 .collect();
-            let test_name = arg_vals
-                .first()
-                .map(logicvec_to_string)
-                .unwrap_or_default();
+            let test_name = arg_vals.first().map(logicvec_to_string).unwrap_or_default();
             self.run_uvm_test(&test_name)?;
         } else if name == "strobe" {
             self.strobe_events.push(ir_args.to_vec());
@@ -93,18 +89,34 @@ impl SimulationEngine {
             self.monitor_last_values = Some(vals);
         } else if name == "readmemh" {
             let file = ir_args.first().ok_or_else(|| {
-                self.diag_error(DiagCode::DpiError, "$readmemh requires at least a filename argument")
+                self.diag_error(
+                    DiagCode::DpiError,
+                    "$readmemh requires at least a filename argument",
+                )
             })?;
             let file_str = if let IrExpr::String(s) = file {
                 s.clone()
             } else {
-                return Err(self.diag_error(DiagCode::DpiError, "$readmemh first argument must be a string (filename)"));
+                return Err(self.diag_error(
+                    DiagCode::DpiError,
+                    "$readmemh first argument must be a string (filename)",
+                ));
             };
-            let sig_id = ir_args.get(1).and_then(|a| {
-                if let IrExpr::Signal(id, _) = a { Some(*id) } else { None }
-            }).ok_or_else(|| {
-                self.diag_error(DiagCode::DpiError, "$readmemh requires a signal/memory argument")
-            })?;
+            let sig_id = ir_args
+                .get(1)
+                .and_then(|a| {
+                    if let IrExpr::Signal(id, _) = a {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    self.diag_error(
+                        DiagCode::DpiError,
+                        "$readmemh requires a signal/memory argument",
+                    )
+                })?;
             let sig_info = self.design.top.signals.get(sig_id).ok_or_else(|| {
                 self.diag_error(DiagCode::DpiError, "$readmemh: signal not found")
             })?;
@@ -122,18 +134,34 @@ impl SimulationEngine {
             self.state.write_signal(sig_id, packed);
         } else if name == "readmemb" {
             let file = ir_args.first().ok_or_else(|| {
-                self.diag_error(DiagCode::DpiError, "$readmemb requires at least a filename argument")
+                self.diag_error(
+                    DiagCode::DpiError,
+                    "$readmemb requires at least a filename argument",
+                )
             })?;
             let file_str = if let IrExpr::String(s) = file {
                 s.clone()
             } else {
-                return Err(self.diag_error(DiagCode::DpiError, "$readmemb first argument must be a string (filename)"));
+                return Err(self.diag_error(
+                    DiagCode::DpiError,
+                    "$readmemb first argument must be a string (filename)",
+                ));
             };
-            let sig_id = ir_args.get(1).and_then(|a| {
-                if let IrExpr::Signal(id, _) = a { Some(*id) } else { None }
-            }).ok_or_else(|| {
-                self.diag_error(DiagCode::DpiError, "$readmemb requires a signal/memory argument")
-            })?;
+            let sig_id = ir_args
+                .get(1)
+                .and_then(|a| {
+                    if let IrExpr::Signal(id, _) = a {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    self.diag_error(
+                        DiagCode::DpiError,
+                        "$readmemb requires a signal/memory argument",
+                    )
+                })?;
             let sig_info = self.design.top.signals.get(sig_id).ok_or_else(|| {
                 self.diag_error(DiagCode::DpiError, "$readmemb: signal not found")
             })?;
@@ -323,10 +351,8 @@ impl SimulationEngine {
                             }
                         });
                         if let Some(sid) = sig_id {
-                            self.state.write_signal(
-                                sid,
-                                LogicVec::from_u64(handle as u64, 32),
-                            );
+                            self.state
+                                .write_signal(sid, LogicVec::from_u64(handle as u64, 32));
                         }
                     }
                     Err(_) => {
@@ -640,13 +666,13 @@ impl SimulationEngine {
                         h as u32
                     }
                 } else {
-                self.emit_warning(
-                    maria_core::diagnostics::DiagCode::NotImplemented,
-                    format!("$coverage_model: covergroup '{}' not found", name),
-                );
-                0
-            }
-        } else if let Some(first_cg) = self.design.covergroups.first() {
+                    self.emit_warning(
+                        maria_core::diagnostics::DiagCode::NotImplemented,
+                        format!("$coverage_model: covergroup '{}' not found", name),
+                    );
+                    0
+                }
+            } else if let Some(first_cg) = self.design.covergroups.first() {
                 if let Some((&h, _)) = self
                     .coverage_model_handles
                     .iter()
@@ -723,11 +749,7 @@ impl SimulationEngine {
                     while let Some(c) = chars.next() {
                         if c == '%' {
                             if let Some(spec) = chars.next() {
-                                if spec == 'd'
-                                    || spec == 'h'
-                                    || spec == 'b'
-                                    || spec == 'o'
-                                {
+                                if spec == 'd' || spec == 'h' || spec == 'b' || spec == 'o' {
                                     if let Some(tok) = tokens.get(ti) {
                                         let radix = if spec == 'h' {
                                             16
@@ -781,10 +803,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-            }} else if name == "test$plusargs" {
-                        // $test$plusargs in statement context — return value ignored
-                    } else if name == "coverage_merge" {
-                        // Stub
+            }
+        } else if name == "test$plusargs" {
+            // $test$plusargs in statement context — return value ignored
+        } else if name == "coverage_merge" {
+            // Stub
         } else {
             // Try VPI registered system task/function (names need $ prefix)
             let vpi_name = format!("${}", name);
@@ -807,11 +830,7 @@ impl SimulationEngine {
     /// $sdf_annotate. Dipanggil dari evaluate_syscall dan evaluate_syscall_stmt.
     /// Returns Ok(true) jika syscall ditangani di sini (synced, tidak yield),
     /// Ok(false) jika bukan tanggung jawab handler ini.
-    fn evaluate_lang_syscall(
-        &mut self,
-        name: &str,
-        ir_args: &[IrExpr],
-    ) -> Result<bool, SimError> {
+    fn evaluate_lang_syscall(&mut self, name: &str, ir_args: &[IrExpr]) -> Result<bool, SimError> {
         match name {
             "info" | "warning" | "error" | "fatal" => {
                 // $info / $warning / $error / $fatal — severity system tasks
@@ -873,12 +892,8 @@ impl SimulationEngine {
             }
             "showscopes" => {
                 // $showscopes — print all hierarchical scopes (module names)
-                let mut scopes: Vec<String> = self
-                    .design
-                    .modules
-                    .keys()
-                    .map(|s| s.to_string())
-                    .collect();
+                let mut scopes: Vec<String> =
+                    self.design.modules.keys().map(|s| s.to_string()).collect();
                 scopes.sort();
                 for s in &scopes {
                     println!("{}", s);
@@ -948,12 +963,13 @@ impl SimulationEngine {
             "sdf_annotate" => {
                 // $sdf_annotate("file.sdf") — runtime SDF annotation
                 if let Some(IrExpr::String(path)) = ir_args.first() {
-                    let sdf_data = crate::simulator::sdf::SdfData::parse_file(path).map_err(|e| {
-                        self.diag_error(
-                            DiagCode::DpiError,
-                            format!("$sdf_annotate: SDF parse failed: {}", e),
-                        )
-                    })?;
+                    let sdf_data =
+                        crate::simulator::sdf::SdfData::parse_file(path).map_err(|e| {
+                            self.diag_error(
+                                DiagCode::DpiError,
+                                format!("$sdf_annotate: SDF parse failed: {}", e),
+                            )
+                        })?;
                     self.annotate_sdf(&sdf_data)?;
                 }
                 Ok(true)
@@ -1000,10 +1016,7 @@ impl SimulationEngine {
                 .iter()
                 .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                 .collect();
-            let test_name = arg_vals
-                .first()
-                .map(logicvec_to_string)
-                .unwrap_or_default();
+            let test_name = arg_vals.first().map(logicvec_to_string).unwrap_or_default();
             self.run_uvm_test(&test_name)?;
         } else if name == "strobe" {
             self.strobe_events.push(ir_args.to_vec());
@@ -1201,10 +1214,8 @@ impl SimulationEngine {
                             }
                         });
                         if let Some(sid) = sig_id {
-                            self.state.write_signal(
-                                sid,
-                                LogicVec::from_u64(handle as u64, 32),
-                            );
+                            self.state
+                                .write_signal(sid, LogicVec::from_u64(handle as u64, 32));
                         }
                     }
                     Err(_) => {
@@ -1499,9 +1510,17 @@ impl SimulationEngine {
                 }
             });
             let handle: u32 = if let Some(ref name) = cg_name {
-                let exists = self.design.covergroups.iter().any(|cg| cg.name.as_str() == name.as_str());
+                let exists = self
+                    .design
+                    .covergroups
+                    .iter()
+                    .any(|cg| cg.name.as_str() == name.as_str());
                 if exists {
-                    if let Some((&h, _)) = self.coverage_model_handles.iter().find(|(_, n)| n.as_str() == name.as_str()) {
+                    if let Some((&h, _)) = self
+                        .coverage_model_handles
+                        .iter()
+                        .find(|(_, n)| n.as_str() == name.as_str())
+                    {
                         h as u32
                     } else {
                         let h = self.next_coverage_model_handle;
@@ -1517,7 +1536,11 @@ impl SimulationEngine {
                     0
                 }
             } else if let Some(first_cg) = self.design.covergroups.first() {
-                if let Some((&h, _)) = self.coverage_model_handles.iter().find(|(_, n)| n.as_str() == first_cg.name.as_str()) {
+                if let Some((&h, _)) = self
+                    .coverage_model_handles
+                    .iter()
+                    .find(|(_, n)| n.as_str() == first_cg.name.as_str())
+                {
                     h as u32
                 } else {
                     let h = self.next_coverage_model_handle;
@@ -1530,7 +1553,8 @@ impl SimulationEngine {
             };
             if let Some(sig_arg) = ir_args.first() {
                 if let IrExpr::Signal(id, _) = sig_arg {
-                    self.state.write_signal(*id, LogicVec::from_u64(handle as u64, 32));
+                    self.state
+                        .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
                 }
             }
         } else if name == "load_coverage_db" {
@@ -1549,10 +1573,20 @@ impl SimulationEngine {
                 for c in msg.chars() {
                     let byte = c as u8;
                     for i in 0..8 {
-                        bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                        bits.push(if (byte >> i) & 1 == 1 {
+                            LogicVal::One
+                        } else {
+                            LogicVal::Zero
+                        });
                     }
                 }
-                self.state.write_signal(*out_id, LogicVec { width: bits.len(), bits });
+                self.state.write_signal(
+                    *out_id,
+                    LogicVec {
+                        width: bits.len(),
+                        bits,
+                    },
+                );
             }
         } else if name == "sscanf" {
             if let Some(input_arg) = ir_args.first() {
@@ -1563,7 +1597,13 @@ impl SimulationEngine {
                 } else {
                     String::new()
                 };
-                let fmt = ir_args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
+                let fmt = ir_args.get(1).and_then(|a| {
+                    if let IrExpr::String(s) = a {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                });
                 if let Some(ref fmt_str) = fmt {
                     let tokens: Vec<&str> = input_str.split_whitespace().collect();
                     let mut ti = 0;
@@ -1574,11 +1614,22 @@ impl SimulationEngine {
                             if let Some(spec) = chars.next() {
                                 if spec == 'd' || spec == 'h' || spec == 'b' || spec == 'o' {
                                     if let Some(tok) = tokens.get(ti) {
-                                        let radix = if spec == 'h' { 16 } else if spec == 'o' { 8 } else if spec == 'b' { 2 } else { 10 };
+                                        let radix = if spec == 'h' {
+                                            16
+                                        } else if spec == 'o' {
+                                            8
+                                        } else if spec == 'b' {
+                                            2
+                                        } else {
+                                            10
+                                        };
                                         if let Ok(val) = i64::from_str_radix(tok, radix) {
                                             if let Some(out_arg) = ir_args.get(2 + ai) {
                                                 if let IrExpr::Signal(sid, _) = out_arg {
-                                                    self.state.write_signal(*sid, LogicVec::from_u64(val as u64, 32));
+                                                    self.state.write_signal(
+                                                        *sid,
+                                                        LogicVec::from_u64(val as u64, 32),
+                                                    );
                                                 }
                                             }
                                             ai += 1;
@@ -1593,10 +1644,20 @@ impl SimulationEngine {
                                             for c in s.chars() {
                                                 let byte = c as u8;
                                                 for i in 0..8 {
-                                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                                    bits.push(if (byte >> i) & 1 == 1 {
+                                                        LogicVal::One
+                                                    } else {
+                                                        LogicVal::Zero
+                                                    });
                                                 }
                                             }
-                                            self.state.write_signal(*sid, LogicVec { width: bits.len(), bits });
+                                            self.state.write_signal(
+                                                *sid,
+                                                LogicVec {
+                                                    width: bits.len(),
+                                                    bits,
+                                                },
+                                            );
                                         }
                                     }
                                     break;
@@ -1605,10 +1666,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-            }} else if name == "test$plusargs" {
-                        // $test$plusargs in statement context — return value ignored
-                    } else if name == "coverage_merge" {
-                        // Stub
+            }
+        } else if name == "test$plusargs" {
+            // $test$plusargs in statement context — return value ignored
+        } else if name == "coverage_merge" {
+            // Stub
         } else {
             // Try VPI registered system task/function (names need $ prefix)
             let vpi_name = format!("${}", name);

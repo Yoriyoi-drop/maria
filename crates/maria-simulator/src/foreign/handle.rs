@@ -36,10 +36,19 @@ pub struct ForeignHandle {
 }
 
 impl ForeignHandle {
-    pub const NULL: ForeignHandle = ForeignHandle { id: 0, kind: HandleKind::Scope };
-    pub const fn null() -> Self { ForeignHandle::NULL }
-    pub fn is_null(&self) -> bool { self.id == 0 }
-    pub fn is_valid(&self) -> bool { self.id != 0 }
+    pub const NULL: ForeignHandle = ForeignHandle {
+        id: 0,
+        kind: HandleKind::Scope,
+    };
+    pub const fn null() -> Self {
+        ForeignHandle::NULL
+    }
+    pub fn is_null(&self) -> bool {
+        self.id == 0
+    }
+    pub fn is_valid(&self) -> bool {
+        self.id != 0
+    }
 }
 
 /// Registry: id → object (disimpan sebagai `Box<dyn Any>` agar bisa menampung
@@ -53,15 +62,21 @@ pub struct HandleRegistry {
 impl HandleRegistry {
     pub fn global() -> &'static Mutex<HandleRegistry> {
         static REGISTRY: OnceLock<Mutex<HandleRegistry>> = OnceLock::new();
-        REGISTRY.get_or_init(|| Mutex::new(HandleRegistry {
-            objects: HashMap::new(),
-            next_id: AtomicU64::new(1),
-        }))
+        REGISTRY.get_or_init(|| {
+            Mutex::new(HandleRegistry {
+                objects: HashMap::new(),
+                next_id: AtomicU64::new(1),
+            })
+        })
     }
 
     /// Register object → handle u64. Kind diambil dari `ForeignHandle` caller
     /// (registry tidak tahu tipe object — adapter yang tahu).
-    pub fn insert<T: std::any::Any + Send + Sync>(&mut self, kind: HandleKind, obj: T) -> ForeignHandle {
+    pub fn insert<T: std::any::Any + Send + Sync>(
+        &mut self,
+        kind: HandleKind,
+        obj: T,
+    ) -> ForeignHandle {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         self.objects.insert(id, Box::new(obj));
         ForeignHandle { id, kind }
@@ -118,7 +133,10 @@ mod tests {
     fn test_foreign_handle_null() {
         assert!(ForeignHandle::NULL.is_null());
         assert!(!ForeignHandle::NULL.is_valid());
-        let h = ForeignHandle { id: 7, kind: HandleKind::Port };
+        let h = ForeignHandle {
+            id: 7,
+            kind: HandleKind::Port,
+        };
         assert!(!h.is_null());
         assert!(h.is_valid());
     }

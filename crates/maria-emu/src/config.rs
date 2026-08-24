@@ -71,8 +71,7 @@ impl EmuConfig {
     pub fn load_file(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read '{}': {}", path.display(), e))?;
-        Self::from_toml(&content)
-            .map_err(|e| format!("config '{}': {}", path.display(), e))
+        Self::from_toml(&content).map_err(|e| format!("config '{}': {}", path.display(), e))
     }
 
     /// Parse konten TOML menjadi `EmuConfig`.
@@ -122,7 +121,10 @@ size = 0x100
         assert_eq!(cfg.accuracy.as_deref(), Some("functional"));
         assert_eq!(cfg.cpu.as_deref(), Some("riscv32"));
         assert_eq!(cfg.console.as_deref(), Some("pty"));
-        assert_eq!(cfg.block, vec!["rootfs.img".to_string(), "data.img".to_string()]);
+        assert_eq!(
+            cfg.block,
+            vec!["rootfs.img".to_string(), "data.img".to_string()]
+        );
         assert_eq!(cfg.iso.as_deref(), Some("debian-riscv64.iso"));
         assert_eq!(cfg.firmware.as_deref(), Some("opensbi.bin"));
         assert_eq!(cfg.dtb.as_deref(), Some("board.dts"));
@@ -153,7 +155,13 @@ size = 0x100
     fn test_parse_minimal_config() {
         let cfg = EmuConfig::from_toml("top = \"bare\"\n").expect("parse");
         assert_eq!(cfg.top.as_deref(), Some("bare"));
-        assert_eq!(cfg, EmuConfig { top: Some("bare".into()), ..Default::default() });
+        assert_eq!(
+            cfg,
+            EmuConfig {
+                top: Some("bare".into()),
+                ..Default::default()
+            }
+        );
     }
 
     #[test]

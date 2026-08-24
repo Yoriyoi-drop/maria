@@ -1,8 +1,8 @@
 //! Differential Executor — bandingkan Maria dengan simulator referensi.
 
-use std::process::Command;
-use std::io::Write;
 use std::fs;
+use std::io::Write;
+use std::process::Command;
 use tempfile::tempdir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,7 +88,9 @@ impl DifferentialExecutor {
             results.push(result);
         }
 
-        let maria_result = results.iter().find(|r| r.simulator == Simulator::Maria)
+        let maria_result = results
+            .iter()
+            .find(|r| r.simulator == Simulator::Maria)
             .cloned()
             .unwrap_or(SimulationResult {
                 simulator: Simulator::Maria,
@@ -100,7 +102,8 @@ impl DifferentialExecutor {
                 sim_time_ms: 0,
             });
 
-        let references: Vec<SimulationResult> = results.into_iter()
+        let references: Vec<SimulationResult> = results
+            .into_iter()
             .filter(|r| r.simulator != Simulator::Maria)
             .collect();
 
@@ -118,7 +121,12 @@ impl DifferentialExecutor {
         }
     }
 
-    fn run_simulator(&self, sim: Simulator, file_path: &std::path::Path, work_dir: &std::path::Path) -> SimulationResult {
+    fn run_simulator(
+        &self,
+        sim: Simulator,
+        file_path: &std::path::Path,
+        work_dir: &std::path::Path,
+    ) -> SimulationResult {
         match sim {
             Simulator::Maria => self.run_maria(file_path),
             Simulator::Verilator => self.run_verilator(file_path, work_dir),
@@ -150,7 +158,11 @@ impl DifferentialExecutor {
                         success: true,
                         output: stdout,
                         signals,
-                        error: if stderr.is_empty() { None } else { Some(stderr) },
+                        error: if stderr.is_empty() {
+                            None
+                        } else {
+                            Some(stderr)
+                        },
                         compile_time_ms: compile_time,
                         sim_time_ms: sim_time,
                     }
@@ -178,7 +190,11 @@ impl DifferentialExecutor {
         }
     }
 
-    fn run_verilator(&self, file_path: &std::path::Path, work_dir: &std::path::Path) -> SimulationResult {
+    fn run_verilator(
+        &self,
+        file_path: &std::path::Path,
+        work_dir: &std::path::Path,
+    ) -> SimulationResult {
         let start = std::time::Instant::now();
 
         let verilator_bin = std::env::var("VERILATOR").unwrap_or_else(|_| "verilator".to_string());
@@ -268,7 +284,11 @@ impl DifferentialExecutor {
         }
     }
 
-    fn run_icarus(&self, file_path: &std::path::Path, work_dir: &std::path::Path) -> SimulationResult {
+    fn run_icarus(
+        &self,
+        file_path: &std::path::Path,
+        work_dir: &std::path::Path,
+    ) -> SimulationResult {
         let start = std::time::Instant::now();
 
         let iverilog = std::env::var("IVERILOG").unwrap_or_else(|_| "iverilog".to_string());
@@ -285,9 +305,7 @@ impl DifferentialExecutor {
         let sim_start = std::time::Instant::now();
 
         let result = match compile_out {
-            Ok(out) if out.status.success() => {
-                Command::new(&vvp).arg(&out_bin).output()
-            }
+            Ok(out) if out.status.success() => Command::new(&vvp).arg(&out_bin).output(),
             Ok(out) => {
                 return SimulationResult {
                     simulator: Simulator::Icarus,
@@ -368,9 +386,7 @@ impl DifferentialExecutor {
         let sim_start = std::time::Instant::now();
 
         let result = match compile_out {
-            Ok(out) if out.status.success() => {
-                Command::new(&out_bin).output()
-            }
+            Ok(out) if out.status.success() => Command::new(&out_bin).output(),
             Ok(out) => {
                 return SimulationResult {
                     simulator: Simulator::VCS,
@@ -438,7 +454,11 @@ impl DifferentialExecutor {
     fn parse_maria_output(&self, output: &str) -> Vec<(String, u64)> {
         let mut signals = Vec::new();
         for line in output.lines() {
-            if line.contains(" = ") && (line.contains("0x") || line.contains("0b") || line.chars().any(|c| c.is_ascii_digit())) {
+            if line.contains(" = ")
+                && (line.contains("0x")
+                    || line.contains("0b")
+                    || line.chars().any(|c| c.is_ascii_digit()))
+            {
                 if let Some(eq_pos) = line.find(" = ") {
                     let name = line[..eq_pos].trim();
                     let value_str = line[eq_pos + 3..].trim();
@@ -478,7 +498,11 @@ impl DifferentialExecutor {
         }
     }
 
-    fn compare_results(&self, maria: &SimulationResult, references: &[SimulationResult]) -> Vec<Mismatch> {
+    fn compare_results(
+        &self,
+        maria: &SimulationResult,
+        references: &[SimulationResult],
+    ) -> Vec<Mismatch> {
         let mut mismatches = Vec::new();
 
         for ref_sim in references {
@@ -493,8 +517,10 @@ impl DifferentialExecutor {
             }
 
             if maria.success && ref_sim.success {
-                let maria_signals: std::collections::HashMap<_, _> = maria.signals.iter().cloned().collect();
-                let ref_signals: std::collections::HashMap<_, _> = ref_sim.signals.iter().cloned().collect();
+                let maria_signals: std::collections::HashMap<_, _> =
+                    maria.signals.iter().cloned().collect();
+                let ref_signals: std::collections::HashMap<_, _> =
+                    ref_sim.signals.iter().cloned().collect();
 
                 for (name, maria_val) in &maria_signals {
                     if let Some(ref_val) = ref_signals.get(name) {

@@ -42,7 +42,8 @@ pub fn vpi_get_time(_handle: vpiHandle, time_p: &mut t_vpi_time) -> i32 {
         time_p.high = (t >> 32) as u32;
         time_p.real = t as f64;
         1
-    }).unwrap_or(0)
+    })
+    .unwrap_or(0)
 }
 
 /// vpi_get_cb_info(cb_handle, cb_data_p) — get info about a registered callback.

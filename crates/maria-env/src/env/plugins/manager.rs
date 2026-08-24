@@ -17,7 +17,9 @@ impl std::fmt::Debug for PluginManagerHandle {
 
 impl PluginManagerHandle {
     pub fn new() -> Self {
-        PluginManagerHandle { inner: Mutex::new(PluginManager::new()) }
+        PluginManagerHandle {
+            inner: Mutex::new(PluginManager::new()),
+        }
     }
 
     pub fn register(&self, plugin: Box<dyn Plugin>) -> Result<(), String> {
@@ -49,7 +51,13 @@ impl PluginManagerHandle {
     }
 
     pub fn metadata(&self) -> Vec<PluginMetadata> {
-        self.inner.lock().unwrap().list().into_iter().cloned().collect()
+        self.inner
+            .lock()
+            .unwrap()
+            .list()
+            .into_iter()
+            .cloned()
+            .collect()
     }
 }
 

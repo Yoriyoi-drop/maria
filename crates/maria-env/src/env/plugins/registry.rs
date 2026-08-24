@@ -36,8 +36,16 @@ mod tests {
     #[test]
     fn test_registry() {
         let meta = vec![
-            PluginMetadata { name: "a".into(), version: "1".into(), enabled: true },
-            PluginMetadata { name: "b".into(), version: "2".into(), enabled: false },
+            PluginMetadata {
+                name: "a".into(),
+                version: "1".into(),
+                enabled: true,
+            },
+            PluginMetadata {
+                name: "b".into(),
+                version: "2".into(),
+                enabled: false,
+            },
         ];
         let reg = PluginRegistry::from_list(meta);
         assert_eq!(reg.len(), 2);

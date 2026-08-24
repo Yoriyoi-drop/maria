@@ -7,8 +7,8 @@
 
 use eframe::egui;
 
-use maria_ir::IrDesign;
 use maria_core::Symbol;
+use maria_ir::IrDesign;
 
 use super::super::state::GuiState;
 
@@ -123,10 +123,7 @@ fn render_node(
         // Panah expand/collapse (atau titik untuk leaf)
         if has_children {
             let arrow = if is_open { "▾" } else { "▸" };
-            if ui
-                .button(egui::RichText::new(arrow).size(10.0))
-                .clicked()
-            {
+            if ui.button(egui::RichText::new(arrow).size(10.0)).clicked() {
                 state.arch_open.insert(key.clone(), !is_open);
             }
         } else {

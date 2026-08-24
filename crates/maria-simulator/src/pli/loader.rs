@@ -17,24 +17,35 @@ pub struct LoadedPli {
 
 impl std::fmt::Debug for LoadedPli {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "LoadedPli {{ path: {:?}, abi: {:?} }}", self.path, self.abi)
+        write!(
+            f,
+            "LoadedPli {{ path: {:?}, abi: {:?} }}",
+            self.path, self.abi
+        )
     }
 }
 
 /// Cari + muat library PLI.
 #[cfg(feature = "dpi")]
 pub fn load_pli_library(name: &str) -> Result<LoadedPli, String> {
-    use crate::foreign::loader::{load_library, find_library, current_abi};
+    use crate::foreign::loader::{current_abi, find_library, load_library};
     let search = crate::foreign::loader::default_search_paths();
     let path = find_library(name, &search)
         .ok_or_else(|| format!("PLI library '{}' not found in search paths", name))?;
     let library = load_library(&path)?;
-    Ok(LoadedPli { path, abi: current_abi(), library })
+    Ok(LoadedPli {
+        path,
+        abi: current_abi(),
+        library,
+    })
 }
 
 #[cfg(not(feature = "dpi"))]
 pub fn load_pli_library(name: &str) -> Result<LoadedPli, String> {
-    Err(format!("PLI library '{}' loading requires feature \"dpi\"", name))
+    Err(format!(
+        "PLI library '{}' loading requires feature \"dpi\"",
+        name
+    ))
 }
 
 /// Cek apakah library mengekspor symbol PLI yang diharapkan:

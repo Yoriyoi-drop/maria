@@ -1,22 +1,24 @@
 // Module declarations: submodule files dari restrukturisasi parser/
-pub mod lexer;
-pub mod preprocessor;
-pub mod util;
-pub mod specify;
-pub mod udp;
-pub mod config;
-pub mod package;
 pub mod class;
-pub mod expr;
-pub mod stmt;
+pub mod config;
 pub mod decl;
+pub mod expr;
 pub mod instance;
+pub mod lexer;
+pub mod package;
+pub mod preprocessor;
 pub mod proc;
+pub mod specify;
+pub mod stmt;
+pub mod udp;
+pub mod util;
+use crate::lexer::*;
 use maria_ast::*;
-use maria_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet, FixItHint};
+use maria_core::diagnostics::diagnostic::{
+    DiagCode, DiagLevel, Diagnostic, FixItHint, SourceSnippet,
+};
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::lexer::*;
 
 pub struct Parser {
     tokens: Vec<(Token, usize, usize)>,
@@ -214,7 +216,10 @@ impl Parser {
             DiagCode::ExpectedSemi
         } else if msg_str.contains("expected") {
             DiagCode::ExpectedToken
-        } else if msg_str.contains("unclosed") || msg_str.contains("unterminated") || msg_str.contains("unexpected EOF") {
+        } else if msg_str.contains("unclosed")
+            || msg_str.contains("unterminated")
+            || msg_str.contains("unexpected EOF")
+        {
             DiagCode::UnclosedBlock
         } else {
             DiagCode::InvalidSyntax
@@ -280,10 +285,14 @@ impl Parser {
                 DiagCode::ExpectedToken => {
                     // Fix-it: untuk expected keyword seperti endmodule, end, endfunction, dll.
                     let msg_lower = msg_str.to_lowercase();
-                    if msg_lower.contains("endmodule") || msg_lower.contains("endfunction") ||
-                       msg_lower.contains("endtask") || msg_lower.contains("endclass") ||
-                       msg_lower.contains("endinterface") || msg_lower.contains("endpackage") ||
-                       msg_lower.contains("end") {
+                    if msg_lower.contains("endmodule")
+                        || msg_lower.contains("endfunction")
+                        || msg_lower.contains("endtask")
+                        || msg_lower.contains("endclass")
+                        || msg_lower.contains("endinterface")
+                        || msg_lower.contains("endpackage")
+                        || msg_lower.contains("end")
+                    {
                         let last_combined_line = self.source_lines.len();
                         let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
                         let fix_it = FixItHint::insert(
@@ -329,10 +338,14 @@ impl Parser {
                 }
                 DiagCode::ExpectedToken => {
                     let msg_lower = msg_str.to_lowercase();
-                    if msg_lower.contains("endmodule") || msg_lower.contains("endfunction") ||
-                       msg_lower.contains("endtask") || msg_lower.contains("endclass") ||
-                       msg_lower.contains("endinterface") || msg_lower.contains("endpackage") ||
-                       msg_lower.contains("end") {
+                    if msg_lower.contains("endmodule")
+                        || msg_lower.contains("endfunction")
+                        || msg_lower.contains("endtask")
+                        || msg_lower.contains("endclass")
+                        || msg_lower.contains("endinterface")
+                        || msg_lower.contains("endpackage")
+                        || msg_lower.contains("end")
+                    {
                         let last_combined_line = self.source_lines.len();
                         let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
                         let fix_it = FixItHint::insert(
@@ -352,10 +365,14 @@ impl Parser {
             match code {
                 DiagCode::ExpectedToken => {
                     let msg_lower = msg_str.to_lowercase();
-                    if msg_lower.contains("endmodule") || msg_lower.contains("endfunction") ||
-                       msg_lower.contains("endtask") || msg_lower.contains("endclass") ||
-                       msg_lower.contains("endinterface") || msg_lower.contains("endpackage") ||
-                       msg_lower.contains("end") {
+                    if msg_lower.contains("endmodule")
+                        || msg_lower.contains("endfunction")
+                        || msg_lower.contains("endtask")
+                        || msg_lower.contains("endclass")
+                        || msg_lower.contains("endinterface")
+                        || msg_lower.contains("endpackage")
+                        || msg_lower.contains("end")
+                    {
                         let last_combined_line = self.source_lines.len();
                         let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
                         let fix_it = FixItHint::insert(
@@ -487,10 +504,7 @@ impl Parser {
                 self.advance();
                 Ok(Symbol::intern("this"))
             }
-            _ => Err(self.err(format!(
-                "expected identifier, found {}",
-                self.peek()
-            ))),
+            _ => Err(self.err(format!("expected identifier, found {}", self.peek()))),
         }
     }
 
@@ -537,8 +551,10 @@ impl Parser {
         // Re-seed nama class & typedef GLOBAL (lintas file) yang di-clear di
         // atas. Tanpa ini, `ClassType var;` dari file lain (mis. class UVM di
         // file terpisah) salah di-parse sebagai instance module.
-        self.class_names.extend(self.global_class_names.iter().copied());
-        self.typedef_names.extend(self.global_typedef_names.iter().copied());
+        self.class_names
+            .extend(self.global_class_names.iter().copied());
+        self.typedef_names
+            .extend(self.global_typedef_names.iter().copied());
         let mut modules = Vec::with_capacity(64);
         let mut classes = Vec::with_capacity(32);
         let mut packages = Vec::with_capacity(16);
@@ -557,7 +573,7 @@ impl Parser {
         self.peek_count.set(0);
         // First pass: collect all class names — with error recovery
         // If parsing fails, error is saved and we skip to next construct
-let saved_pos = self.pos.get();
+        let saved_pos = self.pos.get();
         let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         while self.peek() != &Token::Eof {
@@ -571,7 +587,12 @@ let saved_pos = self.pos.get();
                 if _stuck > 10_000 {
                     let line = self.peek_line();
                     let col = self.peek_col();
-                    self.push_warning_at("parser stuck (no progress) during class discovery pass — skipping".to_string(), line, col);
+                    self.push_warning_at(
+                        "parser stuck (no progress) during class discovery pass — skipping"
+                            .to_string(),
+                        line,
+                        col,
+                    );
                     break;
                 }
             } else {
@@ -581,24 +602,40 @@ let saved_pos = self.pos.get();
             if self.peek() == &Token::Class {
                 match self.parse_class_fast() {
                     Ok(_) => {}
-                    Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        self.skip_to_next_top_level();
+                        continue;
+                    }
                 }
             } else if self.peek() == &Token::Module {
                 match self.parse_module_fast() {
                     Ok(_) => {}
-                    Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        self.skip_to_next_top_level();
+                        continue;
+                    }
                 }
             } else if self.peek() == &Token::Interface {
                 // skip interface in first pass (no class deps needed)
                 match self.parse_interface_fast() {
                     Ok(_) => {}
-                    Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        self.skip_to_next_top_level();
+                        continue;
+                    }
                 }
             } else if self.peek() == &Token::Program {
                 // skip program in first pass
                 match self.parse_program_fast() {
                     Ok(_) => {}
-                    Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        self.skip_to_next_top_level();
+                        continue;
+                    }
                 }
             } else if self.peek() == &Token::Package {
                 // Skip package in first pass — full parse only in pass 2
@@ -634,13 +671,21 @@ let saved_pos = self.pos.get();
                 self.advance(); // consume virtual
                 match self.parse_class_fast() {
                     Ok(_) => {}
-                    Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        self.skip_to_next_top_level();
+                        continue;
+                    }
                 }
             } else if self.peek() == &Token::Covergroup {
                 // Skip covergroup in first pass — collect name
                 let cg = match self.parse_covergroup() {
                     Ok(cg) => cg,
-                    Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        self.skip_to_next_top_level();
+                        continue;
+                    }
                 };
                 self.class_names.insert(cg.name);
             } else if self.peek() == &Token::Bind {
@@ -720,7 +765,7 @@ let saved_pos = self.pos.get();
             } else if self.peek() == &Token::New {
                 // 'new' at top level — likely from partially parsed class body
                 self.advance(); // consume 'new'
-                // Skip balanced parens for new( ... )
+                                // Skip balanced parens for new( ... )
                 if self.peek() == &Token::LParen {
                     let _ = self.skip_balanced_paren_light();
                 }
@@ -729,19 +774,27 @@ let saved_pos = self.pos.get();
                 let col = self.peek_col();
                 let tok = format!("{}", self.peek());
                 let (_, _) = self.resolve_source_file(line);
-                let summary = if tok.len() > 40 { format!("{}...", &tok[..40]) } else { tok };
+                let summary = if tok.len() > 40 {
+                    format!("{}...", &tok[..40])
+                } else {
+                    tok
+                };
 
-                self.push_warning_at(format!("skipping top-level construct: {}", summary), line, col);
+                self.push_warning_at(
+                    format!("skipping top-level construct: {}", summary),
+                    line,
+                    col,
+                );
                 self.skip_to_next_top_level();
             }
         }
-// First pass done in {:?} — class_names={}, typedef_names={}
+        // First pass done in {:?} — class_names={}, typedef_names={}
         self.pos.set(saved_pos);
         modules.clear();
         classes.clear();
         // Second pass: full parse with class names known — with error recovery
         // Jika parsing modul/class gagal, error disimpan dan lanjut ke konstruk berikutnya
-let mut _last_pos = self.pos.get();
+        let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         let mut _n_module = 0u32;
         let mut _n_interface = 0u32;
@@ -758,51 +811,89 @@ let mut _last_pos = self.pos.get();
                 if _stuck > 10_000 {
                     let line = self.peek_line();
                     let col = self.peek_col();
-                    self.push_warning_at("parser stuck (no progress) during second pass — skipping".to_string(), line, col);
+                    self.push_warning_at(
+                        "parser stuck (no progress) during second pass — skipping".to_string(),
+                        line,
+                        col,
+                    );
                     break;
                 }
             } else {
                 _stuck = 0;
                 _last_pos = self.pos.get();
             }
-             let had_error = match self.peek() {
+            let had_error = match self.peek() {
                 Token::Module => {
                     _n_module += 1;
                     match self.parse_module() {
-                        Ok(m) => { modules.push(m); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                        Ok(m) => {
+                            modules.push(m);
+                            false
+                        }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            true
+                        }
                     }
-                },
+                }
                 Token::Interface => {
                     _n_interface += 1;
                     match self.parse_interface() {
-                        Ok(iface) => { interfaces.push(iface); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                        Ok(iface) => {
+                            interfaces.push(iface);
+                            false
+                        }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            true
+                        }
                     }
-                },
+                }
                 Token::Class => {
                     _n_class += 1;
                     match self.parse_class() {
-                        Ok(c) => { classes.push(c); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                        Ok(c) => {
+                            classes.push(c);
+                            false
+                        }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            true
+                        }
                     }
-                },
+                }
                 Token::Package => {
                     _n_package += 1;
                     match self.parse_package_decl() {
-                        Ok(p) => { packages.push(p); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                        Ok(p) => {
+                            packages.push(p);
+                            false
+                        }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            true
+                        }
                     }
-                },
+                }
                 Token::Program => match self.parse_module() {
-                    Ok(m) => { modules.push(m); false }
-                    Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                    Ok(m) => {
+                        modules.push(m);
+                        false
+                    }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        true
+                    }
                 },
                 Token::Import => {
                     self.advance();
                     let pkg = match self.expect_ident() {
                         Ok(p) => p,
-                        Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            self.skip_to_next_top_level();
+                            continue;
+                        }
                     };
                     if self.peek() != &Token::Scope {
                         let err = self.err("expected '::' after package name");
@@ -817,7 +908,11 @@ let mut _last_pos = self.pos.get();
                     } else {
                         match self.expect_ident() {
                             Ok(id) => id,
-                            Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                            Err(e) => {
+                                self.errors.push(e.to_diagnostic());
+                                self.skip_to_next_top_level();
+                                continue;
+                            }
                         }
                     };
                     self.skip_semi();
@@ -831,41 +926,59 @@ let mut _last_pos = self.pos.get();
                 Token::Virtual if self.peek_ahead(1) == &Token::Class => {
                     self.advance(); // consume 'virtual' so parse_class() sees 'class'
                     match self.parse_class() {
-                        Ok(c) => { classes.push(c); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
-                    }
-                }
-                Token::Covergroup => {
-                    match self.parse_covergroup() {
-                        Ok(cg) => {
-                            if let Some(m) = modules.first_mut() {
-                                m.items.push(ModuleItem::Covergroup(cg));
-                            }
+                        Ok(c) => {
+                            classes.push(c);
                             false
                         }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            true
+                        }
                     }
                 }
+                Token::Covergroup => match self.parse_covergroup() {
+                    Ok(cg) => {
+                        if let Some(m) = modules.first_mut() {
+                            m.items.push(ModuleItem::Covergroup(cg));
+                        }
+                        false
+                    }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        true
+                    }
+                },
                 Token::Bind => {
                     self.advance(); // consume 'bind'
                     let target = match self.expect_ident() {
                         Ok(t) => t,
-                        Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            self.skip_to_next_top_level();
+                            continue;
+                        }
                     };
                     match self.parse_instance() {
                         Ok(instance) => {
                             binds.push(BindDecl { target, instance });
                             false
                         }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            true
+                        }
                     }
                 }
-                Token::Clocking => {
-                    match self.parse_clocking_block() {
-                        Ok(cb) => { clocking_blocks.push(cb); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                Token::Clocking => match self.parse_clocking_block() {
+                    Ok(cb) => {
+                        clocking_blocks.push(cb);
+                        false
                     }
-                }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        true
+                    }
+                },
                 Token::Export => {
                     self.advance();
                     if self.peek() == &Token::StringLit(Symbol::intern("DPI-C"))
@@ -873,45 +986,71 @@ let mut _last_pos = self.pos.get();
                     {
                         match self.parse_dpi_import() {
                             Ok(_) => false,
-                            Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                            Err(e) => {
+                                self.errors.push(e.to_diagnostic());
+                                true
+                            }
                         }
                     } else {
                         match self.skip_until_semi_or_end() {
                             Ok(_) => false,
-                            Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                            Err(e) => {
+                                self.errors.push(e.to_diagnostic());
+                                true
+                            }
                         }
                     }
                 }
-                Token::Config => {
-                    match self.parse_config_decl() {
-                        Ok(cfg) => { configs.push(cfg); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                Token::Config => match self.parse_config_decl() {
+                    Ok(cfg) => {
+                        configs.push(cfg);
+                        false
                     }
-                }
-                Token::Primitive => {
-                    match self.parse_udp_declaration() {
-                        Ok(udp) => { udp_defs.push(udp); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        true
                     }
-                }
-                Token::Function => {
-                    match self.parse_function(false) {
-                        Ok(func) => { unit_funcs.push(func); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                },
+                Token::Primitive => match self.parse_udp_declaration() {
+                    Ok(udp) => {
+                        udp_defs.push(udp);
+                        false
                     }
-                }
-                Token::Task => {
-                    match self.parse_task(false) {
-                        Ok(task) => { unit_tasks.push(task); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        true
                     }
-                }
-                Token::Typedef => {
-                    match self.parse_typedef() {
-                        Ok(td) => { unit_typedefs.push(td); false }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                },
+                Token::Function => match self.parse_function(false) {
+                    Ok(func) => {
+                        unit_funcs.push(func);
+                        false
                     }
-                }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        true
+                    }
+                },
+                Token::Task => match self.parse_task(false) {
+                    Ok(task) => {
+                        unit_tasks.push(task);
+                        false
+                    }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        true
+                    }
+                },
+                Token::Typedef => match self.parse_typedef() {
+                    Ok(td) => {
+                        unit_typedefs.push(td);
+                        false
+                    }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        true
+                    }
+                },
                 Token::Let => {
                     // LANG-40: let di level unit (package) — parse & discard
                     // (belum disimpan; module & class didukung).
@@ -931,7 +1070,10 @@ let mut _last_pos = self.pos.get();
                             }
                             false
                         }
-                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            true
+                        }
                     }
                 }
                 Token::New => {
@@ -968,14 +1110,15 @@ let mut _last_pos = self.pos.get();
                             | Token::Bit
                             | Token::Byte
                             | Token::Shortint
-                            | Token::Longint                        | Token::Time
-                        | Token::Real
-                        | Token::WReal
-                        | Token::RealTime
-                        | Token::String
-                        | Token::Enum
-                        | Token::Struct
-                        | Token::Union
+                            | Token::Longint
+                            | Token::Time
+                            | Token::Real
+                            | Token::WReal
+                            | Token::RealTime
+                            | Token::String
+                            | Token::Enum
+                            | Token::Struct
+                            | Token::Union
                     ) {
                         let err = self.err("declaration outside of module");
                         self.errors.push(err.to_diagnostic());
@@ -992,7 +1135,11 @@ let mut _last_pos = self.pos.get();
                             tok_str
                         };
 
-                        self.push_warning_at(format!("skipping top-level construct: {}", summary), line, col);
+                        self.push_warning_at(
+                            format!("skipping top-level construct: {}", summary),
+                            line,
+                            col,
+                        );
                         self.skip_to_next_top_level();
                     }
                     false
@@ -1003,7 +1150,7 @@ let mut _last_pos = self.pos.get();
                 self.skip_to_next_top_level();
             }
         }
-// Second pass done in {:?}
+        // Second pass done in {:?}
         Ok(Design {
             modules,
             classes,
@@ -1122,7 +1269,7 @@ let mut _last_pos = self.pos.get();
             // tidak error di module body.
             Token::Default => {
                 self.advance(); // 'default'
-                // `default clock = <event>;` — skip token sampai ';'
+                                // `default clock = <event>;` — skip token sampai ';'
                 while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
                     self.advance();
                 }
@@ -1261,9 +1408,7 @@ let mut _last_pos = self.pos.get();
                     self.skip_assert_item();
                     return Ok(None);
                 }
-                if std::env::var("MARIA_DEBUG_PARSE").is_ok()
-                    && name.as_str() == "my_class"
-                {
+                if std::env::var("MARIA_DEBUG_PARSE").is_ok() && name.as_str() == "my_class" {
                     eprintln!(
                         "[DBG-PARSE] decision: name={} in_class={} in_typedef={} in_mod_type_param={} ahead1={}",
                         name,
@@ -1443,21 +1588,25 @@ let mut _last_pos = self.pos.get();
                         kind: DeclKind::Wire,
                         names,
                     })))
-            } else {
-                let line = self.peek_line();
-                let col = self.peek_col();
-                let tok = self.peek().clone();
-                let tok_str = format!("{}", tok);
-                let (_, _) = self.resolve_source_file(line);
-                let summary = if tok_str.len() > 40 {
-                    format!("{}...", &tok_str[..40])
                 } else {
-                    tok_str
-                };
-self.push_warning_at(format!("skipping unknown construct: {}", summary), line, col);
-                self.skip_until_semi_or_end()?;
-                Ok(None)
-            }
+                    let line = self.peek_line();
+                    let col = self.peek_col();
+                    let tok = self.peek().clone();
+                    let tok_str = format!("{}", tok);
+                    let (_, _) = self.resolve_source_file(line);
+                    let summary = if tok_str.len() > 40 {
+                        format!("{}...", &tok_str[..40])
+                    } else {
+                        tok_str
+                    };
+                    self.push_warning_at(
+                        format!("skipping unknown construct: {}", summary),
+                        line,
+                        col,
+                    );
+                    self.skip_until_semi_or_end()?;
+                    Ok(None)
+                }
             }
             Token::Property => {
                 // Deklarasi SVA `property name(...); ... endproperty` — di-skip
@@ -1535,10 +1684,23 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                         // Port bisa `input a`, `a` (direction optional).
                         // Skip direction/type keywords.
                         match self.peek() {
-                            Token::Input | Token::Output | Token::Inout | Token::Wire
-                            | Token::Logic | Token::Reg | Token::Bit | Token::Int
-                            | Token::Integer | Token::Byte | Token::Shortint | Token::Longint
-                            | Token::Tri | Token::Tri0 | Token::Tri1 | Token::Wand | Token::Wor => {
+                            Token::Input
+                            | Token::Output
+                            | Token::Inout
+                            | Token::Wire
+                            | Token::Logic
+                            | Token::Reg
+                            | Token::Bit
+                            | Token::Int
+                            | Token::Integer
+                            | Token::Byte
+                            | Token::Shortint
+                            | Token::Longint
+                            | Token::Tri
+                            | Token::Tri0
+                            | Token::Tri1
+                            | Token::Wand
+                            | Token::Wor => {
                                 self.advance();
                             }
                             Token::Comma => {
@@ -1570,7 +1732,11 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                         None => {}
                     }
                 }
-                return Ok(Some(ModuleItem::Checker(CheckerDecl { name, ports, items })));
+                return Ok(Some(ModuleItem::Checker(CheckerDecl {
+                    name,
+                    ports,
+                    items,
+                })));
             }
             Token::Alias => {
                 // LANG-08: `alias a = b = c;` (IEEE 1800-2017 §10.9) — semua
@@ -1611,7 +1777,7 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                 // Klausa `with resolution_fn` — `with` adalah Ident biasa.
                 if matches!(self.peek(), Token::Ident(s) if *s == Symbol::intern("with")) {
                     self.advance(); // 'with'
-                    // resolution function: ident optional, konsumsi sampai ';'
+                                    // resolution function: ident optional, konsumsi sampai ';'
                     while !matches!(self.peek(), Token::Semi | Token::Eof) {
                         self.advance();
                     }
@@ -1625,7 +1791,7 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
             Token::Param | Token::Parameter | Token::LocalParam => {
                 let is_localparam = self.peek() == &Token::LocalParam;
                 self.advance(); // consume param/localparam/parameter
-                // Handle 'parameter type T = type_expr'
+                                // Handle 'parameter type T = type_expr'
                 if self.peek() == &Token::Type {
                     self.advance();
                     let pname = self.expect_ident()?;
@@ -1761,8 +1927,8 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                     } else {
                         None
                     };
-            params.push(ParamDecl {
-                name,
+                    params.push(ParamDecl {
+                        name,
                         dtype: dtype.clone(),
                         range: range.clone(),
                         default,
@@ -1941,16 +2107,14 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                 let class_decl = self.parse_class()?;
                 Ok(Some(ModuleItem::Class(class_decl)))
             }
-            Token::EndClass => {
-                Ok(None)
-            }
+            Token::EndClass => Ok(None),
             _ => Ok(None),
         }
     }
 
     /// Skip tokens until the next top-level construct (module/class/interface/package/etc.).
     /// First advances past the current token (so we don't get stuck on the same construct).
-    /// 
+    ///
     /// Penting: Function/Task ikut dilacak depth-nya agar error recovery tidak premature return
     /// saat berada di dalam body function/task.
     fn skip_to_next_top_level(&mut self) {
@@ -1971,17 +2135,40 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
             }
             match self.peek() {
                 Token::Eof => return,
-                Token::Module | Token::Class | Token::Interface | Token::Package | Token::Program
-                    if depth == 0 => return,
-                Token::Function | Token::Task | Token::Begin | Token::Case | Token::CaseX
-                | Token::CaseZ | Token::Fork | Token::Specify | Token::Generate
+                Token::Module
+                | Token::Class
+                | Token::Interface
+                | Token::Package
+                | Token::Program
+                    if depth == 0 =>
+                {
+                    return
+                }
+                Token::Function
+                | Token::Task
+                | Token::Begin
+                | Token::Case
+                | Token::CaseX
+                | Token::CaseZ
+                | Token::Fork
+                | Token::Specify
+                | Token::Generate
                 | Token::Covergroup => {
                     depth += 1;
                     self.advance();
                 }
-                Token::End | Token::Endcase | Token::Join | Token::EndFunction | Token::EndTask
-                | Token::Endmodule | Token::EndClass | Token::EndInterface | Token::EndPackage
-                | Token::EndPrimitive | Token::EndSpecify | Token::EndGenerate
+                Token::End
+                | Token::Endcase
+                | Token::Join
+                | Token::EndFunction
+                | Token::EndTask
+                | Token::Endmodule
+                | Token::EndClass
+                | Token::EndInterface
+                | Token::EndPackage
+                | Token::EndPrimitive
+                | Token::EndSpecify
+                | Token::EndGenerate
                 | Token::EndGroup => {
                     depth = depth.saturating_sub(1);
                     self.advance();
@@ -2012,7 +2199,23 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                     self.advance();
                     return Ok(());
                 }
-                Token::Endmodule | Token::EndFunction | Token::EndTask | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::EndProgram | Token::EndGenerate | Token::EndSpecify | Token::EndClocking | Token::EndConfig | Token::EndPrimitive | Token::EndTable | Token::EndGroup | Token::EndSequence | Token::EndEnum | Token::Eof => {
+                Token::Endmodule
+                | Token::EndFunction
+                | Token::EndTask
+                | Token::EndClass
+                | Token::EndInterface
+                | Token::EndPackage
+                | Token::EndProgram
+                | Token::EndGenerate
+                | Token::EndSpecify
+                | Token::EndClocking
+                | Token::EndConfig
+                | Token::EndPrimitive
+                | Token::EndTable
+                | Token::EndGroup
+                | Token::EndSequence
+                | Token::EndEnum
+                | Token::Eof => {
                     return Ok(());
                 }
                 Token::Begin => {
@@ -2035,14 +2238,18 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
     fn skip_class_body(&mut self) {
         let mut depth = 0i32;
         self.advance(); // consume 'class'
-        // Skip class header: name, #(params), extends, ';'
+                        // Skip class header: name, #(params), extends, ';'
         let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         loop {
             if self.pos.get() == _last_pos {
                 _stuck += 1;
                 if _stuck > 5_000 {
-                    self.push_warning_at("parser stuck (no progress) skipping class body — aborting".to_string(), self.peek_line(), self.peek_col());
+                    self.push_warning_at(
+                        "parser stuck (no progress) skipping class body — aborting".to_string(),
+                        self.peek_line(),
+                        self.peek_col(),
+                    );
                     return; // emergency exit: stuck in skip_class_body header
                 }
             } else {
@@ -2050,7 +2257,10 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                 _last_pos = self.pos.get();
             }
             match self.peek() {
-                Token::Semi => { self.advance(); break; }
+                Token::Semi => {
+                    self.advance();
+                    break;
+                }
                 Token::Hash => {
                     self.advance();
                     if self.peek() == &Token::LParen {
@@ -2058,7 +2268,9 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                     }
                 }
                 Token::EndClass | Token::Eof => return,
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
         // Skip class body until matching endclass
@@ -2068,7 +2280,11 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
             if self.pos.get() == _last_pos2 {
                 _stuck2 += 1;
                 if _stuck2 > 5_000 {
-                    self.push_warning_at("parser stuck (no progress) in class body — aborting".to_string(), self.peek_line(), self.peek_col());
+                    self.push_warning_at(
+                        "parser stuck (no progress) in class body — aborting".to_string(),
+                        self.peek_line(),
+                        self.peek_col(),
+                    );
                     return; // emergency exit: stuck in skip_class_body body
                 }
             } else {
@@ -2096,7 +2312,9 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                     depth -= 1;
                     self.advance();
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
     }
@@ -2107,14 +2325,21 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
         self.advance(); // consume '('
         loop {
             match self.peek() {
-                Token::LParen => { depth += 1; self.advance(); }
+                Token::LParen => {
+                    depth += 1;
+                    self.advance();
+                }
                 Token::RParen => {
                     depth -= 1;
                     self.advance();
-                    if depth == 0 { return Ok(()); }
+                    if depth == 0 {
+                        return Ok(());
+                    }
                 }
                 Token::Eof => return Ok(()),
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
     }
@@ -2179,5 +2404,4 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
             }
         }
     }
-
 }

@@ -3,11 +3,11 @@
 // parse_typedef, parse_scoped_type_name, parse_type_expr, parse_param_list, parse_range
 
 use super::Parser;
-use maria_ast::*;
+use crate::lexer::*;
 use maria_ast::types::const_eval_simple;
+use maria_ast::*;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_scoped_type_name(&mut self) -> Option<DataType> {
@@ -23,7 +23,10 @@ impl Parser {
                 if let Token::Ident(t) = self.peek() {
                     let type_name = *t;
                     self.advance();
-                    Some(DataType::UserDefined(Symbol::intern(&format!("{}::{}", pkg, type_name))))
+                    Some(DataType::UserDefined(Symbol::intern(&format!(
+                        "{}::{}",
+                        pkg, type_name
+                    ))))
                 } else {
                     None
                 }
@@ -71,9 +74,18 @@ impl Parser {
                 };
                 self.advance();
                 let mut dtype = dt;
-                if self.peek() == &Token::Signed { self.advance(); dtype = DataType::Signed(Box::new(dtype)); }
-                if self.peek() == &Token::Unsigned { self.advance(); }
-                let decl_expr_range = if self.peek() == &Token::LBrack { self.parse_range()? } else { None };
+                if self.peek() == &Token::Signed {
+                    self.advance();
+                    dtype = DataType::Signed(Box::new(dtype));
+                }
+                if self.peek() == &Token::Unsigned {
+                    self.advance();
+                }
+                let decl_expr_range = if self.peek() == &Token::LBrack {
+                    self.parse_range()?
+                } else {
+                    None
+                };
                 let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
                 while self.peek_is_packed_dim() {
                     if let Some(er) = self.parse_range()? {
@@ -82,13 +94,23 @@ impl Parser {
                 }
                 let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
                 self.skip_semi();
-                return Ok(Decl { dtype, kind: DeclKind::Logic, names });
+                return Ok(Decl {
+                    dtype,
+                    kind: DeclKind::Logic,
+                    names,
+                });
             }
             Token::Enum => {
                 self.advance();
                 let base = match self.peek() {
-                    Token::Bit | Token::Logic | Token::Int | Token::Integer
-                        | Token::Byte | Token::Shortint | Token::Longint | Token::Time => {
+                    Token::Bit
+                    | Token::Logic
+                    | Token::Int
+                    | Token::Integer
+                    | Token::Byte
+                    | Token::Shortint
+                    | Token::Longint
+                    | Token::Time => {
                         let dt = match self.peek() {
                             Token::Bit => DataType::Bit,
                             Token::Logic => DataType::Logic,
@@ -99,7 +121,12 @@ impl Parser {
                             _ => DataType::Longint,
                         };
                         self.advance();
-                        let dt = if self.peek() == &Token::Signed { self.advance(); DataType::Signed(Box::new(dt)) } else { dt };
+                        let dt = if self.peek() == &Token::Signed {
+                            self.advance();
+                            DataType::Signed(Box::new(dt))
+                        } else {
+                            dt
+                        };
                         Some(Box::new(dt))
                     }
                     _ => None,
@@ -118,59 +145,99 @@ impl Parser {
                 }
                 let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::EnumType { base, members }, kind: DeclKind::Logic, names });
+                return Ok(Decl {
+                    dtype: DataType::EnumType { base, members },
+                    kind: DeclKind::Logic,
+                    names,
+                });
             }
             Token::Struct => {
                 self.advance();
-                if matches!(self.peek(), Token::Ident(s) if s == "packed") { self.advance(); }
+                if matches!(self.peek(), Token::Ident(s) if s == "packed") {
+                    self.advance();
+                }
                 let members = self.parse_struct_body()?;
                 let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::StructType { members }, kind: DeclKind::Logic, names });
+                return Ok(Decl {
+                    dtype: DataType::StructType { members },
+                    kind: DeclKind::Logic,
+                    names,
+                });
             }
             Token::Union => {
                 self.advance();
-                if matches!(self.peek(), Token::Ident(s) if s == "packed") { self.advance(); }
+                if matches!(self.peek(), Token::Ident(s) if s == "packed") {
+                    self.advance();
+                }
                 let members = self.parse_struct_body()?;
                 let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::UnionType { members }, kind: DeclKind::Logic, names });
+                return Ok(Decl {
+                    dtype: DataType::UnionType { members },
+                    kind: DeclKind::Logic,
+                    names,
+                });
             }
             Token::String => {
                 self.advance();
                 let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::String, kind: DeclKind::Reg, names });
+                return Ok(Decl {
+                    dtype: DataType::String,
+                    kind: DeclKind::Reg,
+                    names,
+                });
             }
             Token::Real => {
                 self.advance();
                 let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::Real, kind: DeclKind::Reg, names });
+                return Ok(Decl {
+                    dtype: DataType::Real,
+                    kind: DeclKind::Reg,
+                    names,
+                });
             }
             Token::WReal => {
                 self.advance();
                 let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::Real, kind: DeclKind::Wire, names });
+                return Ok(Decl {
+                    dtype: DataType::Real,
+                    kind: DeclKind::Wire,
+                    names,
+                });
             }
             Token::RealTime => {
                 self.advance();
                 let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::Realtime, kind: DeclKind::Reg, names });
+                return Ok(Decl {
+                    dtype: DataType::Realtime,
+                    kind: DeclKind::Reg,
+                    names,
+                });
             }
             Token::Mailbox => {
                 self.advance();
                 let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::UserDefined(Symbol::intern("__mailbox")), kind: DeclKind::Reg, names });
+                return Ok(Decl {
+                    dtype: DataType::UserDefined(Symbol::intern("__mailbox")),
+                    kind: DeclKind::Reg,
+                    names,
+                });
             }
             Token::Semaphore => {
                 self.advance();
                 let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
-                return Ok(Decl { dtype: DataType::UserDefined(Symbol::intern("__semaphore")), kind: DeclKind::Reg, names });
+                return Ok(Decl {
+                    dtype: DataType::UserDefined(Symbol::intern("__semaphore")),
+                    kind: DeclKind::Reg,
+                    names,
+                });
             }
             Token::Ident(_) => {
                 let name = self.expect_ident()?;
@@ -179,7 +246,14 @@ impl Parser {
                 if self.peek() == &Token::Scope {
                     self.advance();
                     let type_name = self.expect_ident()?;
-                    dtype = DataType::UserDefined(Symbol::intern(&format!("{}::{}", match &dtype { DataType::UserDefined(s) => s.as_str(), _ => "", }, type_name)));
+                    dtype = DataType::UserDefined(Symbol::intern(&format!(
+                        "{}::{}",
+                        match &dtype {
+                            DataType::UserDefined(s) => s.as_str(),
+                            _ => "",
+                        },
+                        type_name
+                    )));
                 }
                 let decl_expr_range = if self.peek() == &Token::LBrack {
                     self.parse_range()?
@@ -194,9 +268,15 @@ impl Parser {
                 }
                 let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
                 self.skip_semi();
-                return Ok(Decl { dtype, kind: DeclKind::Logic, names });
+                return Ok(Decl {
+                    dtype,
+                    kind: DeclKind::Logic,
+                    names,
+                });
             }
-            _ => return Err(self.err("expected wire/reg/logic/int/byte/shortint/longint/enum/struct/union/wand/wor/tri")),
+            _ => return Err(self.err(
+                "expected wire/reg/logic/int/byte/shortint/longint/enum/struct/union/wand/wor/tri",
+            )),
         };
         self.advance();
 
@@ -270,8 +350,9 @@ impl Parser {
                     let mut is_queue = false;
                     let mut is_associative = false;
                     let mut assoc_key_type: Option<DataType> = None;
-                    let (var_expr_range, array_range, array_size_expr) =
-                        if decl_expr_range.is_some() {
+                    let (var_expr_range, array_range, array_size_expr) = if decl_expr_range
+                        .is_some()
+                    {
                         let ar = if self.peek() == &Token::LBrack {
                             if self.peek_ahead(1) == &Token::RBrack {
                                 self.advance();
@@ -565,9 +646,7 @@ impl Parser {
                         }
                     }
                 }
-                _ => {
-                    return Err(self.err("expected identifier in enum"))
-                }
+                _ => return Err(self.err("expected identifier in enum")),
             }
             if self.peek() == &Token::Comma {
                 self.advance();
@@ -709,9 +788,7 @@ impl Parser {
                         DataType::UserDefined(name)
                     }
                 }
-                _ => {
-                    return Err(self.err("expected type in struct/union member"))
-                }
+                _ => return Err(self.err("expected type in struct/union member")),
             };
             let (range, expr_range) = if self.peek() == &Token::LBrack {
                 let er = self.parse_range()?;
@@ -818,8 +895,7 @@ impl Parser {
                             let type_name = self.expect_ident()?;
                             DataType::UserDefined(Symbol::intern(&format!(
                                 "{}::{}",
-                                name,
-                                type_name
+                                name, type_name
                             )))
                         } else {
                             DataType::UserDefined(name)
@@ -1132,9 +1208,7 @@ impl Parser {
                     return Err(self.err("expected name after typedef type"));
                 }
             }
-            _ => {
-                return Err(self.err("expected type after typedef"))
-            }
+            _ => return Err(self.err("expected type after typedef")),
         };
         self.skip_semi();
         Ok(TypedefDecl {
@@ -1468,5 +1542,4 @@ impl Parser {
             i += 1;
         }
     }
-
 }

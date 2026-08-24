@@ -148,12 +148,26 @@ pub fn collect_loop_var_names(stmts: &[Stmt], out: &mut Vec<Symbol>) {
 fn collect_loop_var_names_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
     match stmt {
         Stmt::Block { stmts } | Stmt::LoopForever { stmts } => collect_loop_var_names(stmts, out),
-        Stmt::BlockingAssign { .. } | Stmt::NonBlockingAssign { .. } | Stmt::StmtAssign { .. }
-        | Stmt::Null | Stmt::SysFinish | Stmt::Break | Stmt::Continue | Stmt::Return(_)
-        | Stmt::Expr { .. } | Stmt::SysCall { .. } | Stmt::EventTrigger { .. }
-        | Stmt::Release { .. } | Stmt::Deassign { .. } | Stmt::Disable { .. }
+        Stmt::BlockingAssign { .. }
+        | Stmt::NonBlockingAssign { .. }
+        | Stmt::StmtAssign { .. }
+        | Stmt::Null
+        | Stmt::SysFinish
+        | Stmt::Break
+        | Stmt::Continue
+        | Stmt::Return(_)
+        | Stmt::Expr { .. }
+        | Stmt::SysCall { .. }
+        | Stmt::EventTrigger { .. }
+        | Stmt::Release { .. }
+        | Stmt::Deassign { .. }
+        | Stmt::Disable { .. }
         | Stmt::Force { .. } => {}
-        Stmt::IfElse { true_branch, false_branch, .. } => {
+        Stmt::IfElse {
+            true_branch,
+            false_branch,
+            ..
+        } => {
             collect_loop_var_names_stmt(true_branch, out);
             if let Some(fb) = false_branch {
                 collect_loop_var_names_stmt(fb, out);
@@ -175,10 +189,7 @@ fn collect_loop_var_names_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
             }
         }
         Stmt::LoopFor {
-            init,
-            step,
-            stmts,
-            ..
+            init, step, stmts, ..
         } => {
             if let Some(Stmt::BlockingAssign {
                 lhs: Expr::Ident { name, .. },
@@ -294,7 +305,12 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             delay: substitute_loop_var_in_expr(delay, var_name, value),
             stmt: Box::new(substitute_loop_var_in_stmt(stmt, var_name, value)),
         },
-        Stmt::SysCall { name, args, line, col } => Stmt::SysCall {
+        Stmt::SysCall {
+            name,
+            args,
+            line,
+            col,
+        } => Stmt::SysCall {
             name: *name,
             args: args
                 .iter()
@@ -478,7 +494,7 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
                     .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
                 stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
             }
-        },
+        }
         Stmt::Repeat { count, stmts } => Stmt::Repeat {
             count: substitute_loop_var_in_expr(count, var_name, value),
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
@@ -609,7 +625,12 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
                 .map(|e| substitute_loop_var_in_expr(e, var_name, value))
                 .collect(),
         ),
-        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
+        Expr::FuncCall {
+            name,
+            args,
+            line,
+            col,
+        } => Expr::FuncCall {
             name: *name,
             args: args
                 .iter()
@@ -717,14 +738,14 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
                         )
                     }
                     maria_ast::expr::StructLitMember::Positional(e) => {
-                        maria_ast::expr::StructLitMember::Positional(
-                            substitute_loop_var_in_expr(e, var_name, value),
-                        )
+                        maria_ast::expr::StructLitMember::Positional(substitute_loop_var_in_expr(
+                            e, var_name, value,
+                        ))
                     }
                     maria_ast::expr::StructLitMember::Default(e) => {
-                        maria_ast::expr::StructLitMember::Default(
-                            substitute_loop_var_in_expr(e, var_name, value),
-                        )
+                        maria_ast::expr::StructLitMember::Default(substitute_loop_var_in_expr(
+                            e, var_name, value,
+                        ))
                     }
                 })
                 .collect(),

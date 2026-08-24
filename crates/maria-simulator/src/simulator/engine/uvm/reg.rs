@@ -7,10 +7,10 @@
 //! object.rs, komponen/sequence di component.rs.
 
 use super::super::SimulationEngine;
-use maria_core::error::SimError;
-use maria_ir::*;
 use crate::simulator::types::*;
 use crate::simulator::util::*;
+use maria_core::error::SimError;
+use maria_ir::*;
 
 impl SimulationEngine {
     pub(crate) fn execute_uvm_reg_field_method(
@@ -58,13 +58,17 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get" => {
-                let val = self.uvm_reg_field_data.get(&obj_id)
+                let val = self
+                    .uvm_reg_field_data
+                    .get(&obj_id)
                     .map(|fd| fd.value.clone())
                     .unwrap_or(LogicVec::new(1));
                 Ok(val)
             }
             "get_desired" => {
-                let val = self.uvm_reg_field_data.get(&obj_id)
+                let val = self
+                    .uvm_reg_field_data
+                    .get(&obj_id)
                     .map(|fd| fd.desired.clone())
                     .unwrap_or(LogicVec::new(1));
                 Ok(val)
@@ -79,7 +83,9 @@ impl SimulationEngine {
             }
             "randomize" => {
                 if let Some(_fd) = self.uvm_reg_field_data.get(&obj_id) {
-                    let class_name = self.state.get_object(obj_id)
+                    let class_name = self
+                        .state
+                        .get_object(obj_id)
                         .map(|o| o.class_name.to_string())
                         .unwrap_or_default();
                     if !class_name.is_empty() {
@@ -87,9 +93,15 @@ impl SimulationEngine {
                     }
                 }
                 // Fallback: randomize via engine
-                let seed = self.current_time.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-                let width = self.uvm_reg_field_data.get(&obj_id)
-                    .map(|fd| fd.width).unwrap_or(1);
+                let seed = self
+                    .current_time
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let width = self
+                    .uvm_reg_field_data
+                    .get(&obj_id)
+                    .map(|fd| fd.width)
+                    .unwrap_or(1);
                 let rv = LogicVec::from_u64(seed, width);
                 if let Some(fd) = self.uvm_reg_field_data.get_mut(&obj_id) {
                     fd.value = rv.clone();
@@ -125,25 +137,33 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_bit_pos" => {
-                let pos = self.uvm_reg_field_data.get(&obj_id)
+                let pos = self
+                    .uvm_reg_field_data
+                    .get(&obj_id)
                     .map(|fd| fd.bit_pos as u64)
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(pos, 32))
             }
             "get_n_bits" => {
-                let w = self.uvm_reg_field_data.get(&obj_id)
+                let w = self
+                    .uvm_reg_field_data
+                    .get(&obj_id)
                     .map(|fd| fd.width as u64)
                     .unwrap_or(1);
                 Ok(LogicVec::from_u64(w, 32))
             }
             "get_access" => {
-                let access = self.uvm_reg_field_data.get(&obj_id)
+                let access = self
+                    .uvm_reg_field_data
+                    .get(&obj_id)
                     .map(|fd| fd.access.clone())
                     .unwrap_or_default();
                 Ok(string_to_logicvec(&access))
             }
             "is_modified" => {
-                let modified = self.uvm_reg_field_data.get(&obj_id)
+                let modified = self
+                    .uvm_reg_field_data
+                    .get(&obj_id)
                     .map(|fd| fd.modified)
                     .unwrap_or(false);
                 Ok(LogicVec::from_u64(if modified { 1 } else { 0 }, 1))
@@ -192,8 +212,11 @@ impl SimulationEngine {
                         }
                     }
                     // Register with parent block (use local values, not borrowed references)
-                    let reg_offset = self.uvm_reg_data.get(&obj_id)
-                        .map(|rd| rd.address).unwrap_or(offset);
+                    let reg_offset = self
+                        .uvm_reg_data
+                        .get(&obj_id)
+                        .map(|rd| rd.address)
+                        .unwrap_or(offset);
                     if let Some(bd) = self.uvm_reg_block_data.get_mut(&block_id) {
                         bd.regs_by_offset.insert(reg_offset, obj_id);
                         if let Some(map_id) = bd.default_map {
@@ -226,7 +249,9 @@ impl SimulationEngine {
             "read" => {
                 // read(status, map, path): model-side read (return mirrored value)
                 // Also returns status in first arg (simplified: always success)
-                let val = self.uvm_reg_data.get(&obj_id)
+                let val = self
+                    .uvm_reg_data
+                    .get(&obj_id)
                     .map(|rd| rd.value.clone())
                     .unwrap_or(LogicVec::new(32));
                 Ok(val)
@@ -240,13 +265,17 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get" => {
-                let val = self.uvm_reg_data.get(&obj_id)
+                let val = self
+                    .uvm_reg_data
+                    .get(&obj_id)
                     .map(|rd| rd.value.clone())
                     .unwrap_or(LogicVec::new(32));
                 Ok(val)
             }
             "get_desired" => {
-                let val = self.uvm_reg_data.get(&obj_id)
+                let val = self
+                    .uvm_reg_data
+                    .get(&obj_id)
                     .map(|rd| rd.desired.clone())
                     .unwrap_or(LogicVec::new(32));
                 Ok(val)
@@ -277,7 +306,9 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "randomize" => {
-                let class_name = self.state.get_object(obj_id)
+                let class_name = self
+                    .state
+                    .get_object(obj_id)
                     .map(|o| o.class_name.to_string())
                     .unwrap_or_default();
                 if !class_name.is_empty() {
@@ -309,7 +340,9 @@ impl SimulationEngine {
             }
             "get_fields" => {
                 // Return list of field object IDs
-                let fields = self.uvm_reg_data.get(&obj_id)
+                let fields = self
+                    .uvm_reg_data
+                    .get(&obj_id)
                     .map(|rd| rd.fields.clone())
                     .unwrap_or_default();
                 // Pack field IDs into a single LogicVec (64-bit each)
@@ -322,23 +355,32 @@ impl SimulationEngine {
                         let id_vec = LogicVec::from_u64(*fid as u64, 64);
                         bits.extend(id_vec.bits.iter());
                     }
-                    Ok(LogicVec { width: total_width, bits })
+                    Ok(LogicVec {
+                        width: total_width,
+                        bits,
+                    })
                 }
             }
             "get_address" => {
-                let addr = self.uvm_reg_data.get(&obj_id)
+                let addr = self
+                    .uvm_reg_data
+                    .get(&obj_id)
                     .map(|rd| rd.address)
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(addr, 64))
             }
             "get_n_bits" => {
-                let w = self.uvm_reg_data.get(&obj_id)
+                let w = self
+                    .uvm_reg_data
+                    .get(&obj_id)
                     .map(|rd| rd.width as u64)
                     .unwrap_or(32);
                 Ok(LogicVec::from_u64(w, 32))
             }
             "is_modified" => {
-                let modified = self.uvm_reg_data.get(&obj_id)
+                let modified = self
+                    .uvm_reg_data
+                    .get(&obj_id)
                     .map(|rd| rd.modified)
                     .unwrap_or(false);
                 Ok(LogicVec::from_u64(if modified { 1 } else { 0 }, 1))
@@ -375,7 +417,9 @@ impl SimulationEngine {
             }
             "default_map" => {
                 // Get/set default address map
-                let default_map = self.uvm_reg_block_data.get(&obj_id)
+                let default_map = self
+                    .uvm_reg_block_data
+                    .get(&obj_id)
                     .and_then(|bd| bd.default_map)
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(default_map as u64, 64))
@@ -389,14 +433,18 @@ impl SimulationEngine {
             }
             "get_reg_by_offset" => {
                 let offset = args.first().map(|a| a.to_u64()).unwrap_or(0);
-                let reg_id = self.uvm_reg_block_data.get(&obj_id)
+                let reg_id = self
+                    .uvm_reg_block_data
+                    .get(&obj_id)
                     .and_then(|bd| bd.regs_by_offset.get(&offset).copied())
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(reg_id as u64, 64))
             }
             "get_registers" => {
                 // Return all register object IDs in this block
-                let regs: Vec<u64> = self.uvm_reg_block_data.get(&obj_id)
+                let regs: Vec<u64> = self
+                    .uvm_reg_block_data
+                    .get(&obj_id)
                     .map(|bd| bd.regs_by_offset.values().map(|&id| id as u64).collect())
                     .unwrap_or_default();
                 if regs.is_empty() {
@@ -408,11 +456,16 @@ impl SimulationEngine {
                         let id_vec = LogicVec::from_u64(rid, 64);
                         bits.extend(id_vec.bits.iter());
                     }
-                    Ok(LogicVec { width: total_width, bits })
+                    Ok(LogicVec {
+                        width: total_width,
+                        bits,
+                    })
                 }
             }
             "get_base_address" => {
-                let addr = self.uvm_reg_block_data.get(&obj_id)
+                let addr = self
+                    .uvm_reg_block_data
+                    .get(&obj_id)
                     .map(|bd| bd.base_address)
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(addr, 64))
@@ -459,7 +512,9 @@ impl SimulationEngine {
             }
             "get_reg_by_offset" => {
                 let offset = args.first().map(|a| a.to_u64()).unwrap_or(0);
-                let reg_id = self.uvm_reg_map_data.get(&obj_id)
+                let reg_id = self
+                    .uvm_reg_map_data
+                    .get(&obj_id)
                     .and_then(|md| md.regs_by_offset.get(&offset).copied())
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(reg_id as u64, 64))
@@ -472,7 +527,9 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_base_addr" => {
-                let addr = self.uvm_reg_map_data.get(&obj_id)
+                let addr = self
+                    .uvm_reg_map_data
+                    .get(&obj_id)
                     .map(|md| md.base_address)
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(addr, 64))

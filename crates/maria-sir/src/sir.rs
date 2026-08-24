@@ -104,7 +104,10 @@ pub enum SirNodeKind {
     ReduceXor,
     // ── Bit-vector —─
     Concat,
-    Slice { msb: usize, lsb: usize },
+    Slice {
+        msb: usize,
+        lsb: usize,
+    },
     // ── Buffer / I/O —─
     Buffer,
     TriState,

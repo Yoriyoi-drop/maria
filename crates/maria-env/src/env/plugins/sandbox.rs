@@ -11,11 +11,17 @@ pub struct SandboxPolicy {
 
 impl SandboxPolicy {
     pub fn new() -> Self {
-        SandboxPolicy { allow_hooks: true, trusted: Vec::new() }
+        SandboxPolicy {
+            allow_hooks: true,
+            trusted: Vec::new(),
+        }
     }
 
     pub fn restricted() -> Self {
-        SandboxPolicy { allow_hooks: false, trusted: Vec::new() }
+        SandboxPolicy {
+            allow_hooks: false,
+            trusted: Vec::new(),
+        }
     }
 
     pub fn trust(&mut self, name: impl Into<String>) {

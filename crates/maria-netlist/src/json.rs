@@ -1,6 +1,6 @@
 //! Emisi `netlist.json` — representasi netlist untuk GUI/CI (SYNTHESIS.md §13).
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::net::{Netlist, PortDir};
 
@@ -126,15 +126,17 @@ mod tests {
             enable: None,
             width: 8,
         });
-        let mk = |name: &str, dir: maria_sir::PortDir, value: usize, width: usize| maria_sir::SirPort {
-            name: Symbol::intern(name),
-            dir,
-            width,
-            value,
-        };
+        let mk =
+            |name: &str, dir: maria_sir::PortDir, value: usize, width: usize| maria_sir::SirPort {
+                name: Symbol::intern(name),
+                dir,
+                width,
+                value,
+            };
         m.inputs.push(mk("clk", maria_sir::PortDir::Input, 0, 1));
         m.inputs.push(mk("rst_n", maria_sir::PortDir::Input, 1, 1));
-        m.outputs.push(mk("count", maria_sir::PortDir::Output, 2, 8));
+        m.outputs
+            .push(mk("count", maria_sir::PortDir::Output, 2, 8));
         m
     }
 

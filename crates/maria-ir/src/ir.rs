@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use maria_core::intern::Symbol;
 use maria_core::{LogicVal, LogicVec};
+use std::collections::HashMap;
 
 pub type SignalId = usize;
 pub type ClassId = usize;
@@ -299,7 +299,11 @@ pub struct SignalSensitivity {
 
 impl SignalSensitivity {
     pub fn whole(sig_id: SignalId) -> Self {
-        Self { sig_id, msb: None, lsb: None }
+        Self {
+            sig_id,
+            msb: None,
+            lsb: None,
+        }
     }
 }
 

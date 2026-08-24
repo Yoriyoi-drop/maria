@@ -19,11 +19,10 @@
 //! - Merge: combine with current Engine coverage data (sum hits, union sets)
 //! - Save: serialize to binary file
 
-use maria_ir::LogicVal;
 use maria_core::Symbol;
+use maria_ir::LogicVal;
 use std::collections::HashMap;
 use std::io::{self, BufReader, BufWriter, Read, Write};
-
 
 // ─── Binary I/O Helpers ─────────────────────────────────────────────
 
@@ -86,7 +85,10 @@ fn read_logic_val<R: Read>(r: &mut R) -> io::Result<LogicVal> {
         1 => Ok(LogicVal::One),
         2 => Ok(LogicVal::X),
         3 => Ok(LogicVal::Z),
-        _ => Err(io::Error::new(io::ErrorKind::InvalidData, "invalid LogicVal")),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid LogicVal",
+        )),
     }
 }
 
@@ -229,13 +231,12 @@ impl CoverageDatabase {
 
     /// Merge coverage data from the engine into this database.
     /// Values are summed across runs. Sets are unioned.
-    pub fn merge_from_engine(
-        &mut self,
-        engine: &crate::simulator::engine::SimulationEngine,
-    ) {
+    pub fn merge_from_engine(&mut self, engine: &crate::simulator::engine::SimulationEngine) {
         // Merge covergroup data
         for cg in &engine.design.covergroups {
-            let entry = self.covergroups.entry(cg.name.to_string())
+            let entry = self
+                .covergroups
+                .entry(cg.name.to_string())
                 .or_insert_with(|| CovergroupEntry {
                     name: cg.name.to_string(),
                     coverpoints: Vec::new(),
@@ -247,9 +248,9 @@ impl CoverageDatabase {
             // tetap menerima total agregat.
             let prefix = format!("{}.", cg.name);
             let sum_key = |item: &str,
-                               total_map: &HashMap<Symbol, u64>,
-                               hits_map: &HashMap<Symbol, u64>,
-                               bins_map: &HashMap<Symbol, HashMap<Symbol, u64>>|
+                           total_map: &HashMap<Symbol, u64>,
+                           hits_map: &HashMap<Symbol, u64>,
+                           bins_map: &HashMap<Symbol, HashMap<Symbol, u64>>|
              -> (u64, u64, HashMap<Symbol, u64>) {
                 let mut total = 0u64;
                 let mut hits = 0u64;
@@ -340,7 +341,9 @@ impl CoverageDatabase {
 
         // Merge toggle coverage
         for (sig_id, transitions) in &engine.cover_toggle {
-            let entry = self.toggle_data.entry(*sig_id)
+            let entry = self
+                .toggle_data
+                .entry(*sig_id)
                 .or_insert_with(|| ToggleEntry {
                     sig_id: *sig_id,
                     transitions: HashMap::new(),
@@ -352,8 +355,7 @@ impl CoverageDatabase {
 
         // Merge branch coverage
         for (key, branches) in &engine.cover_branches {
-            let entry = self.branch_data.entry(*key)
-                .or_default();
+            let entry = self.branch_data.entry(*key).or_default();
             for (label, count) in branches {
                 *entry.entry(*label).or_insert(0) += count;
             }
@@ -361,8 +363,7 @@ impl CoverageDatabase {
 
         // Merge FSM coverage
         for (sig_id, states) in &engine.cover_fsm {
-            let entry = self.fsm_data.entry(*sig_id)
-                .or_default();
+            let entry = self.fsm_data.entry(*sig_id).or_default();
             for state in states {
                 *entry.entry(*state).or_insert(0) += 1;
             }
@@ -373,7 +374,11 @@ impl CoverageDatabase {
     /// Useful for reporting after load.
     pub fn to_engine_maps(
         &self,
-    ) -> (HashMap<Symbol, u64>, HashMap<Symbol, u64>, HashMap<Symbol, HashMap<Symbol, u64>>) {
+    ) -> (
+        HashMap<Symbol, u64>,
+        HashMap<Symbol, u64>,
+        HashMap<Symbol, HashMap<Symbol, u64>>,
+    ) {
         let mut total = HashMap::new();
         let mut hits = HashMap::new();
         let mut bins = HashMap::new();
@@ -413,38 +418,45 @@ impl CoverageDatabase {
         let mut writer = BufWriter::new(file);
 
         // Header
-        writer.write_all(b"MCDB")
+        writer
+            .write_all(b"MCDB")
             .map_err(|e| format!("write header: {}", e))?;
         write_u32(&mut writer, 1) // version
             .map_err(|e| format!("write version: {}", e))?;
 
         // Section 1: Covergroup
-        writer.write_all(&[SectionTag::Covergroup as u8, 0, 0, 0])
+        writer
+            .write_all(&[SectionTag::Covergroup as u8, 0, 0, 0])
             .map_err(|e| format!("write section tag: {}", e))?;
         self.write_covergroup_section(&mut writer)?;
 
         // Section 2: Line
-        writer.write_all(&[SectionTag::Line as u8, 0, 0, 0])
+        writer
+            .write_all(&[SectionTag::Line as u8, 0, 0, 0])
             .map_err(|e| format!("write tag line: {}", e))?;
         self.write_line_section(&mut writer)?;
 
         // Section 3: Toggle
-        writer.write_all(&[SectionTag::Toggle as u8, 0, 0, 0])
+        writer
+            .write_all(&[SectionTag::Toggle as u8, 0, 0, 0])
             .map_err(|e| format!("write tag toggle: {}", e))?;
         self.write_toggle_section(&mut writer)?;
 
         // Section 4: Branch
-        writer.write_all(&[SectionTag::Branch as u8, 0, 0, 0])
+        writer
+            .write_all(&[SectionTag::Branch as u8, 0, 0, 0])
             .map_err(|e| format!("write tag branch: {}", e))?;
         self.write_branch_section(&mut writer)?;
 
         // Section 5: FSM
-        writer.write_all(&[SectionTag::Fsm as u8, 0, 0, 0])
+        writer
+            .write_all(&[SectionTag::Fsm as u8, 0, 0, 0])
             .map_err(|e| format!("write tag fsm: {}", e))?;
         self.write_fsm_section(&mut writer)?;
 
         // End marker
-        writer.write_all(&[SectionTag::End as u8, 0, 0, 0])
+        writer
+            .write_all(&[SectionTag::End as u8, 0, 0, 0])
             .map_err(|e| format!("write end: {}", e))?;
 
         writer.flush().map_err(|e| format!("flush: {}", e))?;
@@ -467,13 +479,13 @@ impl CoverageDatabase {
 
         // Verify header
         let mut magic = [0u8; 4];
-        reader.read_exact(&mut magic)
+        reader
+            .read_exact(&mut magic)
             .map_err(|e| format!("read magic: {}", e))?;
         if &magic != b"MCDB" {
             return Err("invalid coverage DB magic".to_string());
         }
-        let _version = read_u32(&mut reader)
-            .map_err(|e| format!("read version: {}", e))?;
+        let _version = read_u32(&mut reader).map_err(|e| format!("read version: {}", e))?;
 
         let mut db = CoverageDatabase::new();
 
@@ -507,33 +519,23 @@ impl CoverageDatabase {
     // ─── Section Writers ────────────────────────────────────────────
 
     fn write_covergroup_section(&self, w: &mut impl Write) -> Result<(), String> {
-        write_usize(w, self.covergroups.len())
-            .map_err(|e| format!("cg count: {}", e))?;
+        write_usize(w, self.covergroups.len()).map_err(|e| format!("cg count: {}", e))?;
         for (name, entry) in &self.covergroups {
-            write_str(w, name)
-                .map_err(|e| format!("cg name: {}", e))?;
+            write_str(w, name).map_err(|e| format!("cg name: {}", e))?;
             // Coverpoints
-            write_usize(w, entry.coverpoints.len())
-                .map_err(|e| format!("cp count: {}", e))?;
+            write_usize(w, entry.coverpoints.len()).map_err(|e| format!("cp count: {}", e))?;
             for cp in &entry.coverpoints {
-                write_str(w, &cp.name)
-                    .map_err(|e| format!("cp name: {}", e))?;
-                write_u64(w, cp.total)
-                    .map_err(|e| format!("cp total: {}", e))?;
-                write_u64(w, cp.hits)
-                    .map_err(|e| format!("cp hits: {}", e))?;
+                write_str(w, &cp.name).map_err(|e| format!("cp name: {}", e))?;
+                write_u64(w, cp.total).map_err(|e| format!("cp total: {}", e))?;
+                write_u64(w, cp.hits).map_err(|e| format!("cp hits: {}", e))?;
                 write_bin_map(w, &cp.bins)?;
             }
             // Crosses
-            write_usize(w, entry.crosses.len())
-                .map_err(|e| format!("cross count: {}", e))?;
+            write_usize(w, entry.crosses.len()).map_err(|e| format!("cross count: {}", e))?;
             for cross in &entry.crosses {
-                write_str(w, &cross.name)
-                    .map_err(|e| format!("cross name: {}", e))?;
-                write_u64(w, cross.total)
-                    .map_err(|e| format!("cross total: {}", e))?;
-                write_u64(w, cross.hits)
-                    .map_err(|e| format!("cross hits: {}", e))?;
+                write_str(w, &cross.name).map_err(|e| format!("cross name: {}", e))?;
+                write_u64(w, cross.total).map_err(|e| format!("cross total: {}", e))?;
+                write_u64(w, cross.hits).map_err(|e| format!("cross hits: {}", e))?;
                 write_bin_map(w, &cross.bins)?;
             }
         }
@@ -541,68 +543,49 @@ impl CoverageDatabase {
     }
 
     fn write_line_section(&self, w: &mut impl Write) -> Result<(), String> {
-        write_usize(w, self.line_hits.len())
-            .map_err(|e| format!("line count: {}", e))?;
+        write_usize(w, self.line_hits.len()).map_err(|e| format!("line count: {}", e))?;
         for (key, hits) in &self.line_hits {
-            write_str(w, key.as_str())
-                .map_err(|e| format!("line key: {}", e))?;
-            write_u64(w, *hits)
-                .map_err(|e| format!("line hits: {}", e))?;
+            write_str(w, key.as_str()).map_err(|e| format!("line key: {}", e))?;
+            write_u64(w, *hits).map_err(|e| format!("line hits: {}", e))?;
         }
         Ok(())
     }
 
     fn write_toggle_section(&self, w: &mut impl Write) -> Result<(), String> {
-        write_usize(w, self.toggle_data.len())
-            .map_err(|e| format!("toggle count: {}", e))?;
+        write_usize(w, self.toggle_data.len()).map_err(|e| format!("toggle count: {}", e))?;
         for (sig_id, entry) in &self.toggle_data {
-            write_usize(w, *sig_id)
-                .map_err(|e| format!("toggle sig: {}", e))?;
-            write_usize(w, entry.transitions.len())
-                .map_err(|e| format!("toggle trans: {}", e))?;
+            write_usize(w, *sig_id).map_err(|e| format!("toggle sig: {}", e))?;
+            write_usize(w, entry.transitions.len()).map_err(|e| format!("toggle trans: {}", e))?;
             for ((from, to), count) in &entry.transitions {
-                write_logic_val(w, from)
-                    .map_err(|e| format!("toggle from: {}", e))?;
-                write_logic_val(w, to)
-                    .map_err(|e| format!("toggle to: {}", e))?;
-                write_u64(w, *count)
-                    .map_err(|e| format!("toggle count: {}", e))?;
+                write_logic_val(w, from).map_err(|e| format!("toggle from: {}", e))?;
+                write_logic_val(w, to).map_err(|e| format!("toggle to: {}", e))?;
+                write_u64(w, *count).map_err(|e| format!("toggle count: {}", e))?;
             }
         }
         Ok(())
     }
 
     fn write_branch_section(&self, w: &mut impl Write) -> Result<(), String> {
-        write_usize(w, self.branch_data.len())
-            .map_err(|e| format!("branch count: {}", e))?;
+        write_usize(w, self.branch_data.len()).map_err(|e| format!("branch count: {}", e))?;
         for (key, branches) in &self.branch_data {
-            write_str(w, key.as_str())
-                .map_err(|e| format!("branch key: {}", e))?;
-            write_usize(w, branches.len())
-                .map_err(|e| format!("branch entries: {}", e))?;
+            write_str(w, key.as_str()).map_err(|e| format!("branch key: {}", e))?;
+            write_usize(w, branches.len()).map_err(|e| format!("branch entries: {}", e))?;
             for (label, count) in branches {
-                write_str(w, label.as_str())
-                    .map_err(|e| format!("branch label: {}", e))?;
-                write_u64(w, *count)
-                    .map_err(|e| format!("branch count: {}", e))?;
+                write_str(w, label.as_str()).map_err(|e| format!("branch label: {}", e))?;
+                write_u64(w, *count).map_err(|e| format!("branch count: {}", e))?;
             }
         }
         Ok(())
     }
 
     fn write_fsm_section(&self, w: &mut impl Write) -> Result<(), String> {
-        write_usize(w, self.fsm_data.len())
-            .map_err(|e| format!("fsm count: {}", e))?;
+        write_usize(w, self.fsm_data.len()).map_err(|e| format!("fsm count: {}", e))?;
         for (sig_id, states) in &self.fsm_data {
-            write_usize(w, *sig_id)
-                .map_err(|e| format!("fsm sig: {}", e))?;
-            write_usize(w, states.len())
-                .map_err(|e| format!("fsm states: {}", e))?;
+            write_usize(w, *sig_id).map_err(|e| format!("fsm sig: {}", e))?;
+            write_usize(w, states.len()).map_err(|e| format!("fsm states: {}", e))?;
             for (state, count) in states {
-                write_u64(w, *state)
-                    .map_err(|e| format!("fsm state: {}", e))?;
-                write_u64(w, *count)
-                    .map_err(|e| format!("fsm count: {}", e))?;
+                write_u64(w, *state).map_err(|e| format!("fsm state: {}", e))?;
+                write_u64(w, *count).map_err(|e| format!("fsm count: {}", e))?;
             }
         }
         Ok(())
@@ -677,7 +660,13 @@ impl CoverageDatabase {
                 let count = read_u64(r).map_err(|e| format!("toggle count: {}", e))?;
                 transitions.insert((from, to), count);
             }
-            self.toggle_data.insert(sig_id, ToggleEntry { sig_id, transitions });
+            self.toggle_data.insert(
+                sig_id,
+                ToggleEntry {
+                    sig_id,
+                    transitions,
+                },
+            );
         }
         Ok(())
     }
@@ -721,7 +710,9 @@ impl CoverageDatabase {
     pub fn merge_from_db(&mut self, other: &CoverageDatabase) {
         // Merge covergroup data
         for (name, other_entry) in &other.covergroups {
-            let entry = self.covergroups.entry(name.clone())
+            let entry = self
+                .covergroups
+                .entry(name.clone())
                 .or_insert_with(|| CovergroupEntry {
                     name: name.clone(),
                     coverpoints: Vec::new(),
@@ -760,7 +751,9 @@ impl CoverageDatabase {
 
         // Merge toggle coverage
         for (sig_id, other_entry) in &other.toggle_data {
-            let entry = self.toggle_data.entry(*sig_id)
+            let entry = self
+                .toggle_data
+                .entry(*sig_id)
                 .or_insert_with(|| ToggleEntry {
                     sig_id: *sig_id,
                     transitions: HashMap::new(),
@@ -772,8 +765,7 @@ impl CoverageDatabase {
 
         // Merge branch coverage
         for (key, branches) in &other.branch_data {
-            let entry = self.branch_data.entry(*key)
-                .or_default();
+            let entry = self.branch_data.entry(*key).or_default();
             for (label, count) in branches {
                 *entry.entry(*label).or_insert(0) += count;
             }
@@ -781,8 +773,7 @@ impl CoverageDatabase {
 
         // Merge FSM coverage
         for (sig_id, states) in &other.fsm_data {
-            let entry = self.fsm_data.entry(*sig_id)
-                .or_default();
+            let entry = self.fsm_data.entry(*sig_id).or_default();
             for (state, count) in states {
                 *entry.entry(*state).or_insert(0) += count;
             }
@@ -803,19 +794,27 @@ impl CoverageDatabase {
         // Coverpoint changes
         for (name, entry) in &self.covergroups {
             for cp in &entry.coverpoints {
-                let other_hits = other.covergroups.get(name)
+                let other_hits = other
+                    .covergroups
+                    .get(name)
                     .and_then(|e| e.coverpoints.iter().find(|c| c.name == cp.name))
                     .map(|c| c.hits)
                     .unwrap_or(0);
                 if cp.hits != other_hits {
-                    diff.coverpoint_changes.push((format!("{}.{}", name, cp.name), cp.hits, other_hits));
+                    diff.coverpoint_changes.push((
+                        format!("{}.{}", name, cp.name),
+                        cp.hits,
+                        other_hits,
+                    ));
                 }
             }
         }
         // New coverpoints in other
         for (name, entry) in &other.covergroups {
             for cp in &entry.coverpoints {
-                let found = self.covergroups.get(name)
+                let found = self
+                    .covergroups
+                    .get(name)
                     .and_then(|e| e.coverpoints.iter().find(|c| c.name == cp.name))
                     .is_some();
                 if !found {
@@ -835,7 +834,9 @@ impl CoverageDatabase {
         // Branch changes
         for (key, branches) in &self.branch_data {
             let self_total: u64 = branches.values().sum();
-            let other_total: u64 = other.branch_data.get(key)
+            let other_total: u64 = other
+                .branch_data
+                .get(key)
                 .map(|b| b.values().sum())
                 .unwrap_or(0);
             if self_total != other_total {
@@ -884,10 +885,12 @@ impl CoverageDatabase {
                 } else {
                     0.0
                 };
-                println!("    {}: {}/{} hits ({:.1}%)", cp.name, cp.hits, cp.total, pct);
-                let mut sorted_bins: Vec<(&str, &u64)> = cp.bins.iter()
-                    .map(|(k, v)| (k.as_str(), v))
-                    .collect();
+                println!(
+                    "    {}: {}/{} hits ({:.1}%)",
+                    cp.name, cp.hits, cp.total, pct
+                );
+                let mut sorted_bins: Vec<(&str, &u64)> =
+                    cp.bins.iter().map(|(k, v)| (k.as_str(), v)).collect();
                 sorted_bins.sort_by(|a, b| b.1.cmp(a.1));
                 for (bin_key, count) in sorted_bins.iter().take(5) {
                     println!("      - {}: {}", bin_key, count);
@@ -898,7 +901,9 @@ impl CoverageDatabase {
         // Line coverage highlights (top 10)
         if !self.line_hits.is_empty() {
             println!("  Top line hits:");
-            let mut sorted: Vec<(&str, &u64)> = self.line_hits.iter()
+            let mut sorted: Vec<(&str, &u64)> = self
+                .line_hits
+                .iter()
                 .map(|(k, v)| (k.as_str(), v))
                 .collect();
             sorted.sort_by(|a, b| b.1.cmp(a.1));
@@ -914,11 +919,20 @@ impl CoverageDatabase {
             for branches in self.branch_data.values() {
                 for count in branches.values() {
                     total_br += 1;
-                    if *count > 0 { covered_br += 1; }
+                    if *count > 0 {
+                        covered_br += 1;
+                    }
                 }
             }
-            let br_pct = if total_br > 0 { (covered_br as f64 / total_br as f64) * 100.0 } else { 0.0 };
-            println!("  Branch coverage: {}/{} ({:.1}%)", covered_br, total_br, br_pct);
+            let br_pct = if total_br > 0 {
+                (covered_br as f64 / total_br as f64) * 100.0
+            } else {
+                0.0
+            };
+            println!(
+                "  Branch coverage: {}/{} ({:.1}%)",
+                covered_br, total_br, br_pct
+            );
         }
 
         println!("========================================\n");
@@ -932,10 +946,14 @@ impl CoverageDatabase {
         html.push_str("<title>Coverage Report</title>\n");
         html.push_str("<style>\n");
         html.push_str("  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; background: #0d1117; color: #c9d1d9; }\n");
-        html.push_str("  h1 { color: #58a6ff; border-bottom: 2px solid #30363d; padding-bottom: 10px; }\n");
+        html.push_str(
+            "  h1 { color: #58a6ff; border-bottom: 2px solid #30363d; padding-bottom: 10px; }\n",
+        );
         html.push_str("  h2 { color: #58a6ff; }\n");
         html.push_str("  table { border-collapse: collapse; width: 100%; margin: 10px 0; }\n");
-        html.push_str("  th, td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; }\n");
+        html.push_str(
+            "  th, td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; }\n",
+        );
         html.push_str("  th { background: #161b22; color: #58a6ff; font-weight: 600; }\n");
         html.push_str("  tr:nth-child(even) { background: #161b22; }\n");
         html.push_str("  tr:hover { background: #1c2128; }\n");
@@ -963,10 +981,16 @@ impl CoverageDatabase {
         for branches in self.branch_data.values() {
             for count in branches.values() {
                 total_br += 1;
-                if *count > 0 { covered_br += 1; }
+                if *count > 0 {
+                    covered_br += 1;
+                }
             }
         }
-        let br_pct = if total_br > 0 { (covered_br as f64 / total_br as f64 * 100.0) as u64 } else { 0 };
+        let br_pct = if total_br > 0 {
+            (covered_br as f64 / total_br as f64 * 100.0) as u64
+        } else {
+            0
+        };
 
         // Coverpoint percentage
         let mut total_cp_hits = 0u64;
@@ -977,7 +1001,11 @@ impl CoverageDatabase {
                 total_cp_total += cp.total;
             }
         }
-        let cp_pct = if total_cp_total > 0 { (total_cp_hits as f64 / total_cp_total as f64 * 100.0) as u64 } else { 0 };
+        let cp_pct = if total_cp_total > 0 {
+            (total_cp_hits as f64 / total_cp_total as f64 * 100.0) as u64
+        } else {
+            0
+        };
 
         html.push_str("<div class=\"summary\">\n");
         html.push_str(&format!("  <div class=\"card\"><div class=\"val\">{}</div><div class=\"label\">Covergroups</div></div>\n", total_cg));
@@ -997,8 +1025,18 @@ impl CoverageDatabase {
             for (name, entry) in &self.covergroups {
                 let mut first = true;
                 for cp in &entry.coverpoints {
-                    let pct = if cp.total > 0 { (cp.hits as f64 / cp.total as f64 * 100.0) as u64 } else { 0 };
-                    let css = if pct >= 90 { "good" } else if pct >= 50 { "warn" } else { "bad" };
+                    let pct = if cp.total > 0 {
+                        (cp.hits as f64 / cp.total as f64 * 100.0) as u64
+                    } else {
+                        0
+                    };
+                    let css = if pct >= 90 {
+                        "good"
+                    } else if pct >= 50 {
+                        "warn"
+                    } else {
+                        "bad"
+                    };
                     html.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}/{}</td><td class=\"{}\">{}%</td><td>{}</td></tr>\n",
                         if first { name } else { "" },
                         cp.name, cp.hits, cp.total, css, pct, cp.bins.len()));
@@ -1014,9 +1052,12 @@ impl CoverageDatabase {
             for (key, branches) in &self.branch_data {
                 let mut first = true;
                 for (label, count) in branches {
-                    html.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                    html.push_str(&format!(
+                        "<tr><td>{}</td><td>{}</td><td>{}</td></tr>\n",
                         if first { key.as_str() } else { "" },
-                        label.as_str(), count));
+                        label.as_str(),
+                        count
+                    ));
                     first = false;
                 }
             }
@@ -1025,8 +1066,12 @@ impl CoverageDatabase {
 
         // Line coverage table (top 20)
         if !self.line_hits.is_empty() {
-            html.push_str("<h2>Line Coverage (Top 20)</h2>\n<table>\n<tr><th>Key</th><th>Hits</th></tr>\n");
-            let mut sorted: Vec<(&str, &u64)> = self.line_hits.iter()
+            html.push_str(
+                "<h2>Line Coverage (Top 20)</h2>\n<table>\n<tr><th>Key</th><th>Hits</th></tr>\n",
+            );
+            let mut sorted: Vec<(&str, &u64)> = self
+                .line_hits
+                .iter()
                 .map(|(k, v)| (k.as_str(), v))
                 .collect();
             sorted.sort_by(|a, b| b.1.cmp(a.1));
@@ -1047,13 +1092,10 @@ impl CoverageDatabase {
 // ─── Helper: Bin map serialization ───────────────────────────────────
 
 fn write_bin_map(w: &mut impl Write, bins: &CoverBinMap) -> Result<(), String> {
-    write_usize(w, bins.len())
-        .map_err(|e| format!("bin count: {}", e))?;
+    write_usize(w, bins.len()).map_err(|e| format!("bin count: {}", e))?;
     for (key, count) in bins {
-        write_str(w, key.as_str())
-            .map_err(|e| format!("bin key: {}", e))?;
-        write_u64(w, *count)
-            .map_err(|e| format!("bin count: {}", e))?;
+        write_str(w, key.as_str()).map_err(|e| format!("bin key: {}", e))?;
+        write_u64(w, *count).map_err(|e| format!("bin count: {}", e))?;
     }
     Ok(())
 }
@@ -1108,27 +1150,25 @@ mod tests {
         let mut db = CoverageDatabase::new();
         let entry = CovergroupEntry {
             name: "cg_main".to_string(),
-            coverpoints: vec![
-                CoverpointEntry {
-                    name: "addr".to_string(),
-                    total: 100,
-                    hits: 50,
-                    bins: vec![
-                        (Symbol::intern("addr=42"), 30u64),
-                        (Symbol::intern("addr=99"), 20u64),
-                    ].into_iter().collect(),
-                },
-            ],
-            crosses: vec![
-                CrossEntry {
-                    name: "addr_x_data".to_string(),
-                    total: 50,
-                    hits: 25,
-                    bins: vec![
-                        (Symbol::intern("addr=42 x data=1"), 15u64),
-                    ].into_iter().collect(),
-                },
-            ],
+            coverpoints: vec![CoverpointEntry {
+                name: "addr".to_string(),
+                total: 100,
+                hits: 50,
+                bins: vec![
+                    (Symbol::intern("addr=42"), 30u64),
+                    (Symbol::intern("addr=99"), 20u64),
+                ]
+                .into_iter()
+                .collect(),
+            }],
+            crosses: vec![CrossEntry {
+                name: "addr_x_data".to_string(),
+                total: 50,
+                hits: 25,
+                bins: vec![(Symbol::intern("addr=42 x data=1"), 15u64)]
+                    .into_iter()
+                    .collect(),
+            }],
         };
         db.covergroups.insert("cg_main".to_string(), entry);
 
@@ -1165,7 +1205,13 @@ mod tests {
         let db = CoverageDatabase::new();
         let loaded = db.load_from_file(&path_str).unwrap();
         assert_eq!(loaded.line_hits.len(), 2);
-        assert_eq!(*loaded.line_hits.get(&Symbol::intern("proc1.stmt1")).unwrap(), 42);
+        assert_eq!(
+            *loaded
+                .line_hits
+                .get(&Symbol::intern("proc1.stmt1"))
+                .unwrap(),
+            42
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -1182,7 +1228,13 @@ mod tests {
         let mut transitions = HashMap::new();
         transitions.insert((LogicVal::Zero, LogicVal::One), 5u64);
         transitions.insert((LogicVal::One, LogicVal::Zero), 3u64);
-        db.toggle_data.insert(0, ToggleEntry { sig_id: 0, transitions });
+        db.toggle_data.insert(
+            0,
+            ToggleEntry {
+                sig_id: 0,
+                transitions,
+            },
+        );
 
         db.save_to_file(&path_str).unwrap();
 
@@ -1191,7 +1243,12 @@ mod tests {
         assert_eq!(loaded.toggle_data.len(), 1);
         let te = loaded.toggle_data.get(&0).unwrap();
         assert_eq!(te.transitions.len(), 2);
-        assert_eq!(*te.transitions.get(&(LogicVal::Zero, LogicVal::One)).unwrap(), 5);
+        assert_eq!(
+            *te.transitions
+                .get(&(LogicVal::Zero, LogicVal::One))
+                .unwrap(),
+            5
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -1214,7 +1271,10 @@ mod tests {
 
         let db = CoverageDatabase::new();
         let loaded = db.load_from_file(&path_str).unwrap();
-        let branches = loaded.branch_data.get(&Symbol::intern("if.cond#0")).unwrap();
+        let branches = loaded
+            .branch_data
+            .get(&Symbol::intern("if.cond#0"))
+            .unwrap();
         assert_eq!(*branches.get(&Symbol::intern("true")).unwrap(), 30);
 
         let _ = std::fs::remove_file(&path);
@@ -1269,14 +1329,12 @@ mod tests {
         // Simulate merge by directly inserting covergroup data
         let entry = CovergroupEntry {
             name: "cg".to_string(),
-            coverpoints: vec![
-                CoverpointEntry {
-                    name: "cp".to_string(),
-                    total: 20,
-                    hits: 10,
-                    bins: vec![(Symbol::intern("val=5"), 6u64)].into_iter().collect(),
-                },
-            ],
+            coverpoints: vec![CoverpointEntry {
+                name: "cp".to_string(),
+                total: 20,
+                hits: 10,
+                bins: vec![(Symbol::intern("val=5"), 6u64)].into_iter().collect(),
+            }],
             crosses: vec![],
         };
         db.covergroups.insert("cg".to_string(), entry);
@@ -1290,7 +1348,10 @@ mod tests {
         let db = CoverageDatabase::new();
         let loaded = db.load_from_file(&path_str).unwrap();
         assert_eq!(loaded.covergroups.len(), 1);
-        assert_eq!(loaded.covergroups.get("cg").unwrap().coverpoints[0].hits, 10);
+        assert_eq!(
+            loaded.covergroups.get("cg").unwrap().coverpoints[0].hits,
+            10
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -1310,7 +1371,10 @@ mod tests {
 
         // Load with with_path
         let loaded = CoverageDatabase::with_path(&path_str);
-        assert_eq!(*loaded.line_hits.get(&Symbol::intern("test.line")).unwrap(), 99);
+        assert_eq!(
+            *loaded.line_hits.get(&Symbol::intern("test.line")).unwrap(),
+            99
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -1323,14 +1387,23 @@ mod tests {
         db1.line_hits.insert(Symbol::intern("proc2.stmt"), 5);
 
         let mut db2 = CoverageDatabase::new();
-        db2.line_hits.insert(Symbol::intern("proc.stmt"), 20);  // same key → summed
-        db2.line_hits.insert(Symbol::intern("proc3.stmt"), 8);   // new key
+        db2.line_hits.insert(Symbol::intern("proc.stmt"), 20); // same key → summed
+        db2.line_hits.insert(Symbol::intern("proc3.stmt"), 8); // new key
 
         db1.merge_from_db(&db2);
 
-        assert_eq!(*db1.line_hits.get(&Symbol::intern("proc.stmt")).unwrap(), 30); // 10+20
-        assert_eq!(*db1.line_hits.get(&Symbol::intern("proc2.stmt")).unwrap(), 5);
-        assert_eq!(*db1.line_hits.get(&Symbol::intern("proc3.stmt")).unwrap(), 8);
+        assert_eq!(
+            *db1.line_hits.get(&Symbol::intern("proc.stmt")).unwrap(),
+            30
+        ); // 10+20
+        assert_eq!(
+            *db1.line_hits.get(&Symbol::intern("proc2.stmt")).unwrap(),
+            5
+        );
+        assert_eq!(
+            *db1.line_hits.get(&Symbol::intern("proc3.stmt")).unwrap(),
+            8
+        );
     }
 
     #[test]
@@ -1338,14 +1411,14 @@ mod tests {
         let mut db1 = CoverageDatabase::new();
         let entry1 = CovergroupEntry {
             name: "cg_main".to_string(),
-            coverpoints: vec![
-                CoverpointEntry {
-                    name: "addr".to_string(),
-                    total: 100,
-                    hits: 50,
-                    bins: vec![(Symbol::intern("addr=42"), 30u64)].into_iter().collect(),
-                },
-            ],
+            coverpoints: vec![CoverpointEntry {
+                name: "addr".to_string(),
+                total: 100,
+                hits: 50,
+                bins: vec![(Symbol::intern("addr=42"), 30u64)]
+                    .into_iter()
+                    .collect(),
+            }],
             crosses: vec![],
         };
         db1.covergroups.insert("cg_main".to_string(), entry1);
@@ -1353,14 +1426,14 @@ mod tests {
         let mut db2 = CoverageDatabase::new();
         let entry2 = CovergroupEntry {
             name: "cg_main".to_string(),
-            coverpoints: vec![
-                CoverpointEntry {
-                    name: "addr".to_string(),
-                    total: 200,
-                    hits: 100,
-                    bins: vec![(Symbol::intern("addr=99"), 60u64)].into_iter().collect(),
-                },
-            ],
+            coverpoints: vec![CoverpointEntry {
+                name: "addr".to_string(),
+                total: 200,
+                hits: 100,
+                bins: vec![(Symbol::intern("addr=99"), 60u64)]
+                    .into_iter()
+                    .collect(),
+            }],
             crosses: vec![],
         };
         db2.covergroups.insert("cg_main".to_string(), entry2);
@@ -1369,9 +1442,9 @@ mod tests {
 
         let merged = db1.covergroups.get("cg_main").unwrap();
         assert_eq!(merged.coverpoints.len(), 1);
-        assert_eq!(merged.coverpoints[0].total, 300);  // 100+200
-        assert_eq!(merged.coverpoints[0].hits, 150);   // 50+100
-        // Bins should be merged (retain both addr=42 and addr=99)
+        assert_eq!(merged.coverpoints[0].total, 300); // 100+200
+        assert_eq!(merged.coverpoints[0].hits, 150); // 50+100
+                                                     // Bins should be merged (retain both addr=42 and addr=99)
         let bins = &merged.coverpoints[0].bins;
         assert_eq!(*bins.get(&Symbol::intern("addr=42")).unwrap(), 30);
         assert_eq!(*bins.get(&Symbol::intern("addr=99")).unwrap(), 60);
@@ -1396,14 +1469,14 @@ mod tests {
         db1.line_hits.insert(Symbol::intern("stmt2"), 5);
 
         let mut db2 = CoverageDatabase::new();
-        db2.line_hits.insert(Symbol::intern("stmt1"), 20);  // different
-        db2.line_hits.insert(Symbol::intern("stmt2"), 5);   // same
+        db2.line_hits.insert(Symbol::intern("stmt1"), 20); // different
+        db2.line_hits.insert(Symbol::intern("stmt2"), 5); // same
 
         let diff = db1.diff(&db2);
         assert_eq!(diff.line_changes.len(), 1);
         assert_eq!(diff.line_changes[0].0, Symbol::intern("stmt1"));
-        assert_eq!(diff.line_changes[0].1, 10);  // self
-        assert_eq!(diff.line_changes[0].2, 20);  // other
+        assert_eq!(diff.line_changes[0].1, 10); // self
+        assert_eq!(diff.line_changes[0].2, 20); // other
     }
 
     #[test]
@@ -1413,14 +1486,12 @@ mod tests {
         let mut db2 = CoverageDatabase::new();
         let entry = CovergroupEntry {
             name: "cg_new".to_string(),
-            coverpoints: vec![
-                CoverpointEntry {
-                    name: "cp_new".to_string(),
-                    total: 10,
-                    hits: 5,
-                    bins: HashMap::new(),
-                },
-            ],
+            coverpoints: vec![CoverpointEntry {
+                name: "cp_new".to_string(),
+                total: 10,
+                hits: 5,
+                bins: HashMap::new(),
+            }],
             crosses: vec![],
         };
         db2.covergroups.insert("cg_new".to_string(), entry);
@@ -1442,7 +1513,10 @@ mod tests {
         db.save_to_file(&path_str).unwrap();
 
         let loaded = CoverageDatabase::load_from_path(&path_str).unwrap();
-        assert_eq!(*loaded.line_hits.get(&Symbol::intern("test.key")).unwrap(), 42);
+        assert_eq!(
+            *loaded.line_hits.get(&Symbol::intern("test.key")).unwrap(),
+            42
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -1467,8 +1541,14 @@ mod tests {
         // Load and merge the first DB into the second
         db_main.load_and_merge(&path_str).unwrap();
 
-        assert_eq!(*db_main.line_hits.get(&Symbol::intern("run1.stmt")).unwrap(), 10);
-        assert_eq!(*db_main.line_hits.get(&Symbol::intern("run2.stmt")).unwrap(), 20);
+        assert_eq!(
+            *db_main.line_hits.get(&Symbol::intern("run1.stmt")).unwrap(),
+            10
+        );
+        assert_eq!(
+            *db_main.line_hits.get(&Symbol::intern("run2.stmt")).unwrap(),
+            20
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -1481,14 +1561,12 @@ mod tests {
 
         let entry = CovergroupEntry {
             name: "cg".to_string(),
-            coverpoints: vec![
-                CoverpointEntry {
-                    name: "cp".to_string(),
-                    total: 10,
-                    hits: 5,
-                    bins: HashMap::new(),
-                },
-            ],
+            coverpoints: vec![CoverpointEntry {
+                name: "cp".to_string(),
+                total: 10,
+                hits: 5,
+                bins: HashMap::new(),
+            }],
             crosses: vec![],
         };
         db.covergroups.insert("cg".to_string(), entry);
@@ -1508,14 +1586,12 @@ mod tests {
         db.line_hits.insert(Symbol::intern("line1"), 5);
         let entry = CovergroupEntry {
             name: "cg".to_string(),
-            coverpoints: vec![
-                CoverpointEntry {
-                    name: "cp".to_string(),
-                    total: 10,
-                    hits: 5,
-                    bins: HashMap::new(),
-                },
-            ],
+            coverpoints: vec![CoverpointEntry {
+                name: "cp".to_string(),
+                total: 10,
+                hits: 5,
+                bins: HashMap::new(),
+            }],
             crosses: vec![],
         };
         db.covergroups.insert("cg".to_string(), entry);

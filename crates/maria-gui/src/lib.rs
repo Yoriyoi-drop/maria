@@ -51,12 +51,23 @@ pub fn run() -> eframe::Result<()> {
     };
 
     // Pass 1: wgpu (renderer utama — GPU rendering untuk 60-144 FPS)
-    match eframe::run_native("maria", mk_options(eframe::Renderer::Wgpu), Box::new(create_app)) {
+    match eframe::run_native(
+        "maria",
+        mk_options(eframe::Renderer::Wgpu),
+        Box::new(create_app),
+    ) {
         Ok(()) => Ok(()),
         Err(wgpu_err) => {
-            eprintln!("⚠ wgpu gagal inisialisasi ({}), fallback ke OpenGL (glow)...", wgpu_err);
+            eprintln!(
+                "⚠ wgpu gagal inisialisasi ({}), fallback ke OpenGL (glow)...",
+                wgpu_err
+            );
             // Pass 2: glow — fallback otomatis bila GPU/driver wgpu bermasalah.
-            eframe::run_native("maria", mk_options(eframe::Renderer::Glow), Box::new(create_app))
+            eframe::run_native(
+                "maria",
+                mk_options(eframe::Renderer::Glow),
+                Box::new(create_app),
+            )
         }
     }
 }

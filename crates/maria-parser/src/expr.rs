@@ -11,11 +11,11 @@
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
-use maria_ast::*;
+use crate::lexer::*;
 use maria_ast::types::const_eval_simple;
+use maria_ast::*;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
-use crate::lexer::*;
 
 impl Parser {
     pub(crate) fn is_type_token(&self) -> bool {
@@ -194,7 +194,9 @@ impl Parser {
                     });
                 }
                 Token::Inside => {
-                    if 7 < min_prec { break; }
+                    if 7 < min_prec {
+                        break;
+                    }
                     self.advance();
                     self.expect(Token::LBrace)?;
                     let mut range_list = Vec::new();
@@ -218,30 +220,48 @@ impl Parser {
                             } else {
                                 range_list.push(self.parse_expr(0)?);
                             }
-                            if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                            if self.peek() == &Token::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
                     }
                     self.expect(Token::RBrace)?;
-                    lhs = Expr::Inside { expr: Box::new(lhs), range_list };
+                    lhs = Expr::Inside {
+                        expr: Box::new(lhs),
+                        range_list,
+                    };
                     continue;
                 }
                 Token::Ident(ref s) if s == "dist" => {
-                    if 7 < min_prec { break; }
+                    if 7 < min_prec {
+                        break;
+                    }
                     self.advance();
                     self.expect(Token::LBrace)?;
                     let mut items = Vec::new();
                     if self.peek() != &Token::RBrace {
                         loop {
                             items.push(self.parse_dist_item()?);
-                            if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                            if self.peek() == &Token::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
                     }
                     self.expect(Token::RBrace)?;
-                    lhs = Expr::Dist { expr: Box::new(lhs), items };
+                    lhs = Expr::Dist {
+                        expr: Box::new(lhs),
+                        items,
+                    };
                     continue;
                 }
                 Token::Ident(ref s) if s == "with" => {
-                    if 6 < min_prec { break; }
+                    if 6 < min_prec {
+                        break;
+                    }
                     self.advance();
                     let with_expr = if self.peek() == &Token::LBrace {
                         self.advance();
@@ -249,12 +269,17 @@ impl Parser {
                         while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
                             let e = self.parse_expr(0)?;
                             exprs.push(e);
-                            if self.peek() == &Token::Semi { self.advance(); }
+                            if self.peek() == &Token::Semi {
+                                self.advance();
+                            }
                         }
                         self.expect(Token::RBrace)?;
-                        exprs.into_iter()
+                        exprs
+                            .into_iter()
                             .reduce(|acc, e| Expr::BinaryOp {
-                                op: BinaryOp::LogicalAnd, lhs: Box::new(acc), rhs: Box::new(e),
+                                op: BinaryOp::LogicalAnd,
+                                lhs: Box::new(acc),
+                                rhs: Box::new(e),
                             })
                             .unwrap_or(Expr::Value(Value::Decimal(1)))
                     } else {
@@ -265,8 +290,18 @@ impl Parser {
                     };
                     let old_lhs = std::mem::replace(&mut lhs, Expr::Value(Value::Decimal(0)));
                     match old_lhs {
-                        Expr::MethodCall { obj, method, args, with_clause: None } => {
-                            lhs = Expr::MethodCall { obj, method, args, with_clause: Some(Box::new(with_expr)) };
+                        Expr::MethodCall {
+                            obj,
+                            method,
+                            args,
+                            with_clause: None,
+                        } => {
+                            lhs = Expr::MethodCall {
+                                obj,
+                                method,
+                                args,
+                                with_clause: Some(Box::new(with_expr)),
+                            };
                         }
                         // F17: pola UVM `!x.randomize() with { ... }` — `with`
                         // melekat ke MethodCall DALAM, `!` tetap di luar:
@@ -302,18 +337,29 @@ impl Parser {
                 }
                 Token::LBrack => {
                     self.advance();
-                    if self.peek() == &Token::RBrack { self.advance(); continue; }
+                    if self.peek() == &Token::RBrack {
+                        self.advance();
+                        continue;
+                    }
                     let first = self.parse_expr(0)?;
                     if self.peek() == &Token::Colon {
                         self.advance();
                         let second = self.parse_expr(0)?;
                         self.expect(Token::RBrack)?;
-                        lhs = Expr::RangeSelect { expr: Box::new(lhs), msb: Box::new(first), lsb: Box::new(second) };
+                        lhs = Expr::RangeSelect {
+                            expr: Box::new(lhs),
+                            msb: Box::new(first),
+                            lsb: Box::new(second),
+                        };
                     } else if self.peek() == &Token::PlusColon {
                         self.advance();
                         let width = self.parse_expr(0)?;
                         self.expect(Token::RBrack)?;
-                        lhs = Expr::PartSelect { expr: Box::new(lhs), base: Box::new(first), width: Box::new(width) };
+                        lhs = Expr::PartSelect {
+                            expr: Box::new(lhs),
+                            base: Box::new(first),
+                            width: Box::new(width),
+                        };
                     } else if self.peek() == &Token::MinusColon {
                         self.advance();
                         let width = self.parse_expr(0)?;
@@ -333,7 +379,10 @@ impl Parser {
                         };
                     } else {
                         self.expect(Token::RBrack)?;
-                        lhs = Expr::BitSelect { expr: Box::new(lhs), index: Box::new(first) };
+                        lhs = Expr::BitSelect {
+                            expr: Box::new(lhs),
+                            index: Box::new(first),
+                        };
                     }
                     continue;
                 }
@@ -344,9 +393,17 @@ impl Parser {
                         self.advance();
                         let args = self.parse_call_args()?;
                         self.expect(Token::RParen)?;
-                        lhs = Expr::MethodCall { obj: Box::new(lhs), method: member, args, with_clause: None };
+                        lhs = Expr::MethodCall {
+                            obj: Box::new(lhs),
+                            method: member,
+                            args,
+                            with_clause: None,
+                        };
                     } else {
-                        lhs = Expr::MemberAccess { obj: Box::new(lhs), field: member };
+                        lhs = Expr::MemberAccess {
+                            obj: Box::new(lhs),
+                            field: member,
+                        };
                     }
                     continue;
                 }
@@ -375,10 +432,16 @@ impl Parser {
 
             match op_info {
                 Some((prec, op)) => {
-                    if prec < min_prec { break; }
+                    if prec < min_prec {
+                        break;
+                    }
                     self.advance();
                     let rhs = self.parse_expr(prec + 1)?;
-                    lhs = Expr::BinaryOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+                    lhs = Expr::BinaryOp {
+                        op,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    };
                 }
                 None => break,
             }
@@ -403,12 +466,19 @@ impl Parser {
             // dari token setelahnya (`]`, `,`, `)` atau `:` dalam range). Tanpa ini
             // `[1:$]` error "expected system function name" → package gagal parse.
             Token::Dollar
-                if matches!(self.peek_ahead(1), Token::RBrack | Token::Comma | Token::RParen | Token::Colon) =>
+                if matches!(
+                    self.peek_ahead(1),
+                    Token::RBrack | Token::Comma | Token::RParen | Token::Colon
+                ) =>
             {
                 let dl = self.peek_line();
                 let dc = self.peek_col();
                 self.advance();
-                Ok(Expr::Ident { name: Symbol::intern("$"), line: dl, col: dc })
+                Ok(Expr::Ident {
+                    name: Symbol::intern("$"),
+                    line: dl,
+                    col: dc,
+                })
             }
             Token::Dollar => {
                 let sf_line = self.peek_line();
@@ -416,12 +486,30 @@ impl Parser {
                 self.advance();
                 let name_tok = self.peek().clone();
                 let name_sym = match &name_tok {
-                    Token::Ident(n) => { self.advance(); *n }
-                    Token::Time => { self.advance(); Symbol::intern("time") }
-                    Token::Real => { self.advance(); Symbol::intern("real") }
-                    Token::RealTime => { self.advance(); Symbol::intern("realtime") }
-                    Token::Signed => { self.advance(); Symbol::intern("signed") }
-                    Token::Unsigned => { self.advance(); Symbol::intern("unsigned") }
+                    Token::Ident(n) => {
+                        self.advance();
+                        *n
+                    }
+                    Token::Time => {
+                        self.advance();
+                        Symbol::intern("time")
+                    }
+                    Token::Real => {
+                        self.advance();
+                        Symbol::intern("real")
+                    }
+                    Token::RealTime => {
+                        self.advance();
+                        Symbol::intern("realtime")
+                    }
+                    Token::Signed => {
+                        self.advance();
+                        Symbol::intern("signed")
+                    }
+                    Token::Unsigned => {
+                        self.advance();
+                        Symbol::intern("unsigned")
+                    }
                     _ => return Err(self.err("expected system function name")),
                 };
                 // SAFETY: Stack buffer 128 bytes cukup untuk semua system function SV
@@ -438,8 +526,14 @@ impl Parser {
                         let name_bytes = name_str.as_bytes();
                         // Safe: name_bytes valid UTF-8, buf[1..] cukup untuk copy
                         unsafe {
-                            std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), buf.as_mut_ptr().add(1), name_bytes.len());
-                            Symbol::intern(std::str::from_utf8_unchecked(&buf[..name_bytes.len() + 1]))
+                            std::ptr::copy_nonoverlapping(
+                                name_bytes.as_ptr(),
+                                buf.as_mut_ptr().add(1),
+                                name_bytes.len(),
+                            );
+                            Symbol::intern(std::str::from_utf8_unchecked(
+                                &buf[..name_bytes.len() + 1],
+                            ))
                         }
                     }
                 };
@@ -449,9 +543,18 @@ impl Parser {
                     self.advance();
                     let args = self.parse_call_args()?;
                     self.expect(Token::RParen)?;
-                    Ok(Expr::FuncCall { name: full_name, args, line: fl, col: fc })
+                    Ok(Expr::FuncCall {
+                        name: full_name,
+                        args,
+                        line: fl,
+                        col: fc,
+                    })
                 } else {
-                    Ok(Expr::Ident { name: full_name, line: sf_line, col: sf_col })
+                    Ok(Expr::Ident {
+                        name: full_name,
+                        line: sf_line,
+                        col: sf_col,
+                    })
                 }
             }
             Token::Ident(name) => {
@@ -470,7 +573,12 @@ impl Parser {
                         self.advance();
                         let args = self.parse_call_args()?;
                         self.expect(Token::RParen)?;
-                        return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", name, item)), args, line: fl, col: fc });
+                        return Ok(Expr::FuncCall {
+                            name: Symbol::intern(&format!("{}::{}", name, item)),
+                            args,
+                            line: fl,
+                            col: fc,
+                        });
                     }
                     // Type cast scoped: `pkg::type'(expr)` — pola umum di OpenTitan
                     // (`top_pkg::TL_DBW'('b0001)`, `lc_ctrl_pkg::lc_tx_t'(x)`).
@@ -500,15 +608,22 @@ impl Parser {
                     self.expect(Token::LParen)?;
                     let mut type_specs = Vec::new();
                     loop {
-                        if self.peek() == &Token::RParen { break; }
+                        if self.peek() == &Token::RParen {
+                            break;
+                        }
                         type_specs.push(self.parse_type_expr()?);
-                        if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
                     }
                     self.expect(Token::RParen)?;
                     let class_prefix = if type_specs.is_empty() {
                         name
                     } else {
-                        let type_strs: Vec<String> = type_specs.iter().map(|dt| dt.to_string()).collect();
+                        let type_strs: Vec<String> =
+                            type_specs.iter().map(|dt| dt.to_string()).collect();
                         let suffix = type_strs.join(",");
                         Symbol::intern(&format!("{}#{}", name, suffix))
                     };
@@ -518,18 +633,28 @@ impl Parser {
                         let sc_col = self.peek_col();
                         let item = self.expect_ident()?;
                         if self.peek() == &Token::LParen {
-                            if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen {
-                                self.advance(); self.advance();
+                            if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen
+                            {
+                                self.advance();
+                                self.advance();
                                 let expr = self.parse_expr(0)?;
                                 self.expect(Token::RParen)?;
-                                return Ok(Expr::Cast { dtype: Symbol::intern(&format!("{}::{}", class_prefix, item)), expr: Box::new(expr) });
+                                return Ok(Expr::Cast {
+                                    dtype: Symbol::intern(&format!("{}::{}", class_prefix, item)),
+                                    expr: Box::new(expr),
+                                });
                             }
                             let fl = self.peek_line();
                             let fc = self.peek_col();
                             self.advance();
                             let args = self.parse_call_args()?;
                             self.expect(Token::RParen)?;
-                            return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", class_prefix, item)), args, line: fl, col: fc });
+                            return Ok(Expr::FuncCall {
+                                name: Symbol::intern(&format!("{}::{}", class_prefix, item)),
+                                args,
+                                line: fl,
+                                col: fc,
+                            });
                         }
                         return Ok(Expr::ScopedIdent {
                             package: class_prefix,
@@ -538,7 +663,11 @@ impl Parser {
                             col: sc_col,
                         });
                     }
-                    return Ok(Expr::Ident { name: class_prefix, line, col });
+                    return Ok(Expr::Ident {
+                        name: class_prefix,
+                        line,
+                        col,
+                    });
                 }
                 // Type cast: type_name'(expr)
                 if self.peek() == &Token::Quote {
@@ -546,7 +675,10 @@ impl Parser {
                     self.expect(Token::LParen)?;
                     let expr = self.parse_expr(0)?;
                     self.expect(Token::RParen)?;
-                    return Ok(Expr::Cast { dtype: name, expr: Box::new(expr) });
+                    return Ok(Expr::Cast {
+                        dtype: name,
+                        expr: Box::new(expr),
+                    });
                 }
                 if self.peek() == &Token::LParen {
                     let fl = self.peek_line();
@@ -554,29 +686,59 @@ impl Parser {
                     self.advance();
                     let args = self.parse_call_args()?;
                     self.expect(Token::RParen)?;
-                    Ok(Expr::FuncCall { name, args, line: fl, col: fc })
+                    Ok(Expr::FuncCall {
+                        name,
+                        args,
+                        line: fl,
+                        col: fc,
+                    })
                 } else {
                     Ok(Expr::Ident { name, line, col })
                 }
             }
-            Token::Number { value, base, width, is_signed } => {
+            Token::Number {
+                value,
+                base,
+                width,
+                is_signed,
+            } => {
                 let num_line = self.peek_line();
                 let num_col = self.peek_col();
                 self.advance();
                 if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen {
-                    self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
                     let expr = self.parse_expr(0)?;
                     self.expect(Token::RParen)?;
                     let n = value.as_str().parse::<i64>().unwrap_or(0);
-                    return Ok(Expr::Cast { dtype: Symbol::intern(&format!("{}", n)), expr: Box::new(expr) });
+                    return Ok(Expr::Cast {
+                        dtype: Symbol::intern(&format!("{}", n)),
+                        expr: Box::new(expr),
+                    });
                 }
                 let val = if let Some(base) = base {
                     match base {
-                        2 => Expr::Value(Value::Binary { bits: value.as_str().to_string(), width, is_signed }),
-                        8 => Expr::Value(Value::Octal { bits: value.as_str().to_string(), width, is_signed }),
-                        10 => Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0))),
-                        16 => Expr::Value(Value::Hex { bits: value.as_str().to_string(), width, is_signed }),
-                        _ => Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0))),
+                        2 => Expr::Value(Value::Binary {
+                            bits: value.as_str().to_string(),
+                            width,
+                            is_signed,
+                        }),
+                        8 => Expr::Value(Value::Octal {
+                            bits: value.as_str().to_string(),
+                            width,
+                            is_signed,
+                        }),
+                        10 => {
+                            Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0)))
+                        }
+                        16 => Expr::Value(Value::Hex {
+                            bits: value.as_str().to_string(),
+                            width,
+                            is_signed,
+                        }),
+                        _ => {
+                            Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0)))
+                        }
                     }
                 } else {
                     if let Ok(n) = value.as_str().parse::<i64>() {
@@ -614,13 +776,26 @@ impl Parser {
                             _ => None,
                         };
                         Expr::Value(Value::Decimal(scaled.unwrap_or(n)))
+                    } else {
+                        Expr::Ident {
+                            name: value,
+                            line: num_line,
+                            col: num_col,
+                        }
                     }
-                    else { Expr::Ident { name: value, line: num_line, col: num_col } }
                 };
                 Ok(val)
             }
-            Token::RealNum(s) => { self.advance(); Ok(Expr::Value(Value::Real(s.as_str().parse::<f64>().unwrap_or(0.0)))) }
-            Token::StringLit(s) => { self.advance(); Ok(Expr::String(s.as_str().to_string())) }
+            Token::RealNum(s) => {
+                self.advance();
+                Ok(Expr::Value(Value::Real(
+                    s.as_str().parse::<f64>().unwrap_or(0.0),
+                )))
+            }
+            Token::StringLit(s) => {
+                self.advance();
+                Ok(Expr::String(s.as_str().to_string()))
+            }
             Token::New => {
                 self.advance();
                 if self.peek() == &Token::LBrack {
@@ -629,71 +804,150 @@ impl Parser {
                     self.advance();
                     let size = self.parse_expr(0)?;
                     self.expect(Token::RBrack)?;
-                    let _init = if self.peek() == &Token::LParen { self.advance(); let val = self.parse_expr(0)?; self.expect(Token::RParen)?; Some(Box::new(val)) } else { None };
-                    Ok(Expr::FuncCall { name: Symbol::intern("new"), args: vec![size], line: fl, col: fc })
+                    let _init = if self.peek() == &Token::LParen {
+                        self.advance();
+                        let val = self.parse_expr(0)?;
+                        self.expect(Token::RParen)?;
+                        Some(Box::new(val))
+                    } else {
+                        None
+                    };
+                    Ok(Expr::FuncCall {
+                        name: Symbol::intern("new"),
+                        args: vec![size],
+                        line: fl,
+                        col: fc,
+                    })
                 } else if self.peek() == &Token::LParen {
                     let fl = self.peek_line();
                     let fc = self.peek_col();
                     self.advance();
                     let args = self.parse_call_args()?;
                     self.expect(Token::RParen)?;
-                    Ok(Expr::FuncCall { name: Symbol::intern("new"), args, line: fl, col: fc })
+                    Ok(Expr::FuncCall {
+                        name: Symbol::intern("new"),
+                        args,
+                        line: fl,
+                        col: fc,
+                    })
                 } else {
                     // F41: `new` tanpa argumen (mis. `mailbox req_mbx = new;`)
                     // — representasikan sebagai panggilan new kosong.
                     let fl = self.peek_line();
                     let fc = self.peek_col();
-                    Ok(Expr::FuncCall { name: Symbol::intern("new"), args: vec![], line: fl, col: fc })
+                    Ok(Expr::FuncCall {
+                        name: Symbol::intern("new"),
+                        args: vec![],
+                        line: fl,
+                        col: fc,
+                    })
                 }
             }
             Token::This => {
                 let th_line = self.peek_line();
                 let th_col = self.peek_col();
                 self.advance();
-                Ok(Expr::Ident { name: Symbol::intern("this"), line: th_line, col: th_col })
+                Ok(Expr::Ident {
+                    name: Symbol::intern("this"),
+                    line: th_line,
+                    col: th_col,
+                })
             }
-            Token::Null => { self.advance(); Ok(Expr::Null) }
-            Token::Plus | Token::Minus | Token::Tilde | Token::Amp | Token::Pipe | Token::Caret
-            | Token::TildeAmp | Token::TildePipe | Token::CaretTilde => {
+            Token::Null => {
+                self.advance();
+                Ok(Expr::Null)
+            }
+            Token::Plus
+            | Token::Minus
+            | Token::Tilde
+            | Token::Amp
+            | Token::Pipe
+            | Token::Caret
+            | Token::TildeAmp
+            | Token::TildePipe
+            | Token::CaretTilde => {
                 let saved_tok = tok.clone();
                 self.advance();
                 let op = match saved_tok {
-                    Token::Plus => UnaryOp::Plus, Token::Minus => UnaryOp::Minus, Token::Tilde => UnaryOp::BitNot,
-                    Token::Amp => UnaryOp::ReductionAnd, Token::Pipe => UnaryOp::ReductionOr,
-                    Token::Caret => UnaryOp::ReductionXor, Token::TildeAmp => UnaryOp::ReductionNand,
-                    Token::TildePipe => UnaryOp::ReductionNor, Token::CaretTilde => UnaryOp::ReductionXnor,
+                    Token::Plus => UnaryOp::Plus,
+                    Token::Minus => UnaryOp::Minus,
+                    Token::Tilde => UnaryOp::BitNot,
+                    Token::Amp => UnaryOp::ReductionAnd,
+                    Token::Pipe => UnaryOp::ReductionOr,
+                    Token::Caret => UnaryOp::ReductionXor,
+                    Token::TildeAmp => UnaryOp::ReductionNand,
+                    Token::TildePipe => UnaryOp::ReductionNor,
+                    Token::CaretTilde => UnaryOp::ReductionXnor,
                     _ => unreachable!(),
                 };
                 let expr = self.parse_expr(12)?;
-                Ok(Expr::UnaryOp { op, expr: Box::new(expr) })
+                Ok(Expr::UnaryOp {
+                    op,
+                    expr: Box::new(expr),
+                })
             }
-            Token::Not => { self.advance(); let expr = self.parse_expr(12)?; Ok(Expr::UnaryOp { op: UnaryOp::Not, expr: Box::new(expr) }) }
+            Token::Not => {
+                self.advance();
+                let expr = self.parse_expr(12)?;
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Not,
+                    expr: Box::new(expr),
+                })
+            }
             Token::LBrace => {
                 self.advance();
-                if matches!(self.peek(), Token::Shl | Token::Shr | Token::Sshl | Token::Sshr) {
-                    let op = if matches!(self.peek(), Token::Shl | Token::Sshl) { String::from("<<") } else { String::from(">>") };
+                if matches!(
+                    self.peek(),
+                    Token::Shl | Token::Shr | Token::Sshl | Token::Sshr
+                ) {
+                    let op = if matches!(self.peek(), Token::Shl | Token::Sshl) {
+                        String::from("<<")
+                    } else {
+                        String::from(">>")
+                    };
                     self.advance();
-                    let slice_size = if !matches!(self.peek(), Token::LBrace) { Some(Box::new(self.parse_expr(0)?)) } else { None };
+                    let slice_size = if !matches!(self.peek(), Token::LBrace) {
+                        Some(Box::new(self.parse_expr(0)?))
+                    } else {
+                        None
+                    };
                     self.expect(Token::LBrace)?;
                     let mut slices = Vec::new();
                     loop {
-                        if self.peek() == &Token::RBrace { break; }
+                        if self.peek() == &Token::RBrace {
+                            break;
+                        }
                         slices.push(self.parse_expr(0)?);
-                        if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
                     }
-                    self.expect(Token::RBrace)?; self.expect(Token::RBrace)?;
-                    return Ok(Expr::StreamingConcat { op, slice_size, slices });
+                    self.expect(Token::RBrace)?;
+                    self.expect(Token::RBrace)?;
+                    return Ok(Expr::StreamingConcat {
+                        op,
+                        slice_size,
+                        slices,
+                    });
                 }
                 let mut exprs = Vec::new();
                 loop {
-                    if self.peek() == &Token::RBrace { break; }
+                    if self.peek() == &Token::RBrace {
+                        break;
+                    }
                     let item = self.parse_expr(0)?;
                     if self.peek() == &Token::LBrace {
                         self.advance();
                         let mut inner_exprs = Vec::new();
                         loop {
                             inner_exprs.push(self.parse_expr(0)?);
-                            if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                            if self.peek() == &Token::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
                         self.expect(Token::RBrace)?;
                         let inner = if inner_exprs.len() == 1 {
@@ -701,19 +955,60 @@ impl Parser {
                         } else {
                             Expr::Concat(inner_exprs)
                         };
-                        exprs.push(Expr::Replicate { count: Box::new(item), expr: Box::new(inner) });
-                    } else { exprs.push(item); }
-                    if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                        exprs.push(Expr::Replicate {
+                            count: Box::new(item),
+                            expr: Box::new(inner),
+                        });
+                    } else {
+                        exprs.push(item);
+                    }
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
                 }
                 self.expect(Token::RBrace)?;
-                if exprs.len() == 1 { Ok(exprs.into_iter().next().unwrap()) }
-                else { Ok(Expr::Concat(exprs)) }
+                if exprs.len() == 1 {
+                    Ok(exprs.into_iter().next().unwrap())
+                } else {
+                    Ok(Expr::Concat(exprs))
+                }
             }
-            Token::LParen => { self.advance(); let expr = self.parse_expr(0)?; self.expect(Token::RParen)?; Ok(Expr::Paren(Box::new(expr))) }
-            Token::FillLit(val) => { self.advance(); Ok(Expr::FillLit(val)) }
-            Token::Auto => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("automatic"), line: 0, col: 0 }) }
-            Token::String => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("string"), line: 0, col: 0 }) }
-            Token::Class | Token::EndClass => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("class"), line: 0, col: 0 }) }
+            Token::LParen => {
+                self.advance();
+                let expr = self.parse_expr(0)?;
+                self.expect(Token::RParen)?;
+                Ok(Expr::Paren(Box::new(expr)))
+            }
+            Token::FillLit(val) => {
+                self.advance();
+                Ok(Expr::FillLit(val))
+            }
+            Token::Auto => {
+                self.advance();
+                Ok(Expr::Ident {
+                    name: Symbol::intern("automatic"),
+                    line: 0,
+                    col: 0,
+                })
+            }
+            Token::String => {
+                self.advance();
+                Ok(Expr::Ident {
+                    name: Symbol::intern("string"),
+                    line: 0,
+                    col: 0,
+                })
+            }
+            Token::Class | Token::EndClass => {
+                self.advance();
+                Ok(Expr::Ident {
+                    name: Symbol::intern("class"),
+                    line: 0,
+                    col: 0,
+                })
+            }
             Token::Quote => {
                 self.advance();
                 if self.peek() == &Token::LBrace {
@@ -838,23 +1133,70 @@ impl Parser {
                     Ok(Expr::FillLit(maria_core::LogicVal::Zero))
                 }
             }
-            Token::Increment => { self.advance(); let expr = self.parse_expr(12)?; Ok(Expr::BinaryOp { op: BinaryOp::Add, lhs: Box::new(expr), rhs: Box::new(Expr::Value(Value::Decimal(1))) }) }
-            Token::Decrement => { self.advance(); let expr = self.parse_expr(12)?; Ok(Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(expr), rhs: Box::new(Expr::Value(Value::Decimal(1))) }) }
-            Token::Void | Token::Int | Token::Integer | Token::Logic | Token::Bit | Token::Byte
-            | Token::Shortint | Token::Longint | Token::Time | Token::Signed | Token::Unsigned | Token::Real | Token::RealTime => {
+            Token::Increment => {
+                self.advance();
+                let expr = self.parse_expr(12)?;
+                Ok(Expr::BinaryOp {
+                    op: BinaryOp::Add,
+                    lhs: Box::new(expr),
+                    rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                })
+            }
+            Token::Decrement => {
+                self.advance();
+                let expr = self.parse_expr(12)?;
+                Ok(Expr::BinaryOp {
+                    op: BinaryOp::Sub,
+                    lhs: Box::new(expr),
+                    rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                })
+            }
+            Token::Void
+            | Token::Int
+            | Token::Integer
+            | Token::Logic
+            | Token::Bit
+            | Token::Byte
+            | Token::Shortint
+            | Token::Longint
+            | Token::Time
+            | Token::Signed
+            | Token::Unsigned
+            | Token::Real
+            | Token::RealTime => {
                 self.advance();
                 let type_name = match tok {
-                    Token::Void => "void", Token::Int => "int", Token::Integer => "integer",
-                    Token::Logic => "logic", Token::Bit => "bit", Token::Byte => "byte",
-                    Token::Shortint => "shortint", Token::Longint => "longint", Token::Time => "time",
-                    Token::Signed => "signed", Token::Unsigned => "unsigned", Token::Real => "real", Token::RealTime => "realtime",
+                    Token::Void => "void",
+                    Token::Int => "int",
+                    Token::Integer => "integer",
+                    Token::Logic => "logic",
+                    Token::Bit => "bit",
+                    Token::Byte => "byte",
+                    Token::Shortint => "shortint",
+                    Token::Longint => "longint",
+                    Token::Time => "time",
+                    Token::Signed => "signed",
+                    Token::Unsigned => "unsigned",
+                    Token::Real => "real",
+                    Token::RealTime => "realtime",
                     _ => unreachable!(),
                 };
                 if self.peek() == &Token::Quote {
-                    self.advance(); self.expect(Token::LParen)?;
-                    let expr = self.parse_expr(0)?; self.expect(Token::RParen)?;
-                    Ok(Expr::Cast { dtype: Symbol::intern(type_name), expr: Box::new(expr) })
-                } else { Ok(Expr::Ident { name: Symbol::intern(type_name), line: 0, col: 0 }) }
+                    self.advance();
+                    self.expect(Token::LParen)?;
+                    let expr = self.parse_expr(0)?;
+                    self.expect(Token::RParen)?;
+                    Ok(Expr::Cast {
+                        dtype: Symbol::intern(type_name),
+                        expr: Box::new(expr),
+                    })
+                } else {
+                    Ok(Expr::Ident {
+                        name: Symbol::intern(type_name),
+                        line: 0,
+                        col: 0,
+                    })
+                }
             }
             ref other => Err(self.err(format!("expected expression, found {:?}", other))),
         }

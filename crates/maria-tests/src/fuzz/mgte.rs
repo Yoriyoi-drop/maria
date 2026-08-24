@@ -1,13 +1,13 @@
 //! Maria Guided Test Engine (MGTE) — orkestrator utama testing terarah.
 
+use super::differential::{DifferentialExecutor, DifferentialResult, Simulator};
 use super::gen::GenInput;
 use super::guide::CoverageGuide;
-use super::oracle::{check, Verdict};
-use super::semantic_mutator::SemanticMutator;
-use super::semantic_mutator::ModuleContext;
 use super::hierarchy_mutator::{HierarchyMutator, HierarchyNode};
 use super::minimizer::TestcaseMinimizer;
-use super::differential::{DifferentialExecutor, Simulator, DifferentialResult};
+use super::oracle::{check, Verdict};
+use super::semantic_mutator::ModuleContext;
+use super::semantic_mutator::SemanticMutator;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -66,6 +66,8 @@ pub struct MGTEStats {
     pub coverage_features: usize,
     pub corpus_size: usize,
     pub elapsed_ms: u64,
+    /// Union tag fitur (diisi `run`, digabung antar worker di `run_parallel`).
+    pub feature_tags: std::collections::HashSet<String>,
 }
 
 pub struct MGTE {
@@ -104,6 +106,7 @@ impl MGTE {
                 coverage_features: 0,
                 corpus_size: 0,
                 elapsed_ms: 0,
+                feature_tags: Default::default(),
             },
             bug_corpus: Vec::new(),
         }
@@ -143,6 +146,7 @@ impl MGTE {
             coverage_features: 0,
             ..Default::default()
         };
+        let mut union_tags: std::collections::HashSet<String> = Default::default();
         for h in handles {
             let s = h.join().expect("mgte worker panic");
             merged.passed += s.passed;
@@ -150,9 +154,12 @@ impl MGTE {
             merged.bugs_found += s.bugs_found;
             merged.differential_mismatches += s.differential_mismatches;
             merged.minimized_cases += s.minimized_cases;
-            merged.coverage_features = merged.coverage_features.max(s.coverage_features);
+            // UNION fitur lintas worker (dulu max — menyesatkan).
+            union_tags.extend(s.feature_tags);
             merged.corpus_size += s.corpus_size;
         }
+        merged.feature_tags = union_tags;
+        merged.coverage_features = merged.feature_tags.len();
         merged.elapsed_ms = start.elapsed().as_millis() as u64;
         merged
     }
@@ -171,14 +178,22 @@ impl MGTE {
                 Verdict::Bug(msg) => {
                     self.stats.bugs_found += 1;
                     self.bug_corpus.push((input.clone(), msg.clone()));
-                    eprintln!("[MGTE] BUG #{}: {}\n=== SOURCE ===\n{}\n=== END ===", self.stats.bugs_found, msg, input.to_source());
+                    eprintln!(
+                        "[MGTE] BUG #{}: {}\n=== SOURCE ===\n{}\n=== END ===",
+                        self.stats.bugs_found,
+                        msg,
+                        input.to_source()
+                    );
 
                     if self.config.enable_differential {
                         if let Some(diff) = &self.differential {
                             let diff_result = diff.run(&input.to_source());
                             if diff_result.has_bug() {
                                 self.stats.differential_mismatches += 1;
-                                eprintln!("[MGTE] DIFFERENTIAL MISMATCH: {}", diff_result.summary());
+                                eprintln!(
+                                    "[MGTE] DIFFERENTIAL MISMATCH: {}",
+                                    diff_result.summary()
+                                );
 
                                 if self.config.enable_minimizer {
                                     self.minimize_bug(&input, &diff_result);
@@ -190,6 +205,11 @@ impl MGTE {
                 Verdict::Pass => {
                     self.stats.passed += 1;
                 }
+                Verdict::Suspect(msg) => {
+                    // Tercatat, bukan kegagalan keras (wasit eksternal tak
+                    // bisa memutuskan — mis. icarus tak mendukung `inside`).
+                    eprintln!("[MGTE] SUSPECT: {}", msg);
+                }
                 Verdict::CompileFail => {
                     self.stats.compile_failures += 1;
                 }
@@ -200,7 +220,8 @@ impl MGTE {
             if i % 50 == 0 && i > 0 {
                 eprintln!(
                     "[MGTE] iter={}/{} pass={} fail={} bugs={} diff={} cov={} corpus={}",
-                    i, n,
+                    i,
+                    n,
                     self.stats.passed,
                     self.stats.compile_failures,
                     self.stats.bugs_found,
@@ -213,6 +234,7 @@ impl MGTE {
 
         self.stats.total_iterations = n;
         self.stats.coverage_features = self.guide.coverage_len();
+        self.stats.feature_tags = self.guide.features_snapshot();
         self.stats.corpus_size = self.guide.corpus_len();
         self.stats.elapsed_ms = start.elapsed().as_millis() as u64;
 
@@ -220,7 +242,9 @@ impl MGTE {
     }
 
     fn select_next_input(&mut self, counter: u64) -> GenInput {
-        if self.config.modes.contains(&MGTEMode::Hierarchy) && self.hierarchy_mutator.has_hierarchy() {
+        if self.config.modes.contains(&MGTEMode::Hierarchy)
+            && self.hierarchy_mutator.has_hierarchy()
+        {
             if let Some(target) = self.select_hierarchy_target() {
                 if let Some(input) = self.hierarchy_mutator.generate_targeted_testcase(&target) {
                     return input;
@@ -228,14 +252,20 @@ impl MGTE {
             }
         }
 
-        if self.config.modes.contains(&MGTEMode::Semantic) && self.guide.corpus_len() > 0 && counter % 3 == 0 {
+        if self.config.modes.contains(&MGTEMode::Semantic)
+            && self.guide.corpus_len() > 0
+            && counter % 3 == 0
+        {
             let idx = (counter as usize) % self.guide.corpus_len();
             if let Some(base) = self.guide.corpus_get(idx) {
                 return self.semantic_mutator.mutate_input(&base);
             }
         }
 
-        if self.config.modes.contains(&MGTEMode::Generate) && self.guide.corpus_len() > 0 && counter % 5 == 0 {
+        if self.config.modes.contains(&MGTEMode::Generate)
+            && self.guide.corpus_len() > 0
+            && counter % 5 == 0
+        {
             let idx = (counter as usize) % self.guide.corpus_len();
             if let Some(base) = self.guide.corpus_get(idx) {
                 return self.mutate_generate_bounds(&base);
@@ -266,7 +296,11 @@ impl MGTE {
         let mut new_input = input.clone();
         new_input.w = boundary;
         new_input.seed = rng.u64(..);
-        let mask = if boundary >= 64 { u64::MAX } else { (1u64 << boundary) - 1 };
+        let mask = if boundary >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << boundary) - 1
+        };
         new_input.a = rng.u64(..) & mask;
         new_input.b = rng.u64(..) & mask;
         new_input.expr = super::expr::gen_node(boundary, &mut rng, 0);
@@ -283,7 +317,8 @@ impl MGTE {
 
         if minimize_result.still_fails {
             self.stats.minimized_cases += 1;
-            eprintln!("[MGTE] MINIMIZED: {} -> {} ({} steps)",
+            eprintln!(
+                "[MGTE] MINIMIZED: {} -> {} ({} steps)",
                 self.source_size(&minimize_result.original),
                 self.source_size(&minimize_result.minimized),
                 minimize_result.steps.len()
@@ -348,17 +383,21 @@ impl MGTE {
             self.stats.coverage_features,
             self.stats.corpus_size,
             self.stats.elapsed_ms,
-            self.bug_corpus.iter().enumerate().map(|(i, (input, msg))| {
-                format!(
-                    "{}. seed={} w={} expr=`{}`\n   ```\n{}\n   ```\n   **Bug:** {}\n",
-                    i + 1,
-                    input.seed,
-                    input.w,
-                    input.expr.to_sv(input.w),
-                    input.to_source(),
-                    msg
-                )
-            }).collect::<String>()
+            self.bug_corpus
+                .iter()
+                .enumerate()
+                .map(|(i, (input, msg))| {
+                    format!(
+                        "{}. seed={} w={} expr=`{}`\n   ```\n{}\n   ```\n   **Bug:** {}\n",
+                        i + 1,
+                        input.seed,
+                        input.w,
+                        input.expr.to_sv(input.w),
+                        input.to_source(),
+                        msg
+                    )
+                })
+                .collect::<String>()
         )
     }
 }
@@ -366,7 +405,11 @@ impl MGTE {
 impl MGTEConfig {
     pub fn for_elaboration() -> Self {
         MGTEConfig {
-            modes: vec![MGTEMode::Elaboration, MGTEMode::Hierarchy, MGTEMode::Generate],
+            modes: vec![
+                MGTEMode::Elaboration,
+                MGTEMode::Hierarchy,
+                MGTEMode::Generate,
+            ],
             iterations: 500,
             ..Default::default()
         }
@@ -383,7 +426,11 @@ impl MGTEConfig {
 
     pub fn for_differential() -> Self {
         MGTEConfig {
-            modes: vec![MGTEMode::Differential, MGTEMode::Elaboration, MGTEMode::Simulator],
+            modes: vec![
+                MGTEMode::Differential,
+                MGTEMode::Elaboration,
+                MGTEMode::Simulator,
+            ],
             iterations: 200,
             enable_differential: true,
             differential_sims: vec![Simulator::Verilator, Simulator::Icarus],

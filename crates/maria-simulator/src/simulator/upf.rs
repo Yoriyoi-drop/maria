@@ -32,10 +32,9 @@
 //! create_power_switch SW_CORE -domain PD_TOP -output_supply_net VDD_SW -input_supply_net VDD -on_state {ctrl == 1}
 //! ```
 
+use maria_ir::*;
 use std::collections::HashMap;
 use std::fs;
-use maria_ir::*;
-
 
 // ─── Data Structures ───
 
@@ -203,7 +202,11 @@ impl PowerIntent {
                         let raw = tokens[i].clone();
                         if raw != "{" && raw != "}" {
                             // Strip leading { and trailing } if present
-                            let cleaned = raw.trim_start_matches('{').trim_end_matches('}').trim().to_string();
+                            let cleaned = raw
+                                .trim_start_matches('{')
+                                .trim_end_matches('}')
+                                .trim()
+                                .to_string();
                             if !cleaned.is_empty() {
                                 // Split space-separated names within a single brace token
                                 for part in cleaned.split_whitespace() {
@@ -231,12 +234,10 @@ impl PowerIntent {
             elements,
             primary_power_net: None,
             primary_ground_net: None,
-            power_states: vec![
-                PowerState {
-                    name: "ON".to_string(),
-                    logic_expr: None,
-                },
-            ],
+            power_states: vec![PowerState {
+                name: "ON".to_string(),
+                logic_expr: None,
+            }],
             current_state: "ON".to_string(),
         };
         self.domains.insert(name, domain);
@@ -263,10 +264,8 @@ impl PowerIntent {
                 i += 1;
             }
         }
-        self.supply_nets.insert(name.clone(), SupplyNet {
-            name,
-            domain,
-        });
+        self.supply_nets
+            .insert(name.clone(), SupplyNet { name, domain });
         Ok(())
     }
 
@@ -276,7 +275,9 @@ impl PowerIntent {
             return Err("set_domain_supply_net requires a domain name".to_string());
         }
         let domain_name = tokens[1].clone();
-        let domain = self.domains.get_mut(&domain_name)
+        let domain = self
+            .domains
+            .get_mut(&domain_name)
             .ok_or_else(|| format!("power domain '{}' not found", domain_name))?;
 
         let mut i = 2;
@@ -316,7 +317,9 @@ impl PowerIntent {
             return Err("add_power_state requires a domain name".to_string());
         }
         let domain_name = tokens[1].clone();
-        let domain = self.domains.get_mut(&domain_name)
+        let domain = self
+            .domains
+            .get_mut(&domain_name)
             .ok_or_else(|| format!("power domain '{}' not found", domain_name))?;
 
         let mut state_name = String::new();
@@ -332,7 +335,7 @@ impl PowerIntent {
                             state_name = tokens[i].clone();
                             // Strip { } if present
                             if state_name.starts_with('{') && state_name.ends_with('}') {
-                                state_name = state_name[1..state_name.len()-1].to_string();
+                                state_name = state_name[1..state_name.len() - 1].to_string();
                             }
                             i += 1;
                         }
@@ -341,7 +344,7 @@ impl PowerIntent {
                         if i < tokens.len() {
                             let mut expr = tokens[i].clone();
                             if expr.starts_with('{') && expr.ends_with('}') {
-                                expr = expr[1..expr.len()-1].to_string();
+                                expr = expr[1..expr.len() - 1].to_string();
                             }
                             logic_expr = Some(expr);
                             i += 1;
@@ -395,26 +398,42 @@ impl PowerIntent {
                 i += 1;
                 match flag.as_str() {
                     "-power_net" | "-power" => {
-                        if i < tokens.len() { power_net = Some(tokens[i].clone()); i += 1; }
+                        if i < tokens.len() {
+                            power_net = Some(tokens[i].clone());
+                            i += 1;
+                        }
                     }
                     "-ground_net" | "-ground" => {
-                        if i < tokens.len() { ground_net = Some(tokens[i].clone()); i += 1; }
+                        if i < tokens.len() {
+                            ground_net = Some(tokens[i].clone());
+                            i += 1;
+                        }
                     }
                     "-domain" => {
-                        if i < tokens.len() { domain = Some(tokens[i].clone()); i += 1; }
+                        if i < tokens.len() {
+                            domain = Some(tokens[i].clone());
+                            i += 1;
+                        }
                     }
-                    _ => { if i < tokens.len() && !tokens[i].starts_with('-') { i += 1; } }
+                    _ => {
+                        if i < tokens.len() && !tokens[i].starts_with('-') {
+                            i += 1;
+                        }
+                    }
                 }
             } else {
                 i += 1;
             }
         }
-        self.supply_sets.insert(name.clone(), SupplySet {
-            name,
-            power_net,
-            ground_net,
-            domain,
-        });
+        self.supply_sets.insert(
+            name.clone(),
+            SupplySet {
+                name,
+                power_net,
+                ground_net,
+                domain,
+            },
+        );
         Ok(())
     }
 
@@ -446,15 +465,28 @@ impl PowerIntent {
                         }
                     }
                     "-isolation_power_net" | "-power_net" => {
-                        if i < tokens.len() { isolation_power_net = Some(tokens[i].clone()); i += 1; }
+                        if i < tokens.len() {
+                            isolation_power_net = Some(tokens[i].clone());
+                            i += 1;
+                        }
                     }
                     "-isolation_ground_net" | "-ground_net" => {
-                        if i < tokens.len() { isolation_ground_net = Some(tokens[i].clone()); i += 1; }
+                        if i < tokens.len() {
+                            isolation_ground_net = Some(tokens[i].clone());
+                            i += 1;
+                        }
                     }
                     "-enable" => {
-                        if i < tokens.len() { enable_signal = Some(tokens[i].clone()); i += 1; }
+                        if i < tokens.len() {
+                            enable_signal = Some(tokens[i].clone());
+                            i += 1;
+                        }
                     }
-                    _ => { if i < tokens.len() && !tokens[i].starts_with('-') { i += 1; } }
+                    _ => {
+                        if i < tokens.len() && !tokens[i].starts_with('-') {
+                            i += 1;
+                        }
+                    }
                 }
             } else {
                 i += 1;
@@ -486,20 +518,39 @@ impl PowerIntent {
                 let flag = tokens[i].to_lowercase();
                 i += 1;
                 match flag.as_str() {
-                    "-domain" => { if i < tokens.len() { domain = tokens[i].clone(); i += 1; } }
-                    "-output_supply_net" => { if i < tokens.len() { output_supply_net = tokens[i].clone(); i += 1; } }
-                    "-input_supply_net" => { if i < tokens.len() { input_supply_net = tokens[i].clone(); i += 1; } }
+                    "-domain" => {
+                        if i < tokens.len() {
+                            domain = tokens[i].clone();
+                            i += 1;
+                        }
+                    }
+                    "-output_supply_net" => {
+                        if i < tokens.len() {
+                            output_supply_net = tokens[i].clone();
+                            i += 1;
+                        }
+                    }
+                    "-input_supply_net" => {
+                        if i < tokens.len() {
+                            input_supply_net = tokens[i].clone();
+                            i += 1;
+                        }
+                    }
                     "-on_state" => {
                         if i < tokens.len() {
                             let mut expr = tokens[i].clone();
                             if expr.starts_with('{') && expr.ends_with('}') {
-                                expr = expr[1..expr.len()-1].to_string();
+                                expr = expr[1..expr.len() - 1].to_string();
                             }
                             on_expression = expr;
                             i += 1;
                         }
                     }
-                    _ => { if i < tokens.len() && !tokens[i].starts_with('-') { i += 1; } }
+                    _ => {
+                        if i < tokens.len() && !tokens[i].starts_with('-') {
+                            i += 1;
+                        }
+                    }
                 }
             } else {
                 i += 1;
@@ -524,20 +575,29 @@ impl PowerIntent {
             let control_expr = sw.on_expression.trim();
             let ctrl_on = if let Some(eq_pos) = control_expr.find("==") {
                 let name = control_expr[..eq_pos].trim();
-                let expected = control_expr[eq_pos+2..].trim() == "1";
+                let expected = control_expr[eq_pos + 2..].trim() == "1";
                 self.supply_values.get(name).copied().unwrap_or(false) == expected
             } else {
                 // Just a signal name: true if it's 1
-                self.supply_values.get(control_expr).copied().unwrap_or(false)
+                self.supply_values
+                    .get(control_expr)
+                    .copied()
+                    .unwrap_or(false)
             };
 
             // Propagate input supply to output supply when switch is ON
             if ctrl_on {
-                let input_val = self.supply_values.get(&sw.input_supply_net).copied().unwrap_or(false);
-                self.supply_values.insert(sw.output_supply_net.clone(), input_val);
+                let input_val = self
+                    .supply_values
+                    .get(&sw.input_supply_net)
+                    .copied()
+                    .unwrap_or(false);
+                self.supply_values
+                    .insert(sw.output_supply_net.clone(), input_val);
             } else {
                 // Switch OFF: output supply is 0
-                self.supply_values.insert(sw.output_supply_net.clone(), false);
+                self.supply_values
+                    .insert(sw.output_supply_net.clone(), false);
             }
         }
 
@@ -595,9 +655,14 @@ impl PowerIntent {
         // Check if the signal's source domain is OFF
         let src_domain = self.find_domain_for_signal(signal_name);
         let src_off = match src_domain {
-            Some(ref d) => self.domains.get(d)
-                .map(|dom| dom.current_state != "ON" 
-                    && (dom.current_state == "OFF" || dom.current_state.to_uppercase().starts_with("OFF")))
+            Some(ref d) => self
+                .domains
+                .get(d)
+                .map(|dom| {
+                    dom.current_state != "ON"
+                        && (dom.current_state == "OFF"
+                            || dom.current_state.to_uppercase().starts_with("OFF"))
+                })
                 .unwrap_or(false),
             None => false,
         };
@@ -639,9 +704,12 @@ impl PowerIntent {
                 // Try to parse: `name == val` or `name != val`
                 if let Some(eq_pos) = or_term.find("==") {
                     let name = or_term[..eq_pos].trim();
-                    let val_str = or_term[eq_pos+2..].trim();
-                    let expected = val_str == "1" || val_str == "true" || val_str == "ON"
-                        || val_str == "on" || val_str == "TRUE";
+                    let val_str = or_term[eq_pos + 2..].trim();
+                    let expected = val_str == "1"
+                        || val_str == "true"
+                        || val_str == "ON"
+                        || val_str == "on"
+                        || val_str == "TRUE";
                     let actual = self.supply_values.get(name).copied().unwrap_or(false);
                     if actual == expected {
                         term_ok = true;
@@ -649,9 +717,12 @@ impl PowerIntent {
                     }
                 } else if let Some(ne_pos) = or_term.find("!=") {
                     let name = or_term[..ne_pos].trim();
-                    let val_str = or_term[ne_pos+2..].trim();
-                    let expected = val_str == "1" || val_str == "true" || val_str == "ON"
-                        || val_str == "on" || val_str == "TRUE";
+                    let val_str = or_term[ne_pos + 2..].trim();
+                    let expected = val_str == "1"
+                        || val_str == "true"
+                        || val_str == "ON"
+                        || val_str == "on"
+                        || val_str == "TRUE";
                     let actual = self.supply_values.get(name).copied().unwrap_or(false);
                     if actual != expected {
                         term_ok = true;
@@ -683,8 +754,8 @@ impl PowerIntent {
         let domain_name = self.find_domain_for_signal(signal_name);
         if let Some(dname) = domain_name {
             if let Some(domain) = self.domains.get(&dname) {
-                return domain.current_state == "OFF" 
-                    || domain.current_state == "OFF_N" 
+                return domain.current_state == "OFF"
+                    || domain.current_state == "OFF_N"
                     || domain.current_state == "OFF_NRET"
                     || domain.current_state == "RETENTION"
                     || domain.current_state.to_uppercase().starts_with("OFF");
@@ -722,7 +793,8 @@ impl PowerIntent {
             for (dname, domain) in &self.domains {
                 for elem in &domain.elements {
                     if sig_name.starts_with(elem) || sig_name == elem {
-                        self.signal_domain_map.insert(sig_name.to_string(), dname.clone());
+                        self.signal_domain_map
+                            .insert(sig_name.to_string(), dname.clone());
                         break;
                     }
                 }
@@ -835,7 +907,10 @@ create_supply_net VSS -domain PD_TOP
         let upf = PowerIntent::parse(src).unwrap();
         assert!(upf.supply_nets.contains_key("VDD"));
         assert!(upf.supply_nets.contains_key("VSS"));
-        assert_eq!(upf.supply_nets.get("VDD").unwrap().domain, Some("PD_TOP".to_string()));
+        assert_eq!(
+            upf.supply_nets.get("VDD").unwrap().domain,
+            Some("PD_TOP".to_string())
+        );
     }
 
     #[test]
@@ -970,7 +1045,8 @@ set_domain_supply_net PD_TOP -primary_power_net VDD -primary_ground_net VSS
 
     #[test]
     fn test_upf_tokenizer_braces() {
-        let tokens = tokenize_upf(r#"add_power_state PD_TOP -state ON -logic_expr {VDD == 1 && VSS == 0}"#);
+        let tokens =
+            tokenize_upf(r#"add_power_state PD_TOP -state ON -logic_expr {VDD == 1 && VSS == 0}"#);
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0][0], "add_power_state");
         assert_eq!(tokens[0][1], "PD_TOP");
@@ -1026,10 +1102,16 @@ set_domain_supply_net PD_IO -primary_power_net VDD_IO
 
         // No supply values set → evaluate_power_states sets domains OFF (primary power net VDD_CORE defaults to false)
         upf.evaluate_power_states();
-        assert!(upf.domains.get("PD_CORE").unwrap().current_state == "OFF", "PD_CORE should be OFF");
+        assert!(
+            upf.domains.get("PD_CORE").unwrap().current_state == "OFF",
+            "PD_CORE should be OFF"
+        );
 
         // Core signals should be in PD_CORE
-        assert!(upf.is_signal_powered_off("u_core.clk"), "u_core.clk should be powered off");
+        assert!(
+            upf.is_signal_powered_off("u_core.clk"),
+            "u_core.clk should be powered off"
+        );
         assert!(upf.is_signal_powered_off("u_core.data"));
 
         // IO signals should be in PD_IO

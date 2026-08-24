@@ -9,7 +9,9 @@ pub struct CoverageStats {
 
 impl CoverageStats {
     pub fn from_engine(engine: &SimulationEngine) -> Self {
-        CoverageStats { stats: engine.coverage_stats() }
+        CoverageStats {
+            stats: engine.coverage_stats(),
+        }
     }
 
     pub fn branch_percent(&self) -> f64 {

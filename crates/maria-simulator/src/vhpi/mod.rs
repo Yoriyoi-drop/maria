@@ -21,6 +21,4 @@ pub mod object;
 pub mod value;
 
 pub use handle::{VhpiHandle, VhpiObjectKind};
-pub use object::{
-    vhpi_get, vhpi_get_str, vhpi_handle_by_name, vhpi_is_defined,
-};
+pub use object::{vhpi_get, vhpi_get_str, vhpi_handle_by_name, vhpi_is_defined};

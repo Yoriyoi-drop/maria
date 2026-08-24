@@ -5,8 +5,8 @@
 #![allow(non_upper_case_globals)]
 
 use super::types::*;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 /// Registered system task/function
 pub(crate) struct RegisteredSystf {
@@ -57,7 +57,8 @@ pub fn vpi_remove_systf(systf_handle: vpiHandle) -> i32 {
 pub fn call_registered_systf(name: &str, is_function: bool) -> bool {
     let snapshot: Vec<s_vpi_systf_data> = {
         let registry = VPI_SYSTFS.lock().unwrap();
-        registry.iter()
+        registry
+            .iter()
             .filter_map(|entry| {
                 if entry.data.tfname.is_null() {
                     return None;
@@ -120,7 +121,9 @@ pub fn compile_all_systfs() {
         if let Some(compiletf) = entry.compiletf {
             let mut dummy: i32 = 0;
             let ptr = &mut dummy as *mut i32 as *mut std::ffi::c_void;
-            unsafe { compiletf(ptr); }
+            unsafe {
+                compiletf(ptr);
+            }
         }
     }
 }
@@ -170,7 +173,11 @@ mod tests {
         // Dispatch: engine memanggil berdasarkan nama → calltf stub dieksekusi.
         let found = call_registered_systf("$my_vpi_task", false);
         assert!(found, "systf terdaftar harus ditemukan");
-        assert_eq!(CALLED.load(Ordering::SeqCst), 1, "calltf harus terpanggil sekali");
+        assert_eq!(
+            CALLED.load(Ordering::SeqCst),
+            1,
+            "calltf harus terpanggil sekali"
+        );
 
         // Nama yang tidak terdaftar → tidak ditemukan.
         assert!(!call_registered_systf("$unregistered_task", false));
@@ -178,7 +185,11 @@ mod tests {
         // Hapus → call berikutnya tidak ditemukan.
         assert_eq!(vpi_remove_systf(h), 1, "remove harus sukses");
         assert!(!call_registered_systf("$my_vpi_task", false));
-        assert_eq!(CALLED.load(Ordering::SeqCst), 1, "calltf tidak boleh terpanggil lagi");
+        assert_eq!(
+            CALLED.load(Ordering::SeqCst),
+            1,
+            "calltf tidak boleh terpanggil lagi"
+        );
 
         // remove ganda → 0 (sudah tidak ada).
         assert_eq!(vpi_remove_systf(h), 0);

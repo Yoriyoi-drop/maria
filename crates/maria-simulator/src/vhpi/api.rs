@@ -72,12 +72,14 @@ pub unsafe extern "C" fn vhpi_get_value(handle: VhpiHandle, value_p: *mut t_vhpi
     };
     let format = (*value_p).format;
     match &obj.kind {
-        super::handle::VhpiObjectKind::Signal(sig_id, _) | super::handle::VhpiObjectKind::Port(sig_id, _) => {
+        super::handle::VhpiObjectKind::Signal(sig_id, _)
+        | super::handle::VhpiObjectKind::Port(sig_id, _) => {
             super::object::with_vhpi_engine(|engine| {
                 let val = engine.state.read_signal(*sig_id).clone();
                 *value_p = value::logicvec_to_vhpi(&val, format);
                 0
-            }).unwrap_or(-1)
+            })
+            .unwrap_or(-1)
         }
         _ => -1,
     }
@@ -99,12 +101,14 @@ pub unsafe extern "C" fn vhpi_put_value(
         None => return -1,
     };
     match &obj.kind {
-        super::handle::VhpiObjectKind::Signal(sig_id, _) | super::handle::VhpiObjectKind::Port(sig_id, _) => {
+        super::handle::VhpiObjectKind::Signal(sig_id, _)
+        | super::handle::VhpiObjectKind::Port(sig_id, _) => {
             super::object::with_vhpi_engine(|engine| {
                 let val = value::vhpi_to_logicvec(value_p);
                 engine.state.write_signal(*sig_id, val);
                 0
-            }).unwrap_or(-1)
+            })
+            .unwrap_or(-1)
         }
         _ => -1,
     }

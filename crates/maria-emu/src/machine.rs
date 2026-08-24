@@ -53,7 +53,12 @@ impl MachineResult {
                     }
                 })
                 .collect();
-            format!("{} — console: [{}] ({} bytes)", head, txt, self.console.len())
+            format!(
+                "{} — console: [{}] ({} bytes)",
+                head,
+                txt,
+                self.console.len()
+            )
         } else {
             head
         }
@@ -69,7 +74,11 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(cpu: Box<dyn CpuCore>, mem: MemoryMap, max_steps: u64) -> Self {
-        Self { cpu, mem, max_steps }
+        Self {
+            cpu,
+            mem,
+            max_steps,
+        }
     }
 
     /// Jalankan sampai trap / max_steps. `MmioAccess` (R4, co-sim RTL device)
@@ -120,19 +129,38 @@ mod tests {
 
     #[test]
     fn test_machine_summary_halted() {
-        let r = MachineResult { steps: 7, cycles: 42, pc: 0x8000_001c, halted: true, cause: 11, tval: 0x8000_001c, console: Vec::new() };
+        let r = MachineResult {
+            steps: 7,
+            cycles: 42,
+            pc: 0x8000_001c,
+            halted: true,
+            cause: 11,
+            tval: 0x8000_001c,
+            console: Vec::new(),
+        };
         let s = r.summary();
         assert!(s.contains("halted"));
         assert!(s.contains("cause=11"));
         // Console RTL device ikut di-ringkas.
-        let r2 = MachineResult { steps: 3, cycles: 12, pc: 0x1000, halted: true, cause: 11, tval: 0x1000, console: b"ABC".to_vec() };
+        let r2 = MachineResult {
+            steps: 3,
+            cycles: 12,
+            pc: 0x1000,
+            halted: true,
+            cause: 11,
+            tval: 0x1000,
+            console: b"ABC".to_vec(),
+        };
         assert!(r2.summary().contains("console: [ABC] (3 bytes)"));
     }
 
     #[test]
     fn test_machine_max_steps_no_halt() {
         let mut mem = MemoryMap::new();
-        mem.add(RamRegion::new(Symbol::intern("ram"), 0x0, 0x1000, RegionKind::Ram, false).unwrap()).unwrap();
+        mem.add(
+            RamRegion::new(Symbol::intern("ram"), 0x0, 0x1000, RegionKind::Ram, false).unwrap(),
+        )
+        .unwrap();
         // Interpreter: loop tak berujung (jump ke diri sendiri) → max_steps.
         let mut cpu = Rv32Cpu::new();
         cpu.set_pc(0x0);

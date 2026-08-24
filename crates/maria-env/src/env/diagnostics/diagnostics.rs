@@ -1,5 +1,5 @@
-use maria_core::diagnostics::{DiagLevel, DiagSink, Diagnostic};
 use crate::env::diagnostics::{DiagStatistics, EmitterHandle};
+use maria_core::diagnostics::{DiagLevel, DiagSink, Diagnostic};
 
 /// DiagnosticsContext — pusat penerima diagnostik dari seluruh pipeline.
 ///

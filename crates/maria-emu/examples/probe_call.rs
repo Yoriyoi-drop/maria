@@ -1,12 +1,22 @@
 //! Probe: trace every step 195..310 to see the call into LzmaDecode.
+use maria_core::intern::Symbol;
 use maria_emu::cpu::x86::{FileDisk, X86Cpu};
 use maria_emu::cpu::CpuCore;
 use maria_emu::mem::{MemoryMap, MemoryPort, RamRegion, RegionKind};
-use maria_core::intern::Symbol;
 
 fn main() {
     let mut m = MemoryMap::new();
-    m.add(RamRegion::new(Symbol::intern("ram"), 0x0, 0x400_0000, RegionKind::Ram, false).unwrap()).unwrap();
+    m.add(
+        RamRegion::new(
+            Symbol::intern("ram"),
+            0x0,
+            0x400_0000,
+            RegionKind::Ram,
+            false,
+        )
+        .unwrap(),
+    )
+    .unwrap();
     let iso = std::env::args().nth(1).expect("iso path");
     let mut f = std::fs::File::open(&iso).expect("open iso");
     use std::io::Read;
@@ -17,7 +27,9 @@ fn main() {
     cpu.disk = Some(Box::new(FileDisk::open(&iso).unwrap()));
     let mut n = 0;
     for _ in 0..320 {
-        if cpu.halted { break; }
+        if cpu.halted {
+            break;
+        }
         let pc = cpu.pc();
         let _ = cpu.step(&mut m);
         n += 1;

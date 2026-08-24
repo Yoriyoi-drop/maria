@@ -4,12 +4,12 @@
 //! Setiap thread punya local queue, dan thread idle bisa steal dari thread lain.
 
 use crossbeam::deque::Worker;
+use maria_parser::lexer::{Lexer, Token};
+use maria_parser::preprocessor::Preprocessor;
+use maria_parser::Parser;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use maria_parser::preprocessor::Preprocessor;
-use maria_parser::lexer::{Lexer, Token};
-use maria_parser::Parser;
 
 // ─── Task ───
 
@@ -209,7 +209,11 @@ impl Scheduler {
             let mut pp = Preprocessor::new();
             match pp.preprocess(&content, None) {
                 Ok(preprocessed) => {
-                    eprintln!("[Preprocess] {} -> {} chars", path.display(), preprocessed.len());
+                    eprintln!(
+                        "[Preprocess] {} -> {} chars",
+                        path.display(),
+                        preprocessed.len()
+                    );
                 }
                 Err(e) => {
                     eprintln!("[Preprocess] {} ERROR: {}", path.display(), e);
@@ -260,8 +264,12 @@ impl Scheduler {
                 let mut parser = Parser::new(tokens, &path.to_string_lossy());
                 match parser.parse_design() {
                     Ok(design) => {
-                        eprintln!("[Parse] {} -> {} modules, {} packages", 
-                            path.display(), design.modules.len(), design.packages.len());
+                        eprintln!(
+                            "[Parse] {} -> {} modules, {} packages",
+                            path.display(),
+                            design.modules.len(),
+                            design.packages.len()
+                        );
                     }
                     Err(e) => {
                         eprintln!("[Parse] {} ERROR: {}", path.display(), e);

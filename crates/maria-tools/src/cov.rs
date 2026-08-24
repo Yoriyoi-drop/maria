@@ -3,11 +3,11 @@
 //! Menghasilkan `coverage.json` + `coverage.html` dari hasil simulasi.
 //! Jenis coverage: line, toggle, branch, FSM, covergroup, assertion.
 
-use maria_elaboration::elaborator::ElaborateMode;
+use crate::{kv, open_elaborated, section};
 use maria_core::error::SimError;
+use maria_elaboration::elaborator::ElaborateMode;
 use maria_simulator::simulator::SimulationEngine;
 use std::time::Instant;
-use crate::{open_elaborated, section, kv};
 
 /// Opsi mcov.
 pub struct CovArgs<'a> {
@@ -25,7 +25,13 @@ pub struct CovArgs<'a> {
 /// Jalankan mcov.
 pub fn run(args: &CovArgs) -> Result<(), SimError> {
     // Use StrictSimulation mode for coverage (requires simulation)
-    let (_session, _design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::StrictSimulation)?;
+    let (_session, _design, ir) = open_elaborated(
+        args.files,
+        args.incdirs,
+        args.defines,
+        args.top,
+        ElaborateMode::StrictSimulation,
+    )?;
     let top_name = ir.top.name.as_str();
 
     let mut engine = SimulationEngine::new(ir, args.max_time);
@@ -33,7 +39,10 @@ pub fn run(args: &CovArgs) -> Result<(), SimError> {
     section("Coverage Simulation");
     let sim_start = Instant::now();
     engine.run()?;
-    kv("sim time", format!("{} ms", sim_start.elapsed().as_millis()));
+    kv(
+        "sim time",
+        format!("{} ms", sim_start.elapsed().as_millis()),
+    );
 
     let stats = engine.coverage_stats();
 
@@ -43,7 +52,11 @@ pub fn run(args: &CovArgs) -> Result<(), SimError> {
 
     let prefix = args
         .output
-        .map(|o| o.trim_end_matches(".coverage.json").trim_end_matches(".coverage.html").to_string())
+        .map(|o| {
+            o.trim_end_matches(".coverage.json")
+                .trim_end_matches(".coverage.html")
+                .to_string()
+        })
         .unwrap_or_else(|| top_name.to_string());
 
     // ── Ringkasan ──
@@ -59,9 +72,21 @@ pub fn run(args: &CovArgs) -> Result<(), SimError> {
     let fsm_states = stats.get("fsm_states").copied().unwrap_or(0.0) as u64;
 
     kv("line", format!("{}/{}", line_hits, line_items));
-    kv("branch", format!("{}/{} ({:.1}%)", branch_covered, branch_total, branch_pct));
-    kv("toggle", format!("{} signals, {} transitions", toggle_signals, toggle_transitions));
-    kv("fsm", format!("{} signals, {} states", fsm_signals, fsm_states));
+    kv(
+        "branch",
+        format!("{}/{} ({:.1}%)", branch_covered, branch_total, branch_pct),
+    );
+    kv(
+        "toggle",
+        format!(
+            "{} signals, {} transitions",
+            toggle_signals, toggle_transitions
+        ),
+    );
+    kv(
+        "fsm",
+        format!("{} signals, {} states", fsm_signals, fsm_states),
+    );
 
     // ── coverage.json ──
     if args.json {
@@ -78,10 +103,18 @@ pub fn run(args: &CovArgs) -> Result<(), SimError> {
                 "fsm": { "signals": fsm_signals, "states": fsm_states },
             }
         });
-        let json = serde_json::to_string_pretty(&obj)
-            .map_err(|e| SimError::with_diag(maria_core::diagnostics::DiagCode::InternalError, format!("json: {}", e)))?;
-        std::fs::write(&json_path, json)
-            .map_err(|e| SimError::with_diag(maria_core::diagnostics::DiagCode::IoError, format!("{}: {}", json_path, e)))?;
+        let json = serde_json::to_string_pretty(&obj).map_err(|e| {
+            SimError::with_diag(
+                maria_core::diagnostics::DiagCode::InternalError,
+                format!("json: {}", e),
+            )
+        })?;
+        std::fs::write(&json_path, json).map_err(|e| {
+            SimError::with_diag(
+                maria_core::diagnostics::DiagCode::IoError,
+                format!("{}: {}", json_path, e),
+            )
+        })?;
         println!("  coverage.json → {}", json_path);
     }
 
@@ -90,9 +123,12 @@ pub fn run(args: &CovArgs) -> Result<(), SimError> {
         let html_path = format!("{}.coverage.html", prefix);
         let mut covdb = maria_simulator::simulator::coverage_db::CoverageDatabase::new();
         covdb.merge_from_engine(&engine);
-        covdb
-            .export_html(&html_path)
-            .map_err(|e| SimError::with_diag(maria_core::diagnostics::DiagCode::IoError, format!("html: {}", e)))?;
+        covdb.export_html(&html_path).map_err(|e| {
+            SimError::with_diag(
+                maria_core::diagnostics::DiagCode::IoError,
+                format!("html: {}", e),
+            )
+        })?;
         println!("  coverage.html → {}", html_path);
     }
 
@@ -101,10 +137,16 @@ pub fn run(args: &CovArgs) -> Result<(), SimError> {
         if branch_pct < threshold {
             return Err(SimError::with_diag(
                 maria_core::diagnostics::DiagCode::AssertionFailed,
-                format!("COVERAGE FAILED: branch {:.1}% < threshold {:.1}%", branch_pct, threshold),
+                format!(
+                    "COVERAGE FAILED: branch {:.1}% < threshold {:.1}%",
+                    branch_pct, threshold
+                ),
             ));
         }
-        println!("  ✓ branch coverage {:.1}% >= threshold {:.1}%", branch_pct, threshold);
+        println!(
+            "  ✓ branch coverage {:.1}% >= threshold {:.1}%",
+            branch_pct, threshold
+        );
     }
 
     Ok(())

@@ -83,7 +83,12 @@ pub struct t_vhpi_time {
 
 impl t_vhpi_time {
     pub fn new_sim_time() -> Self {
-        t_vhpi_time { time_type: 0, low: 0, high: 0, real: 0.0 }
+        t_vhpi_time {
+            time_type: 0,
+            low: 0,
+            high: 0,
+            real: 0.0,
+        }
     }
 }
 
@@ -103,7 +108,9 @@ pub fn logicvec_to_vhpi(lv: &LogicVec, format: i32) -> t_vhpi_value {
         },
         vhpiIntVal => t_vhpi_value {
             format,
-            value: vhpi_value_union { int: lv.to_u64() as i32 },
+            value: vhpi_value_union {
+                int: lv.to_u64() as i32,
+            },
         },
         vhpiRealVal => t_vhpi_value {
             format,
@@ -141,14 +148,19 @@ pub unsafe fn vhpi_to_logicvec(value: *const t_vhpi_value) -> LogicVec {
                 'Z' => LogicVal::Z,
                 _ => LogicVal::X,
             };
-            LogicVec { width: 1, bits: vec![b] }
+            LogicVec {
+                width: 1,
+                bits: vec![b],
+            }
         }
         vhpiRealVal => LogicVec::from_u64(v.value.real as u64, 64),
         vhpiStrVal | vhpiBinStrVal => {
             if v.value.str.is_null() {
                 LogicVec::from_u64(0, 32)
             } else {
-                let s = std::ffi::CStr::from_ptr(v.value.str).to_string_lossy().to_string();
+                let s = std::ffi::CStr::from_ptr(v.value.str)
+                    .to_string_lossy()
+                    .to_string();
                 binstr_to_logicvec(&s)
             }
         }
@@ -171,7 +183,10 @@ pub fn binstr_to_logicvec(s: &str) -> LogicVec {
     // bits[0] = MSB → balik agar bits[0] = LSB (konvensi LogicVec).
     let mut rev = bits.clone();
     rev.reverse();
-    LogicVec { width: rev.len(), bits: rev }
+    LogicVec {
+        width: rev.len(),
+        bits: rev,
+    }
 }
 
 /// LogicVec → string biner MSB-first ("1010").
@@ -202,10 +217,16 @@ mod tests {
 
     #[test]
     fn test_logicvec_to_vhpi_logic() {
-        let lv = LogicVec { width: 1, bits: vec![LogicVal::One] };
+        let lv = LogicVec {
+            width: 1,
+            bits: vec![LogicVal::One],
+        };
         let v = logicvec_to_vhpi(&lv, vhpiLogicVal);
         assert_eq!(unsafe { v.value.logic } as char, '1');
-        let lvz = LogicVec { width: 1, bits: vec![LogicVal::Z] };
+        let lvz = LogicVec {
+            width: 1,
+            bits: vec![LogicVal::Z],
+        };
         let vz = logicvec_to_vhpi(&lvz, vhpiLogicVal);
         assert_eq!(unsafe { vz.value.logic } as char, 'Z');
     }

@@ -168,22 +168,40 @@ pub fn check_many(files: &[&MvFile]) -> Result<(), (usize, MvError)> {
         for p in &f.packages {
             if let Some(prev) = pkg_owner.insert(p.name.as_str(), i) {
                 if prev != i {
-                    return Err((i, err_at(
-                        p.line, p.col,
-                        "E2007",
-                        format!("package '{}' dideklarasikan di file #{} dan #{}", p.name, prev + 1, i + 1),
-                    )));
+                    return Err((
+                        i,
+                        err_at(
+                            p.line,
+                            p.col,
+                            "E2007",
+                            format!(
+                                "package '{}' dideklarasikan di file #{} dan #{}",
+                                p.name,
+                                prev + 1,
+                                i + 1
+                            ),
+                        ),
+                    ));
                 }
             }
         }
         for ifc in &f.interfaces {
             if let Some(prev) = ifc_owner.insert(ifc.name.as_str(), i) {
                 if prev != i {
-                    return Err((i, err_at(
-                        ifc.line, ifc.col,
-                        "E2007",
-                        format!("interface '{}' dideklarasikan di file #{} dan #{}", ifc.name, prev + 1, i + 1),
-                    )));
+                    return Err((
+                        i,
+                        err_at(
+                            ifc.line,
+                            ifc.col,
+                            "E2007",
+                            format!(
+                                "interface '{}' dideklarasikan di file #{} dan #{}",
+                                ifc.name,
+                                prev + 1,
+                                i + 1
+                            ),
+                        ),
+                    ));
                 }
             }
         }
@@ -192,22 +210,39 @@ pub fn check_many(files: &[&MvFile]) -> Result<(), (usize, MvError)> {
             if let Some(prev) = type_owner.insert(n, i) {
                 if prev != i {
                     let (l, c) = td_pos(td);
-                    return Err((i, err_at(
-                        l, c,
-                        "E2007",
-                        format!("tipe '{n}' dideklarasikan di file #{} dan #{}", prev + 1, i + 1),
-                    )));
+                    return Err((
+                        i,
+                        err_at(
+                            l,
+                            c,
+                            "E2007",
+                            format!(
+                                "tipe '{n}' dideklarasikan di file #{} dan #{}",
+                                prev + 1,
+                                i + 1
+                            ),
+                        ),
+                    ));
                 }
             }
         }
         for c in &f.classes {
             if let Some(prev) = cls_owner.insert(c.name.as_str(), i) {
                 if prev != i {
-                    return Err((i, err_at(
-                        c.line, c.col,
-                        "E2007",
-                        format!("class '{}' dideklarasikan di file #{} dan #{}", c.name, prev + 1, i + 1),
-                    )));
+                    return Err((
+                        i,
+                        err_at(
+                            c.line,
+                            c.col,
+                            "E2007",
+                            format!(
+                                "class '{}' dideklarasikan di file #{} dan #{}",
+                                c.name,
+                                prev + 1,
+                                i + 1
+                            ),
+                        ),
+                    ));
                 }
             }
         }
@@ -216,11 +251,20 @@ pub fn check_many(files: &[&MvFile]) -> Result<(), (usize, MvError)> {
         for m in f.modules.iter().chain(f.programs.iter()) {
             if let Some(prev) = mod_owner.insert(m.name.as_str(), i) {
                 if prev != i {
-                    return Err((i, err_at(
-                        m.line, m.col,
-                        "E2007",
-                        format!("module '{}' dideklarasikan di file #{} dan #{}", m.name, prev + 1, i + 1),
-                    )));
+                    return Err((
+                        i,
+                        err_at(
+                            m.line,
+                            m.col,
+                            "E2007",
+                            format!(
+                                "module '{}' dideklarasikan di file #{} dan #{}",
+                                m.name,
+                                prev + 1,
+                                i + 1
+                            ),
+                        ),
+                    ));
                 }
             }
         }
@@ -231,11 +275,19 @@ pub fn check_many(files: &[&MvFile]) -> Result<(), (usize, MvError)> {
         for ifc in &f.interfaces {
             if let Some(prev) = mod_owner.get(ifc.name.as_str()) {
                 if *prev != i {
-                    return Err((i, err_at(
-                        ifc.line, ifc.col,
-                        "E2007",
-                        format!("interface '{}' bentrok dengan module di file #{}", ifc.name, prev + 1),
-                    )));
+                    return Err((
+                        i,
+                        err_at(
+                            ifc.line,
+                            ifc.col,
+                            "E2007",
+                            format!(
+                                "interface '{}' bentrok dengan module di file #{}",
+                                ifc.name,
+                                prev + 1
+                            ),
+                        ),
+                    ));
                 }
             }
         }
@@ -257,7 +309,12 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
         let n = td_name(td);
         if !seen.insert(n) {
             let (l, c) = td_pos(td);
-            return Err(err_at(l, c, "E2007", format!("tipe '{n}' dideklarasikan dua kali di level file")));
+            return Err(err_at(
+                l,
+                c,
+                "E2007",
+                format!("tipe '{n}' dideklarasikan dua kali di level file"),
+            ));
         }
         check_typedef(td, &ctx)?;
     }
@@ -265,13 +322,26 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
     let mut fnames = HashSet::new();
     for f in &file.funcs {
         if !fnames.insert(f.name.as_str()) {
-            return Err(err_at(f.line, f.col, "E2007", format!("function '{}' dideklarasikan dua kali di level file", f.name)));
+            return Err(err_at(
+                f.line,
+                f.col,
+                "E2007",
+                format!(
+                    "function '{}' dideklarasikan dua kali di level file",
+                    f.name
+                ),
+            ));
         }
     }
     let mut tnames = HashSet::new();
     for t in &file.tasks {
         if !tnames.insert(t.name.as_str()) {
-            return Err(err_at(t.line, t.col, "E2007", format!("task '{}' dideklarasikan dua kali di level file", t.name)));
+            return Err(err_at(
+                t.line,
+                t.col,
+                "E2007",
+                format!("task '{}' dideklarasikan dua kali di level file", t.name),
+            ));
         }
     }
 
@@ -290,16 +360,21 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
     for i in &file.interfaces {
         if !ifc_seen.insert(i.name.as_str()) {
             return Err(err_at(
-                i.line, i.col,
+                i.line,
+                i.col,
                 "E2007",
                 format!("interface '{}' dideklarasikan dua kali", i.name),
             ));
         }
         if mod_names.contains(i.name.as_str()) {
             return Err(err_at(
-                i.line, i.col,
+                i.line,
+                i.col,
                 "E2007",
-                format!("interface '{}' bentrok dengan module/program bernama sama", i.name),
+                format!(
+                    "interface '{}' bentrok dengan module/program bernama sama",
+                    i.name
+                ),
             ));
         }
         check_interface(i, &ctx)?;
@@ -308,7 +383,12 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
     let mut pkg_seen = HashSet::new();
     for p in &file.packages {
         if !pkg_seen.insert(p.name.as_str()) {
-            return Err(err_at(p.line, p.col, "E2007", format!("package '{}' dideklarasikan dua kali", p.name)));
+            return Err(err_at(
+                p.line,
+                p.col,
+                "E2007",
+                format!("package '{}' dideklarasikan dua kali", p.name),
+            ));
         }
         let mut td_seen = HashSet::new();
         let mut c_seen = HashSet::new();
@@ -317,7 +397,8 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
             if !td_seen.insert(n) {
                 let (l, c) = td_pos(td);
                 return Err(err_at(
-                    l, c,
+                    l,
+                    c,
                     "E2007",
                     format!("tipe '{n}' dideklarasikan dua kali di package '{}'", p.name),
                 ));
@@ -327,9 +408,13 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
         for (cn, _, _) in &p.consts {
             if !c_seen.insert(cn.as_str()) {
                 return Err(err_at(
-                    p.line, p.col,
+                    p.line,
+                    p.col,
                     "E2007",
-                    format!("konstanta '{cn}' dideklarasikan dua kali di package '{}'", p.name),
+                    format!(
+                        "konstanta '{cn}' dideklarasikan dua kali di package '{}'",
+                        p.name
+                    ),
                 ));
             }
         }
@@ -342,7 +427,12 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
     let mut mod_seen = HashSet::new();
     for m in &file.modules {
         if !mod_seen.insert(m.name.as_str()) {
-            return Err(err_at(m.line, m.col, "E2007", format!("module '{}' dideklarasikan dua kali", m.name)));
+            return Err(err_at(
+                m.line,
+                m.col,
+                "E2007",
+                format!("module '{}' dideklarasikan dua kali", m.name),
+            ));
         }
         check_module(m, &ctx)?;
     }
@@ -351,7 +441,8 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
     for p in &file.programs {
         if !mod_seen.insert(p.name.as_str()) {
             return Err(err_at(
-                p.line, p.col,
+                p.line,
+                p.col,
                 "E2007",
                 format!("module/program '{}' dideklarasikan dua kali", p.name),
             ));
@@ -363,7 +454,12 @@ fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(), MvError>
     let mut cls_seen = HashSet::new();
     for c in &file.classes {
         if !cls_seen.insert(c.name.as_str()) {
-            return Err(err_at(c.line, c.col, "E2007", format!("class '{}' dideklarasikan dua kali", c.name)));
+            return Err(err_at(
+                c.line,
+                c.col,
+                "E2007",
+                format!("class '{}' dideklarasikan dua kali", c.name),
+            ));
         }
         check_class(c, &ctx)?;
     }
@@ -563,7 +659,8 @@ fn check_typedef<'a>(td: &'a Typedef, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
                 for n in &f.names {
                     if !fseen.insert(n.as_str()) {
                         return Err(err_at(
-                            f.line, f.col,
+                            f.line,
+                            f.col,
                             "E2007",
                             format!("field '{n}' dideklarasikan dua kali di struct/union '{name}'"),
                         ));
@@ -573,7 +670,12 @@ fn check_typedef<'a>(td: &'a Typedef, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
             }
             Ok(())
         }
-        Typedef::Enum { name, width, members, .. } => {
+        Typedef::Enum {
+            name,
+            width,
+            members,
+            ..
+        } => {
             let scope = new_scope(ctx, name);
             if let Some(w) = width {
                 check_expr(w, ctx, &scope, 0)?;
@@ -582,9 +684,13 @@ fn check_typedef<'a>(td: &'a Typedef, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
             for m in members {
                 if !mseen.insert(m.name.as_str()) {
                     return Err(err_at(
-                        m.line, m.col,
+                        m.line,
+                        m.col,
                         "E2007",
-                        format!("member '{}' dideklarasikan dua kali di enum '{name}'", m.name),
+                        format!(
+                            "member '{}' dideklarasikan dua kali di enum '{name}'",
+                            m.name
+                        ),
                     ));
                 }
                 if let Some(v) = &m.value {
@@ -610,9 +716,13 @@ fn check_interface<'a>(i: &'a Interface, ctx: &'a Ctx<'a>) -> Result<(), MvError
         for n in &p.names {
             if !port_names.insert(n.as_str()) {
                 return Err(err_at(
-                    p.line, p.col,
+                    p.line,
+                    p.col,
                     "E2007",
-                    format!("port '{}' dideklarasikan dua kali di interface '{}'", n, i.name),
+                    format!(
+                        "port '{}' dideklarasikan dua kali di interface '{}'",
+                        n, i.name
+                    ),
                 ));
             }
             sig_names.insert(n.as_str());
@@ -623,9 +733,13 @@ fn check_interface<'a>(i: &'a Interface, ctx: &'a Ctx<'a>) -> Result<(), MvError
         for n in names {
             if !sig_names.insert(n.as_str()) {
                 return Err(err_at(
-                    *line, *col,
+                    *line,
+                    *col,
                     "E2007",
-                    format!("signal '{}' dideklarasikan dua kali di interface '{}'", n, i.name),
+                    format!(
+                        "signal '{}' dideklarasikan dua kali di interface '{}'",
+                        n, i.name
+                    ),
                 ));
             }
         }
@@ -636,18 +750,26 @@ fn check_interface<'a>(i: &'a Interface, ctx: &'a Ctx<'a>) -> Result<(), MvError
     for mp in &i.modports {
         if !mp_seen.insert(mp.name.as_str()) {
             return Err(err_at(
-                mp.line, mp.col,
+                mp.line,
+                mp.col,
                 "E2007",
-                format!("modport '{}' dideklarasikan dua kali di interface '{}'", mp.name, i.name),
+                format!(
+                    "modport '{}' dideklarasikan dua kali di interface '{}'",
+                    mp.name, i.name
+                ),
             ));
         }
         for (_, names) in &mp.dirs {
             for n in names {
                 if !sig_names.contains(n.as_str()) {
                     return Err(err_at(
-                        mp.line, mp.col,
+                        mp.line,
+                        mp.col,
                         "E2001",
-                        format!("modport '{}' merujuk signal '{}' yang tidak ada di interface '{}'", mp.name, n, i.name),
+                        format!(
+                            "modport '{}' merujuk signal '{}' yang tidak ada di interface '{}'",
+                            mp.name, n, i.name
+                        ),
                     ));
                 }
             }
@@ -667,17 +789,21 @@ fn check_module<'a>(m: &'a Module, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
     for p in &m.params {
         if scope.params.contains_key(p.name.as_str()) {
             return Err(err_at(
-                p.line, p.col,
+                p.line,
+                p.col,
                 "E2007",
-                format!("parameter '{}' dideklarasikan dua kali di module '{}'", p.name, m.name),
+                format!(
+                    "parameter '{}' dideklarasikan dua kali di module '{}'",
+                    p.name, m.name
+                ),
             ));
         }
         // F32: type param — marker `Named("type")` (`T : type = ...`) ATAU
         // bentuk kata kunci `type T = ...` (ty=None, type_default terisi).
         // Marker bukan tipe nyata: skip check_type(marker), validasi
         // type_default, daftarkan ke scope.type_params agar `sig x : T` sah.
-        let is_tp = p.type_default.is_some()
-            || matches!(&p.ty, Some(MvType::Named(s, ..)) if s == "type");
+        let is_tp =
+            p.type_default.is_some() || matches!(&p.ty, Some(MvType::Named(s, ..)) if s == "type");
         if is_tp {
             if let Some(td) = &p.type_default {
                 check_type(td, ctx, 0)?;
@@ -689,7 +815,11 @@ fn check_module<'a>(m: &'a Module, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
             if let Some(t) = &p.ty {
                 check_type(t, ctx, 0)?;
             }
-            if let Some(v) = p.default.as_ref().and_then(|e| fold_const(e, &scope.params, 0)) {
+            if let Some(v) = p
+                .default
+                .as_ref()
+                .and_then(|e| fold_const(e, &scope.params, 0))
+            {
                 scope.params.insert(p.name.as_str(), v);
             }
         }
@@ -716,7 +846,8 @@ fn check_module<'a>(m: &'a Module, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
                 for n in &p.names {
                     if !port_names.insert(n.as_str()) {
                         return Err(err_at(
-                            p.line, p.col,
+                            p.line,
+                            p.col,
                             "E2007",
                             format!("port '{n}' dideklarasikan dua kali di module '{}'", m.name),
                         ));
@@ -734,21 +865,42 @@ fn check_module<'a>(m: &'a Module, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
                     scope.types.insert(n.as_str(), &p.ty);
                 }
             }
-            MItem::Sig { names, ty, line, col, .. } | MItem::Reg { names, ty, line, col, .. } => {
+            MItem::Sig {
+                names,
+                ty,
+                line,
+                col,
+                ..
+            }
+            | MItem::Reg {
+                names,
+                ty,
+                line,
+                col,
+                ..
+            } => {
                 check_type_scope(ty, ctx, Some(&scope), 0)?;
                 for n in names {
                     if !decl_names.insert(n.as_str()) {
                         return Err(err_at(
-                            *line, *col,
+                            *line,
+                            *col,
                             "E2007",
-                            format!("sinyal '{n}' dideklarasikan dua kali di module '{}'", m.name),
+                            format!(
+                                "sinyal '{n}' dideklarasikan dua kali di module '{}'",
+                                m.name
+                            ),
                         ));
                     }
                     if scope.params.contains_key(n.as_str()) {
                         return Err(err_at(
-                            *line, *col,
+                            *line,
+                            *col,
                             "E2007",
-                            format!("sinyal '{n}' bentrok dengan parameter di module '{}'", m.name),
+                            format!(
+                                "sinyal '{n}' bentrok dengan parameter di module '{}'",
+                                m.name
+                            ),
                         ));
                     }
                 }
@@ -757,22 +909,36 @@ fn check_module<'a>(m: &'a Module, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
                     scope.types.insert(n.as_str(), ty);
                 }
             }
-            MItem::Const { name, ty, line, col, .. } => {
+            MItem::Const {
+                name,
+                ty,
+                line,
+                col,
+                ..
+            } => {
                 if let Some(t) = ty {
                     check_type_scope(t, ctx, Some(&scope), 0)?;
                 }
                 if !decl_names.insert(name.as_str()) {
                     return Err(err_at(
-                        *line, *col,
+                        *line,
+                        *col,
                         "E2007",
-                        format!("konstanta '{name}' dideklarasikan dua kali di module '{}'", m.name),
+                        format!(
+                            "konstanta '{name}' dideklarasikan dua kali di module '{}'",
+                            m.name
+                        ),
                     ));
                 }
                 if scope.params.contains_key(name.as_str()) {
                     return Err(err_at(
-                        *line, *col,
+                        *line,
+                        *col,
                         "E2007",
-                        format!("konstanta '{name}' bentrok dengan parameter di module '{}'", m.name),
+                        format!(
+                            "konstanta '{name}' bentrok dengan parameter di module '{}'",
+                            m.name
+                        ),
                     ));
                 }
                 scope.sigs.insert(name.as_str());
@@ -816,10 +982,19 @@ fn new_scope<'a>(ctx: &'a Ctx<'a>, mname: &'a str) -> Scope<'a> {
 }
 
 /// Item module (termasuk di dalam blok generate).
-fn check_module_item<'a>(item: &'a MItem, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>) -> Result<(), MvError> {
+fn check_module_item<'a>(
+    item: &'a MItem,
+    ctx: &'a Ctx<'a>,
+    scope: &mut Scope<'a>,
+) -> Result<(), MvError> {
     match item {
         MItem::Port(_) => Ok(()), // port tidak valid di dalam generate — abaikan
-        MItem::Sig { names, ty, init, .. } | MItem::Reg { names, ty, init, .. } => {
+        MItem::Sig {
+            names, ty, init, ..
+        }
+        | MItem::Reg {
+            names, ty, init, ..
+        } => {
             check_type_scope(ty, ctx, Some(scope), 0)?;
             if let Some(i) = init {
                 check_expr(i, ctx, scope, 0)?;
@@ -830,7 +1005,9 @@ fn check_module_item<'a>(item: &'a MItem, ctx: &'a Ctx<'a>, scope: &mut Scope<'a
             }
             Ok(())
         }
-        MItem::Const { name, ty, value, .. } => {
+        MItem::Const {
+            name, ty, value, ..
+        } => {
             if let Some(t) = ty {
                 check_type_scope(t, ctx, Some(scope), 0)?;
             }
@@ -845,17 +1022,25 @@ fn check_module_item<'a>(item: &'a MItem, ctx: &'a Ctx<'a>, scope: &mut Scope<'a
             let clk_base = spec.clk.split('.').next().unwrap_or(&spec.clk);
             if !scope.known(clk_base) {
                 return Err(err_at(
-                    spec.line, spec.col,
+                    spec.line,
+                    spec.col,
                     "E2001",
-                    format!("undefined signal '{}' (clock seq) — di module '{}'", spec.clk, scope.env.mname),
+                    format!(
+                        "undefined signal '{}' (clock seq) — di module '{}'",
+                        spec.clk, scope.env.mname
+                    ),
                 ));
             }
             if let Some((rname, _, _)) = &spec.reset {
                 if !scope.known(rname) {
                     return Err(err_at(
-                        spec.line, spec.col,
+                        spec.line,
+                        spec.col,
                         "E2001",
-                        format!("undefined signal '{rname}' (reset seq) — di module '{}'", scope.env.mname),
+                        format!(
+                            "undefined signal '{rname}' (reset seq) — di module '{}'",
+                            scope.env.mname
+                        ),
                     ));
                 }
             }
@@ -884,8 +1069,8 @@ fn check_module_item<'a>(item: &'a MItem, ctx: &'a Ctx<'a>, scope: &mut Scope<'a
             // Catatan: interface `.mv` belum punya params (ast Interface tanpa
             // field params) — target interface dgn override → E2001 benar
             // (override param pada interface = memang tidak valid di .mv).
-            let target_known = ctx.modules.contains(module.as_str())
-                || ctx.interfaces.contains(module.as_str());
+            let target_known =
+                ctx.modules.contains(module.as_str()) || ctx.interfaces.contains(module.as_str());
             let kind = if ctx.interfaces.contains(module.as_str()) {
                 "interface"
             } else {
@@ -943,7 +1128,10 @@ fn check_module_item<'a>(item: &'a MItem, ctx: &'a Ctx<'a>, scope: &mut Scope<'a
                             *line,
                             *col,
                             "E2007",
-                            format!("parameter '{}' di-override dua kali di {} '{}'", pn, kind, module),
+                            format!(
+                                "parameter '{}' di-override dua kali di {} '{}'",
+                                pn, kind, module
+                            ),
                         ));
                     }
                     continue;
@@ -962,7 +1150,10 @@ fn check_module_item<'a>(item: &'a MItem, ctx: &'a Ctx<'a>, scope: &mut Scope<'a
                         *line,
                         *col,
                         "E2007",
-                        format!("parameter '{}' di-override dua kali di {} '{}'", pn, kind, module),
+                        format!(
+                            "parameter '{}' di-override dua kali di {} '{}'",
+                            pn, kind, module
+                        ),
                     ));
                 }
             }
@@ -998,7 +1189,10 @@ fn check_module_item<'a>(item: &'a MItem, ctx: &'a Ctx<'a>, scope: &mut Scope<'a
                                 *line,
                                 *col,
                                 "E2007",
-                                format!("port '{}' dikoneksikan dua kali di {} '{}'", port, kind, module),
+                                format!(
+                                    "port '{}' dikoneksikan dua kali di {} '{}'",
+                                    port, kind, module
+                                ),
                             ));
                         }
                     }
@@ -1026,7 +1220,12 @@ fn check_module_item<'a>(item: &'a MItem, ctx: &'a Ctx<'a>, scope: &mut Scope<'a
             scope.sigs.insert(name.as_str());
             Ok(())
         }
-        MItem::GenFor { var, from, to, body } => {
+        MItem::GenFor {
+            var,
+            from,
+            to,
+            body,
+        } => {
             check_expr(from, ctx, scope, 0)?;
             check_expr(to, ctx, scope, 0)?;
             let mut inner = scope.clone();
@@ -1095,7 +1294,8 @@ fn check_class<'a>(c: &'a MClass, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
     for (n, ty, _) in &c.fields {
         if !fseen.insert(n.as_str()) {
             return Err(err_at(
-                c.line, c.col,
+                c.line,
+                c.col,
                 "E2007",
                 format!("field '{n}' dideklarasikan dua kali di class '{}'", c.name),
             ));
@@ -1110,18 +1310,26 @@ fn check_class<'a>(c: &'a MClass, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
     for f in &c.funcs {
         if !mseen.insert(f.name.as_str()) {
             return Err(err_at(
-                f.line, f.col,
+                f.line,
+                f.col,
                 "E2007",
-                format!("method '{}' dideklarasikan dua kali di class '{}'", f.name, c.name),
+                format!(
+                    "method '{}' dideklarasikan dua kali di class '{}'",
+                    f.name, c.name
+                ),
             ));
         }
     }
     for t in &c.tasks {
         if !mseen.insert(t.name.as_str()) {
             return Err(err_at(
-                t.line, t.col,
+                t.line,
+                t.col,
                 "E2007",
-                format!("method '{}' dideklarasikan dua kali di class '{}'", t.name, c.name),
+                format!(
+                    "method '{}' dideklarasikan dua kali di class '{}'",
+                    t.name, c.name
+                ),
             ));
         }
     }
@@ -1131,9 +1339,13 @@ fn check_class<'a>(c: &'a MClass, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
     for (cname, items) in &c.constraints {
         if !cseen.insert(cname.as_str()) {
             return Err(err_at(
-                c.line, c.col,
+                c.line,
+                c.col,
                 "E2007",
-                format!("constraint '{cname}' dideklarasikan dua kali di class '{}'", c.name),
+                format!(
+                    "constraint '{cname}' dideklarasikan dua kali di class '{}'",
+                    c.name
+                ),
             ));
         }
         check_constraint_items(items, ctx, &scope)?;
@@ -1165,20 +1377,33 @@ fn check_constraint_items<'a>(
                 check_constraint_items(then, ctx, scope)?;
                 check_constraint_items(els, ctx, scope)?;
             }
-            ConstraintItem::Solve { var, before, line, col } => {
+            ConstraintItem::Solve {
+                var,
+                before,
+                line,
+                col,
+            } => {
                 if !scope.known(var) {
                     return Err(err_at(
-                        *line, *col,
+                        *line,
+                        *col,
                         "E2001",
-                        format!("undefined signal '{var}' (solve) — di '{}'", scope.env.mname),
+                        format!(
+                            "undefined signal '{var}' (solve) — di '{}'",
+                            scope.env.mname
+                        ),
                     ));
                 }
                 for b in before {
                     if !scope.known(b) {
                         return Err(err_at(
-                            *line, *col,
+                            *line,
+                            *col,
                             "E2001",
-                            format!("undefined signal '{b}' (solve before) — di '{}'", scope.env.mname),
+                            format!(
+                                "undefined signal '{b}' (solve before) — di '{}'",
+                                scope.env.mname
+                            ),
                         ));
                     }
                 }
@@ -1190,7 +1415,12 @@ fn check_constraint_items<'a>(
 
 // ── Statements ──
 
-fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind: BlockKind) -> Result<(), MvError> {
+fn check_stmt<'a>(
+    stmt: &'a Stmt,
+    ctx: &'a Ctx<'a>,
+    scope: &mut Scope<'a>,
+    kind: BlockKind,
+) -> Result<(), MvError> {
     match stmt {
         Stmt::Block(stmts) => {
             for s in stmts {
@@ -1199,21 +1429,33 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
             Ok(())
         }
         Stmt::Assign {
-            lhs, rhs, nba, line, col,
+            lhs,
+            rhs,
+            nba,
+            line,
+            col,
         } => {
             // E2004: operator assignment di konteks salah
             if kind == BlockKind::Seq && !*nba {
                 return Err(err_at(
-                    *line, *col,
+                    *line,
+                    *col,
                     "E2004",
-                    format!("blocking assign '=' tidak boleh di dalam seq (pakai '<=') — di '{}'", scope.env.mname),
+                    format!(
+                        "blocking assign '=' tidak boleh di dalam seq (pakai '<=') — di '{}'",
+                        scope.env.mname
+                    ),
                 ));
             }
             if kind != BlockKind::Seq && *nba {
                 return Err(err_at(
-                    *line, *col,
+                    *line,
+                    *col,
                     "E2004",
-                    format!("non-blocking assign '<=' hanya boleh di dalam seq — di '{}'", scope.env.mname),
+                    format!(
+                        "non-blocking assign '<=' hanya boleh di dalam seq — di '{}'",
+                        scope.env.mname
+                    ),
                 ));
             }
             // E2003: drive port input hanya diizinkan di body `initial`/`final`
@@ -1222,9 +1464,13 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
                 if let Some(base) = base_ident(lhs) {
                     if let Some(Dir::In) = scope.env.ports.get(base) {
                         return Err(err_at(
-                            *line, *col,
+                            *line,
+                            *col,
                             "E2003",
-                            format!("cannot drive input port '{base}' — di '{}'", scope.env.mname),
+                            format!(
+                                "cannot drive input port '{base}' — di '{}'",
+                                scope.env.mname
+                            ),
                         ));
                     }
                 }
@@ -1237,9 +1483,14 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
             if let (Some(l), Some(r)) = (wl, wr) {
                 if r > l {
                     return Err(err_at(
-                        *line, *col,
+                        *line,
+                        *col,
                         "E2002",
-                        format!("lebar {r} bit ke sinyal {l}-bit '{}' — di '{}'", describe_lhs(lhs), scope.env.mname),
+                        format!(
+                            "lebar {r} bit ke sinyal {l}-bit '{}' — di '{}'",
+                            describe_lhs(lhs),
+                            scope.env.mname
+                        ),
                     ));
                 }
             }
@@ -1247,22 +1498,34 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
         }
         // F36: `lhs += rhs` — compound assignment (blocking, seperti `=`).
         Stmt::CompoundAssign {
-            lhs, op, rhs, line, col,
+            lhs,
+            op,
+            rhs,
+            line,
+            col,
         } => {
             if kind == BlockKind::Seq {
                 return Err(err_at(
-                    *line, *col,
+                    *line,
+                    *col,
                     "E2004",
-                    format!("compound assign '{op}' tidak boleh di dalam seq (pakai '<=') — di '{}'", scope.env.mname),
+                    format!(
+                        "compound assign '{op}' tidak boleh di dalam seq (pakai '<=') — di '{}'",
+                        scope.env.mname
+                    ),
                 ));
             }
             if kind != BlockKind::Tb {
                 if let Some(base) = base_ident(lhs) {
                     if let Some(Dir::In) = scope.env.ports.get(base) {
                         return Err(err_at(
-                            *line, *col,
+                            *line,
+                            *col,
                             "E2003",
-                            format!("cannot drive input port '{base}' — di '{}'", scope.env.mname),
+                            format!(
+                                "cannot drive input port '{base}' — di '{}'",
+                                scope.env.mname
+                            ),
                         ));
                     }
                 }
@@ -1275,9 +1538,14 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
             if let (Some(l), Some(r)) = (wl, wr) {
                 if r > l {
                     return Err(err_at(
-                        *line, *col,
+                        *line,
+                        *col,
                         "E2002",
-                        format!("lebar {r} bit ke sinyal {l}-bit '{}' — di '{}'", describe_lhs(lhs), scope.env.mname),
+                        format!(
+                            "lebar {r} bit ke sinyal {l}-bit '{}' — di '{}'",
+                            describe_lhs(lhs),
+                            scope.env.mname
+                        ),
                     ));
                 }
             }
@@ -1287,18 +1555,26 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
         Stmt::IncDec { lhs, line, col, .. } => {
             if kind == BlockKind::Seq {
                 return Err(err_at(
-                    *line, *col,
+                    *line,
+                    *col,
                     "E2004",
-                    format!("increment/decrement tidak boleh di dalam seq (pakai '<=') — di '{}'", scope.env.mname),
+                    format!(
+                        "increment/decrement tidak boleh di dalam seq (pakai '<=') — di '{}'",
+                        scope.env.mname
+                    ),
                 ));
             }
             if kind != BlockKind::Tb {
                 if let Some(base) = base_ident(lhs) {
                     if let Some(Dir::In) = scope.env.ports.get(base) {
                         return Err(err_at(
-                            *line, *col,
+                            *line,
+                            *col,
                             "E2003",
-                            format!("cannot drive input port '{base}' — di '{}'", scope.env.mname),
+                            format!(
+                                "cannot drive input port '{base}' — di '{}'",
+                                scope.env.mname
+                            ),
                         ));
                     }
                 }
@@ -1405,7 +1681,8 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
             for n in names {
                 if scope.sigs.contains(n.as_str()) {
                     return Err(MvError::new(
-                        0, 0,
+                        0,
+                        0,
                         format!("E2007: variabel '{}' sudah dideklarasikan", n),
                     ));
                 }
@@ -1418,7 +1695,8 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
             if let Some(v) = v {
                 if scope.in_task {
                     return Err(MvError::new(
-                        0, 0,
+                        0,
+                        0,
                         "E2008: task tidak boleh mengembalikan nilai (return expr)".to_string(),
                     ));
                 }
@@ -1429,7 +1707,8 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
         Stmt::Break | Stmt::Continue => {
             if scope.loop_depth == 0 {
                 return Err(MvError::new(
-                    0, 0,
+                    0,
+                    0,
                     "E2009: break/continue hanya boleh di dalam loop".to_string(),
                 ));
             }
@@ -1483,14 +1762,24 @@ fn describe_lhs(e: &Expr) -> String {
         Expr::Ident(s, ..) => s.clone(),
         Expr::Member(o, f, ..) => format!("{}.{}", describe_lhs(o), f),
         Expr::Index(o, i) => format!("{}[{}]", describe_lhs(o), describe_lhs(i)),
-        Expr::Range(o, a, b) => format!("{}[{}:{}]", describe_lhs(o), describe_lhs(a), describe_lhs(b)),
+        Expr::Range(o, a, b) => format!(
+            "{}[{}:{}]",
+            describe_lhs(o),
+            describe_lhs(a),
+            describe_lhs(b)
+        ),
         other => format!("{other:?}"),
     }
 }
 
 // ── Expressions ──
 
-fn check_expr<'a>(e: &'a Expr, ctx: &'a Ctx<'a>, scope: &Scope<'a>, depth: usize) -> Result<(), MvError> {
+fn check_expr<'a>(
+    e: &'a Expr,
+    ctx: &'a Ctx<'a>,
+    scope: &Scope<'a>,
+    depth: usize,
+) -> Result<(), MvError> {
     if depth > 24 {
         return Ok(()); // guard rekursi dalam
     }
@@ -1501,9 +1790,13 @@ fn check_expr<'a>(e: &'a Expr, ctx: &'a Ctx<'a>, scope: &Scope<'a>, depth: usize
             if let Some(v) = sized_value(*base, digits) {
                 if v >= (1i64 << (*w).min(62)) {
                     return Err(err_at(
-                        *l, *c,
+                        *l,
+                        *c,
                         "E2006",
-                        format!("literal {w}'{base}{digits} melebihi {w} bit — di '{}'", scope.env.mname),
+                        format!(
+                            "literal {w}'{base}{digits} melebihi {w} bit — di '{}'",
+                            scope.env.mname
+                        ),
                     ));
                 }
             }
@@ -1521,7 +1814,8 @@ fn check_expr<'a>(e: &'a Expr, ctx: &'a Ctx<'a>, scope: &Scope<'a>, depth: usize
             }
             if !scope.known(s) {
                 return Err(err_at(
-                    *l, *c,
+                    *l,
+                    *c,
                     "E2001",
                     format!("undefined signal '{s}' — di '{}'", scope.env.mname),
                 ));
@@ -1537,16 +1831,25 @@ fn check_expr<'a>(e: &'a Expr, ctx: &'a Ctx<'a>, scope: &Scope<'a>, depth: usize
                         .any(|td| matches!(td, Typedef::Enum { members, .. } if members.iter().any(|mm| mm.name == *i)));
                 if !in_pkg {
                     return Err(err_at(
-                        *l, *c,
+                        *l,
+                        *c,
                         "E2001",
-                        format!("item '{i}' tidak ada di package '{p}' — di '{}'", scope.env.mname),
+                        format!(
+                            "item '{i}' tidak ada di package '{p}' — di '{}'",
+                            scope.env.mname
+                        ),
                     ));
                 }
             }
         }
         // F33: type cast `T'(x)` — tipe target harus dikenal (E2005),
         // ekspresi dalam divalidasi biasa.
-        Expr::Cast { ty, expr, line, col } => {
+        Expr::Cast {
+            ty,
+            expr,
+            line,
+            col,
+        } => {
             // F33 fix review: cast target tidak boleh punya range/array
             // (`logic[7:0]'(x)` → emit SV invalid `logic [7:0]'(x)`).
             if matches!(ty.as_ref(), MvType::Logic(Some(_)) | MvType::Array(_, _)) {
@@ -1588,7 +1891,11 @@ fn check_expr<'a>(e: &'a Expr, ctx: &'a Ctx<'a>, scope: &Scope<'a>, depth: usize
                 check_expr(a, ctx, scope, depth + 1)?;
             }
         }
-        Expr::MethodCall { obj, method: _, args } => {
+        Expr::MethodCall {
+            obj,
+            method: _,
+            args,
+        } => {
             // objek (`this`/`super`/var/instance) + argumen; nama method tidak
             // divalidasi (method class/eksternal — konservatif)
             check_expr(obj, ctx, scope, depth + 1)?;
@@ -1604,9 +1911,13 @@ fn check_expr<'a>(e: &'a Expr, ctx: &'a Ctx<'a>, scope: &Scope<'a>, depth: usize
                     if let Some(fields) = resolve_fields(ty, ctx, 0) {
                         if !fields.iter().any(|fl| fl.names.iter().any(|n| n == f)) {
                             return Err(err_at(
-                                *l, *c,
+                                *l,
+                                *c,
                                 "E2001",
-                                format!("field '{f}' tidak ada di struct — di '{}'", scope.env.mname),
+                                format!(
+                                    "field '{f}' tidak ada di struct — di '{}'",
+                                    scope.env.mname
+                                ),
                             ));
                         }
                     }
@@ -1703,9 +2014,12 @@ fn check_type_scope(
                 if let Some(p) = ctx.packages.get(pkg) {
                     if !p.typedefs.iter().any(|td| td_name(td) == item) {
                         return Err(err_at(
-                            *l, *c,
+                            *l,
+                            *c,
                             "E2005",
-                            format!("tipe tak dikenal '{n}' (package '{pkg}' tidak punya '{item}')"),
+                            format!(
+                                "tipe tak dikenal '{n}' (package '{pkg}' tidak punya '{item}')"
+                            ),
                         ));
                     }
                 }
@@ -1716,7 +2030,8 @@ fn check_type_scope(
             {
                 return Err(err_at(*l, *c, "E2005", format!("tipe tak dikenal '{n}'")));
             }
-        }        MvType::Signed(inner) => check_type_scope(inner, ctx, scope, depth + 1)?,
+        }
+        MvType::Signed(inner) => check_type_scope(inner, ctx, scope, depth + 1)?,
         MvType::Array(inner, _) => check_type_scope(inner, ctx, scope, depth + 1)?,
         _ => {}
     }
@@ -1759,7 +2074,11 @@ fn type_width(ty: &MvType, ctx: &Ctx, scope: &Scope, depth: usize) -> Option<i64
             let td = resolve_typedef(n, ctx)?;
             match td {
                 Typedef::Alias { ty, .. } => type_width(ty, ctx, scope, depth + 1),
-                Typedef::Struct { packed: true, fields, .. } => {
+                Typedef::Struct {
+                    packed: true,
+                    fields,
+                    ..
+                } => {
                     let mut total = 0i64;
                     for f in fields {
                         total += type_width(&f.ty, ctx, scope, depth + 1)?;
@@ -1767,11 +2086,17 @@ fn type_width(ty: &MvType, ctx: &Ctx, scope: &Scope, depth: usize) -> Option<i64
                     Some(total)
                 }
                 Typedef::Struct { packed: false, .. } => None,
-                Typedef::Union { packed: true, fields, .. } => {
+                Typedef::Union {
+                    packed: true,
+                    fields,
+                    ..
+                } => {
                     let mut max_w = 0i64;
                     for f in fields {
                         let w = type_width(&f.ty, ctx, scope, depth + 1)?;
-                        if w > max_w { max_w = w; }
+                        if w > max_w {
+                            max_w = w;
+                        }
                     }
                     Some(max_w)
                 }
@@ -1817,7 +2142,9 @@ fn resolve_fields<'a>(ty: &'a MvType, ctx: &'a Ctx<'a>, depth: usize) -> Option<
         MvType::Named(n, ..) => {
             let td = resolve_typedef(n, ctx)?;
             match td {
-                Typedef::Struct { fields, .. } | Typedef::Union { fields, .. } => Some(fields.iter().collect()),
+                Typedef::Struct { fields, .. } | Typedef::Union { fields, .. } => {
+                    Some(fields.iter().collect())
+                }
                 Typedef::Alias { ty, .. } => resolve_fields(ty, ctx, depth + 1),
                 Typedef::Enum { .. } => None,
             }
@@ -2171,7 +2498,8 @@ module traffic {
     #[test]
     fn e2003_drive_input_with_final_still_error() {
         // module punya final (assertion) tapi comb tetap tidak boleh drive input
-        let src = "module m {\n in clk : bit\n out y : bit\n comb { clk = 0 }\n final { y = clk } }";
+        let src =
+            "module m {\n in clk : bit\n out y : bit\n comb { clk = 0 }\n final { y = clk } }";
         let e = check_src(src).unwrap_err();
         assert!(e.msg.contains("E2003"), "msg: {}", e.msg);
     }
@@ -2366,7 +2694,8 @@ class c extends base {
     fn f9_check_many_error_index_and_message() {
         // Error di file kedua harus di-return dengan indeks file yang benar.
         let good = parse("module a {\n in clk : bit\n}\n").unwrap();
-        let bad = parse("module b {\n in clk : bit\n out y : bit\n comb { y = nope }\n}\n").unwrap();
+        let bad =
+            parse("module b {\n in clk : bit\n out y : bit\n comb { y = nope }\n}\n").unwrap();
         let (idx, e) = check_many(&[&good, &bad]).unwrap_err();
         assert_eq!(idx, 1);
         assert!(e.msg.contains("E2001"), "msg: {}", e.msg);
@@ -2423,7 +2752,8 @@ class c extends base {
     #[test]
     fn f11_e2002_width_position() {
         // Statement assignment dimulai di `y` (baris 4, kolom 12)
-        let src = "module m {\n    in a : logic[7:0]\n    out y : logic[3:0]\n    comb { y = a }\n}\n";
+        let src =
+            "module m {\n    in a : logic[7:0]\n    out y : logic[3:0]\n    comb { y = a }\n}\n";
         let e = check_src(src).unwrap_err();
         assert_eq!(e.line, 4, "line: {e:?}");
         assert_eq!(e.col, 12, "col: {e:?}");
@@ -2461,7 +2791,8 @@ class c extends base {
     #[test]
     fn f11_e2006_overflow_position() {
         // `8'h1FF` di baris 4, kolom 16
-        let src = "module m {\n    in clk : bit\n    out y : logic[7:0]\n    comb { y = 8'h1FF }\n}\n";
+        let src =
+            "module m {\n    in clk : bit\n    out y : logic[7:0]\n    comb { y = 8'h1FF }\n}\n";
         let e = check_src(src).unwrap_err();
         assert_eq!(e.line, 4, "line: {e:?}");
         assert_eq!(e.col, 16, "col: {e:?}");
@@ -2613,7 +2944,11 @@ class item {
         let src = "module foo {\n    in a : bit\n}\nmodule tb {\n    sig x : bit\n    sig y : bit\n    inst foo u (x, y)\n}\n";
         let e = check_src(src).unwrap_err();
         assert!(e.msg.contains("E2001"), "msg: {}", e.msg);
-        assert!(e.msg.contains("terlalu banyak koneksi positional"), "msg: {}", e.msg);
+        assert!(
+            e.msg.contains("terlalu banyak koneksi positional"),
+            "msg: {}",
+            e.msg
+        );
     }
 
     #[test]
@@ -2666,7 +3001,10 @@ class item {
         // check_many (konteks gabungan) mengenali target lintas-file →
         // koneksi port tetap divalidasi (.nope → E2001), bukan dilewati.
         let a = parse("module foo {\n    in a : bit\n    out b : bit\n}\n").unwrap();
-        let b = parse("module tb {\n    sig x : bit\n    sig y : bit\n    inst foo u (.a(x), .nope(y))\n}\n").unwrap();
+        let b = parse(
+            "module tb {\n    sig x : bit\n    sig y : bit\n    inst foo u (.a(x), .nope(y))\n}\n",
+        )
+        .unwrap();
         let (idx, e) = check_many(&[&a, &b]).unwrap_err();
         assert_eq!(idx, 1);
         assert!(e.msg.contains("E2001"), "msg: {}", e.msg);
@@ -2678,7 +3016,9 @@ class item {
     fn f30_inst_cross_file_ok() {
         // Koneksi lintas-file yang benar → lolos.
         let a = parse("module foo {\n    in a : bit\n    out b : bit\n}\n").unwrap();
-        let b = parse("module tb {\n    sig x : bit\n    sig y : bit\n    inst foo u (x, .b(y))\n}\n").unwrap();
+        let b =
+            parse("module tb {\n    sig x : bit\n    sig y : bit\n    inst foo u (x, .b(y))\n}\n")
+                .unwrap();
         check_many(&[&a, &b]).expect("koneksi lintas-file valid harus lolos");
     }
 
@@ -2725,7 +3065,8 @@ class item {
         // Type param deklarasi + dipakai sbg tipe sinyal/port → lolos.
         // `sig x : T` — T ter-resolve dari type param (bukan E2005); lebar
         // sinyal ikut default tipe (logic[7:0] → 8).
-        let src = "module m #(T : type = logic[7:0]) {\n    in  d : T\n    out q : T\n    sig x : T\n}\n";
+        let src =
+            "module m #(T : type = logic[7:0]) {\n    in  d : T\n    out q : T\n    sig x : T\n}\n";
         check_src(src).expect("type param + sinyal bertipe T harus lolos");
     }
 

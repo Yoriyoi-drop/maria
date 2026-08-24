@@ -64,7 +64,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         if ui.button("+").clicked() {
             state.wave_zoom = (state.wave_zoom * 1.5).min(1024.0);
         }
-        if ui.button("Fit").on_hover_text("Sesuaikan zoom dengan lebar panel").clicked() {
+        if ui
+            .button("Fit")
+            .on_hover_text("Sesuaikan zoom dengan lebar panel")
+            .clicked()
+        {
             let avail = ui.available_width().max(240.0);
             state.wave_zoom = ((avail - NAME_W) / (t_end as f32).max(1.0)).clamp(0.5, 256.0);
         }
@@ -171,8 +175,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 if let Some(p) = resp.hover_pos() {
                     let t = ((p.x - wf.left()) / scale).max(0.0) as u64;
                     readout = Some(t);
-                    ui.painter()
-                        .vline(p.x, wf.top()..=wf.bottom(), egui::Stroke::new(1.0, CURSOR_COLOR));
+                    ui.painter().vline(
+                        p.x,
+                        wf.top()..=wf.bottom(),
+                        egui::Stroke::new(1.0, CURSOR_COLOR),
+                    );
                 }
             }
         });
@@ -184,14 +191,22 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         let mut line = format!("t = {}", t);
         for (i, sig) in visible.iter().enumerate() {
             if i >= MAX_READOUT {
-                line.push_str(&format!("   … +{} sinyal lagi", visible.len() - MAX_READOUT));
+                line.push_str(&format!(
+                    "   … +{} sinyal lagi",
+                    visible.len() - MAX_READOUT
+                ));
                 break;
             }
             line.push_str(&format!("   {} = {}", sig.name, value_at(sig, t)));
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(line).monospace().size(11.0).color(CURSOR_COLOR));
+            ui.label(
+                egui::RichText::new(line)
+                    .monospace()
+                    .size(11.0)
+                    .color(CURSOR_COLOR),
+            );
         });
     }
 }
@@ -203,7 +218,11 @@ fn paint_time_axis(ui: &mut egui::Ui, rect: egui::Rect, scale: f32) {
     let mut t = 0u64;
     while t as f32 * scale <= rect.width() {
         let x = rect.left() + t as f32 * scale;
-        painter.vline(x, rect.top()..=rect.bottom(), egui::Stroke::new(1.0, GRID_COLOR));
+        painter.vline(
+            x,
+            rect.top()..=rect.bottom(),
+            egui::Stroke::new(1.0, GRID_COLOR),
+        );
         painter.text(
             egui::pos2(x + 4.0, rect.center().y),
             egui::Align2::LEFT_CENTER,

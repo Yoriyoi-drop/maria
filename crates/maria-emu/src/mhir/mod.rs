@@ -9,4 +9,7 @@ pub mod extract;
 pub mod types;
 
 pub use extract::{apply_address_map, extract};
-pub use types::{AddressRegion, BackPointer, ClockDesc, ClockEdgeKind, DeviceKind, MhirDesign, MhirDevice, MhirMemory, MhirModule, MhirRegister, PortDesc, PortDir, ResetDesc};
+pub use types::{
+    AddressRegion, BackPointer, ClockDesc, ClockEdgeKind, DeviceKind, MhirDesign, MhirDevice,
+    MhirMemory, MhirModule, MhirRegister, PortDesc, PortDir, ResetDesc,
+};

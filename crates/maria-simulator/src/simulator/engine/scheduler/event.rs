@@ -1,9 +1,9 @@
 use super::super::SimulationEngine;
-use maria_core::error::SimError;
-use maria_core::diagnostics::DiagCode;
-use maria_ir::*;
-use crate::simulator::types::*;
 use crate::simulator::parallel;
+use crate::simulator::types::*;
+use maria_core::diagnostics::DiagCode;
+use maria_core::error::SimError;
+use maria_ir::*;
 use std::sync::Arc;
 
 /// Apakah sensitivity process terpenuhi oleh perubahan signal `changed`.
@@ -94,10 +94,13 @@ impl SimulationEngine {
                         }
                         let next_t = t + *delay as usize;
                         self.ensure_events(next_t);
-                        self.push_event(next_t, RegionEvent {
-                            region: EventRegion::Active,
-                            event: EventKind::EvalProcess(pid),
-                        });
+                        self.push_event(
+                            next_t,
+                            RegionEvent {
+                                region: EventRegion::Active,
+                                event: EventKind::EvalProcess(pid),
+                            },
+                        );
                     }
                     Process::Combinational { body, .. } => {
                         // Try MIR JIT for compiled-code execution path
@@ -182,7 +185,11 @@ impl SimulationEngine {
                 self.current_this = this_opt;
                 self.current_method = method_opt;
                 if std::env::var("DBG_UVM").is_ok() {
-                    eprintln!("[DBG-F26] resume ContinueAstBlock fid={:?} nstmts={}", fork_id, stmts.len());
+                    eprintln!(
+                        "[DBG-F26] resume ContinueAstBlock fid={:?} nstmts={}",
+                        fork_id,
+                        stmts.len()
+                    );
                 }
                 let all_consumed = self.evaluate_ast_block_with_delay_fork(&stmts, fork_id)?;
                 // F35 review: return di branch fork (illegal SV tapi parseable)
@@ -190,7 +197,10 @@ impl SimulationEngine {
                 // ke evaluasi blok lain.
                 self.ast_return_pending = false;
                 if std::env::var("DBG_UVM").is_ok() {
-                    eprintln!("[DBG-F26] resume done fid={:?} consumed={}", fork_id, all_consumed);
+                    eprintln!(
+                        "[DBG-F26] resume done fid={:?} consumed={}",
+                        fork_id, all_consumed
+                    );
                 }
                 // F21: fork_decrement SEBELUM restore konteks — bila branch ini
                 // adalah branch TERAKHIR yang selesai, fork_finish mengeksekusi
@@ -327,12 +337,10 @@ impl SimulationEngine {
                 // bila kondisi guard benar saat event terpenuhi. Jika kondisi
                 // salah, tunggu event berikutnya (entry tetap hidup).
                 let guard_ok = match &pe.iff {
-                    Some(cond) => {
-                        match self.evaluate_expr(cond) {
-                            Ok(v) => v.to_bool().unwrap_or(false),
-                            Err(_) => false,
-                        }
-                    }
+                    Some(cond) => match self.evaluate_expr(cond) {
+                        Ok(v) => v.to_bool().unwrap_or(false),
+                        Err(_) => false,
+                    },
                     None => true,
                 };
                 if guard_ok {
@@ -421,12 +429,10 @@ impl SimulationEngine {
             // LANG-27: guard `iff (cond)` di jalur AST — lanjutkan hanya bila
             // kondisi benar. Jika salah, tunggu event berikutnya.
             let guard_ok = match &pe.iff {
-                Some(cond) => {
-                    match self.evaluate_ast_expr(cond) {
-                        Ok(v) => v.to_bool().unwrap_or(false),
-                        Err(_) => false,
-                    }
-                }
+                Some(cond) => match self.evaluate_ast_expr(cond) {
+                    Ok(v) => v.to_bool().unwrap_or(false),
+                    Err(_) => false,
+                },
                 None => true,
             };
             if !guard_ok {
@@ -462,7 +468,10 @@ impl SimulationEngine {
         Ok(matched)
     }
 
-    pub(crate) fn process_pending_wait_orders(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
+    pub(crate) fn process_pending_wait_orders(
+        &mut self,
+        deltas: &[SignalId],
+    ) -> Result<bool, SimError> {
         let mut any_done = false;
         let mut remaining = Vec::new();
         let orders = std::mem::take(&mut self.pending_wait_orders);
@@ -513,14 +522,16 @@ impl SimulationEngine {
             if let Process::Combinational { sensitivity, .. } = process {
                 // Skip if this process is fused into a clock domain
                 if self.use_cycle_fusion
-                    && self.clock_analysis.as_ref()
+                    && self
+                        .clock_analysis
+                        .as_ref()
                         .map(|a| a.fused_processes.contains(&pid))
                         .unwrap_or(false)
                 {
                     continue;
                 }
-                let should_trigger = sensitivity.is_empty()
-                    || sensitivity_triggered(sensitivity, changed);
+                let should_trigger =
+                    sensitivity.is_empty() || sensitivity_triggered(sensitivity, changed);
                 if should_trigger {
                     comb_indices.push(pid);
                 }
@@ -573,15 +584,26 @@ impl SimulationEngine {
                     .map(|i| Arc::new(self.state.read_signal(i).clone()))
                     .collect();
                 let identity: Vec<Option<usize>> = (0..signal_count).map(Some).collect();
-                crate::dbg_sim!(2, "  sparse=off (unresolved access) full-snapshot {} sig", signal_count);
+                crate::dbg_sim!(
+                    2,
+                    "  sparse=off (unresolved access) full-snapshot {} sig",
+                    signal_count
+                );
                 let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
                     .par_iter()
                     .map(|&pid| {
                         let process = &processes[pid];
                         if let Process::Combinational { body, .. } = process {
-                            crate::dbg_sim!(3, "t={} delta={} par-eval pid={}", dbg_t, dbg_delta, pid);
+                            crate::dbg_sim!(
+                                3,
+                                "t={} delta={} par-eval pid={}",
+                                dbg_t,
+                                dbg_delta,
+                                pid
+                            );
                             let mut overlay = std::collections::HashMap::new();
-                            let mut view = parallel::SignalView::new(&snapshot, &identity, &mut overlay);
+                            let mut view =
+                                parallel::SignalView::new(&snapshot, &identity, &mut overlay);
                             let mut writes = Vec::new();
                             match parallel::evaluate_stmt_block_parallel(
                                 body,
@@ -590,7 +612,10 @@ impl SimulationEngine {
                                 &self.design.top.signals,
                             ) {
                                 Ok(()) => Ok(writes),
-                                Err(e) => Err(SimError::with_diag(DiagCode::InternalError, format!("parallel eval error: {}", e))),
+                                Err(e) => Err(SimError::with_diag(
+                                    DiagCode::InternalError,
+                                    format!("parallel eval error: {}", e),
+                                )),
                             }
                         } else {
                             Ok(Vec::new())
@@ -640,7 +665,13 @@ impl SimulationEngine {
                     .map(|&pid| {
                         let process = &processes[pid];
                         if let Process::Combinational { body, .. } = process {
-                            crate::dbg_sim!(3, "t={} delta={} par-eval pid={}", dbg_t, dbg_delta, pid);
+                            crate::dbg_sim!(
+                                3,
+                                "t={} delta={} par-eval pid={}",
+                                dbg_t,
+                                dbg_delta,
+                                pid
+                            );
                             let mut overlay = std::collections::HashMap::new();
                             let mut view = parallel::SignalView::new(&base, &id_map, &mut overlay);
                             let mut writes = Vec::new();
@@ -651,7 +682,10 @@ impl SimulationEngine {
                                 &self.design.top.signals,
                             ) {
                                 Ok(()) => Ok(writes),
-                                Err(e) => Err(SimError::with_diag(DiagCode::InternalError, format!("parallel eval error: {}", e))),
+                                Err(e) => Err(SimError::with_diag(
+                                    DiagCode::InternalError,
+                                    format!("parallel eval error: {}", e),
+                                )),
                             }
                         } else {
                             Ok(Vec::new())
@@ -686,8 +720,8 @@ impl SimulationEngine {
         for (pid, process) in processes.iter().enumerate() {
             match process {
                 Process::CombReactive { sensitivity, .. } => {
-                    let should_trigger = sensitivity.is_empty()
-                        || sensitivity_triggered(sensitivity, changed);
+                    let should_trigger =
+                        sensitivity.is_empty() || sensitivity_triggered(sensitivity, changed);
                     if should_trigger {
                         self.reactive_events.push(EventKind::EvalProcess(pid));
                     }
@@ -726,12 +760,10 @@ impl SimulationEngine {
                     // false (kalau tidak, reset terlewat → FF stuck X).
                     let trigger = clock_trigger
                         && match iff {
-                            Some(cond) => {
-                                match self.evaluate_expr(cond) {
-                                    Ok(v) => v.to_bool().unwrap_or(false),
-                                    Err(_) => false,
-                                }
-                            }
+                            Some(cond) => match self.evaluate_expr(cond) {
+                                Ok(v) => v.to_bool().unwrap_or(false),
+                                Err(_) => false,
+                            },
                             None => true,
                         };
                     // F40 fix: async reset edge (negedge rst_n / posedge rst)
@@ -769,14 +801,16 @@ impl SimulationEngine {
                         // Clone domain upfront untuk hindari borrow conflict
                         // antara self.clock_analysis (immutable) dan self.evaluate_clock_domain (&mut).
                         let fused_domain = if self.use_cycle_fusion {
-                            self.clock_analysis.as_ref()
-                                .and_then(|a| {
-                                    if a.fused_processes.contains(&pid) {
-                                        a.domains.iter().find(|d| d.sequential_processes.contains(&pid)).cloned()
-                                    } else {
-                                        None
-                                    }
-                                })
+                            self.clock_analysis.as_ref().and_then(|a| {
+                                if a.fused_processes.contains(&pid) {
+                                    a.domains
+                                        .iter()
+                                        .find(|d| d.sequential_processes.contains(&pid))
+                                        .cloned()
+                                } else {
+                                    None
+                                }
+                            })
                         } else {
                             None
                         };
@@ -792,9 +826,11 @@ impl SimulationEngine {
                 // as part of their clock domain's follower set
                 Process::Combinational { .. }
                     if self.use_cycle_fusion
-                    && self.clock_analysis.as_ref()
-                        .map(|a| a.fused_processes.contains(&pid))
-                        .unwrap_or(false) => {}
+                        && self
+                            .clock_analysis
+                            .as_ref()
+                            .map(|a| a.fused_processes.contains(&pid))
+                            .unwrap_or(false) => {}
                 _ => {}
             }
         }
@@ -854,5 +890,4 @@ impl SimulationEngine {
         self.signal_id_from_lvalue(lvalue)
             .is_some_and(|id| self.forced_signals.contains(&id))
     }
-
 }

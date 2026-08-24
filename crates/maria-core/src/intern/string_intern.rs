@@ -221,60 +221,60 @@ fn table() -> &'static StringTable {
         let table = StringTable::new();
         // Populate 54 pre-defined symbols (index 0 = empty, 1..=53 = keywords)
         let prelude = vec![
-            "",           // 0  = EMPTY
-            "logic",      // 1
-            "wire",       // 2
-            "reg",        // 3
-            "int",        // 4
-            "integer",    // 5
-            "bit",        // 6
-            "byte",       // 7
-            "shortint",   // 8
-            "longint",    // 9
-            "real",       // 10
-            "time",       // 11
-            "string",     // 12
-            "input",      // 13
-            "output",     // 14
-            "inout",      // 15
-            "module",     // 16
-            "endmodule",  // 17
-            "assign",     // 18
-            "always",     // 19
-            "initial",    // 20
-            "begin",      // 21
-            "end",        // 22
-            "if",         // 23
-            "else",       // 24
-            "for",        // 25
-            "while",      // 26
-            "case",       // 27
-            "parameter",  // 28
-            "localparam", // 29
-            "function",   // 30
-            "endfunction",// 31
-            "task",       // 32
-            "endtask",    // 33
-            "generate",   // 34
-            "endgenerate",// 35
-            "class",     // 36
-            "endclass",   // 37
-            "package",    // 38
-            "endpackage", // 39
-            "interface",  // 40
-            "endinterface",// 41
-            "fork",       // 42
-            "join",       // 43
-            "typedef",    // 44
-            "enum",       // 45
-            "struct",     // 46
-            "union",      // 47
-            "import",     // 48
-            "bind",       // 49
-            "uvm_object", // 50
+            "",              // 0  = EMPTY
+            "logic",         // 1
+            "wire",          // 2
+            "reg",           // 3
+            "int",           // 4
+            "integer",       // 5
+            "bit",           // 6
+            "byte",          // 7
+            "shortint",      // 8
+            "longint",       // 9
+            "real",          // 10
+            "time",          // 11
+            "string",        // 12
+            "input",         // 13
+            "output",        // 14
+            "inout",         // 15
+            "module",        // 16
+            "endmodule",     // 17
+            "assign",        // 18
+            "always",        // 19
+            "initial",       // 20
+            "begin",         // 21
+            "end",           // 22
+            "if",            // 23
+            "else",          // 24
+            "for",           // 25
+            "while",         // 26
+            "case",          // 27
+            "parameter",     // 28
+            "localparam",    // 29
+            "function",      // 30
+            "endfunction",   // 31
+            "task",          // 32
+            "endtask",       // 33
+            "generate",      // 34
+            "endgenerate",   // 35
+            "class",         // 36
+            "endclass",      // 37
+            "package",       // 38
+            "endpackage",    // 39
+            "interface",     // 40
+            "endinterface",  // 41
+            "fork",          // 42
+            "join",          // 43
+            "typedef",       // 44
+            "enum",          // 45
+            "struct",        // 46
+            "union",         // 47
+            "import",        // 48
+            "bind",          // 49
+            "uvm_object",    // 50
             "uvm_component", // 51
-            "uvm_test",   // 52
-            "process",    // 53
+            "uvm_test",      // 52
+            "process",       // 53
         ];
         for s in &prelude {
             table.intern(s);
@@ -290,18 +290,60 @@ pub fn reset_string_table() {
     let mut strings = t.strings.write();
     strings.clear();
     let prelude = vec![
-        "", "logic", "wire", "reg", "int", "integer", "bit", "byte",
-        "shortint", "longint", "real", "time", "string",
-        "input", "output", "inout", "module", "endmodule",
-        "assign", "always", "initial", "begin", "end",
-        "if", "else", "for", "while", "case",
-        "parameter", "localparam", "function", "endfunction",
-        "task", "endtask", "generate", "endgenerate",
-        "class", "endclass", "package", "endpackage",
-        "interface", "endinterface",
-        "fork", "join", "typedef", "enum", "struct", "union",
-        "import", "bind",
-        "uvm_object", "uvm_component", "uvm_test", "process",
+        "",
+        "logic",
+        "wire",
+        "reg",
+        "int",
+        "integer",
+        "bit",
+        "byte",
+        "shortint",
+        "longint",
+        "real",
+        "time",
+        "string",
+        "input",
+        "output",
+        "inout",
+        "module",
+        "endmodule",
+        "assign",
+        "always",
+        "initial",
+        "begin",
+        "end",
+        "if",
+        "else",
+        "for",
+        "while",
+        "case",
+        "parameter",
+        "localparam",
+        "function",
+        "endfunction",
+        "task",
+        "endtask",
+        "generate",
+        "endgenerate",
+        "class",
+        "endclass",
+        "package",
+        "endpackage",
+        "interface",
+        "endinterface",
+        "fork",
+        "join",
+        "typedef",
+        "enum",
+        "struct",
+        "union",
+        "import",
+        "bind",
+        "uvm_object",
+        "uvm_component",
+        "uvm_test",
+        "process",
     ];
     for s in &prelude {
         t.intern(s);
@@ -494,8 +536,7 @@ mod tests {
                 for i in 0..300 {
                     let s = format!("thread{}_{}", t, i);
                     let sym = Symbol::intern(&s);
-                    assert_eq!(sym.as_str(), s.as_str(),
-                        "Mismatch for thread{}_[{}]", t, i);
+                    assert_eq!(sym.as_str(), s.as_str(), "Mismatch for thread{}_[{}]", t, i);
                 }
             }));
         }

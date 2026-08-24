@@ -42,10 +42,19 @@ pub const ELAB_ERRORS: &[(DiagCode, &str)] = &[
     (DiagCode::CircularDependency, "circular dependency"),
     (DiagCode::ParamMismatch, "parameter mismatch"),
     (DiagCode::InstanceNotFound, "instance not found"),
-    (DiagCode::TopResolutionFailed, "unable to determine top-level design"),
-    (DiagCode::MultipleCandidateTops, "multiple candidate top modules"),
+    (
+        DiagCode::TopResolutionFailed,
+        "unable to determine top-level design",
+    ),
+    (
+        DiagCode::MultipleCandidateTops,
+        "multiple candidate top modules",
+    ),
     (DiagCode::MissingRootModule, "missing root module"),
-    (DiagCode::UnresolvedInstantiation, "unresolved instantiation"),
+    (
+        DiagCode::UnresolvedInstantiation,
+        "unresolved instantiation",
+    ),
     (DiagCode::CircularHierarchy, "circular hierarchy"),
     (DiagCode::ExcludedByFilelist, "excluded by filelist"),
     (DiagCode::DuplicateDeclaration, "duplicate definition"),
@@ -106,7 +115,10 @@ pub const RUNTIME_CLOCK_ERRORS: &[(DiagCode, &str)] = &[
 /// All runtime assertion error codes (RT7xxx)
 pub const RUNTIME_ASSERTION_ERRORS: &[(DiagCode, &str)] = &[
     (DiagCode::AssertionFailed, "assertion failed"),
-    (DiagCode::AssertionImmediateFailed, "immediate assertion failed"),
+    (
+        DiagCode::AssertionImmediateFailed,
+        "immediate assertion failed",
+    ),
     (DiagCode::CoverProperty, "cover property"),
     (DiagCode::AssertionDisableError, "assertion disable error"),
 ];
@@ -140,9 +152,7 @@ pub const LEGACY_RUNTIME_ERRORS: &[(DiagCode, &str)] = &[
 ];
 
 /// Other codes
-pub const OTHER_CODES: &[(DiagCode, &str)] = &[
-    (DiagCode::WaveformError, "waveform error"),
-];
+pub const OTHER_CODES: &[(DiagCode, &str)] = &[(DiagCode::WaveformError, "waveform error")];
 
 /// All warning codes (WRxxxx)
 pub const WARNING_CODES: &[(DiagCode, &str)] = &[
@@ -150,7 +160,10 @@ pub const WARNING_CODES: &[(DiagCode, &str)] = &[
     (DiagCode::WidthMismatchWarning, "width mismatch"),
     (DiagCode::UnusedSignal, "unused signal"),
     (DiagCode::ClockNeverToggles, "clock never toggles"),
-    (DiagCode::ResetPermanentlyAsserted, "reset permanently asserted"),
+    (
+        DiagCode::ResetPermanentlyAsserted,
+        "reset permanently asserted",
+    ),
     (DiagCode::CombinationalLoop, "possible combinational loop"),
     (DiagCode::SignalGlitch, "signal glitch detected"),
     (DiagCode::TimingViolation, "timing check violation"),

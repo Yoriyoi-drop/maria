@@ -28,8 +28,17 @@ pub fn candidate_paths(name: &str) -> Vec<PathBuf> {
     out.push(PathBuf::from(trimmed));
     let stem = trimmed
         .strip_prefix("lib")
-        .map(|s| s.trim_end_matches(".so").trim_end_matches(".dylib").trim_end_matches(".dll"))
-        .unwrap_or(trimmed.trim_end_matches(".so").trim_end_matches(".dylib").trim_end_matches(".dll"));
+        .map(|s| {
+            s.trim_end_matches(".so")
+                .trim_end_matches(".dylib")
+                .trim_end_matches(".dll")
+        })
+        .unwrap_or(
+            trimmed
+                .trim_end_matches(".so")
+                .trim_end_matches(".dylib")
+                .trim_end_matches(".dll"),
+        );
     #[cfg(target_os = "linux")]
     {
         out.push(PathBuf::from(format!("lib{}.so", stem)));
@@ -144,20 +153,34 @@ mod tests {
     fn test_candidate_paths_linux() {
         let paths = candidate_paths("foo");
         assert!(!paths.is_empty(), "harus ada kandidat");
-        let names: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        let names: Vec<String> = paths
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
         // Nama polos selalu kandidat pertama.
         assert_eq!(names[0], "foo");
         #[cfg(target_os = "linux")]
         {
-            assert!(names.contains(&"libfoo.so".to_string()), "libfoo.so harus ada: {:?}", names);
-            assert!(names.contains(&"foo.so".to_string()), "foo.so harus ada: {:?}", names);
+            assert!(
+                names.contains(&"libfoo.so".to_string()),
+                "libfoo.so harus ada: {:?}",
+                names
+            );
+            assert!(
+                names.contains(&"foo.so".to_string()),
+                "foo.so harus ada: {:?}",
+                names
+            );
         }
     }
 
     #[test]
     fn test_candidate_paths_with_extension() {
         let paths = candidate_paths("libfoo.so");
-        let names: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        let names: Vec<String> = paths
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
         assert_eq!(names[0], "libfoo.so", "path polos pertama");
         // stem dihitung dari libfoo.so → foo → libfoo.so tetap kandidat.
         assert!(names.contains(&"libfoo.so".to_string()));

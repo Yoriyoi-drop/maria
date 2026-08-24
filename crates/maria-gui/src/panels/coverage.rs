@@ -43,7 +43,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
 
     // ── Branch coverage (persentase penuh dari engine) ──
     let branch_pct = c.branch_percent;
-    pct_row(ui, "Branch", branch_pct, &format!("{}/{}", c.branch_covered, c.branch_total));
+    pct_row(
+        ui,
+        "Branch",
+        branch_pct,
+        &format!("{}/{}", c.branch_covered, c.branch_total),
+    );
 
     // ── Line coverage (hits / items) ──
     let line_pct = if c.line_items > 0 {
@@ -51,7 +56,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     } else {
         0.0
     };
-    pct_row(ui, "Line", line_pct, &format!("{}/{}", c.line_hits, c.line_items));
+    pct_row(
+        ui,
+        "Line",
+        line_pct,
+        &format!("{}/{}", c.line_hits, c.line_items),
+    );
 
     // ── Toggle coverage (signal dengan toggle / total signal) ──
     let toggle_pct = if state.signals.is_empty() {
@@ -73,7 +83,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     } else {
         0.0
     };
-    pct_row(ui, "FSM", fsm_pct, &format!("{} state / {} signal", c.fsm_states, c.fsm_signals));
+    pct_row(
+        ui,
+        "FSM",
+        fsm_pct,
+        &format!("{} state / {} signal", c.fsm_states, c.fsm_signals),
+    );
 
     // ── Detail covergroup ──
     if !c.covergroups.is_empty() {

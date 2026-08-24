@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::mir::*;
-use crate::hir::hir::{HirDesign, HirModule, HirStmt, HirExpr, HirBinOp, HirUnOp};
+use crate::hir::hir::{HirBinOp, HirDesign, HirExpr, HirModule, HirStmt, HirUnOp};
 use maria_core::intern::Symbol;
 
 // ─── Design-Level Lowering ───
@@ -78,11 +78,7 @@ pub fn lower_module(hir: &HirModule) -> MirModule {
 // ─── Statement Lowering ───
 
 /// Lower a single HIR statement to MIR instructions.
-fn lower_stmt(
-    stmt: &HirStmt,
-    instrs: &mut Vec<MirInstr>,
-    mir: &mut MirModule,
-) {
+fn lower_stmt(stmt: &HirStmt, instrs: &mut Vec<MirInstr>, mir: &mut MirModule) {
     match stmt {
         HirStmt::Block { stmts, .. } => {
             for s in stmts {
@@ -167,7 +163,11 @@ fn lower_stmt(
             for (i, item) in items.iter().enumerate() {
                 let item_result = alloc_temp(mir);
                 // Initialize to 0 before OR-ing equality results
-                instrs.push(MirInstr::Const { dest: item_result, value: 0, width: 1 });
+                instrs.push(MirInstr::Const {
+                    dest: item_result,
+                    value: 0,
+                    width: 1,
+                });
                 // Compare case_reg with each expression
                 for case_expr in &item.exprs {
                     let case_val = alloc_temp(mir);
@@ -199,7 +199,12 @@ fn lower_stmt(
             instrs.push(MirInstr::Label(end_label));
         }
 
-        HirStmt::For { init, cond, step, body } => {
+        HirStmt::For {
+            init,
+            cond,
+            step,
+            body,
+        } => {
             // for(init; cond; step) body;
             // Lower as: init; loop { if !cond break; body; step; }
             lower_stmt(init, instrs, mir);
@@ -254,7 +259,11 @@ fn lower_stmt(
             lower_expr(count, instrs, mir, count_reg);
 
             let counter = alloc_temp(mir);
-            instrs.push(MirInstr::Const { dest: counter, value: 0, width: 32 });
+            instrs.push(MirInstr::Const {
+                dest: counter,
+                value: 0,
+                width: 32,
+            });
 
             let loop_start = generate_label(instrs);
             instrs.push(MirInstr::Label(loop_start));
@@ -283,7 +292,11 @@ fn lower_stmt(
 
             // counter++
             let one_reg = alloc_temp(mir);
-            instrs.push(MirInstr::Const { dest: one_reg, value: 1, width: 32 });
+            instrs.push(MirInstr::Const {
+                dest: one_reg,
+                value: 1,
+                width: 32,
+            });
             instrs.push(MirInstr::Binary {
                 op: MirBinOp::Add,
                 dest: counter,
@@ -305,8 +318,9 @@ fn lower_stmt(
         }
 
         HirStmt::Display { args } => {
-            let mir_args: Vec<MirDisplayArg> = args.iter().map(|a| {
-                match a {
+            let mir_args: Vec<MirDisplayArg> = args
+                .iter()
+                .map(|a| match a {
                     HirExpr::StringLiteral(s) => MirDisplayArg::Str(s.as_str().to_string()),
                     HirExpr::Ident(name) => {
                         if let Some(idx) = mir.signal_index(*name) {
@@ -316,8 +330,8 @@ fn lower_stmt(
                         }
                     }
                     _ => MirDisplayArg::Str("<expr>".to_string()),
-                }
-            }).collect();
+                })
+                .collect();
             instrs.push(MirInstr::Display { args: mir_args });
         }
 
@@ -338,12 +352,7 @@ fn lower_stmt(
 // ─── Expression Lowering ───
 
 /// Lower a HIR expression to MIR instructions.
-fn lower_expr(
-    expr: &HirExpr,
-    instrs: &mut Vec<MirInstr>,
-    mir: &mut MirModule,
-    dest: usize,
-) {
+fn lower_expr(expr: &HirExpr, instrs: &mut Vec<MirInstr>, mir: &mut MirModule, dest: usize) {
     match expr {
         HirExpr::IntLiteral(val, width) => {
             instrs.push(MirInstr::Const {
@@ -389,7 +398,12 @@ fn lower_expr(
             }
         }
 
-        HirExpr::Binary { op, lhs, rhs, width } => {
+        HirExpr::Binary {
+            op,
+            lhs,
+            rhs,
+            width,
+        } => {
             let lhs_reg = alloc_temp(mir);
             let rhs_reg = alloc_temp(mir);
             lower_expr(lhs, instrs, mir, lhs_reg);
@@ -416,7 +430,12 @@ fn lower_expr(
             });
         }
 
-        HirExpr::Ternary { cond, then, else_, width: _width } => {
+        HirExpr::Ternary {
+            cond,
+            then,
+            else_,
+            width: _width,
+        } => {
             // a ? b : c → if a { result = b } else { result = c }
             let cond_reg = alloc_temp(mir);
             lower_expr(cond, instrs, mir, cond_reg);
@@ -434,11 +453,14 @@ fn lower_expr(
             instrs.push(MirInstr::Label(end_label));
 
             // Insert branch before then body
-            instrs.insert(then_start, MirInstr::Branch {
-                cond: cond_reg,
-                then_label,
-                else_label,
-            });
+            instrs.insert(
+                then_start,
+                MirInstr::Branch {
+                    cond: cond_reg,
+                    then_label,
+                    else_label,
+                },
+            );
         }
 
         HirExpr::BitSelect { base, index, width } => {
@@ -458,7 +480,12 @@ fn lower_expr(
             });
         }
 
-        HirExpr::PartSelect { base, msb: _msb, lsb, width } => {
+        HirExpr::PartSelect {
+            base,
+            msb: _msb,
+            lsb,
+            width,
+        } => {
             // base[msb:lsb]
             let base_reg = alloc_temp(mir);
             let lsb_reg = alloc_temp(mir);
@@ -528,7 +555,11 @@ fn lower_expr(
             }
         }
 
-        HirExpr::Call { func: _func, args, width } => {
+        HirExpr::Call {
+            func: _func,
+            args,
+            width,
+        } => {
             // NOTE: Function call lowering is a stub.
             // Arguments are evaluated but the call is replaced with constant 0.
             // Full function call support requires a call stack in the MIR.
@@ -547,7 +578,13 @@ fn lower_expr(
         HirExpr::FillLit { val, width } => {
             let fill_val = match val {
                 0 => 0u64,
-                1 => if *width >= 64 { u64::MAX } else { (1u64 << *width) - 1 },
+                1 => {
+                    if *width >= 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << *width) - 1
+                    }
+                }
                 2 => 0u64, // 'x → 0 for MIR (no X-state in simple sim)
                 3 => 0u64, // 'z → 0
                 _ => 0u64,
@@ -598,9 +635,17 @@ fn alloc_temp_const(mir: &mut MirModule, _value: u64, _width: usize) -> usize {
 /// Generate a unique label number.
 fn generate_label(instrs: &mut Vec<MirInstr>) -> usize {
     // Find the highest label number and add 1
-    let max_label = instrs.iter().filter_map(|i| {
-        if let MirInstr::Label(l) = i { Some(*l) } else { None }
-    }).max().unwrap_or(0);
+    let max_label = instrs
+        .iter()
+        .filter_map(|i| {
+            if let MirInstr::Label(l) = i {
+                Some(*l)
+            } else {
+                None
+            }
+        })
+        .max()
+        .unwrap_or(0);
     max_label + 1
 }
 
@@ -663,11 +708,7 @@ fn collect_signal_refs(expr: &HirExpr, mir: &MirModule) -> HashSet<usize> {
     refs
 }
 
-fn collect_signal_refs_inner(
-    expr: &HirExpr,
-    mir: &MirModule,
-    refs: &mut HashSet<usize>,
-) {
+fn collect_signal_refs_inner(expr: &HirExpr, mir: &MirModule, refs: &mut HashSet<usize>) {
     match expr {
         HirExpr::Ident(name) => {
             if let Some(idx) = mir.signal_index(*name) {
@@ -681,7 +722,9 @@ fn collect_signal_refs_inner(
         HirExpr::Unary { operand, .. } => {
             collect_signal_refs_inner(operand, mir, refs);
         }
-        HirExpr::Ternary { cond, then, else_, .. } => {
+        HirExpr::Ternary {
+            cond, then, else_, ..
+        } => {
             collect_signal_refs_inner(cond, mir, refs);
             collect_signal_refs_inner(then, mir, refs);
             collect_signal_refs_inner(else_, mir, refs);
@@ -727,10 +770,18 @@ mod tests {
     }
 
     fn make_simple_module(name: &str, signals: Vec<HirSignal>, stmts: Vec<HirStmt>) -> HirModule {
-        let inputs: Vec<usize> = signals.iter().enumerate()
-            .filter(|(_, s)| s.is_input).map(|(i, _)| i).collect();
-        let outputs: Vec<usize> = signals.iter().enumerate()
-            .filter(|(_, s)| s.is_output).map(|(i, _)| i).collect();
+        let inputs: Vec<usize> = signals
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.is_input)
+            .map(|(i, _)| i)
+            .collect();
+        let outputs: Vec<usize> = signals
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.is_output)
+            .map(|(i, _)| i)
+            .collect();
 
         HirModule {
             name: Symbol::intern(name),
@@ -774,179 +825,208 @@ mod tests {
 
     #[test]
     fn test_lower_blocking_assign() {
-        let stmts = vec![
-            HirStmt::BlockingAssign {
-                lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                rhs: Box::new(HirExpr::IntLiteral(42, 8)),
-            },
-        ];
+        let stmts = vec![HirStmt::BlockingAssign {
+            lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+            rhs: Box::new(HirExpr::IntLiteral(42, 8)),
+        }];
 
-        let hir = make_simple_module("assign_test", vec![
-            make_signal("a", 8, true, false),
-            make_signal("b", 8, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "assign_test",
+            vec![
+                make_signal("a", 8, true, false),
+                make_signal("b", 8, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
         assert_eq!(mir.processes.len(), 1);
         assert_eq!(mir.processes[0].sensitivity, MirSensitivity::Initial);
 
         // Check the store instruction exists
-        let has_store = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Store { signal: 1, .. })
-        });
+        let has_store = mir.processes[0]
+            .instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::Store { signal: 1, .. }));
         assert!(has_store, "Expected a Store instruction for signal b");
     }
 
     #[test]
     fn test_lower_nonblocking_assign() {
-        let stmts = vec![
-            HirStmt::NonBlockingAssign {
-                lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                rhs: Box::new(HirExpr::IntLiteral(99, 8)),
-            },
-        ];
+        let stmts = vec![HirStmt::NonBlockingAssign {
+            lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+            rhs: Box::new(HirExpr::IntLiteral(99, 8)),
+        }];
 
-        let hir = make_simple_module("nba_test", vec![
-            make_signal("a", 8, true, false),
-            make_signal("b", 8, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "nba_test",
+            vec![
+                make_signal("a", 8, true, false),
+                make_signal("b", 8, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
-        let has_nba = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::NonBlocking { .. })
-        });
+        let has_nba = mir.processes[0]
+            .instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::NonBlocking { .. }));
         assert!(has_nba, "Expected a NonBlocking instruction");
     }
 
     #[test]
     fn test_lower_if_else() {
         // if(a) { b = 1; } else { b = 2; }
-        let stmts = vec![
-            HirStmt::If {
-                cond: Box::new(HirExpr::Ident(Symbol::intern("a"))),
-                then: Box::new(HirStmt::BlockingAssign {
-                    lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                    rhs: Box::new(HirExpr::IntLiteral(1, 8)),
-                }),
-                else_: Some(Box::new(HirStmt::BlockingAssign {
-                    lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                    rhs: Box::new(HirExpr::IntLiteral(2, 8)),
-                })),
-            },
-        ];
+        let stmts = vec![HirStmt::If {
+            cond: Box::new(HirExpr::Ident(Symbol::intern("a"))),
+            then: Box::new(HirStmt::BlockingAssign {
+                lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+                rhs: Box::new(HirExpr::IntLiteral(1, 8)),
+            }),
+            else_: Some(Box::new(HirStmt::BlockingAssign {
+                lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+                rhs: Box::new(HirExpr::IntLiteral(2, 8)),
+            })),
+        }];
 
-        let hir = make_simple_module("if_test", vec![
-            make_signal("a", 1, true, false),
-            make_signal("b", 8, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "if_test",
+            vec![
+                make_signal("a", 1, true, false),
+                make_signal("b", 8, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
         assert_eq!(mir.processes.len(), 1);
 
         // Should have Branch + Label instructions for control flow
-        let has_branch = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Branch { .. })
-        });
+        let has_branch = mir.processes[0]
+            .instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::Branch { .. }));
         assert!(has_branch, "Expected a Branch instruction for if-else");
     }
 
     #[test]
     fn test_lower_for_loop() {
         // for(self clk; a; ; ) { b = b + 1; }
-        let stmts = vec![
-            HirStmt::For {
-                init: Box::new(HirStmt::Block { stmts: vec![], name: None }),
-                cond: Box::new(HirExpr::Ident(Symbol::intern("a"))),
-                step: Box::new(HirStmt::Block { stmts: vec![], name: None }),
-                body: Box::new(HirStmt::BlockingAssign {
+        let stmts = vec![HirStmt::For {
+            init: Box::new(HirStmt::Block {
+                stmts: vec![],
+                name: None,
+            }),
+            cond: Box::new(HirExpr::Ident(Symbol::intern("a"))),
+            step: Box::new(HirStmt::Block {
+                stmts: vec![],
+                name: None,
+            }),
+            body: Box::new(HirStmt::BlockingAssign {
+                lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+                rhs: Box::new(HirExpr::Binary {
+                    op: HirBinOp::Add,
                     lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                    rhs: Box::new(HirExpr::Binary {
-                        op: HirBinOp::Add,
-                        lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                        rhs: Box::new(HirExpr::IntLiteral(1, 8)),
-                        width: 8,
-                    }),
+                    rhs: Box::new(HirExpr::IntLiteral(1, 8)),
+                    width: 8,
                 }),
-            },
-        ];
+            }),
+        }];
 
-        let hir = make_simple_module("for_test", vec![
-            make_signal("a", 1, true, false),
-            make_signal("b", 8, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "for_test",
+            vec![
+                make_signal("a", 1, true, false),
+                make_signal("b", 8, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
         assert_eq!(mir.processes.len(), 1);
 
         // Should have a Jump instruction (back edge)
-        let has_jump = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Jump { .. })
-        });
+        let has_jump = mir.processes[0]
+            .instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::Jump { .. }));
         assert!(has_jump, "Expected a Jump instruction for loop");
     }
 
     #[test]
     fn test_lower_case_stmt() {
         // case(a) 1: b=10; 2: b=20; endcase
-        let stmts = vec![
-            HirStmt::Case {
-                expr: Box::new(HirExpr::Ident(Symbol::intern("a"))),
-                items: vec![
-                    HirCaseItem {
-                        exprs: vec![HirExpr::IntLiteral(1, 8)],
-                        stmt: Box::new(HirStmt::BlockingAssign {
-                            lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                            rhs: Box::new(HirExpr::IntLiteral(10, 8)),
-                        }),
-                    },
-                    HirCaseItem {
-                        exprs: vec![HirExpr::IntLiteral(2, 8)],
-                        stmt: Box::new(HirStmt::BlockingAssign {
-                            lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                            rhs: Box::new(HirExpr::IntLiteral(20, 8)),
-                        }),
-                    },
-                ],
-            },
-        ];
+        let stmts = vec![HirStmt::Case {
+            expr: Box::new(HirExpr::Ident(Symbol::intern("a"))),
+            items: vec![
+                HirCaseItem {
+                    exprs: vec![HirExpr::IntLiteral(1, 8)],
+                    stmt: Box::new(HirStmt::BlockingAssign {
+                        lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+                        rhs: Box::new(HirExpr::IntLiteral(10, 8)),
+                    }),
+                },
+                HirCaseItem {
+                    exprs: vec![HirExpr::IntLiteral(2, 8)],
+                    stmt: Box::new(HirStmt::BlockingAssign {
+                        lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+                        rhs: Box::new(HirExpr::IntLiteral(20, 8)),
+                    }),
+                },
+            ],
+        }];
 
-        let hir = make_simple_module("case_test", vec![
-            make_signal("a", 8, true, false),
-            make_signal("b", 8, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "case_test",
+            vec![
+                make_signal("a", 8, true, false),
+                make_signal("b", 8, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
         assert!(!mir.processes.is_empty());
-        let has_store = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Store { signal: 1, .. })
-        });
+        let has_store = mir.processes[0]
+            .instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::Store { signal: 1, .. }));
         assert!(has_store, "Expected Store instructions for case body");
     }
 
     #[test]
     fn test_lower_binary_expr() {
         // c = a + b;
-        let stmts = vec![
-            HirStmt::BlockingAssign {
-                lhs: Box::new(HirExpr::Ident(Symbol::intern("c"))),
-                rhs: Box::new(HirExpr::Binary {
-                    op: HirBinOp::Add,
-                    lhs: Box::new(HirExpr::Ident(Symbol::intern("a"))),
-                    rhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                    width: 8,
-                }),
-            },
-        ];
+        let stmts = vec![HirStmt::BlockingAssign {
+            lhs: Box::new(HirExpr::Ident(Symbol::intern("c"))),
+            rhs: Box::new(HirExpr::Binary {
+                op: HirBinOp::Add,
+                lhs: Box::new(HirExpr::Ident(Symbol::intern("a"))),
+                rhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+                width: 8,
+            }),
+        }];
 
-        let hir = make_simple_module("binop_test", vec![
-            make_signal("a", 8, true, false),
-            make_signal("b", 8, true, false),
-            make_signal("c", 8, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "binop_test",
+            vec![
+                make_signal("a", 8, true, false),
+                make_signal("b", 8, true, false),
+                make_signal("c", 8, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
         let has_binary = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Binary { op: MirBinOp::Add, .. })
+            matches!(
+                i,
+                MirInstr::Binary {
+                    op: MirBinOp::Add,
+                    ..
+                }
+            )
         });
         assert!(has_binary, "Expected a Binary Add instruction");
     }
@@ -958,9 +1038,10 @@ mod tests {
             modules: {
                 let mut m = HashMap::new();
                 m.insert(Symbol::intern("top"), std::sync::Arc::new(top.clone()));
-                m.insert(Symbol::intern("sub"), std::sync::Arc::new(
-                    make_simple_module("sub", vec![], vec![]),
-                ));
+                m.insert(
+                    Symbol::intern("sub"),
+                    std::sync::Arc::new(make_simple_module("sub", vec![], vec![])),
+                );
                 m
             },
             top: std::sync::Arc::new(top),
@@ -973,111 +1054,126 @@ mod tests {
 
     #[test]
     fn test_lower_while_loop() {
-        let stmts = vec![
-            HirStmt::While {
-                cond: Box::new(HirExpr::Ident(Symbol::intern("a"))),
-                body: Box::new(HirStmt::BlockingAssign {
+        let stmts = vec![HirStmt::While {
+            cond: Box::new(HirExpr::Ident(Symbol::intern("a"))),
+            body: Box::new(HirStmt::BlockingAssign {
+                lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
+                rhs: Box::new(HirExpr::Binary {
+                    op: HirBinOp::Add,
                     lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                    rhs: Box::new(HirExpr::Binary {
-                        op: HirBinOp::Add,
-                        lhs: Box::new(HirExpr::Ident(Symbol::intern("b"))),
-                        rhs: Box::new(HirExpr::IntLiteral(1, 8)),
-                        width: 8,
-                    }),
+                    rhs: Box::new(HirExpr::IntLiteral(1, 8)),
+                    width: 8,
                 }),
-            },
-        ];
+            }),
+        }];
 
-        let hir = make_simple_module("while_test", vec![
-            make_signal("a", 1, true, false),
-            make_signal("b", 8, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "while_test",
+            vec![
+                make_signal("a", 1, true, false),
+                make_signal("b", 8, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
-        let has_jump = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Jump { .. })
-        });
+        let has_jump = mir.processes[0]
+            .instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::Jump { .. }));
         assert!(has_jump, "Expected Jump for while loop back-edge");
     }
 
     #[test]
     fn test_lower_concat() {
         // {a, b}
-        let stmts = vec![
-            HirStmt::BlockingAssign {
-                lhs: Box::new(HirExpr::Ident(Symbol::intern("c"))),
-                rhs: Box::new(HirExpr::Concat {
-                    parts: vec![
-                        HirExpr::Ident(Symbol::intern("a")),
-                        HirExpr::Ident(Symbol::intern("b")),
-                    ],
-                    width: 16,
-                }),
-            },
-        ];
+        let stmts = vec![HirStmt::BlockingAssign {
+            lhs: Box::new(HirExpr::Ident(Symbol::intern("c"))),
+            rhs: Box::new(HirExpr::Concat {
+                parts: vec![
+                    HirExpr::Ident(Symbol::intern("a")),
+                    HirExpr::Ident(Symbol::intern("b")),
+                ],
+                width: 16,
+            }),
+        }];
 
-        let hir = make_simple_module("concat_test", vec![
-            make_signal("a", 8, true, false),
-            make_signal("b", 8, true, false),
-            make_signal("c", 16, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "concat_test",
+            vec![
+                make_signal("a", 8, true, false),
+                make_signal("b", 8, true, false),
+                make_signal("c", 16, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
         let has_or = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Binary { op: MirBinOp::Or, .. })
+            matches!(
+                i,
+                MirInstr::Binary {
+                    op: MirBinOp::Or,
+                    ..
+                }
+            )
         });
         assert!(has_or, "Expected Or instructions for concat");
     }
 
     #[test]
     fn test_lower_forever() {
-        let stmts = vec![
-            HirStmt::Forever {
-                body: Box::new(HirStmt::BlockingAssign {
-                    lhs: Box::new(HirExpr::Ident(Symbol::intern("clk"))),
-                    rhs: Box::new(HirExpr::Unary {
-                        op: HirUnOp::BitNot,
-                        operand: Box::new(HirExpr::Ident(Symbol::intern("clk"))),
-                        width: 1,
-                    }),
+        let stmts = vec![HirStmt::Forever {
+            body: Box::new(HirStmt::BlockingAssign {
+                lhs: Box::new(HirExpr::Ident(Symbol::intern("clk"))),
+                rhs: Box::new(HirExpr::Unary {
+                    op: HirUnOp::BitNot,
+                    operand: Box::new(HirExpr::Ident(Symbol::intern("clk"))),
+                    width: 1,
                 }),
-            },
-        ];
+            }),
+        }];
 
-        let hir = make_simple_module("forever_test", vec![
-            make_signal("clk", 1, false, false),
-        ], stmts);
+        let hir = make_simple_module(
+            "forever_test",
+            vec![make_signal("clk", 1, false, false)],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
-        let has_jump = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Jump { .. })
-        });
+        let has_jump = mir.processes[0]
+            .instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::Jump { .. }));
         assert!(has_jump, "Expected Jump for forever loop");
     }
 
     #[test]
     fn test_lower_ternary() {
-        let stmts = vec![
-            HirStmt::BlockingAssign {
-                lhs: Box::new(HirExpr::Ident(Symbol::intern("c"))),
-                rhs: Box::new(HirExpr::Ternary {
-                    cond: Box::new(HirExpr::Ident(Symbol::intern("a"))),
-                    then: Box::new(HirExpr::IntLiteral(10, 8)),
-                    else_: Box::new(HirExpr::IntLiteral(20, 8)),
-                    width: 8,
-                }),
-            },
-        ];
+        let stmts = vec![HirStmt::BlockingAssign {
+            lhs: Box::new(HirExpr::Ident(Symbol::intern("c"))),
+            rhs: Box::new(HirExpr::Ternary {
+                cond: Box::new(HirExpr::Ident(Symbol::intern("a"))),
+                then: Box::new(HirExpr::IntLiteral(10, 8)),
+                else_: Box::new(HirExpr::IntLiteral(20, 8)),
+                width: 8,
+            }),
+        }];
 
-        let hir = make_simple_module("ternary_test", vec![
-            make_signal("a", 1, true, false),
-            make_signal("c", 8, false, true),
-        ], stmts);
+        let hir = make_simple_module(
+            "ternary_test",
+            vec![
+                make_signal("a", 1, true, false),
+                make_signal("c", 8, false, true),
+            ],
+            stmts,
+        );
 
         let mir = lower_module(&hir);
-        let has_branch = mir.processes[0].instrs.iter().any(|i| {
-            matches!(i, MirInstr::Branch { .. })
-        });
+        let has_branch = mir.processes[0]
+            .instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::Branch { .. }));
         assert!(has_branch, "Expected Branch for ternary");
     }
 }

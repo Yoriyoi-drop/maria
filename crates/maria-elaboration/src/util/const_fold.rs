@@ -22,6 +22,69 @@ pub fn const_eval_params(expr: &Expr, params: &HashMap<Symbol, i64>) -> Result<i
     const_eval_with_params(expr, params)
 }
 
+/// Fold SELURUH RHS konstanta langsung pada lebar konteks target.
+///
+/// Masalah yang diselesaikan: fold bertingkat menghasilkan Const pada lebar
+/// self-determined sub-ekspresi (mis. `-((cmp))` → 1 bit), sehingga negasi
+/// terlanjur dihitung di lebar sempit sebelum zero-extension ke target —
+/// `wire [31:0] y = -((-(32'h...) >= !(32'h...)))` memberi 1 alih-alih
+/// ffffffff (ditemukan fuzzer seed=59498908; LRM §11.8.1: operator
+/// context-determined dievaluasi pada lebar konteks).
+///
+/// Evaluasi nilai via `const_eval_with_params` (kini unsigned-correct untuk
+/// perbandingan), lalu simpan sebagai Const selebar `ctx` (zero/truncate —
+/// assignment ke target melakukan hal yang sama). None bila bukan konstanta
+/// murni atau ctx == 0.
+pub fn try_fold_const_at_width(
+    expr: &Expr,
+    params: &HashMap<Symbol, i64>,
+    ctx: usize,
+) -> Option<IrExpr> {
+    if ctx == 0 {
+        return None;
+    }
+    let val = const_eval_with_params(expr, params).ok()?;
+    // String tidak boleh di-fold sebagai bit-pattern (lihat try_fold_const).
+    if matches!(expr, Expr::String(_)) {
+        return None;
+    }
+    // Ekspresi yang memuat `~x` / unary `-x` TIDAK boleh di-fold pada jalur
+    // ini: inversi/negasi context-determined dievaluasi const_eval pada
+    // lebar ≥32 lalu dibandingkan/dipotong di sini → nilai salah untuk
+    // konteks sempit (ditemukan fuzzer seed=15107620: `(2'b11 > ~(2'b10))`
+    // harusnya 1). Jalur runtime + propagasi konteks yang benar.
+    if contains_ctx_sensitive_unary(expr) {
+        return None;
+    }
+    let masked = (val as u64) & if ctx >= 64 { u64::MAX } else { (1u64 << ctx) - 1 };
+    Some(IrExpr::Const(LogicVec::from_u64(masked, ctx)))
+}
+
+/// Deteksi subtree `~x` / unary `-x` (context-determined, sensitif lebar).
+fn contains_ctx_sensitive_unary(e: &Expr) -> bool {
+    match e {
+        Expr::UnaryOp { op: UnaryOp::BitNot | UnaryOp::Minus, .. } => true,
+        Expr::UnaryOp { expr: inner, .. } | Expr::Paren(inner) => {
+            contains_ctx_sensitive_unary(inner)
+        }
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            contains_ctx_sensitive_unary(lhs) || contains_ctx_sensitive_unary(rhs)
+        }
+        Expr::Concat(elems) => elems.iter().any(contains_ctx_sensitive_unary),
+        Expr::Replicate { expr: inner, .. } => contains_ctx_sensitive_unary(inner),
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            contains_ctx_sensitive_unary(cond)
+                || contains_ctx_sensitive_unary(true_expr)
+                || contains_ctx_sensitive_unary(false_expr)
+        }
+        _ => false,
+    }
+}
+
 /// Perkiraan lebar sebenarnya dari ekspresi konstanta murni (tanpa signal),
 /// dihitung dari struktur AST — bukan dari nilai hasil eval.
 ///
@@ -40,7 +103,11 @@ pub(crate) fn const_fold_width(expr: &Expr, params: &HashMap<Symbol, i64>) -> Op
             Value::Octal { bits, width, .. } => width.unwrap_or_else(|| bits.len() * 3),
             Value::Decimal(n) => {
                 let abs = n.unsigned_abs();
-                let w = if *n == 0 { 1 } else { 64 - abs.leading_zeros() as usize };
+                let w = if *n == 0 {
+                    1
+                } else {
+                    64 - abs.leading_zeros() as usize
+                };
                 w.max(32)
             }
             Value::Real(_) => 64,
@@ -115,6 +182,14 @@ pub fn try_fold_const(
     expr: &Expr,
     params: &HashMap<Symbol, i64>,
 ) -> Result<Option<IrExpr>, String> {
+    // Jangan fold subtree yang memuat `~x` / unary `-x`: kedua operator
+    // itu context-determined (LRM §11.8.1) dan nilai i64 hasil
+    // const_eval tidak membawa lebar — `-(1'b1) == 1'b1` salah ter-fold
+    // sebagai -1==1 (ditemukan fuzzer seed=177443644 / seed=197975).
+    // Jalur runtime + propagasi konteks (Cast) yang menangani benar.
+    if contains_ctx_sensitive_unary(expr) {
+        return Ok(None);
+    }
     // Jangan fold relational comparison (Lt/Le/Gt/Ge) untuk ekspresi unsigned
     // karena const_eval_with_params memakai i64 signed arithmetic yang salah
     // untuk unsigned semantics (mis. 187 < -111 sebagai i64 = false, tapi
@@ -235,9 +310,7 @@ pub fn const_expr_is_signed(expr: &Expr) -> bool {
                 _ => const_expr_is_signed(inner),
             }
         }
-        Expr::BinaryOp { lhs, rhs, .. } => {
-            const_expr_is_signed(lhs) && const_expr_is_signed(rhs)
-        }
+        Expr::BinaryOp { lhs, rhs, .. } => const_expr_is_signed(lhs) && const_expr_is_signed(rhs),
         Expr::TernaryOp {
             true_expr,
             false_expr,
@@ -297,8 +370,11 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
             // (X di operand → hasil X → false). `from_u64` sudah zero-fill;
             // Binary/Hex/Octal harus konsisten.
             let mut vec = LogicVec::fill(LogicVal::Zero, w);
+            // `fill` meng-clamp width absurd → iterasi wajib pakai lebar aktual
+            // vec (bukan w mentah), else index-out-of-bounds.
+            let vw = vec.width;
             for (i, c) in digits.chars().rev().enumerate() {
-                if i >= w {
+                if i >= vw {
                     break;
                 }
                 vec.bits[i] = match c {
@@ -314,6 +390,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
         Value::Hex { bits, width, .. } => {
             let w = width.unwrap_or(bits.len() * 4);
             let mut vec = LogicVec::fill(LogicVal::Zero, w);
+            let vw = vec.width;
             let digits: String = bits.chars().filter(|c| *c != '_').collect();
             for (i, c) in digits.chars().rev().enumerate() {
                 // F30 fix: digit x/z eksplisit (mis. `8'hx6`) → bit X/Z,
@@ -325,7 +402,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                         let hv = c.to_digit(16).unwrap_or(0);
                         for j in 0..4 {
                             let bit_idx = i * 4 + j;
-                            if bit_idx >= w {
+                            if bit_idx >= vw {
                                 break;
                             }
                             vec.bits[bit_idx] = if (hv >> j) & 1 == 1 {
@@ -339,7 +416,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                 };
                 for j in 0..4 {
                     let bit_idx = i * 4 + j;
-                    if bit_idx >= w {
+                    if bit_idx >= vw {
                         break;
                     }
                     vec.bits[bit_idx] = val;
@@ -350,6 +427,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
         Value::Octal { bits, width, .. } => {
             let w = width.unwrap_or(bits.len() * 3);
             let mut vec = LogicVec::fill(LogicVal::Zero, w);
+            let vw = vec.width;
             let digits: String = bits.chars().filter(|c| *c != '_').collect();
             for (i, c) in digits.chars().rev().enumerate() {
                 // F30 fix: digit x/z eksplisit di octal → bit X/Z.
@@ -360,7 +438,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                         let ov = c.to_digit(8).unwrap_or(0);
                         for j in 0..3 {
                             let bit_idx = i * 3 + j;
-                            if bit_idx >= w {
+                            if bit_idx >= vw {
                                 break;
                             }
                             vec.bits[bit_idx] = if (ov >> j) & 1 == 1 {
@@ -374,7 +452,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                 };
                 for j in 0..3 {
                     let bit_idx = i * 3 + j;
-                    if bit_idx >= w {
+                    if bit_idx >= vw {
                         break;
                     }
                     vec.bits[bit_idx] = val;
@@ -404,7 +482,9 @@ mod tests {
         assert_eq!(lv.width, 16);
         assert_eq!(lv.to_u64(), 6);
         // bit 4..=15 harus Zero (bukan X)
-        assert!(!lv.bits[4..].iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z)));
+        assert!(!lv.bits[4..]
+            .iter()
+            .any(|b| matches!(b, LogicVal::X | LogicVal::Z)));
         assert_eq!(lv.bits[0], LogicVal::Zero);
         assert_eq!(lv.bits[1], LogicVal::One);
         assert_eq!(lv.bits[2], LogicVal::One);
@@ -420,7 +500,9 @@ mod tests {
         });
         assert_eq!(bin.width, 8);
         assert_eq!(bin.to_u64(), 6);
-        assert!(!bin.bits[3..].iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z)));
+        assert!(!bin.bits[3..]
+            .iter()
+            .any(|b| matches!(b, LogicVal::X | LogicVal::Z)));
 
         let oct = value_to_logicvec(&Value::Octal {
             bits: "6".into(),
@@ -429,7 +511,9 @@ mod tests {
         });
         assert_eq!(oct.width, 9);
         assert_eq!(oct.to_u64(), 6);
-        assert!(!oct.bits[3..].iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z)));
+        assert!(!oct.bits[3..]
+            .iter()
+            .any(|b| matches!(b, LogicVal::X | LogicVal::Z)));
     }
 
     /// F30 fix review: underscore di literal binary tidak boleh menggeser
@@ -441,7 +525,12 @@ mod tests {
             width: Some(8),
             is_signed: false,
         });
-        assert_eq!(lv.to_u64(), 0b1010, "underscore harus diabaikan: {:?}", lv.bits);
+        assert_eq!(
+            lv.to_u64(),
+            0b1010,
+            "underscore harus diabaikan: {:?}",
+            lv.bits
+        );
         assert_eq!(lv.bits[4], LogicVal::Zero); // posisi underscore = 0
     }
 

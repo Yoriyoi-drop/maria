@@ -33,6 +33,6 @@ mod master;
 mod slave;
 
 pub use master::{DistributedMaster, MasterConfig};
-pub use slave::{DistributedSlave, SlaveConfig};
 pub use partitioner::{DesignPartitioner, Partition, PartitionInfo, PartitionSignal};
 pub use protocol::*;
+pub use slave::{DistributedSlave, SlaveConfig};

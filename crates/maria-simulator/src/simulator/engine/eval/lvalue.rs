@@ -1,9 +1,9 @@
 use super::super::SimulationEngine;
-use maria_core::error::SimError;
-use maria_ir::*;
 use crate::simulator::types::*;
 use crate::simulator::util::*;
+use maria_core::error::SimError;
 use maria_core::Symbol;
+use maria_ir::*;
 use std::collections::HashMap;
 
 impl SimulationEngine {
@@ -43,15 +43,19 @@ impl SimulationEngine {
         }
     }
 
-    pub(crate) fn write_lvalue(&mut self, lvalue: &IrLValue, mut val: LogicVec) -> Result<(), SimError> {
+    pub(crate) fn write_lvalue(
+        &mut self,
+        lvalue: &IrLValue,
+        mut val: LogicVec,
+    ) -> Result<(), SimError> {
         // Check for const violation
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
             if let Some(sig) = self.design.top.signals.get(id) {
                 if sig.is_const {
-                    return Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, format!(
-                        "cannot write to const signal '{}'",
-                        sig.name
-                    )));
+                    return Err(self.diag_error(
+                        maria_core::diagnostics::DiagCode::DpiError,
+                        format!("cannot write to const signal '{}'", sig.name),
+                    ));
                 }
             }
         }
@@ -66,18 +70,28 @@ impl SimulationEngine {
         // ── Race detection: Write-Write check ──
         // Cegah false positive untuk multi-driver nets yang intentional
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
-            let is_multi_driver = self.design.top.signals.get(id)
+            let is_multi_driver = self
+                .design
+                .top
+                .signals
+                .get(id)
                 .map(|s| s.multi_driver)
                 .unwrap_or(false);
             if !is_multi_driver {
                 // Check if a DIFFERENT process already wrote this signal in this delta
                 if let Some(existing_writer) = self.signal_writers.get(&id) {
-                    if let (Some(current_pid), Some(prev_pid)) = (self.current_process_id, existing_writer) {
+                    if let (Some(current_pid), Some(prev_pid)) =
+                        (self.current_process_id, existing_writer)
+                    {
                         if current_pid != *prev_pid {
-                            let sig_name = self.design.top.signals.get(id)
+                            let sig_name = self
+                                .design
+                                .top
+                                .signals
+                                .get(id)
                                 .map(|s| s.name.as_str())
                                 .unwrap_or("<unknown>");
-                        self.emit_warning(
+                            self.emit_warning(
                             maria_core::diagnostics::DiagCode::SignalContention,
                                 format!(
                                     "race condition: signal '{}' written by multiple processes in same delta cycle",
@@ -102,7 +116,11 @@ impl SimulationEngine {
                 // multi-driver nets: nilai yang benar-benar ter-commit adalah hasil
                 // resolve_net_values(), bukan val mentah → glitch bisa false positive.
                 if self.glitch_window > 0 {
-                    let is_multi_driver = self.design.top.signals.get(*id)
+                    let is_multi_driver = self
+                        .design
+                        .top
+                        .signals
+                        .get(*id)
                         .map(|s| s.multi_driver)
                         .unwrap_or(false);
                     if !is_multi_driver {
@@ -111,7 +129,11 @@ impl SimulationEngine {
                             if let Some(&(t_prev, ref val_before)) = self.glitch_prev.get(id) {
                                 let dt = self.state.time.saturating_sub(t_prev);
                                 if dt <= self.glitch_window && val.to_u64() == val_before.to_u64() {
-                                    let sig_name = self.design.top.signals.get(*id)
+                                    let sig_name = self
+                                        .design
+                                        .top
+                                        .signals
+                                        .get(*id)
                                         .map(|s| s.name.as_str())
                                         .unwrap_or("<unknown>");
                                     self.emit_warning(
@@ -167,21 +189,21 @@ impl SimulationEngine {
                                 (Some(LogicVal::One), Some(LogicVal::Zero)) => {
                                     sig.delay_fall.unwrap_or(0)
                                 }
-                                _ => sig
-                                    .delay_rise
-                                    .unwrap_or(0)
-                                    .min(sig.delay_fall.unwrap_or(0)),
+                                _ => sig.delay_rise.unwrap_or(0).min(sig.delay_fall.unwrap_or(0)),
                             };
                             let delay_units = self.sdf_ps_to_time_units(delay_ps);
                             if delay_units > 0 {
                                 let t = self.state.time + delay_units;
-                                self.push_event(t as usize, RegionEvent {
-                                    region: EventRegion::Active,
-                                    event: EventKind::SdfDelayedWrite {
-                                        sig_id: *id,
-                                        value: resized,
+                                self.push_event(
+                                    t as usize,
+                                    RegionEvent {
+                                        region: EventRegion::Active,
+                                        event: EventKind::SdfDelayedWrite {
+                                            sig_id: *id,
+                                            value: resized,
+                                        },
                                     },
-                                });
+                                );
                                 return Ok(());
                             }
                         }
@@ -212,13 +234,22 @@ impl SimulationEngine {
                 };
                 // ══ Bounds check: pastikan range tidak melebihi signal width ══
                 if end >= existing.bits.len() {
-                    let sig_name = self.design.top.signals.get(*sig_id)
+                    let sig_name = self
+                        .design
+                        .top
+                        .signals
+                        .get(*sig_id)
                         .map(|s| s.name.as_str())
                         .unwrap_or("<unknown>");
                     self.emit_warning(
                         maria_core::diagnostics::DiagCode::MemoryOutOfBounds,
-                        format!("RangeSelect out of bounds: signal '{}' [{}:{}] exceeds width {}",
-                            sig_name, msb, lsb, existing.bits.len()),
+                        format!(
+                            "RangeSelect out of bounds: signal '{}' [{}:{}] exceeds width {}",
+                            sig_name,
+                            msb,
+                            lsb,
+                            existing.bits.len()
+                        ),
                     );
                     // Clamp to signal width to prevent panic
                     let max_end = existing.bits.len().saturating_sub(1);
@@ -271,9 +302,15 @@ impl SimulationEngine {
                 let start = idx * elem_width;
                 let needed = start + elem_width;
                 // ══ Bounds check: warning untuk fixed-size array out-of-bounds ══
-                let is_dynamic = sig_info.map(|s| s.is_dynamic || s.is_queue).unwrap_or(false);
+                let is_dynamic = sig_info
+                    .map(|s| s.is_dynamic || s.is_queue)
+                    .unwrap_or(false);
                 if needed > existing.width && !is_dynamic {
-                    let sig_name = self.design.top.signals.get(*sig_id)
+                    let sig_name = self
+                        .design
+                        .top
+                        .signals
+                        .get(*sig_id)
                         .map(|s| s.name.as_str())
                         .unwrap_or("<unknown>");
                     self.emit_warning(
@@ -312,7 +349,11 @@ impl SimulationEngine {
                 };
                 // ══ Bounds check: pastikan base+end tidak melebihi signal width ══
                 if base + end >= existing.bits.len() {
-                    let sig_name = self.design.top.signals.get(*sig_id)
+                    let sig_name = self
+                        .design
+                        .top
+                        .signals
+                        .get(*sig_id)
                         .map(|s| s.name.as_str())
                         .unwrap_or("<unknown>");
                     self.emit_warning(
@@ -337,7 +378,8 @@ impl SimulationEngine {
                         }
                     }
                 }
-                let is_init = self.state.read_signal(*sig_id).all_x() || self.state.read_signal(*sig_id).all_z();
+                let is_init = self.state.read_signal(*sig_id).all_x()
+                    || self.state.read_signal(*sig_id).all_z();
                 let old_val = self.state.read_signal(*sig_id).clone();
                 self.state.write_signal(*sig_id, existing.clone());
                 if !is_init {
@@ -382,13 +424,22 @@ impl SimulationEngine {
                 let mut existing = self.state.read_signal(*sig_id).clone();
                 // Bounds check: peringatan + clamp agar tidak panic.
                 if start + w > existing.bits.len() {
-                    let sig_name = self.design.top.signals.get(*sig_id)
+                    let sig_name = self
+                        .design
+                        .top
+                        .signals
+                        .get(*sig_id)
                         .map(|s| s.name.as_str())
                         .unwrap_or("<unknown>");
                     self.emit_warning(
                         maria_core::diagnostics::DiagCode::MemoryOutOfBounds,
-                        format!("ExprPartSelect out of bounds: signal '{}' [{} +: {}] exceeds width {}",
-                            sig_name, start, w, existing.bits.len()),
+                        format!(
+                            "ExprPartSelect out of bounds: signal '{}' [{} +: {}] exceeds width {}",
+                            sig_name,
+                            start,
+                            w,
+                            existing.bits.len()
+                        ),
                     );
                 }
                 for (i, b) in val.bits.iter().enumerate() {
@@ -470,8 +521,15 @@ impl SimulationEngine {
                     (1usize, idx)
                 };
                 if std::env::var("MARIA_DBG_HIERWR").is_ok() {
-                    eprintln!("[DBG-HIERWR] '{}' idx={} array_depth={} elem_w={} sig_w={} val={}",
-                        name.as_str(), idx, sig.array_depth, sig.elem_width, sig.width, val.to_u64());
+                    eprintln!(
+                        "[DBG-HIERWR] '{}' idx={} array_depth={} elem_w={} sig_w={} val={}",
+                        name.as_str(),
+                        idx,
+                        sig.array_depth,
+                        sig.elem_width,
+                        sig.width,
+                        val.to_u64()
+                    );
                 }
                 let lsb = word_sel.saturating_mul(elem_width);
                 let write_w = val.width.min(elem_width);
@@ -491,7 +549,6 @@ impl SimulationEngine {
         }
         Ok(())
     }
-
 
     pub(crate) fn get_lvalue_width(&self, lvalue: &IrLValue) -> usize {
         match lvalue {
@@ -523,7 +580,13 @@ impl SimulationEngine {
             IrLValue::HierRefIndex { name, .. } => self
                 .find_signal(name.as_str())
                 .and_then(|id| self.design.top.signals.get(id))
-                .map(|s| if s.array_depth > 1 { s.elem_width.max(1) } else { 1 })
+                .map(|s| {
+                    if s.array_depth > 1 {
+                        s.elem_width.max(1)
+                    } else {
+                        1
+                    }
+                })
                 .unwrap_or(1),
             IrLValue::Concat(parts) => parts.iter().map(|p| self.get_lvalue_width(p)).sum(),
         }
@@ -544,7 +607,11 @@ impl SimulationEngine {
         }
     }
 
-    pub(crate) fn write_ast_lvalue(&mut self, lhs: &maria_ast::Expr, val: LogicVec) -> Result<(), SimError> {
+    pub(crate) fn write_ast_lvalue(
+        &mut self,
+        lhs: &maria_ast::Expr,
+        val: LogicVec,
+    ) -> Result<(), SimError> {
         match lhs {
             maria_ast::Expr::Ident { name, .. } => self.write_local_or_field(name.as_str(), val),
             maria_ast::Expr::MemberAccess { obj, field } => {
@@ -554,10 +621,10 @@ impl SimulationEngine {
                     obj_data.fields.insert(*field, val);
                     Ok(())
                 } else {
-                    Err(self.diag_error(maria_core::diagnostics::DiagCode::NullHandle, format!(
-                        "object {} not found for field '{}'",
-                        obj_id, field
-                    )))
+                    Err(self.diag_error(
+                        maria_core::diagnostics::DiagCode::NullHandle,
+                        format!("object {} not found for field '{}'", obj_id, field),
+                    ))
                 }
             }
             maria_ast::Expr::BitSelect { expr: inner, index } => {
@@ -723,10 +790,10 @@ impl SimulationEngine {
                     )),
                 }
             }
-            _ => Err(self.diag_error(maria_core::diagnostics::DiagCode::NotImplemented, format!(
-                "unsupported lvalue type in task method: {:?}",
-                lhs
-            ))),
+            _ => Err(self.diag_error(
+                maria_core::diagnostics::DiagCode::NotImplemented,
+                format!("unsupported lvalue type in task method: {:?}", lhs),
+            )),
         }
     }
 
@@ -751,14 +818,21 @@ impl SimulationEngine {
                 if hier.is_empty() {
                     None
                 } else {
-                    self.design.hier_signal_map.get(&Symbol::intern(&hier)).copied()
+                    self.design
+                        .hier_signal_map
+                        .get(&Symbol::intern(&hier))
+                        .copied()
                 }
             }
             _ => None,
         }
     }
 
-    pub(crate) fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+    pub(crate) fn write_local_or_field(
+        &mut self,
+        name: &str,
+        val: LogicVec,
+    ) -> Result<(), SimError> {
         if self.get_local(name).is_some() {
             self.set_local(name, val);
             return Ok(());
@@ -850,5 +924,4 @@ impl SimulationEngine {
         self.record_signal_change(sig_id, &old_val, &resized);
         Ok(())
     }
-
 }
