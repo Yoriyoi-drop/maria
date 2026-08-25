@@ -8,7 +8,7 @@
 use maria_ast::Design;
 
 /// Versi format serialisasi AST (increment bila skema AST berubah).
-pub const AST_FORMAT_VERSION: u64 = 2;
+pub const AST_FORMAT_VERSION: u64 = 3;
 
 /// Serialisasi `Design` → bytes biner (bincode).
 pub fn serialize_design(design: &Design) -> Result<Vec<u8>, String> {

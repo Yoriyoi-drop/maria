@@ -134,6 +134,18 @@ pub enum UnOp {
     Not,
     LogicNot,
     Neg,
+    /// Reduction AND `&e` — self-determined 1-bit.
+    RedAnd,
+    /// Reduction OR `|e`.
+    RedOr,
+    /// Reduction XOR `^e`.
+    RedXor,
+    /// Reduction NAND `~&e`.
+    RedNand,
+    /// Reduction NOR `~|e`.
+    RedNor,
+    /// Reduction XNOR `^~e`.
+    RedXnor,
 }
 
 impl UnOp {
@@ -142,6 +154,12 @@ impl UnOp {
             UnOp::Not => "~",
             UnOp::LogicNot => "!",
             UnOp::Neg => "-",
+            UnOp::RedAnd => "&",
+            UnOp::RedOr => "|",
+            UnOp::RedXor => "^",
+            UnOp::RedNand => "~&",
+            UnOp::RedNor => "~|",
+            UnOp::RedXnor => "^~",
         }
     }
 
@@ -150,11 +168,41 @@ impl UnOp {
             UnOp::Not => "Not",
             UnOp::LogicNot => "LogicNot",
             UnOp::Neg => "Neg",
+            UnOp::RedAnd => "RedAnd",
+            UnOp::RedOr => "RedOr",
+            UnOp::RedXor => "RedXor",
+            UnOp::RedNand => "RedNand",
+            UnOp::RedNor => "RedNor",
+            UnOp::RedXnor => "RedXnor",
         }
     }
 
     pub fn all() -> &'static [UnOp] {
-        &[UnOp::Not, UnOp::LogicNot, UnOp::Neg]
+        &[
+            UnOp::Not,
+            UnOp::LogicNot,
+            UnOp::Neg,
+            UnOp::RedAnd,
+            UnOp::RedOr,
+            UnOp::RedXor,
+            UnOp::RedNand,
+            UnOp::RedNor,
+            UnOp::RedXnor,
+        ]
+    }
+
+    /// Reduksi = self-determined 1-bit (LRM §11.4.9), berbeda semantik dari
+    /// operator unary bitwise/logical.
+    pub fn is_reduction(self) -> bool {
+        matches!(
+            self,
+            UnOp::RedAnd
+                | UnOp::RedOr
+                | UnOp::RedXor
+                | UnOp::RedNand
+                | UnOp::RedNor
+                | UnOp::RedXnor
+        )
     }
 }
 
@@ -163,10 +211,23 @@ impl UnOp {
 /// fuzzer "tidak buta": input bukan byte acak, melainkan SV well-formed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
+    /// Literal 2-state sized selebar konteks.
     Lit(u64),
+    /// Literal 4-state: bit `m` dirender sebagai `x` (stimulus X/Z).
+    /// Golden menandai has_x → oracle skip compare numerik; invariant
+    /// panic/determinism tetap tereksekusi.
+    XLit { v: u64, m: u64 },
     Var(char),
     Un(UnOp, Box<Expr>),
     Bin(BinOp, Box<Expr>, Box<Expr>),
+    /// Ternary `cond ? t : f` — hasil max(lebar t, f, konteks).
+    Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
+    /// Replication `{count{e}}`.
+    Repl(u32, Box<Expr>),
+    /// Bit-select `var[idx]` — self-determined 1-bit.
+    BitSel(char, u32),
+    /// Part-select `var[hi:lo]` — self-determined selebar hi-lo+1.
+    PartSel(char, u32, u32),
 }
 
 fn mask_of(w: u32) -> u64 {
@@ -228,11 +289,43 @@ impl Expr {
     fn eval_w128(&self, w: u32, W: u32, a: u128, b: u128) -> (u128, u32, bool) {
         match self {
             Expr::Lit(v) => ((*v as u128) & mask_of128(W), W.max(w), false),
+            Expr::XLit { v, m } => {
+                // 4-state: hasil pasti mengandung X → has_x (skip numerik).
+                let mask = mask_of128(W.max(w));
+                ((*v as u128) & mask, W.max(w), true)
+            }
             Expr::Var(c) => {
                 let x = if *c == 'a' { a } else { b };
                 ((x & mask_of128(W)), W.max(w), false)
             }
             Expr::Un(op, e) => {
+                if op.is_reduction() {
+                    // Reduksi self-determined: operasi pada lebar operand
+                    // SENDIRI (tanpa extension konteks), hasil 1-bit.
+                    // Operan dievaluasi ulang dgn ctx=0 — anak seperti
+                    // perbandingan menghasilkan lebar aslinya (1-bit),
+                    // bukan lebar konteks (`&(b[1] < b)` = 1, bukan
+                    // reduksi atas vektor selebar konteks).
+                    let (x, ew, hx) = e.eval_w128(0, W, a, b);
+                    if hx {
+                        return (0, 1, true);
+                    }
+                    let bits = x & mask_of128(ew.max(1));
+                    let ones = bits.count_ones();
+                    let all_one = ew > 0 && ones == ew;
+                    let any_one = ones > 0;
+                    let parity = ones & 1 == 1;
+                    let v = match op {
+                        UnOp::RedAnd => all_one,
+                        UnOp::RedOr => any_one,
+                        UnOp::RedXor => parity,
+                        UnOp::RedNand => !all_one,
+                        UnOp::RedNor => !any_one,
+                        UnOp::RedXnor => !parity,
+                        _ => unreachable!(),
+                    };
+                    return (v as u128, w.max(1), false);
+                }
                 let (x, ew, hx) = e.eval_w128(w, W, a, b);
                 // ~ / unary ± context-determined: operan di-extend ke
                 // max(lebar anak, konteks) SEBELUM operasi.
@@ -259,17 +352,25 @@ impl Expr {
                             (((!xe).wrapping_add(1)) & m, mw, false)
                         }
                     }
+                    // Reduksi sudah ditangani early-return sebelum arm ini.
+                    _ => unreachable!("reduction ops handled above"),
                 }
             }
             Expr::Bin(op, l, r) => {
                 // Anak concat: self-determined murni (ctx=0). Anak lainnya —
                 // termasuk operan comparison/logical — context-determined
                 // (warisi ctx; selaras propagate_context_width di elaborator
-                // dan divalidasi differential).
-                let self_det = *op == BinOp::Concat;
-                let c = if self_det { 0 } else { w };
-                let (x, lw, hx) = l.eval_w128(c, W, a, b);
-                let (y, rw, hy) = r.eval_w128(c, W, a, b);
+                // dan divalidasi differential). PENGECUALIAN: RHS shift
+                // self-determined (IEEE 1800 §11.8.1) — `a << ~(1-bit)`
+                // menggeser dgn nilai 1-bit, bukan nilai yang di-extend ke
+                // lebar konteks.
+                let self_det_l = *op == BinOp::Concat;
+                let self_det_r =
+                    *op == BinOp::Concat || matches!(*op, BinOp::Shl | BinOp::Shr | BinOp::Sshl | BinOp::Sshr);
+                let cl = if self_det_l { 0 } else { w };
+                let cr = if self_det_r { 0 } else { w };
+                let (x, lw, hx) = l.eval_w128(cl, W, a, b);
+                let (y, rw, hy) = r.eval_w128(cr, W, a, b);
                 let either_x = hx || hy;
                 match op {
                     BinOp::Add
@@ -373,10 +474,18 @@ impl Expr {
                         (v, ow, either_x)
                     }
                     BinOp::Inside => {
+                        // LHS vs item saling di-extend SEBELUM evaluasi anak
+                        // (op context-determined bersarang seperti unary
+                        // minus mengubah nilai dgn lebar akhir — lihat catatan
+                        // arm comparison di bawah).
+                        let (_, lw0, _) = l.eval_w128(cl, W, a, b);
+                        let (_, rw0, _) = r.eval_w128(cr, W, a, b);
+                        let (x, lw, hx) = l.eval_w128(cl.max(rw0), W, a, b);
+                        let (y, rw, hy) = r.eval_w128(cr.max(lw0), W, a, b);
                         let cw = lw.max(rw);
                         let xe = x & mask_of128(cw);
                         let ye = y & mask_of128(cw);
-                        if either_x {
+                        if hx || hy {
                             return (0, w.max(1), true);
                         }
                         let v = if xe == ye { 1 } else { 0 };
@@ -392,15 +501,27 @@ impl Expr {
                     | BinOp::LogicOr
                     | BinOp::CaseEq
                     | BinOp::CaseNeq => {
-                        // Mutual extension ke max lebar operan, TANPA konteks
-                        // luar (divalidasi vs Icarus seed=332598).
-                        let cw = lw.max(rw);
-                        let xe = x & mask_of128(cw);
-                        let ye = y & mask_of128(cw);
-                        if either_x {
+                        // Operan saling di-extend ke max keduanya (+konteks)
+                        // SEBELUM evaluasi anak, bukan hanya mask nilai
+                        // sesudahnya. Alasan: op context-determined bersarang
+                        // (unary minus/~) mengubah NILAI berdasarkan lebar
+                        // akhir — `-((b===b)) < lit` = all-ones < lit = false,
+                        // bukan 1 < lit = true (LRM §11.8.1; divalidasi vs
+                        // Icarus, multivec seed=4712822). Dua putaran
+                        // refinement agar rantai bersarang konvergen.
+                        let (_, lw0, _) = l.eval_w128(cl, W, a, b);
+                        let (_, rw0, _) = r.eval_w128(cr, W, a, b);
+                        let (x1, lw1, _) = l.eval_w128(cl.max(rw0), W, a, b);
+                        let (y1, rw1, _) = r.eval_w128(cr.max(lw0), W, a, b);
+                        let (x, lw, hx) = l.eval_w128(cl.max(rw1), W, a, b);
+                        let (y, rw, hy) = r.eval_w128(cr.max(lw1), W, a, b);
+                        if hx || hy {
                             // X in comparison operand = X result
                             return (0, w.max(1), true);
                         }
+                        let cw = lw1.max(rw1).max(lw).max(rw);
+                        let xe = x & mask_of128(cw);
+                        let ye = y & mask_of128(cw);
                         let v = match op {
                             BinOp::Eq | BinOp::CaseEq => {
                                 if xe == ye {
@@ -466,6 +587,65 @@ impl Expr {
                     }
                 }
             }
+            Expr::Ternary(cond, t, f) => {
+                // LRM §11.4.11 + Tabel 11-21: kondisi `expr1` SELF-DETERMINED
+                // (tidak mewarisi konteks) — `(~(a === b)) ? x : y`
+                // mengevaluasi ~ pada lebar hasil perbandingan (1 bit), bukan
+                // lebar konteks. Hasil max(lebar t, f, konteks).
+                let (cv, _, chx) = cond.eval_w128(0, W, a, b);
+                let (tv, tw, thx) = t.eval_w128(w, W, a, b);
+                let (fv, fw, fhx) = f.eval_w128(w, W, a, b);
+                let ow = tw.max(fw).max(w);
+                let om = mask_of128(ow);
+                let truthy = cv != 0;
+                let chosen = if truthy { tv } else { fv };
+                // Kondisi X + nilai beda → hasil X; anak X → ikut X.
+                let hx = thx || fhx || (chx && (tv & om) != (fv & om));
+                (chosen & om, ow, hx)
+            }
+            Expr::Repl(count, e) => {
+                // {N{e}}: self-determined, lebar N*lebar(e).
+                let (x, ew, hx) = e.eval_w128(0, W, a, b);
+                if *count == 0 {
+                    return (0, w.max(1), false);
+                }
+                let ew = ew.max(1);
+                let ow = (ew.saturating_mul(*count as u32)).min(128);
+                let om = mask_of128(ow);
+                let mut v: u128 = 0;
+                for i in 0..*count {
+                    let sh = (i as u32 * ew).min(127);
+                    v |= (x & mask_of128(ew)) << sh;
+                }
+                (v & om, ow, hx)
+            }
+            Expr::BitSel(c, idx) => {
+                // var[idx]: 1-bit self-determined; index di luar lebar → X
+                // (LRM §11.5.1). idx ≥ 128 di luar representasi u128 → 0
+                // (guard panic shift-overflow Rust).
+                let x = if *c == 'a' { a } else { b };
+                if *idx >= W {
+                    return (0, 1, true);
+                }
+                let v = if *idx >= 128 { 0 } else { (x >> *idx) & 1 };
+                (v, 1, false)
+            }
+            Expr::PartSel(c, hi, lo) => {
+                // var[hi:lo] self-determined selebar hi-lo+1; sebagian/banyak
+                // bit di luar lebar → mengandung X. lo ≥ 128 → hasil 0
+                // (guard panic shift-overflow Rust).
+                let x = if *c == 'a' { a } else { b };
+                let width = hi.saturating_sub(*lo).saturating_add(1);
+                if *hi >= W {
+                    return (0, width, true);
+                }
+                let v = if *lo >= 128 {
+                    0
+                } else {
+                    (x >> *lo) & mask_of128(width)
+                };
+                (v, width, false)
+            }
         }
     }
 
@@ -491,8 +671,17 @@ impl Expr {
     /// intermediate > 128 bit yang tak bisa dipastikan model emas u128.
     pub fn max_width(&self, w: u64) -> u64 {
         match self {
-            Expr::Lit(_) | Expr::Var(_) => w,
+            Expr::Lit(_) | Expr::Var(_) | Expr::XLit { .. } => w,
             Expr::Un(_, e) => e.max_width(w),
+            Expr::Ternary(c, t, f) => c
+                .max_width(w)
+                .max(t.max_width(w))
+                .max(f.max_width(w)),
+            Expr::Repl(count, e) => {
+                (*count as u64).saturating_mul(e.max_width(w)).min(u64::MAX)
+            }
+            Expr::BitSel(..) => 1,
+            Expr::PartSel(_, hi, lo) => hi.saturating_sub(*lo).saturating_add(1) as u64,
             Expr::Bin(op, l, r) => {
                 let lw = l.max_width(w);
                 let rw = r.max_width(w);
@@ -520,8 +709,35 @@ impl Expr {
     pub fn to_sv(&self, w: u32) -> String {
         match self {
             Expr::Lit(v) => lit_sv(*v, w),
+            Expr::XLit { v, m } => {
+                // Literal 4-state: bit ber-mask dirender 'x' (stimulus X).
+                let mut bits = String::with_capacity(w as usize);
+                for i in (0..w).rev() {
+                    let bit_idx = i as u64;
+                    if bit_idx < 64 && (m >> bit_idx) & 1 == 1 {
+                        bits.push('x');
+                    } else {
+                        let bit = if bit_idx >= 64 {
+                            0
+                        } else {
+                            (*v >> bit_idx) & 1
+                        };
+                        bits.push(if bit == 1 { '1' } else { '0' });
+                    }
+                }
+                format!("{}'b{}", w, bits)
+            }
             Expr::Var(c) => c.to_string(),
             Expr::Un(op, e) => format!("{}({})", op.sym(), e.to_sv(w)),
+            Expr::Ternary(c, t, f) => format!(
+                "({} ? ({}) : ({}))",
+                c.to_sv(w),
+                t.to_sv(w),
+                f.to_sv(w)
+            ),
+            Expr::Repl(count, e) => format!("{{{}{{{}}}}}", count, e.to_sv(w)),
+            Expr::BitSel(c, idx) => format!("{}[{}]", c, idx),
+            Expr::PartSel(c, hi, lo) => format!("{}[{}:{}]", c, hi, lo),
             Expr::Bin(op, l, r) => {
                 match *op {
                     BinOp::Concat => format!("{{{}, {}}}", l.to_sv(w), r.to_sv(w)),
@@ -540,10 +756,20 @@ impl Expr {
     pub fn features(&self, out: &mut Vec<String>) {
         match self {
             Expr::Lit(_) | Expr::Var(_) => {}
+            Expr::XLit { .. } => out.push("xlit".to_string()),
             Expr::Un(op, e) => {
                 out.push(format!("un:{}", op.name()));
                 e.features(out);
             }
+            Expr::Ternary(c, t, f) => {
+                out.push("ternary".to_string());
+                c.features(out);
+                t.features(out);
+                f.features(out);
+            }
+            Expr::Repl(..) => out.push("repl".to_string()),
+            Expr::BitSel(..) => out.push("bitsel".to_string()),
+            Expr::PartSel(..) => out.push("partsel".to_string()),
             Expr::Bin(op, l, r) => {
                 out.push(format!("bin:{}", op.name()));
                 l.features(out);
@@ -562,6 +788,42 @@ impl Expr {
         }
         match self {
             Expr::Un(_, e) => e.mutate(w, rng),
+            Expr::Ternary(c, t, f) => match rng.usize(0..3) {
+                0 => c.mutate(w, rng),
+                1 => t.mutate(w, rng),
+                _ => f.mutate(w, rng),
+            },
+            Expr::Repl(count, e) => {
+                // Replikasi: kadang ubah count (cap agar lebar wajar),
+                // selalu mutasi isinya.
+                if rng.bool() {
+                    let max_count = (128 / w.max(1)).clamp(1, 8);
+                    *count = rng.usize(1..=max_count as usize) as u32;
+                }
+                e.mutate(w, rng);
+            }
+            Expr::BitSel(c, idx) => {
+                if rng.bool() {
+                    *c = if rng.bool() { 'a' } else { 'b' };
+                } else {
+                    *idx %= w.max(1);
+                }
+            }
+            Expr::PartSel(c, hi, lo) => {
+                if rng.bool() {
+                    *c = if rng.bool() { 'a' } else { 'b' };
+                }
+                *hi %= w.max(1);
+                *lo %= w.max(1);
+                if lo > hi {
+                    std::mem::swap(lo, hi);
+                }
+            }
+            Expr::XLit { v, m } => {
+                let mask = mask_of(w);
+                *v = rng.u64(0..) & mask;
+                *m = rng.u64(0..) & mask;
+            }
             Expr::Bin(_, l, r) => {
                 if rng.bool() {
                     l.mutate(w, rng);
@@ -577,17 +839,25 @@ impl Expr {
 
 /// Bangun node ekspresi acak dengan kedalaman maksimum `depth`.
 pub fn gen_node(w: u32, rng: &mut fastrand::Rng, depth: u32) -> Expr {
-    if depth >= 4 {
+    if depth >= 5 {
         return leaf(w, rng);
     }
-    let roll = rng.usize(0..10);
+    let roll = rng.usize(0..12);
     match roll {
-        0..=3 => leaf(w, rng),
+        // Leaf (termasuk X-literal ~10%): stimulus 4-state melatih jalur
+        // X-propagation engine.
+        0..=3 => {
+            if rng.usize(0..10) == 0 {
+                gen_xlit(w, rng)
+            } else {
+                leaf(w, rng)
+            }
+        }
         4..=5 => {
             let op = UnOp::all()[rng.usize(0..UnOp::all().len())];
             Expr::Un(op, Box::new(gen_node(w, rng, depth + 1)))
         }
-        _ => {
+        6..=8 => {
             let op = BinOp::all()[rng.usize(0..BinOp::all().len())];
             Expr::Bin(
                 op,
@@ -595,6 +865,49 @@ pub fn gen_node(w: u32, rng: &mut fastrand::Rng, depth: u32) -> Expr {
                 Box::new(gen_node(w, rng, depth + 1)),
             )
         }
+        9 => Expr::Ternary(
+            Box::new(gen_node(w, rng, depth + 1)),
+            Box::new(gen_node(w, rng, depth + 1)),
+            Box::new(gen_node(w, rng, depth + 1)),
+        ),
+        10 => {
+            let max_count = (128 / w.max(1)).clamp(1, 8);
+            let count = rng.usize(1..=max_count as usize) as u32;
+            Expr::Repl(count, Box::new(gen_node(w, rng, depth + 1)))
+        }
+        _ => gen_sel(w, rng),
+    }
+}
+
+/// Bit/part-select pada variabel — index selalu dalam range lebar `w`
+/// (out-of-range muncul alami via mutasi lebar; golden menandai X).
+fn gen_sel(w: u32, rng: &mut fastrand::Rng) -> Expr {
+    let c = if rng.bool() { 'a' } else { 'b' };
+    if w == 0 {
+        return Expr::Var(c);
+    }
+    if rng.bool() {
+        Expr::BitSel(c, rng.u32(0..w))
+    } else {
+        let hi = rng.u32(0..w);
+        let lo = rng.u32(0..hi + 1);
+        Expr::PartSel(c, hi, lo)
+    }
+}
+
+/// Literal 4-state: subset bit ditandai `x`.
+pub fn gen_xlit(w: u32, rng: &mut fastrand::Rng) -> Expr {
+    let mask = mask_of(w);
+    // Pastikan minimal satu bit x (else sama saja dengan Lit).
+    let xmask = loop {
+        let m = rng.u64(0..) & mask;
+        if m != 0 || mask == 0 {
+            break m;
+        }
+    };
+    Expr::XLit {
+        v: rng.u64(0..) & mask,
+        m: xmask,
     }
 }
 

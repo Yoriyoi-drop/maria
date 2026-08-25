@@ -178,16 +178,21 @@ pub fn evaluate_expr_simple(
             let val = evaluate_expr_simple(inner, signals, sig_info)?;
             let base = evaluate_expr_simple(base_expr, signals, sig_info)?.to_u64() as usize;
             let width = evaluate_expr_simple(width_expr, signals, sig_info)?.to_u64() as usize;
-            let n = val.bits.len();
-            if n == 0 || width == 0 || base >= n {
+            if width == 0 {
                 return Ok(LogicVec::new(1));
             }
-            let end = (base + width - 1).min(n - 1);
-            let bits = val.bits[base..=end].to_vec();
-            Ok(LogicVec {
-                width: bits.len(),
-                bits,
-            })
+            // LRM 1800 §11.5.1: sebagian OOB → SELURUH hasil x selebar
+            // permintaan (sama dengan evaluator utama; dulu di-clamp).
+            match base.checked_add(width - 1) {
+                Some(end) if base < val.bits.len() && end < val.bits.len() => {
+                    let bits = val.bits[base..=end].to_vec();
+                    Ok(LogicVec {
+                        width: bits.len(),
+                        bits,
+                    })
+                }
+                _ => Ok(LogicVec::fill(LogicVal::X, width)),
+            }
         }
         IrExpr::ArrayIndex {
             sig_id,
@@ -265,10 +270,17 @@ pub fn evaluate_expr_simple(
         }
         IrExpr::Cond(cond, true_val, false_val) => {
             let cond_val = evaluate_expr_simple(cond, signals, sig_info)?;
+            let tv = evaluate_expr_simple(true_val, signals, sig_info)?;
+            let fv = evaluate_expr_simple(false_val, signals, sig_info)?;
+            // LRM §11.4.11: hasil selebar max(lebar kedua cabang) —
+            // selaras jalur evaluator utama.
+            let w = tv.width.max(fv.width);
+            let tv = if tv.width < w { tv.resize(w) } else { tv };
+            let fv = if fv.width < w { fv.resize(w) } else { fv };
             if cond_val.to_bool().unwrap_or(false) {
-                evaluate_expr_simple(true_val, signals, sig_info)
+                Ok(tv)
             } else {
-                evaluate_expr_simple(false_val, signals, sig_info)
+                Ok(fv)
             }
         }
         IrExpr::Signed(inner) => evaluate_expr_simple(inner, signals, sig_info),

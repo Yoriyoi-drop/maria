@@ -106,6 +106,16 @@ where
         _ => return Ok(None),
     };
 
+    // Break/Continue KEHILANGAN semantiknya bila body di-unroll menjadi
+    // kode lurus: `continue` di iterasi ke-k menjadi "hentikan SEMUA
+    // iterasi berikutnya" karena FlowControl menyebar ke seluruh blok
+    // hasil-unroll (fuzz loop_fuzz varian C/D: rc salah 4→2, 2→0).
+    // Loop dengan kontrol ini tidak di-unroll — fallback runtime
+    // LoopFor menangani keduanya dengan benar.
+    if stmts_contain_break_continue(stmts) {
+        return Ok(None);
+    }
+
     let mut all_stmts = Vec::new();
     let mut ivar = init_val;
     // Jaring pengaman: maks 100k iterasi unroll — loop yang lebih besar
@@ -134,6 +144,34 @@ where
     }
 
     Ok(Some(all_stmts))
+}
+
+/// Deteksi `break`/`continue` di dalam body loop (rekursif ke statement
+/// bersarang). TIDAK menurun ke loop bersarang — `break`/`continue` di
+/// sana terikat pada loop dalam, bukan loop yang akan di-unroll.
+pub fn stmts_contain_break_continue(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_contains_break_continue)
+}
+
+fn stmt_contains_break_continue(s: &Stmt) -> bool {
+    match s {
+        Stmt::Break | Stmt::Continue => true,
+        Stmt::Block { stmts, .. }
+        | Stmt::LoopForever { stmts }
+        | Stmt::NamedBlock { stmts, .. } => stmts_contain_break_continue(stmts),
+        Stmt::IfElse {
+            true_branch,
+            false_branch,
+            ..
+        } => {
+            stmt_contains_break_continue(true_branch)
+                || false_branch
+                    .as_ref()
+                    .is_some_and(|fb| stmt_contains_break_continue(fb))
+        }
+        // Loop bersarang: break/continue milik loop dalam — jangan turun.
+        _ => false,
+    }
 }
 
 /// Kumpulkan nama loop variable dari SEMUA `for` loop di statements (rekursif).

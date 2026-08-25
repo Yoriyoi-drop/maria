@@ -13,12 +13,23 @@
 use super::gen::generate;
 
 /// Simulasi lalu ambil nilai sinyal `name` (None = sim error/sinyal hilang).
+/// Dijalankan di thread stack besar: engine rekursif dalam dan ekspresi
+/// fuzz berkedalaman 5 melebihi stack thread test default (2 MB).
 fn sim_signal(src: &str, max_time: u64, name: &str) -> Option<u64> {
-    crate::simulate_signals(src, max_time)
-        .ok()?
-        .iter()
-        .find(|(n, _)| n == name)
-        .map(|(_, v)| v.to_u64())
+    let name = name.to_string();
+    let src = src.to_string();
+    let handle = std::thread::Builder::new()
+        .name("meta-sim".to_string())
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || {
+            crate::simulate_signals(&src, max_time)
+                .ok()?
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v.to_u64())
+        })
+        .expect("spawn meta-sim");
+    handle.join().expect("sim panic")
 }
 
 /// Tambah komentar + whitespace bebas tanpa mengubah token stream.
@@ -115,9 +126,33 @@ fn metamorphic_rename_invariant() {
 
 #[test]
 fn metamorphic_redundant_parens_invariant() {
+    let cases = [
+        "module m; reg [6:0] a; wire [6:0] y; assign y = (a) inside {(a)}; initial begin a = 7'd1; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; wire [6:0] y; assign y = ((a)) inside {((a))}; initial begin a = 7'd1; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; wire [6:0] y; assign y = (a) inside {(a ? a : a)}; initial begin a = 7'd1; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = (a) inside {(a >= (b ? b : a))}; initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = (a) inside {((a * b) == b[0:0])}; initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; wire [6:0] y; assign y = (a) inside {(|((a ^ 7'b1)))}; initial begin a = 7'd1; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; wire [6:0] y; assign y = (a) inside {(a >>> a)}; initial begin a = 7'd1; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = ((a ? (({7{a}} / 7'b0110110)) : ({3{7'b0101101}})) inside {(a)}); initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = ((a ? a : a) inside {( |((a ^ 7'b1100111)) ? (((a >>> a) >= (b ? (b) : (a)))) : (((7'b0101010 * 7'b0100111) == b[0:0])) )}); initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m;\n    reg [6:0] a;\n    reg [6:0] b;\n    wire [6:0] y;\n    assign y = ((a ? (({7{a}} / 7'b0110110)) : ({3{7'b0101101}})) inside {(|((a ^ 7'b1100111)) ? (((a >>> a) >= (b ? (b) : (a)))) : (((7'b0101010 * 7'b0100111) == b[0:0])))});\n    initial begin\n        a = 7'b0000000;\n        b = 7'b0001100;\n        #10;\n        $finish;\n    end\nendmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = (((a) inside {(a)})); initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = (((a ? a : a) inside {(a)})); initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = (((a ? a : a) inside {(a)})); initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = (((a) inside {(a >= (b ? b : a))})); initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = (((a) inside {((a * b) == b[0:0])})); initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m; reg [6:0] a; reg [6:0] b; wire [6:0] y; assign y = (((a ? ({7{a}} / 7'd1) : a) inside {(a)})); initial begin a = 7'd1; b = 7'd2; #1 $finish; end endmodule",
+        "module m;\n    reg [6:0] a;\n    reg [6:0] b;\n    wire [6:0] y;\n    assign y = ((((a ? (({7{a}} / 7'b0110110)) : ({3{7'b0101101}})) inside {(|((a ^ 7'b1100111)) ? (((a >>> a) >= (b ? (b) : (a)))) : (((7'b0101010 * 7'b0100111) == b[0:0])))})));\n    initial begin\n        a = 7'b0000000;\n        b = 7'b0001100;\n        #10;\n        $finish;\n    end\nendmodule",
+    ];
+    for c in cases {
+        eprintln!("[dbg-min] {:?} => {:?}", c, sim_signal(c, 20, "y"));
+    }
     for seed in [3u64, 9, 44, 102, 2_000] {
+        eprintln!("[dbg-repro] seed={}", seed);
         let input = generate(seed);
         let base = input.to_source();
+        eprintln!("[dbg-repro] FULL=[[[{}]]]", base);
         let expr_sv = input.expr.to_sv(input.w);
         let parenthesized = base.replace(
             &format!("assign y = {};", expr_sv),

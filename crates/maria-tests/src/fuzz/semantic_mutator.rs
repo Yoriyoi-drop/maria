@@ -147,6 +147,7 @@ impl SemanticMutator {
 
         if new_w != w {
             input.w = new_w as u32;
+            input.wb = input.wb.min(input.w);
             let mask = if new_w >= 64 {
                 u64::MAX
             } else {
@@ -156,6 +157,7 @@ impl SemanticMutator {
             input.b &= mask;
             input.expr = self.rescale_expr_width(&input.expr, w, new_w);
         }
+        input.normalize();
     }
 
     fn rescale_expr_width(&self, expr: &Expr, old_w: u32, new_w: u32) -> Expr {
@@ -167,6 +169,17 @@ impl SemanticMutator {
                     (1u64 << new_w) - 1
                 },
             ),
+            Expr::XLit { v, m } => {
+                let mask = if new_w >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << new_w) - 1
+                };
+                Expr::XLit {
+                    v: v & mask,
+                    m: m & mask,
+                }
+            }
             Expr::Var(c) => Expr::Var(*c),
             Expr::Un(op, inner) => {
                 Expr::Un(*op, Box::new(self.rescale_expr_width(inner, old_w, new_w)))
@@ -176,6 +189,25 @@ impl SemanticMutator {
                 Box::new(self.rescale_expr_width(lhs, old_w, new_w)),
                 Box::new(self.rescale_expr_width(rhs, old_w, new_w)),
             ),
+            Expr::Ternary(c, t, f) => Expr::Ternary(
+                Box::new(self.rescale_expr_width(c, old_w, new_w)),
+                Box::new(self.rescale_expr_width(t, old_w, new_w)),
+                Box::new(self.rescale_expr_width(f, old_w, new_w)),
+            ),
+            Expr::Repl(count, e) => {
+                let max_count = ((128 / new_w.max(1)) as u32).clamp(1, u32::MAX);
+                Expr::Repl(
+                    (*count).min(max_count),
+                    Box::new(self.rescale_expr_width(e, old_w, new_w)),
+                )
+            }
+            Expr::BitSel(c, idx) => Expr::BitSel(*c, (*idx).min(new_w.saturating_sub(1))),
+            Expr::PartSel(c, hi, lo) => {
+                let max_idx = new_w.saturating_sub(1);
+                let hi = (*hi).min(max_idx);
+                let lo = (*lo).min(hi);
+                Expr::PartSel(*c, hi, lo)
+            }
         }
     }
 
@@ -242,6 +274,26 @@ impl SemanticMutator {
                     expr.clone()
                 }
             }
+            Expr::Ternary(c, t, f) => Expr::Ternary(
+                Box::new(self.mutate_expr_structure(c)),
+                Box::new(self.mutate_expr_structure(t)),
+                Box::new(self.mutate_expr_structure(f)),
+            ),
+            Expr::Repl(count, e) => {
+                Expr::Repl(*count, Box::new(self.mutate_expr_structure(e)))
+            }
+            Expr::BitSel(..) | Expr::PartSel(..) => expr.clone(),
+            Expr::XLit { v, m } => {
+                if self.rng.f32() < 0.3 {
+                    // Geser pola X ke bit lain.
+                    Expr::XLit {
+                        v: *v,
+                        m: m.rotate_left(1),
+                    }
+                } else {
+                    expr.clone()
+                }
+            }
         }
     }
 
@@ -299,6 +351,7 @@ impl SemanticMutator {
         let boundaries = [1u32, 2, 4, 8, 16, 31, 32, 33, 64, 128, 255, 256, 512, 1024];
         let boundary = boundaries[self.rng.usize(0..boundaries.len())];
         input.w = boundary;
+        input.wb = boundary;
         let mask = if boundary >= 64 {
             u64::MAX
         } else {
@@ -307,6 +360,7 @@ impl SemanticMutator {
         input.a = self.rng.u64(..) & mask;
         input.b = self.rng.u64(..) & mask;
         input.expr = super::expr::gen_node(boundary, &mut self.rng, 0);
+        input.normalize();
     }
 
     pub fn compute_risk(&self, expr: &Expr) -> RiskScore {
@@ -347,6 +401,23 @@ impl SemanticMutator {
             Expr::Var(_) => {
                 score += 0.1;
             }
+            // Literal X/Z: jalur X-propagation berisiko tinggi.
+            Expr::XLit { .. } => {
+                score += 0.5;
+                reasons.push("4-state literal".to_string());
+            }
+            Expr::Ternary(c, t, f) => {
+                score += self.compute_risk(c).score * 0.2
+                    + self.compute_risk(t).score * 0.3
+                    + self.compute_risk(f).score * 0.3;
+            }
+            Expr::Repl(_, e) => {
+                score += self.compute_risk(e).score * 0.4;
+            }
+            // Select di luar range = sumber X — risiko sedang.
+            Expr::BitSel(..) | Expr::PartSel(..) => {
+                score += 0.2;
+            }
         }
 
         RiskScore {
@@ -359,9 +430,14 @@ impl SemanticMutator {
     fn expr_type_name(&self, expr: &Expr) -> String {
         match expr {
             Expr::Lit(_) => "Literal".to_string(),
+            Expr::XLit { .. } => "XLiteral".to_string(),
             Expr::Var(_) => "Variable".to_string(),
             Expr::Un(op, _) => format!("Unary({:?})", op),
             Expr::Bin(op, _, _) => format!("Binary({:?})", op),
+            Expr::Ternary(..) => "Ternary".to_string(),
+            Expr::Repl(..) => "Replication".to_string(),
+            Expr::BitSel(..) => "BitSelect".to_string(),
+            Expr::PartSel(..) => "PartSelect".to_string(),
         }
     }
 }

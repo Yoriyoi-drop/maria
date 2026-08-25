@@ -493,6 +493,10 @@ impl<'a> Builder<'a> {
                 self.mux(cv, tv, fv, w)
             }
             IrExpr::Signed(inner) => self.lower_expr(inner),
+            // Cast lebar (hasil propagate_context_width): lowering transparan
+            // — untuk unsigned, nilai pada lebar lebih sempit identik dengan
+            // zero-extension; node konsumen (Add dll.) menentukan lebar hasil.
+            IrExpr::Cast { expr: inner, .. } => self.lower_expr(inner),
             _ => {
                 self.skipped
                     .push(format!("ekspresi tidak didukung SIR fase 1: {e:?}"));

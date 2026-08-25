@@ -33,6 +33,86 @@ pub fn parse_literal(bits: &str, radix: u32) -> Result<i64, String> {
         .map_err(|_| "bad literal".to_string())
 }
 
+/// Nilai literal B/H/O dengan memperhitungkan lebar & signedness.
+///
+/// Literal sized-signed (`8'sd130`) adalah POLA w-bit yang ditafsirkan
+/// two's-complement: pola 10000010 @ lebar 8 = -126, BUKAN +130. Tanpa
+/// ini perbandingan konstan ter-fold salah (`8'sd130 >= 8'sd124` dianggap
+/// true padahal -126 >= 124 false — ditemukan fuzzer signed_fuzz
+/// seed=115, dikonfirmasi Icarus).
+fn parse_sized_literal(
+    bits: &str,
+    radix: u32,
+    width: Option<usize>,
+    is_signed: bool,
+) -> Result<i64, String> {
+    let u = u64::from_str_radix(&bits.replace(['x', 'z'], "0"), radix)
+        .map_err(|_| "bad literal".to_string())?;
+    if let Some(w) = width {
+        if is_signed && w > 0 && w < 64 && ((u >> (w - 1)) & 1) == 1 {
+            return Ok((u as i64).wrapping_sub(1i64 << w));
+        }
+    }
+    Ok(u as i64)
+}
+
+/// Pola mentah + lebar + signedness literal sized (Paren tembus).
+/// `None` untuk unsized/ekspresi lain — pemanggil fallback ke jalur i64.
+fn sized_pattern(e: &Expr) -> Option<(u64, u32, bool)> {
+    let (bits, radix, width, is_signed) = match e {
+        Expr::Paren(inner) => return sized_pattern(inner),
+        Expr::Value(Value::Binary { bits, width, is_signed }) => (bits, 2u32, width, is_signed),
+        Expr::Value(Value::Hex { bits, width, is_signed }) => (bits, 16, width, is_signed),
+        Expr::Value(Value::Octal { bits, width, is_signed }) => (bits, 8, width, is_signed),
+        _ => return None,
+    };
+    let u = u64::from_str_radix(&bits.replace(['x', 'z'], "0"), radix).ok()?;
+    Some((u, width.map(|w| w as u32).unwrap_or(0), *is_signed))
+}
+
+/// Interpretasi pola p pada lebar `w` bit: signed → two's-complement,
+/// unsigned → zero-extend. Dipakai Div/Mod konstan yang HARUS dihitung
+/// pada lebar operan bersama (LRM §11.8.1) — pembagian tidak kongruen
+/// mod 2^w, beda dari Add/Sub/Mul (signed_fuzz seed=143: `32'sd2710823578
+/// % 32'sd2464636924` salah kalau dihitung full-precision).
+fn interpret_pattern(p: u64, w: u32, is_signed: bool) -> i64 {
+    if w == 0 || w >= 64 {
+        return p as i64;
+    }
+    let mask = if w == 64 { u64::MAX } else { (1u64 << w) - 1 };
+    let pat = p & mask;
+    if is_signed && ((pat >> (w - 1)) & 1) == 1 {
+        (pat as i64).wrapping_sub(1i64 << w)
+    } else {
+        pat as i64
+    }
+}
+
+/// Evaluasi Div/Mod dua literal sized dengan semantik lebar bersama.
+/// `None` bila ada operan unsized/non-literal (pemanggil pakai fallback).
+fn sized_divmod(
+    lhs: &Expr,
+    rhs: &Expr,
+    is_div: bool,
+) -> Option<Result<i64, String>> {
+    let (lp, lw, ls) = sized_pattern(lhs)?;
+    let (rp, rw, rs) = sized_pattern(rhs)?;
+    let w = lw.max(rw);
+    let x = interpret_pattern(lp, w, ls);
+    let y = interpret_pattern(rp, w, rs);
+    if y == 0 {
+        return Some(Err("division by zero in constant expression".to_string()));
+    }
+    if x == i64::MIN && y == -1 {
+        return Some(Ok(0));
+    }
+    Some(Ok(if is_div {
+        x.wrapping_div(y)
+    } else {
+        x.wrapping_rem(y)
+    }))
+}
+
 pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
@@ -100,6 +180,18 @@ fn const_cmp(
 pub fn sized_width(e: &Expr) -> Option<u64> {
     match e {
         Expr::Paren(inner) => sized_width(inner),
+        // Replikasi `{N{e}}` → N × lebar self-determined e (IEEE 1800
+        // §11.4.12). Tanpa ini concat menghitung lebar elemen replikasi
+        // dari bit-length NILAINYA (`{3{3'b000}}` dianggap 1 bit!) sehingga
+        // lebar concat salah ({3'b110, {3{3'b000}}} jadi 4 bit, bukan 12 —
+        // ditemukan fuzzer seed=2495169615340, konfirmasi Icarus).
+        Expr::Replicate { count, expr } => {
+            let n = match count.as_ref() {
+                Expr::Value(Value::Decimal(n)) if *n > 0 => *n as u64,
+                _ => return None,
+            };
+            Some(n.saturating_mul(sized_width(expr)?))
+        }
         Expr::Value(Value::Binary { bits, width, .. }) => {
             Some(width.map(|w| w as u64).unwrap_or(bits.len() as u64))
         }
@@ -156,9 +248,21 @@ pub fn const_eval_with_params(
 ) -> Result<i64, String> {
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
-        Expr::Value(Value::Binary { bits, .. }) => parse_literal(bits, 2),
-        Expr::Value(Value::Hex { bits, .. }) => parse_literal(bits, 16),
-        Expr::Value(Value::Octal { bits, .. }) => parse_literal(bits, 8),
+        Expr::Value(Value::Binary {
+            bits,
+            width,
+            is_signed,
+        }) => parse_sized_literal(bits, 2, *width, *is_signed),
+        Expr::Value(Value::Hex {
+            bits,
+            width,
+            is_signed,
+        }) => parse_sized_literal(bits, 16, *width, *is_signed),
+        Expr::Value(Value::Octal {
+            bits,
+            width,
+            is_signed,
+        }) => parse_sized_literal(bits, 8, *width, *is_signed),
         Expr::String(s) => Ok(string_to_i64(s)),
         Expr::Ident { name, .. } => {
             if let Some(&val) = param_vals.get(name) {
@@ -230,6 +334,10 @@ pub fn const_eval_with_params(
             lhs,
             rhs,
         } => {
+            // Literal sized: operasi pada lebar operan bersama (§11.8.1).
+            if let Some(res) = sized_divmod(lhs, rhs, true) {
+                return res;
+            }
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
             if r == 0 {
@@ -280,6 +388,10 @@ pub fn const_eval_with_params(
             lhs,
             rhs,
         } => {
+            // Literal sized: operasi pada lebar operan bersama (§11.8.1).
+            if let Some(res) = sized_divmod(lhs, rhs, false) {
+                return res;
+            }
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
             if r == 0 {
@@ -497,14 +609,29 @@ pub fn const_eval_with_params(
             expr: inner,
         } => {
             let v = const_eval_with_params(inner, param_vals)?;
-            Ok(if v != 0 && v != -1 { 0 } else { 1 })
+            // All-ones butuh LEBAR operand — `v == -1` saja tidak cukup:
+            // `&(1'b0)` = 0 dan `&(4'b1111)` = 1 (ditemukan fuzzer baru,
+            // konfirmasi Icarus). Gunakan lebar literal bila diketahui.
+            match sized_width(inner) {
+                Some(w) if w > 0 && w < 64 => {
+                    let all_ones = ((v as u64) & ((1u64 << w) - 1)) == (1u64 << w) - 1;
+                    Ok(all_ones as i64)
+                }
+                _ => Ok(if v == -1 { 1 } else { 0 }),
+            }
         }
         Expr::UnaryOp {
             op: UnaryOp::ReductionNand,
             expr: inner,
         } => {
             let v = const_eval_with_params(inner, param_vals)?;
-            Ok(if v != 0 && v != -1 { 1 } else { 0 })
+            match sized_width(inner) {
+                Some(w) if w > 0 && w < 64 => {
+                    let all_ones = ((v as u64) & ((1u64 << w) - 1)) == (1u64 << w) - 1;
+                    Ok((!all_ones) as i64)
+                }
+                _ => Ok(if v == -1 { 0 } else { 1 }),
+            }
         }
         Expr::UnaryOp {
             op: UnaryOp::ReductionOr,
@@ -549,27 +676,41 @@ pub fn const_eval_with_params(
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
         Expr::Cast { expr: inner, .. } => const_eval_with_params(inner, param_vals),
         Expr::CastWidth { expr: inner, .. } => const_eval_with_params(inner, param_vals),
-        // Replikasi `{N{expr}}` di constant context: pola 1-bit 1 → mask N
-        // ones; pola 0 → 0. Pola lain di-approximate (ulang bit-pattern).
+        // Replikasi `{N{expr}}` di constant context: pola direplikasi pada
+        // LEBAR SELF-DETERMINED operand (`sized_width`) — DULU lebar pola =
+        // COUNT (`63.min(n)`) sehingga `{2{63'h…}}` ter-fold jadi nilai
+        // sampah 4-bit dan `a[0] << ({2{…}} << …)` salah cabang (ditemukan
+        // fuzzer seed=674226683294, konfirmasi Icarus). Total > 63 bit →
+        // Err agar elaborator membangun IR Replicate runtime.
         Expr::Replicate { count, expr } => {
             let n = const_eval_with_params(count, param_vals)?;
             let v = const_eval_with_params(expr, param_vals)?;
-            let n = n.max(0).min(63) as u32;
-            if v == 0 {
-                Ok(0)
-            } else if v == 1 {
-                Ok((1u64.wrapping_shl(n)).wrapping_sub(1) as i64)
-            } else if n == 0 {
-                Ok(0)
-            } else {
-                let mut acc: u64 = 0;
-                let w = 63.min(n) as u32;
-                let pattern = (v as u64) & ((1u64 << w).wrapping_sub(1));
-                for _ in 0..n {
-                    acc = (acc << w) | pattern;
-                }
-                Ok(acc as i64)
+            let n = n.max(0) as u64;
+            if n == 0 {
+                return Ok(0);
             }
+            let w = match sized_width(expr) {
+                Some(w) if w > 0 => w,
+                _ => {
+                    // Lebar pola tak diketahui: hanya pola 1-bit (0/1) yang
+                    // aman di-approximate.
+                    return match v {
+                        0 => Ok(0),
+                        1 => Ok((1u64 << n.min(63)).wrapping_sub(1) as i64),
+                        _ => Err("replication of unknown-width pattern".to_string()),
+                    };
+                }
+            };
+            let total = n.saturating_mul(w);
+            if total > 63 {
+                return Err("replication wider than 63 bits is not constant-foldable".to_string());
+            }
+            let pat = (v as u64) & ((1u64 << w) - 1);
+            let mut acc: u64 = 0;
+            for _ in 0..n {
+                acc = (acc << w) | pat;
+            }
+            Ok(acc as i64)
         }
         // Struct literal utuh tidak bisa di-const-eval sebagai skalar tanpa
         // layout typedef. Nilai 0 (perilaku lama — pola bernama sebelumnya

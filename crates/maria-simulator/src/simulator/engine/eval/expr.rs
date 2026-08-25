@@ -267,15 +267,24 @@ impl SimulationEngine {
                 let width = self.evaluate_expr(width_expr)?;
                 let base = base.to_u64() as usize;
                 let width = width.to_u64() as usize;
-                if width == 0 || base >= val.width {
+                if width == 0 {
                     return Ok(LogicVec::new(1));
                 }
-                let end = (base + width - 1).min(val.width - 1);
-                let bits = val.bits[base..=end].to_vec();
-                Ok(LogicVec {
-                    width: bits.len(),
-                    bits,
-                })
+                // LRM 1800 §11.5.1: bila SEBAGIAN mana pun dari indexed
+                // part-select berada di luar batas deklarasi, SELURUH hasil
+                // bernilai x (selebar yang diminta). Dulu: end di-clamp ke
+                // batas dan sisa bit jadi 0-extension diam-diam, plus kasus
+                // `base >= width` mengembalikan vektor 1-bit (lebar salah).
+                match base.checked_add(width - 1) {
+                    Some(end) if base < val.width && end < val.width => {
+                        let bits = val.bits[base..=end].to_vec();
+                        Ok(LogicVec {
+                            width: bits.len(),
+                            bits,
+                        })
+                    }
+                    _ => Ok(LogicVec::fill(LogicVal::X, width)),
+                }
             }
             IrExpr::ArrayIndex {
                 sig_id,
@@ -352,6 +361,25 @@ impl SimulationEngine {
             IrExpr::BinaryOp(op, lhs, rhs) => {
                 let lval = self.evaluate_expr(lhs)?;
                 let rval = self.evaluate_expr(rhs)?;
+                if std::env::var("MARIA_DBG_PS").is_ok() {
+                    fn tag(e: &IrExpr) -> &'static str {
+                        match e {
+                            IrExpr::Signed(_) => "Signed",
+                            IrExpr::Cast { .. } => "Cast",
+                            IrExpr::Const(_) => "Const",
+                            IrExpr::Signal(..) => "Signal",
+                            IrExpr::BinaryOp(..) => "BinOp",
+                            _ => "Other",
+                        }
+                    }
+                    eprintln!(
+                        "[DBG-BIN] op={:?} l={:?}({}b) r={:?}({}b) ls={} rs={} lnode={} rnode={}",
+                        op, lval.to_u64(), lval.width, rval.to_u64(), rval.width,
+                        is_signed_expr(lhs.as_ref(), &self.design.top.signals),
+                        is_signed_expr(rhs.as_ref(), &self.design.top.signals),
+                        tag(lhs.as_ref()), tag(rhs.as_ref())
+                    );
+                }
                 let lhs_is_real = matches!(lhs.as_ref(), IrExpr::Signal(id, _) if self.design.top.signals.get(*id).map(|s| s.is_real).unwrap_or(false));
                 let rhs_is_real = matches!(rhs.as_ref(), IrExpr::Signal(id, _) if self.design.top.signals.get(*id).map(|s| s.is_real).unwrap_or(false));
                 if lhs_is_real || rhs_is_real {
@@ -441,10 +469,21 @@ impl SimulationEngine {
             }
             IrExpr::Cond(cond, true_expr, false_expr) => {
                 let cval = self.evaluate_expr(cond)?;
+                let tv = self.evaluate_expr(true_expr)?;
+                let fv = self.evaluate_expr(false_expr)?;
+                // LRM §11.4.11: lebar hasil = max(lebar kedua cabang);
+                // cabang yang lebih sempit di-extend (zero utk unsigned).
+                // Tanpa ini reduksi/comparison atas ternary dgn cabang
+                // beda lebar salah (`&(c ? 33'd7 : {3{b[0]}})` dievaluasi
+                // atas 3-bit alih-alih 33-bit — ditemukan fuzzer baru,
+                // konfirmasi Icarus).
+                let w = tv.width.max(fv.width);
+                let tv = if tv.width < w { tv.resize(w) } else { tv };
+                let fv = if fv.width < w { fv.resize(w) } else { fv };
                 if cval.to_bool().unwrap_or(false) {
-                    self.evaluate_expr(true_expr)
+                    Ok(tv)
                 } else {
-                    self.evaluate_expr(false_expr)
+                    Ok(fv)
                 }
             }
             IrExpr::Signed(inner) => self.evaluate_expr(inner),

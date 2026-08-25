@@ -454,18 +454,38 @@ impl Parser {
                                 // Range tak bisa di-resolve saat parse (bound
                                 // pakai enum member / parameter, mis.
                                 // `[PmEnLastPos-1:0]`): simpan ukuran
-                                // `msb-lsb+1` sebagai size-expr agar elaborator
-                                // bisa menyelesaikannya jadi `array_range`.
+                                // `|msb-lsb|+1` sebagai size-expr agar
+                                // elaborator bisa menyelesaikannya jadi
+                                // `array_range`. WAJIB simetris — dulu hanya
+                                // `(msb-lsb)+1` yang salah untuk rentang
+                                // terbalik `[0:N-1]` (picorv32 `cpuregs`,
+                                // hasil negatif → sinyal diam-diam flat).
                                 let sz_expr = match (er.as_ref(), &r) {
-                                    (Some(er), None) => Some(Expr::BinaryOp {
-                                        op: BinaryOp::Add,
-                                        lhs: Box::new(Expr::BinaryOp {
+                                    (Some(er), None) => {
+                                        let span = |a: &Expr, b: &Expr| Expr::BinaryOp {
                                             op: BinaryOp::Sub,
-                                            lhs: Box::new(er.msb.clone()),
-                                            rhs: Box::new(er.lsb.clone()),
-                                        }),
-                                        rhs: Box::new(Expr::Value(Value::Decimal(1))),
-                                    }),
+                                            lhs: Box::new(a.clone()),
+                                            rhs: Box::new(b.clone()),
+                                        };
+                                        let plus_one = |e: Expr| Expr::BinaryOp {
+                                            op: BinaryOp::Add,
+                                            lhs: Box::new(e),
+                                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                                        };
+                                        Some(Expr::TernaryOp {
+                                            cond: Box::new(Expr::BinaryOp {
+                                                op: BinaryOp::Ge,
+                                                lhs: Box::new(er.msb.clone()),
+                                                rhs: Box::new(er.lsb.clone()),
+                                            }),
+                                            true_expr: Box::new(plus_one(span(
+                                                &er.msb, &er.lsb,
+                                            ))),
+                                            false_expr: Box::new(plus_one(span(
+                                                &er.lsb, &er.msb,
+                                            ))),
+                                        })
+                                    }
                                     _ => None,
                                 };
                                 (r, sz_expr)

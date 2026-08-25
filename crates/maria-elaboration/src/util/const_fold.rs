@@ -48,6 +48,34 @@ pub fn try_fold_const_at_width(
     if matches!(expr, Expr::String(_)) {
         return None;
     }
+    // Fill literal (`'0`, `'1`, `'x`, `'z`) context-determined: nilai i64
+    // (`FillLit => 0`) kehilangan semantik fill — `'1` harus jadi all-ones
+    // selebar LHS di runtime, bukan 0.
+    if matches!(expr, Expr::FillLit(_)) {
+        return None;
+    }
+    // Literal yang memuat digit X/Z tak terrepresentasi di i64
+    // (`parse_literal` mengganti x/z → 0) — fold di sini menghilangkan X/Z
+    // (mis. `b = 4'b10xz` diam-diam jadi 4'b1000). Biarkan jalur
+    // `value_to_logicvec` yang memetakan digit X/Z dengan benar.
+    if contains_xz_literal(expr) {
+        return None;
+    }
+    // System function ($bits/$size/$clog2/…) BUKAN konstanta nilai-argumen:
+    // `const_eval_with_params($bits(X)` mengembalikan NILAI X (mis. 220),
+    // bukan jumlah bit — memakai nilai itu sebagai hasil fold merusak semantik
+    // (regresi `$bits(COEFFS)` = 220 padahal 128). Biarkan arm SysFunc di
+    // elaborate_expr yang menangani dengan benar.
+    if contains_sysfunc(expr) {
+        return None;
+    }
+    // Replikasi `{N{e}}`: konversi i64 kehilangan LEBAR POLA operan
+    // (approximation `63.min(n)` salah utk pola multi-bit — ditemukan fuzzer:
+    // `{7{16'hca3b}}` ter-fold jadi sampah). Fold hanya aman via
+    // IrExpr::Replicate yang dirender elaborate_expr dan dievaluasi engine.
+    if matches!(expr, Expr::Replicate { .. }) {
+        return None;
+    }
     // Ekspresi yang memuat `~x` / unary `-x` TIDAK boleh di-fold pada jalur
     // ini: inversi/negasi context-determined dievaluasi const_eval pada
     // lebar ≥32 lalu dibandingkan/dipotong di sini → nilai salah untuk
@@ -58,6 +86,65 @@ pub fn try_fold_const_at_width(
     }
     let masked = (val as u64) & if ctx >= 64 { u64::MAX } else { (1u64 << ctx) - 1 };
     Some(IrExpr::Const(LogicVec::from_u64(masked, ctx)))
+}
+
+/// Deteksi pemanggilan system function (`$bits`, `$size`, …) di subtree —
+/// nilai konstanta i64 tidak merepresentasikan hasilnya.
+fn contains_sysfunc(e: &Expr) -> bool {
+    match e {
+        Expr::FuncCall { name, args, .. } if name.starts_with("$") => true,
+        Expr::FuncCall { args, .. } => args.iter().any(contains_sysfunc),
+        Expr::Paren(inner) => contains_sysfunc(inner),
+        Expr::UnaryOp { expr: inner, .. } => contains_sysfunc(inner),
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            contains_sysfunc(lhs) || contains_sysfunc(rhs)
+        }
+        Expr::Concat(elems) => elems.iter().any(contains_sysfunc),
+        Expr::Replicate {
+            count,
+            expr: inner,
+        } => contains_sysfunc(count) || contains_sysfunc(inner),
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            contains_sysfunc(cond)
+                || contains_sysfunc(true_expr)
+                || contains_sysfunc(false_expr)
+        }
+        _ => false,
+    }
+}
+
+/// Deteksi literal based (Binary/Hex/Octal) yang memuat digit `x`/`z` —
+/// nilainya tidak bisa direpresentasikan sebagai i64.
+fn contains_xz_literal(e: &Expr) -> bool {
+    let lit_has_xz = |bits: &str| bits.chars().any(|c| matches!(c, 'x' | 'X' | 'z' | 'Z' | '?'));
+    match e {
+        Expr::Value(Value::Binary { bits, .. }) | Expr::Value(Value::Octal { bits, .. }) => {
+            lit_has_xz(bits)
+        }
+        Expr::Value(Value::Hex { bits, .. }) => lit_has_xz(bits),
+        Expr::FillLit(_) => true,
+        Expr::Paren(inner) => contains_xz_literal(inner),
+        Expr::UnaryOp { expr: inner, .. } => contains_xz_literal(inner),
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            contains_xz_literal(lhs) || contains_xz_literal(rhs)
+        }
+        Expr::Concat(elems) => elems.iter().any(contains_xz_literal),
+        Expr::Replicate { expr: inner, .. } => contains_xz_literal(inner),
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            contains_xz_literal(cond)
+                || contains_xz_literal(true_expr)
+                || contains_xz_literal(false_expr)
+        }
+        _ => false,
+    }
 }
 
 /// Deteksi subtree `~x` / unary `-x` (context-determined, sensitif lebar).
@@ -190,6 +277,13 @@ pub fn try_fold_const(
     if contains_ctx_sensitive_unary(expr) {
         return Ok(None);
     }
+    // Replikasi `{N{e}}`: konversi i64 kehilangan LEBAR POLA operan
+    // (approximation `63.min(n)` di const_eval_with_params salah utk pola
+    // multi-bit). Biarkan IrExpr::Replicate — engine mereplikasi bit-pattern
+    // asli dengan benar.
+    if matches!(expr, Expr::Replicate { .. }) {
+        return Ok(None);
+    }
     // Jangan fold relational comparison (Lt/Le/Gt/Ge) untuk ekspresi unsigned
     // karena const_eval_with_params memakai i64 signed arithmetic yang salah
     // untuk unsigned semantics (mis. 187 < -111 sebagai i64 = false, tapi
@@ -310,7 +404,32 @@ pub fn const_expr_is_signed(expr: &Expr) -> bool {
                 _ => const_expr_is_signed(inner),
             }
         }
-        Expr::BinaryOp { lhs, rhs, .. } => const_expr_is_signed(lhs) && const_expr_is_signed(rhs),
+        Expr::BinaryOp { op, lhs, rhs } => {
+            // LRM §11.8.2 Tabel 11-21: hasil perbandingan & logical SELALU
+            // unsigned (1-bit), apa pun signedness operandnya. Tanpa ini
+            // fold `(4'sd5 < 4'sd7)` menghasilkan `Signed(Const(1))` —
+            // engine menandai seluruh sub-tree sebagai signed dan
+            // perbandingan induk jalan bertanda padahal mixed-unsigned
+            // (ditemukan fuzzer signed_fuzz seed=18/24/84/111).
+            if matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::Neq
+                    | BinaryOp::CaseEq
+                    | BinaryOp::CaseNeq
+                    | BinaryOp::EqWild
+                    | BinaryOp::NeqWild
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+                    | BinaryOp::LogicalAnd
+                    | BinaryOp::LogicalOr
+            ) {
+                return false;
+            }
+            const_expr_is_signed(lhs) && const_expr_is_signed(rhs)
+        }
         Expr::TernaryOp {
             true_expr,
             false_expr,

@@ -159,6 +159,55 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
     }
 }
 
+/// Signedness ekspresi IR (LRM §11.8.2 Tabel 11-21) — cermin
+/// `maria_simulator::simulator::util::is_signed_expr` untuk dipakai saat
+/// propagasi konteks lebar di elaborator:
+/// - perbandingan & logical → SELALU unsigned;
+/// - shift → mengikuti operan kiri saja;
+/// - operator lain → signed bila KEDUA operan signed.
+pub(crate) fn expr_ir_is_signed(e: &IrExpr, signals: &[SignalInfo]) -> bool {
+    match e {
+        IrExpr::Signed(_) => true,
+        IrExpr::Signal(id, _) | IrExpr::BitSelect(id, _) | IrExpr::RangeSelect(id, ..) => {
+            signals.get(*id).map(|s| s.is_signed).unwrap_or(false)
+        }
+        IrExpr::ArrayIndex { sig_id, .. } => {
+            signals.get(*sig_id).map(|s| s.is_signed).unwrap_or(false)
+        }
+        IrExpr::BinaryOp(op, l, r) => {
+            if matches!(
+                op,
+                BinaryIrOp::Eq
+                    | BinaryIrOp::Neq
+                    | BinaryIrOp::CaseEq
+                    | BinaryIrOp::CaseNeq
+                    | BinaryIrOp::EqWild
+                    | BinaryIrOp::NeqWild
+                    | BinaryIrOp::Lt
+                    | BinaryIrOp::Le
+                    | BinaryIrOp::Gt
+                    | BinaryIrOp::Ge
+                    | BinaryIrOp::LogicalAnd
+                    | BinaryIrOp::LogicalOr
+            ) {
+                return false;
+            }
+            if matches!(
+                op,
+                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr
+            ) {
+                return expr_ir_is_signed(l, signals);
+            }
+            expr_ir_is_signed(l, signals) && expr_ir_is_signed(r, signals)
+        }
+        IrExpr::UnaryOp(_, inner) => expr_ir_is_signed(inner, signals),
+        IrExpr::Cond(_, t, f) => {
+            expr_ir_is_signed(t, signals) || expr_ir_is_signed(f, signals)
+        }
+        _ => false,
+    }
+}
+
 /// Propagasi lebar konteks (LRM §11.8.1 "context-determined") ke dalam tree
 /// IR RHS assignment. Engine evaluasi bottom-up tanpa info target; operand
 /// dari operator context-determined (unary ±/~, aritmetika, bitwise, dan
@@ -259,7 +308,7 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
                     let _ = propagate_context_width(a, ctx.max(wb1), signals);
                     wrap_cast(e, ctx, signals)
                 }
-                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr => {
+                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl => {
                     // RHS shift self-determined; LHS context-determined —
                     // extend LHS sebelum shift agar hasil selebar konteks.
                     let _wb = propagate_context_width(b, wb0, signals);
@@ -271,14 +320,53 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
                         ctx.max(wb0)
                     }
                 }
+                BinaryIrOp::Sshr => {
+                    // >>> ARITHMETIC bila lhs signed (IEEE 1800 §11.4.10).
+                    // lhs SIGNED TIDAK boleh di-cast: wrap_cast zero-extend
+                    // merusak sign bit (`logic signed [7:0] s = -128;
+                    // rs = s >>> 2` salah jadi 0x20 padahal 0xE0) dan
+                    // is_signed_expr(Cast) = false memaksa jalur logical.
+                    // Runtime menangani sign-fill ke lebar konteks
+                    // (evaluate_expr_ctx + eval_sshr_signed pada lebar asli
+                    // lhs). lhs UNSIGNED → >>> identik logis dan lhs tetap
+                    // context-determined (§11.8.1): propagasi konteks +
+                    // wrap_cast seperti Shl/Shr, kalau tidak sub-ekspresi
+                    // `-(cmp)` / `~x` dihitung pada lebar self-determined
+                    // sempit lalu hasilnya salah (ditemukan fuzzer
+                    // signed_fuzz seed=125; emas + Icarus: -(1) selebar
+                    // konteks = all-ones).
+                    let _wb = propagate_context_width(b, wb0, signals);
+                    if expr_ir_is_signed(a, signals) {
+                        wa0
+                    } else {
+                        let wa1 = propagate_context_width(a, ctx.max(wb0), signals);
+                        if wa1 >= ctx.max(wb0) {
+                            wa1
+                        } else {
+                            wrap_cast(a, ctx.max(wb0), signals);
+                            ctx.max(wb0)
+                        }
+                    }
+                }
                 _ => {
                     // Aritmetika/bitwise: kedua operand context-determined,
-                    // hasil = max keduanya (dan keduanya extend ke max).
+                    // hasil = max(kedua operand, KONTEKS) — LRM §11.8.1.
                     let wa1 = propagate_context_width(a, ctx.max(wb0), signals);
                     let wb1 = propagate_context_width(b, ctx.max(wa1), signals);
-                    let w = wa1.max(wb1);
-                    let _ = propagate_context_width(a, w, signals);
-                    let _ = propagate_context_width(b, w, signals);
+                    let w = wa1.max(wb1).max(ctx);
+                    // Operand yang tetap lebih sempit dari lebar operasi
+                    // WAJIB dibungkus Cast SEBELUM operasi — propagate saja
+                    // tidak cukup untuk operand Signal/BitSelect (arm-nya
+                    // tidak pernah membungkus cast), sehingga op bitwise
+                    // jalan pada lebar sempit lalu hasilnya di-extend
+                    // terlambat (`b ^~ b[8]` dgn b 16-bit, konteks 32 →
+                    // salah; divalidasi Icarus, guided_fuzz seed=850564).
+                    if wa1 < w {
+                        wrap_cast(a, w, signals);
+                    }
+                    if wb1 < w {
+                        wrap_cast(b, w, signals);
+                    }
                     w
                 }
             }
@@ -288,7 +376,73 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
             let wf = propagate_context_width(fa, ctx, signals);
             wt.max(wf)
         }
+        IrExpr::Inside { expr, list } => {
+            // LRM §11.4.13 + §11.8.1: lhs dan tiap item `inside`
+            // context-determined — operan saling di-extend ke max(konteks,
+            // lebar lhs, lebar item terbesar). Tanpa ini `~(b[15]) inside
+            // {a[2]}` dievaluasi 1-bit self-determined (salah; divalidasi
+            // differential vs Icarus, metamorphic fuzz seed=300922).
+            let mut wm = propagate_context_width(expr, ctx.max(1), signals);
+            for item in list.iter_mut() {
+                let wi = propagate_context_width(item, ctx.max(wm), signals);
+                wm = wm.max(wi);
+            }
+            let _ = propagate_context_width(expr, ctx.max(wm), signals);
+            // Hasil inside 1-bit; pembungkusan ke konteks tugas parent.
+            wrap_cast(e, ctx, signals)
+        }
+        IrExpr::Replicate(_count, inner) => {
+            // Replikasi SELF-DETERMINED (LRM §11.8.1) — lebar konteks luar
+            // TIDAK masuk. Tapi tetap harus DESCEND ke body dengan konteks
+            // lebar body sendiri: op context-determined bersarang (perbandingan,
+            // unary ±/~) saling di-size antar operan di dalam body. Tanpa
+            // descend, `~x > y` di dalam `{N{...}}` dievaluasi pada lebar
+            // sempit `x` (ditemukan guided_fuzz seed=17861824; emas +
+            // Icarus: operan comparison di-extend ke lebar operan terlebar).
+            let wi0 = expr_approx_width(inner, signals).max(1);
+            let _wi = propagate_context_width(inner, wi0, signals);
+            expr_approx_width(e, signals)
+        }
+        IrExpr::Concat(items) => {
+            // Concat juga self-determined, tapi elemen yang berisi op
+            // context-determined tetap saling di-size internal (sama dgn
+            // Replicate — descend dengan lebar elemen terlebar).
+            let mut wm = ctx;
+            for it in items.iter() {
+                wm = wm.max(expr_approx_width(it, signals));
+            }
+            for it in items.iter_mut() {
+                let _ = propagate_context_width(it, wm, signals);
+            }
+            expr_approx_width(e, signals)
+        }
         _ => expr_approx_width(e, signals),
+    }
+}
+
+/// LRM §12.5: ekspresi `case` dan SELURUH label di-size mutual ke lebar
+/// terlebar SEBELUM evaluasi — op context-determined bersarang pada
+/// selector (mis. `~(^(...))`) mengubah NILAI berdasarkan lebar akhir.
+/// Runtime memang melakukan zero-extension saat perbandingan, tapi itu
+/// terlambat: extension pasca-evaluasi tidak mengubah nilai op yang sudah
+/// dihitung pada lebar sempit (`~0` 1-bit = 1, padahal `~0` selebar item =
+/// all-ones). Ditemukan fuzz case (seed=139372796, divalidasi Icarus).
+pub(crate) fn apply_case_context_width(
+    ir_expr: &mut IrExpr,
+    items: &mut [IrCaseItem],
+    signals: &[SignalInfo],
+) {
+    let mut wm = expr_approx_width(ir_expr, signals);
+    for item in items.iter() {
+        for l in &item.labels {
+            wm = wm.max(expr_approx_width(l, signals));
+        }
+    }
+    propagate_context_width(ir_expr, wm, signals);
+    for item in items.iter_mut() {
+        for l in item.labels.iter_mut() {
+            let _ = propagate_context_width(l, wm, signals);
+        }
     }
 }
 
@@ -379,44 +533,25 @@ impl Elaborator {
         };
         let rhs_w = expr_approx_width(rhs, signals);
         if lhs_w != rhs_w && rhs_w > 0 {
-            // Jangan warning bila RHS adalah konstanta hasil const-fold yang
-            // nilainya muat di lebar LHS (mis. `result = COEFFS[2]` di mana
-            // COEFFS[2] = 3 dalam reg [7:0]). Konstanta fold default 32-bit
-            // sehingga tanpa cek nilai akan memicu false-positive.
-            // Konstanta NEGATIF di-fold sebagai `Signed(Const)` (ROUND 36) —
-            // unwrap lapisan Signed agar suppression nilai tetap bekerja.
-            let const_lv = match rhs {
-                IrExpr::Const(lv) => Some(lv),
-                IrExpr::Signed(inner) => match inner.as_ref() {
-                    IrExpr::Const(lv) => Some(lv),
-                    _ => None,
-                },
-                _ => None,
-            };
-            if let Some(lv) = const_lv {
-                let cw = lv.width.min(64);
-                let cw_mask = if cw >= 64 { u64::MAX } else { (1u64 << cw) - 1 };
-                let raw = lv.to_u64() & cw_mask;
-                let max_val = if lhs_w >= 64 {
-                    u64::MAX
+            // Jangan warning bila RHS konstanta yang nilainya muat di lebar
+            // LHS (mis. `result = COEFFS[2]` di mana COEFFS[2] = 3 dalam
+            // reg [7:0]; atau `reg signed [7:0] a; a = -1;` — `-1` berlebar
+            // 32 sebagai ekspresi tapi nilainya muat). Nilai diekstrak dari
+            // Const langsung maupun ekspresi konstanta sederhana
+            // (`-1` = UnaryOp(Minus, Const), `-x*2+1`, dsb.) — konstanta
+            // negatif hasil fold ROUND 36 dibungkus Signed.
+            if let Some(v) = Self::ir_const_value(rhs) {
+                let fits = if lhs_sig.is_signed && lhs_w > 0 && lhs_w < 64 {
+                    let min = -(1i64 << (lhs_w - 1));
+                    let max = (1i64 << (lhs_w - 1)) - 1;
+                    v >= min && v <= max
+                } else if lhs_w < 64 {
+                    v >= 0 && (v as u64) <= (1u64 << lhs_w) - 1
                 } else {
-                    (1u64 << lhs_w) - 1
+                    true
                 };
-                if raw <= max_val {
+                if fits {
                     return;
-                }
-                // Konstanta negatif (two's complement): nilai low bits bila
-                // di-sign-extend kembali menghasilkan nilai asli yang sama
-                // (mis. -1 = 0xFFFFFFFF muat di reg signed [7:0]).
-                if lhs_sig.is_signed && lhs_w > 0 && lhs_w < 64 {
-                    let low = raw & max_val;
-                    let sign_bit = 1u64 << (lhs_w - 1);
-                    if low & sign_bit != 0 {
-                        let sign_ext = (low | !max_val) & cw_mask;
-                        if sign_ext == raw {
-                            return;
-                        }
-                    }
                 }
             }
             self.elab_warn_at(
@@ -430,6 +565,48 @@ impl Elaborator {
             );
         }
     }
+
+/// Ekstrak nilai konstanta dari IrExpr sederhana: `Const`/`Signed(Const)`
+/// langsung, atau operasi unary/binary aritmetika di atas konstanta
+/// (`-1`, `~5`, `(2*3-1)`, …). `None` bila ada sinyal/X/Z/op tak didukung.
+fn ir_const_value(e: &IrExpr) -> Option<i64> {
+    match e {
+        IrExpr::Const(lv) if lv.width <= 64 => {
+            let has_xz = lv
+                .bits
+                .iter()
+                .any(|b| matches!(b, maria_core::logic::LogicVal::X | maria_core::logic::LogicVal::Z));
+            if has_xz {
+                None
+            } else {
+                Some(lv.to_i64())
+            }
+        }
+        // Konstanta negatif hasil fold ROUND 36 dibungkus Signed.
+        IrExpr::Signed(inner) => Self::ir_const_value(inner),
+        IrExpr::UnaryOp(op, inner) => match op {
+            UnaryIrOp::Minus => Self::ir_const_value(inner)?.checked_neg(),
+            UnaryIrOp::BitNot => {
+                let v = Self::ir_const_value(inner)?;
+                Some(!v)
+            }
+            UnaryIrOp::Plus => Self::ir_const_value(inner),
+            _ => None,
+        },
+        IrExpr::BinaryOp(op, a, b) => {
+            let (l, r) = (Self::ir_const_value(a)?, Self::ir_const_value(b)?);
+            match op {
+                BinaryIrOp::Add => l.checked_add(r),
+                BinaryIrOp::Sub => l.checked_sub(r),
+                BinaryIrOp::Mul => l.checked_mul(r),
+                BinaryIrOp::Div if r != 0 => l.checked_div(r),
+                BinaryIrOp::Mod if r != 0 => l.checked_rem(r),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
 
     pub(crate) fn elaborate_stmt_block(
         &self,
@@ -457,7 +634,7 @@ impl Elaborator {
         known_modules: &[Symbol],
         signals: &[SignalInfo],
     ) -> Result<IrStmt, SimError> {
-        let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+        let mut ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
         let mut ir_items = Vec::new();
         for item in items {
             let mut labels = Vec::new();
@@ -481,6 +658,7 @@ impl Elaborator {
             Some(d) => vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?],
             None => vec![],
         };
+        apply_case_context_width(&mut ir_expr, &mut ir_items, signals);
         Ok(IrStmt::Case {
             case_type,
             expr: ir_expr,
@@ -714,7 +892,7 @@ impl Elaborator {
                 let case_const = const_eval_with_params(expr, &self.param_vals);
                 if case_const.is_err() || !all_labels_const {
                     // ── Evaluasi RUNTIME: case expr / label memakai sinyal ──
-                    let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                    let mut ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                     let mut ir_items = Vec::new();
                     for item in items {
                         let mut labels = Vec::new();
@@ -743,6 +921,7 @@ impl Elaborator {
                         }
                         None => vec![],
                     };
+                    apply_case_context_width(&mut ir_expr, &mut ir_items, signals);
                     Ok(IrStmt::Case {
                         case_type: CaseType::Normal,
                         expr: ir_expr,
@@ -1153,7 +1332,7 @@ impl Elaborator {
                 items,
                 default,
             } => {
-                let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                let mut ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                 let mut ir_items = Vec::new();
                 for item in items {
                     let mut labels = Vec::new();
@@ -1177,6 +1356,7 @@ impl Elaborator {
                     Some(d) => vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?],
                     None => vec![],
                 };
+                apply_case_context_width(&mut ir_expr, &mut ir_items, signals);
                 Ok(IrStmt::Case {
                     case_type: CaseType::CaseX,
                     expr: ir_expr,
@@ -1189,7 +1369,7 @@ impl Elaborator {
                 items,
                 default,
             } => {
-                let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                let mut ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                 let mut ir_items = Vec::new();
                 for item in items {
                     let mut labels = Vec::new();
@@ -1213,6 +1393,7 @@ impl Elaborator {
                     Some(d) => vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?],
                     None => vec![],
                 };
+                apply_case_context_width(&mut ir_expr, &mut ir_items, signals);
                 Ok(IrStmt::Case {
                     case_type: CaseType::CaseZ,
                     expr: ir_expr,
@@ -1439,7 +1620,7 @@ impl Elaborator {
                 items,
                 default,
             } => {
-                let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                let mut ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                 let mut ir_items = Vec::new();
                 for item in items {
                     let mut labels = Vec::new();
@@ -1463,6 +1644,7 @@ impl Elaborator {
                     Some(d) => vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?],
                     None => vec![],
                 };
+                apply_case_context_width(&mut ir_expr, &mut ir_items, signals);
                 Ok(IrStmt::Case {
                     case_type: CaseType::Normal,
                     expr: ir_expr,
@@ -1588,7 +1770,7 @@ impl Elaborator {
                         }
                     }
                 } else {
-                    let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                    let mut ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                     let mut ir_items = Vec::new();
                     for item in items {
                         let mut labels = Vec::new();
@@ -1627,6 +1809,7 @@ impl Elaborator {
                         }
                         None => vec![],
                     };
+                    apply_case_context_width(&mut ir_expr, &mut ir_items, signals);
                     Ok(IrStmt::Case {
                         case_type: CaseType::Inside,
                         expr: ir_expr,

@@ -80,7 +80,54 @@ pub use verify::{now_ns, CheckResult, VerifyCheckKind, VerifyResult};
 /// bump manual ini cache MICD akan me-restore hasil LAMA dari binary BARU
 /// (stale IR bug — ROUND 36). Kedua sisi enforcement hidup: schema check
 /// (bawah) dan `CacheManifest::valid()` membandingkan `compiler_version`.
+///
+/// **Fingerprint otomatis** (`binary_fingerprint`): sejak ditemukan stale
+/// cache lupa bump `-p<N>` (elaborator `inside` context-width), revisi
+/// pipeline efektif kini juga menyertakan fingerprint binary yang berjalan
+/// (size + mtime `current_exe`) via [`pipeline_revision`] — rebuild cargo
+/// apa pun otomatis meng-invalidasi database lama tanpa bump manual. Bump
+/// `-p<N>` tetap berguna untuk memaksa invalidasi eksplisit saat semantik
+/// berubah tanpa rebuild (jarang).
 pub const COMPILER_VERSION: &str = concat!("Maria ", env!("CARGO_PKG_VERSION"), "-p2");
+
+/// Fingerprint identitas binary yang sedang berjalan: xxh64 atas ukuran +
+/// mtime (nanodetik) file executable. Binary yang sama → fingerprint sama
+/// (incremental lintas run tetap hidup); rebuild cargo apa pun yang me-relink
+/// binary → mtime berubah → fingerprint baru → seluruh state/objects/cache
+/// project dengan pid lama diabaikan (tidak pernah di-reuse antar binary).
+/// Gagal stat exe (eksotis) → 0 (fallback: hanya `COMPILER_VERSION`).
+pub fn binary_fingerprint() -> u64 {
+    use std::sync::OnceLock;
+    static FP: OnceLock<u64> = OnceLock::new();
+    *FP.get_or_init(|| {
+        use crate::cache::checksum::compute_checksum;
+        let Ok(exe) = std::env::current_exe() else {
+            return 0;
+        };
+        let Ok(meta) = std::fs::metadata(&exe) else {
+            return 0;
+        };
+        let mut h = Vec::with_capacity(24);
+        h.extend_from_slice(&meta.len().to_le_bytes());
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos() as u128)
+            .unwrap_or(0);
+        h.extend_from_slice(&mtime.to_le_bytes());
+        h.extend_from_slice(exe.to_string_lossy().as_bytes());
+        compute_checksum(&h)
+    })
+}
+
+/// Revisi pipeline **efektif** untuk validasi cache: `COMPILER_VERSION` +
+/// fingerprint binary ([`binary_fingerprint`]). Dipakai sebagai pembanding
+/// `compiler_version` di schema check dan `CacheManifest::valid()` — satu
+/// sumber kebenaran, bukan `COMPILER_VERSION` telanjang.
+pub fn pipeline_revision() -> String {
+    format!("{}-{:016x}", COMPILER_VERSION, binary_fingerprint())
+}
 
 /// Versi skema database (Kritik 3 db.md). Naikkan bila layout/format
 /// persistensi berubah (field struct, key store, semantik). Database lama
@@ -260,7 +307,7 @@ impl MicdDatabase {
         use crate::cache::checksum::{checksum_fold, compute_checksum};
         let mut h: Vec<u64> = Vec::with_capacity(sources.len() + incdirs.len() + defines.len() + 4);
         h.push(compute_checksum(root.to_string_lossy().as_bytes()));
-        h.push(compute_checksum(COMPILER_VERSION.as_bytes()));
+        h.push(compute_checksum(pipeline_revision().as_bytes()));
         h.push(compute_checksum(b"systemverilog-2012"));
         for s in sources {
             h.push(path_hash(s));
@@ -388,7 +435,7 @@ impl MicdDatabase {
             pid: pid.to_string(),
             registry: ProjectInfo::default(),
             flags_hash: 0,
-            compiler_version: COMPILER_VERSION.to_string(),
+            compiler_version: pipeline_revision(),
             created_ns: now_ns(),
             schema_version: 0,
             files: HashMap::new(),
@@ -438,13 +485,14 @@ impl MicdDatabase {
                 .get(KEY_SINGLETON)
                 .and_then(|b| bincode::deserialize::<MetadataManifest>(&b).ok())
             {
-                // compiler_version juga dibandingkan: versi pipeline berubah
-                // (PIPELINE_REV dinaikkan) → database lama dianggap tidak
-                // kompatibel → dibangun ulang. Sebelumnya hanya schema_version
-                // dicek; COMPILER_VERSION statis tak pernah berubah sehingga
+                // compiler_version juga dibandingkan: revisi pipeline efektif
+                // berubah (bump manual ATAU fingerprint binary baru — rebuild
+                // cargo apa pun) → database lama dianggap tidak kompatibel →
+                // dibangun ulang. Sebelumnya hanya schema_version dicek;
+                // COMPILER_VERSION statis tak pernah berubah sehingga
                 // elaborasi hasil binary LAMA bisa di-restore binary BARU.
                 if manifest.schema_version == SCHEMA_VERSION
-                    && manifest.compiler_version == COMPILER_VERSION
+                    && manifest.compiler_version == pipeline_revision()
                 {
                     schema_ok = true;
                     db.schema_version = manifest.schema_version;
@@ -1734,7 +1782,7 @@ mod tests {
             let manifest = MetadataManifest {
                 paths: vec![PathBuf::from("a.sv")],
                 flags_hash: 0,
-                compiler_version: COMPILER_VERSION.into(),
+                compiler_version: pipeline_revision(),
                 created_ns: 0,
                 schema_version: SCHEMA_VERSION,
             };

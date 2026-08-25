@@ -180,7 +180,41 @@ pub fn is_signed_expr(expr: &IrExpr, signals: &[SignalInfo]) -> bool {
         // operand signed). Literal desimal unsized (`5`) kini di-emit
         // elaborator sebagai IrExpr::Signed (LRM §6.8.1) agar `a < 0` /
         // `a / 2` tetap signed sedangkan `a < 8'hFF` unsigned.
-        IrExpr::BinaryOp(_, lhs, rhs) => {
+        IrExpr::BinaryOp(op, lhs, rhs) => {
+            // LRM §11.8.1 Tabel 11-21: hasil operator perbandingan & logical
+            // SELALU unsigned (1-bit), apa pun signedness operandnya. Tanpa
+            // pengecualian ini `(-a <= b) >>> x` menandai lhs shift sbg
+            // signed → 1'b1 di-sign-extend jadi all-ones (ditemukan fuzzer
+            // signed_fuzz seed=1/30; emas + Icarus: zero-extend).
+            if matches!(
+                op,
+                BinaryIrOp::Eq
+                    | BinaryIrOp::Neq
+                    | BinaryIrOp::CaseEq
+                    | BinaryIrOp::CaseNeq
+                    | BinaryIrOp::EqWild
+                    | BinaryIrOp::NeqWild
+                    | BinaryIrOp::Lt
+                    | BinaryIrOp::Le
+                    | BinaryIrOp::Gt
+                    | BinaryIrOp::Ge
+                    | BinaryIrOp::LogicalAnd
+                    | BinaryIrOp::LogicalOr
+            ) {
+                return false;
+            }
+            // LRM §11.8.2 Tabel 11-21: hasil SHIFT mengikuti signedness
+            // OPERAN KIRI saja (rhs self-determined, tidak berpengaruh).
+            // Dulu `l && r` — `signed_neg >> (unsigned_cmp)` salah jadi
+            // unsigned sehingga induk comparison jalan tanpa tanda
+            // (ditemukan fuzzer signed_fuzz seed=111; emas + Icarus:
+            // signed).
+            if matches!(
+                op,
+                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr
+            ) {
+                return is_signed_expr(lhs, signals);
+            }
             is_signed_expr(lhs, signals) && is_signed_expr(rhs, signals)
         }
         IrExpr::UnaryOp(op, inner) => {

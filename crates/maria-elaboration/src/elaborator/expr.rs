@@ -381,13 +381,15 @@ impl Elaborator {
                     } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
                         Ok(IrExpr::BitSelect(*sid, idx as usize))
                     } else {
-                        // Dynamic index on flat signal — treat as array index
+                        // Index DINAMIS pada sinyal flat → bit-select runtime,
+                        // BUKAN ArrayIndex (elem_width sinyal flat = lebar
+                        // penuh → ArrayIndex membaca selebar sinyal per index).
                         let index_expr = self.elaborate_expr(index, signal_map, signals)?;
-                        Ok(IrExpr::ArrayIndex {
-                            sig_id: *sid,
-                            index: Box::new(index_expr),
-                            elem_width: sig.elem_width,
-                        })
+                        Ok(IrExpr::ExprPartSelect(
+                            Box::new(IrExpr::Signal(*sid, sig.width)),
+                            Box::new(index_expr),
+                            Box::new(IrExpr::Const(LogicVec::from_u64(1, 32))),
+                        ))
                     }
                 } else if let IrExpr::RangeSelect(sid, outer_msb, outer_lsb) = &inner_expr {
                     // Bit-select bertingkat pada chunk packed multi-dimensi:
@@ -512,6 +514,7 @@ impl Elaborator {
             } => {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 if let IrExpr::Signal(sid, _) = &inner_expr {
+                    let sig_width = signals[*sid].width;
                     if let (Ok(base_c), Ok(width_c)) = (
                         const_eval_params(base, &self.param_vals),
                         const_eval_params(width, &self.param_vals),
@@ -519,9 +522,27 @@ impl Elaborator {
                         let base = base_c as usize;
                         let width = width_c as usize;
                         if width > 0 {
-                            Ok(IrExpr::RangeSelect(*sid, base + width - 1, base))
+                            // Guard OOB + anti-wrap: bila msb melebihi lebar
+                            // sinyal ATAU aritmetika membungkus, lowering ke
+                            // ExprPartSelect konstan agar evaluator menerapkan
+                            // §11.5.1 (SELURUH hasil x selebar permintaan).
+                            // Dulu RangeSelect langsung dengan indeks wrap →
+                            // nilai/lebar salah diam-diam.
+                            match base.checked_add(width - 1) {
+                                Some(msb) if msb < sig_width => {
+                                    Ok(IrExpr::RangeSelect(*sid, msb, base))
+                                }
+                                _ => Ok(IrExpr::ExprPartSelect(
+                                    Box::new(inner_expr),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(base_c as u64, 64))),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(
+                                        width_c as u64,
+                                        32,
+                                    ))),
+                                )),
+                            }
                         } else {
-                            Ok(IrExpr::RangeSelect(*sid, base, base))
+                            Ok(IrExpr::RangeSelect(*sid, base.min(sig_width), base))
                         }
                     } else {
                         let base_expr = self.elaborate_expr(base, signal_map, signals)?;
@@ -539,11 +560,19 @@ impl Elaborator {
                     let base = base_c as usize;
                     let width = width_c as usize;
                     if width > 0 {
-                        Ok(IrExpr::ExprRangeSelect(
-                            Box::new(inner_expr),
-                            base + width - 1,
-                            base,
-                        ))
+                        // Anti-wrap seperti cabang signal di atas.
+                        match base.checked_add(width - 1) {
+                            Some(msb) => Ok(IrExpr::ExprRangeSelect(
+                                Box::new(inner_expr),
+                                msb,
+                                base,
+                            )),
+                            None => Ok(IrExpr::ExprPartSelect(
+                                Box::new(inner_expr),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(base_c as u64, 64))),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(width_c as u64, 32))),
+                            )),
+                        }
                     } else {
                         Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), base, base))
                     }
@@ -564,7 +593,52 @@ impl Elaborator {
                 line,
                 col,
                 ..
-            } if name.starts_with("$") => match name.as_str() {
+            } if name.starts_with("$") => {
+                self.elaborate_sys_func_call(name, args, line, col, signal_map, signals)
+            }
+            _ => self.elaborate_expr_tail(expr, signal_map, signals),
+        }
+    }
+
+    /// Arm ekor `elaborate_expr` (FuncCall non-sistem, String, MethodCall,
+    /// MemberAccess, Inside, dst.). Dipisah dari `elaborate_expr` supaya
+    /// binggkai stack tiap fungsi tetap kecil: bingkai versi monolitik
+    /// ~163 KB pada build debug membuat rekursi ekspresi bersarang
+    /// melebihi stack thread 2 MB (stack overflow, metamorphic fuzz).
+    fn elaborate_expr_tail(
+        &self,
+        expr: &Expr,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<IrExpr, SimError> {
+        match expr {
+            Expr::FuncCall {
+                name,
+                args,
+                line,
+                col,
+                ..
+            } if name.starts_with("$") => {
+                self.elaborate_sys_func_call(name, args, line, col, signal_map, signals)
+            }
+            _ => self.elaborate_expr_rest(expr, signal_map, signals),
+        }
+    }
+
+    /// Elaborasi pemanggilan fungsi sistem (`$display`, `$clog2`, ...).
+    /// Dipisah agar bingkai stack tiap fungsi tetap kecil — bingkai versi
+    /// monolitik ~163 KB pada build debug membuat rekursi ekspresi bersarang
+    /// melebihi stack thread 2 MB (stack overflow, metamorphic fuzz).
+    fn elaborate_sys_func_call(
+        &self,
+        name: &Symbol,
+        args: &[Expr],
+        line: &usize,
+        col: &usize,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<IrExpr, SimError> {
+        match name.as_str() {
                 "$signed" => {
                     if args.len() != 1 {
                         return Err(self.elab_diag(
@@ -883,7 +957,19 @@ impl Elaborator {
                         col: *col,
                     })
                 }
-            },
+            }
+        }
+
+    /// Sisa arm ekor `elaborate_expr`: FuncCall non-sistem ("new", method /
+    /// user / DPI), String, MethodCall, MemberAccess, Null, Inside,
+    /// StreamingConcat, Dist, Cast, StructLit.
+    fn elaborate_expr_rest(
+        &self,
+        expr: &Expr,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<IrExpr, SimError> {
+        match expr {
             Expr::FuncCall { name, args, .. } if name == "new" => {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()

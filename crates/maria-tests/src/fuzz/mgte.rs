@@ -304,6 +304,7 @@ impl MGTE {
         new_input.a = rng.u64(..) & mask;
         new_input.b = rng.u64(..) & mask;
         new_input.expr = super::expr::gen_node(boundary, &mut rng, 0);
+        new_input.normalize();
         new_input
     }
 

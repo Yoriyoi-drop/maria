@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::super::verify::now_ns;
-use super::super::COMPILER_VERSION;
+use super::super::pipeline_revision;
 
 /// Versi skema lapisan `cache/`. Naikkan bila struktur persistensi kategori
 /// berubah (field payload, layout index). Store dengan versi berbeda dianggap
@@ -33,7 +33,7 @@ impl CacheManifest {
     pub fn fresh(config_hash: u64) -> Self {
         CacheManifest {
             schema_version: CACHE_SCHEMA_VERSION,
-            compiler_version: COMPILER_VERSION.to_string(),
+            compiler_version: pipeline_revision(),
             config_hash,
             created_ns: now_ns(),
             updated_ns: now_ns(),
@@ -43,11 +43,11 @@ impl CacheManifest {
     }
 
     /// Apakah skema kompatibel dengan versi terkini. compiler_version juga
-    /// dibandingkan: PIPELINE_REV dinaikkan (perilaku elaborator/parser/
-    /// simulator berubah) → seluruh kategori cache dibangun ulang, mencegah
-    /// restore hasil lama dari binary baru.
+    /// dibandingkan: revisi pipeline efektif berubah (bump manual ATAU
+    /// fingerprint binary baru — rebuild cargo apa pun) → seluruh kategori
+    /// cache dibangun ulang, mencegah restore hasil lama dari binary baru.
     pub fn valid(&self) -> bool {
-        self.schema_version == CACHE_SCHEMA_VERSION && self.compiler_version == COMPILER_VERSION
+        self.schema_version == CACHE_SCHEMA_VERSION && self.compiler_version == pipeline_revision()
     }
 }
 

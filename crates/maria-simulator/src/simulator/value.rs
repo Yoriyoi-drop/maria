@@ -358,36 +358,99 @@ pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> Log
             LogicVec::from_u64(if l >= r { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Div => {
-            let l = lhs_ext.to_i64();
-            let r = rhs_ext.to_i64();
+            let l = if max_width > 64 && max_width <= 128 {
+                to_i128_signed(&lhs_ext)
+            } else {
+                lhs_ext.to_i64() as i128
+            };
+            let r = if max_width > 64 && max_width <= 128 {
+                to_i128_signed(&rhs_ext)
+            } else {
+                rhs_ext.to_i64() as i128
+            };
             if r == 0 {
                 LogicVec {
                     bits: vec![LogicVal::X; max_width],
                     width: max_width,
                 }
             } else {
-                // i64 div truncates toward zero — sama dengan semantik SV
-                // (IEEE 1800 §11.4.3): -7/2 = -3, -7/-2 = 3. wrapping_ div
-                // menghindari panic i64::MIN / -1.
-                LogicVec::from_u64(l.wrapping_div(r) as u64, max_width)
+                // i128 div truncates toward zero (semantik SV §11.4.3).
+                let q = l.wrapping_div(r);
+                if max_width > 64 && max_width <= 128 {
+                    from_u128_wide(q as u128, max_width)
+                } else {
+                    LogicVec::from_u64(q as u64, max_width)
+                }
             }
         }
         BinaryIrOp::Mod => {
-            let l = lhs_ext.to_i64();
-            let r = rhs_ext.to_i64();
+            let l = if max_width > 64 && max_width <= 128 {
+                to_i128_signed(&lhs_ext)
+            } else {
+                lhs_ext.to_i64() as i128
+            };
+            let r = if max_width > 64 && max_width <= 128 {
+                to_i128_signed(&rhs_ext)
+            } else {
+                rhs_ext.to_i64() as i128
+            };
             if r == 0 {
                 LogicVec {
                     bits: vec![LogicVal::X; max_width],
                     width: max_width,
                 }
             } else {
-                // i64 rem truncates toward zero (tanda mengikuti dividen,
+                // i128 rem truncates toward zero (tanda mengikuti dividen,
                 // SV §11.4.3): -7 % 2 = -1.
-                LogicVec::from_u64(l.wrapping_rem(r) as u64, max_width)
+                let m = l.wrapping_rem(r);
+                if max_width > 64 && max_width <= 128 {
+                    from_u128_wide(m as u128, max_width)
+                } else {
+                    LogicVec::from_u64(m as u64, max_width)
+                }
             }
         }
         _ => eval_binary(op, lhs, rhs),
     }
+}
+
+/// Konversi LogicVec → u128 (hingga 128 bit; bit di atas width = 0).
+/// Dipakai jalur aritmetika lebar (>64 bit) — dulu `to_u64` memotong
+/// MSB sehingga `num % -(b)` (divisor 65-bit `2^64+1` → terbaca 1)
+/// salah total (ditemukan fuzzer seed=41920606, konfirmasi Icarus).
+fn to_u128_wide(lv: &LogicVec) -> u128 {
+    let mut v = lv.to_u64() as u128;
+    for i in 64..lv.width.min(128) {
+        if lv.bits.get(i).copied().unwrap_or(LogicVal::X) == LogicVal::One {
+            v |= 1u128 << i;
+        }
+    }
+    v
+}
+
+/// Konversi u128 → LogicVec selebar `width` (zero-extend / truncate).
+fn from_u128_wide(val: u128, width: usize) -> LogicVec {
+    let mut lv = LogicVec::new(width);
+    for i in 0..width.min(128) {
+        lv.bits[i] = if (val >> i) & 1 == 1 {
+            LogicVal::One
+        } else {
+            LogicVal::Zero
+        };
+    }
+    lv
+}
+
+/// Sign-extend LogicVec ke i128 (untuk Div/Mod signed >64-bit).
+fn to_i128_signed(lv: &LogicVec) -> i128 {
+    let v = to_u128_wide(lv);
+    if lv.width > 0 && lv.width < 128 {
+        let sign_bit = 1u128 << (lv.width - 1);
+        if v & sign_bit != 0 {
+            return (v | !((1u128 << lv.width) - 1)) as i128;
+        }
+    }
+    v as i128
 }
 
 pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
@@ -410,6 +473,17 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     bits: vec![LogicVal::X; max_width],
                     width: max_width,
                 }
+            } else if max_width > 64 && max_width <= 128 {
+                // Jalur lebar: u128 — to_u64 memotong MSB (bug fuzzer
+                // seed=41920606).
+                let l = to_u128_wide(&lhs_ext);
+                let r = to_u128_wide(&rhs_ext);
+                let result = match op {
+                    BinaryIrOp::Add => l.wrapping_add(r),
+                    BinaryIrOp::Sub => l.wrapping_sub(r),
+                    _ => unreachable!(),
+                };
+                from_u128_wide(result, max_width)
             } else {
                 let l = lhs_ext.to_u64();
                 let r = rhs_ext.to_u64();
@@ -435,6 +509,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     bits: vec![LogicVal::X; max_width],
                     width: max_width,
                 }
+            } else if max_width > 64 && max_width <= 128 {
+                let l = to_u128_wide(&lhs_ext);
+                let r = to_u128_wide(&rhs_ext);
+                from_u128_wide(l.wrapping_mul(r), max_width)
             } else {
                 LogicVec::from_u64(lhs_ext.to_u64().wrapping_mul(rhs_ext.to_u64()), max_width)
             }
@@ -452,6 +530,16 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 LogicVec {
                     bits: vec![LogicVal::X; max_width],
                     width: max_width,
+                }
+            } else if max_width > 64 && max_width <= 128 {
+                let l = to_u128_wide(&lhs_ext);
+                let r = to_u128_wide(&rhs_ext);
+                match l.checked_div(r) {
+                    Some(q) => from_u128_wide(q, max_width),
+                    None => LogicVec {
+                        bits: vec![LogicVal::X; max_width],
+                        width: max_width,
+                    },
                 }
             } else {
                 let l = lhs_ext.to_u64();
@@ -478,6 +566,17 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 LogicVec {
                     bits: vec![LogicVal::X; max_width],
                     width: max_width,
+                }
+            } else if max_width > 64 && max_width <= 128 {
+                let l = to_u128_wide(&lhs_ext);
+                let r = to_u128_wide(&rhs_ext);
+                if r == 0 {
+                    LogicVec {
+                        bits: vec![LogicVal::X; max_width],
+                        width: max_width,
+                    }
+                } else {
+                    from_u128_wide(l.wrapping_rem(r), max_width)
                 }
             } else {
                 let l = lhs_ext.to_u64();

@@ -272,13 +272,16 @@ impl HierarchyMutator {
 
         let expr = super::expr::gen_node(w, &mut rng, 0);
 
-        Some(GenInput {
+        let mut input = GenInput {
             w,
+            wb: w,
             a,
             b,
             expr,
             seed: self.rng.u64(..),
-        })
+        };
+        input.normalize();
+        Some(input)
     }
 }
 

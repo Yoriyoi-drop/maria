@@ -30,6 +30,9 @@ fn parallel_sim(workers: usize, seeds: &[u64]) -> Vec<Option<u64>> {
             let next = Arc::clone(&next);
             std::thread::Builder::new()
                 .name(format!("conc-diff-{}", w))
+                // Engine rekursif dalam — ekspresi fuzz berkedalaman 5
+                // overflow stack thread default; samakan dengan oracle.
+                .stack_size(256 * 1024 * 1024)
                 .spawn(move || loop {
                     let i = next.fetch_add(1, Ordering::SeqCst);
                     if i >= seeds.len() {
@@ -84,11 +87,9 @@ fn parallel_sim(workers: usize, seeds: &[u64]) -> Vec<Option<u64>> {
     out
 }
 
-#[test]
-fn concurrency_differential_1_vs_n_threads() {
-    // Baseline sekuensial.
+fn baseline_values() -> (Vec<u64>, Vec<Option<u64>>) {
     let seeds: Vec<u64> = (0..40).map(|i| i * 104_729 + 11).collect();
-    let baseline: Vec<Option<u64>> = seeds
+    let vals = seeds
         .iter()
         .map(|s| {
             let input = generate(*s);
@@ -97,6 +98,19 @@ fn concurrency_differential_1_vs_n_threads() {
                 .and_then(|sigs| sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()))
         })
         .collect();
+    (seeds, vals)
+}
+
+#[test]
+fn concurrency_differential_1_vs_n_threads() {
+    // Baseline sekuensial — dijalankan di thread stack besar (engine
+    // rekursif dalam; ekspresi fuzz berkedalaman 5 melebihi stack 2 MB).
+    let handle = std::thread::Builder::new()
+        .name("conc-diff-base".to_string())
+        .stack_size(256 * 1024 * 1024)
+        .spawn(baseline_values)
+        .expect("spawn baseline");
+    let (seeds, baseline): (Vec<u64>, Vec<Option<u64>>) = handle.join().expect("baseline panic");
 
     for workers in [2usize, 4, 8] {
         let par = parallel_sim(workers, &seeds);

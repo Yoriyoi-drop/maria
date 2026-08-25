@@ -12,10 +12,10 @@
 
 use super::Parser;
 use crate::lexer::*;
+use crate::util::dec_str_to_bits;
 use maria_ast::types::const_eval_simple;
 use maria_ast::*;
-use maria_core::error::SimError;
-use maria_core::intern::Symbol;
+use maria_core::error::SimError;use maria_core::intern::Symbol;
 
 impl Parser {
     pub(crate) fn is_type_token(&self) -> bool {
@@ -728,17 +728,13 @@ impl Parser {
                             width,
                             is_signed,
                         }),
-                        10 => {
-                            Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0)))
-                        }
+                        10 => decimal_value_expr(&value, width, is_signed),
                         16 => Expr::Value(Value::Hex {
                             bits: value.as_str().to_string(),
                             width,
                             is_signed,
                         }),
-                        _ => {
-                            Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0)))
-                        }
+                        _ => decimal_value_expr(&value, width, is_signed),
                     }
                 } else {
                     if let Ok(n) = value.as_str().parse::<i64>() {
@@ -777,11 +773,10 @@ impl Parser {
                         };
                         Expr::Value(Value::Decimal(scaled.unwrap_or(n)))
                     } else {
-                        Expr::Ident {
-                            name: value,
-                            line: num_line,
-                            col: num_col,
-                        }
+                        // Melebihi i64 (dan bukan time literal): tetap angka —
+                        // dulu jatuh ke Expr::Ident → implicit net diam-diam
+                        // (fuzzer partsel seed=28).
+                        decimal_value_expr(&value, None, false)
                     }
                 };
                 Ok(val)
@@ -1200,5 +1195,53 @@ impl Parser {
             }
             ref other => Err(self.err(format!("expected expression, found {:?}", other))),
         }
+    }
+}
+
+/// Bangun `Expr` untuk literal desimal (sized maupun unsized).
+///
+/// `#[inline(never)]` + fungsi terpisah: `parse_primary_expr_impl` sudah
+/// bingkai stack raksasa (rekursi parser pada ekspresi fuzz ber-kurung
+/// dalam melimpahi 2 MB — multivec fuzz), semua lokal helper ini tidak
+/// boleh menambah bingkai induknya.
+///
+/// Aturan lebar/signedness:
+/// - Sized (`4'sd9`) wajib mempertahankan lebar & signedness — dulu masuk
+///   `Value::Decimal` yang membuang keduanya sehingga dievaluasi sebagai
+///   konstanta 32-bit (fuzzer signed_fuzz seed=30: `4'sd9 <<< b` menggeser
+///   di 32 bit alih-alih 4).
+/// - Unsized tetap `Decimal` bila muat i64 (semantik §6.8.1 ROUND 36:
+///   unsized decimal = signed); melebihi itu → pola biner/hex presisi
+///   penuh, BUKAN `Expr::Ident` (dulu literal raksasa diam-diam jadi
+///   implicit net — fuzzer partsel seed=28).
+#[inline(never)]
+fn decimal_value_expr(value: &Symbol, width: Option<usize>, is_signed: bool) -> Expr {
+    let digits = value.as_str();
+    match (width, digits.parse::<u64>()) {
+        (Some(_), Ok(v)) => Expr::Value(Value::Binary {
+            bits: format!("{:b}", v),
+            width,
+            is_signed,
+        }),
+        (Some(_), Err(_)) => Expr::Value(Value::Binary {
+            bits: dec_str_to_bits(digits),
+            width,
+            is_signed,
+        }),
+        (None, _) => match digits.parse::<i64>() {
+            Ok(n) => Expr::Value(Value::Decimal(n)),
+            // Melebihi i64: hex mempertahankan nilai u64 eksak; di luar u64
+            // → biner arbitrary-precision. Tetap angka, bukan identifier.
+            Err(_) if digits.parse::<u128>().is_ok() => Expr::Value(Value::Hex {
+                bits: format!("{:x}", digits.parse::<u128>().unwrap_or(0)),
+                width: None,
+                is_signed: false,
+            }),
+            Err(_) => Expr::Value(Value::Binary {
+                bits: dec_str_to_bits(digits),
+                width: None,
+                is_signed: false,
+            }),
+        },
     }
 }

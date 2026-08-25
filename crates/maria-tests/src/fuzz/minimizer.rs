@@ -140,6 +140,17 @@ impl TestcaseMinimizer {
                     (1u64 << new_w) - 1
                 },
             ),
+            Expr::XLit { v, m } => {
+                let mask = if new_w >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << new_w) - 1
+                };
+                Expr::XLit {
+                    v: v & mask,
+                    m: m & mask,
+                }
+            }
             Expr::Var(c) => Expr::Var(*c),
             Expr::Un(op, inner) => Expr::Un(*op, Box::new(self.rescale_expr(inner, old_w, new_w))),
             Expr::Bin(op, lhs, rhs) => Expr::Bin(
@@ -147,6 +158,24 @@ impl TestcaseMinimizer {
                 Box::new(self.rescale_expr(lhs, old_w, new_w)),
                 Box::new(self.rescale_expr(rhs, old_w, new_w)),
             ),
+            Expr::Ternary(c, t, f) => Expr::Ternary(
+                Box::new(self.rescale_expr(c, old_w, new_w)),
+                Box::new(self.rescale_expr(t, old_w, new_w)),
+                Box::new(self.rescale_expr(f, old_w, new_w)),
+            ),
+            Expr::Repl(count, e) => {
+                // Lebar menyusut → count yang melebihi 128 bit tak valid;
+                // clamp ke batas aman.
+                let max_count = ((128 / new_w.max(1)) as u32).clamp(1, u32::MAX);
+                Expr::Repl((*count).min(max_count), Box::new(self.rescale_expr(e, old_w, new_w)))
+            }
+            Expr::BitSel(c, idx) => Expr::BitSel(*c, (*idx).min(new_w.saturating_sub(1))),
+            Expr::PartSel(c, hi, lo) => {
+                let max_idx = new_w.saturating_sub(1);
+                let hi = (*hi).min(max_idx);
+                let lo = (*lo).min(hi);
+                Expr::PartSel(*c, hi, lo)
+            }
         }
     }
 
@@ -245,6 +274,25 @@ impl TestcaseMinimizer {
                     _ => Expr::Un(*op, Box::new(simplified)),
                 }
             }
+            Expr::Ternary(c, t, f) => {
+                let sc = self.simplify_expr(c);
+                let st = self.simplify_expr(t);
+                let sf = self.simplify_expr(f);
+                // Kedua cabang identik → kondisi tak relevan.
+                if st == sf {
+                    return st;
+                }
+                Expr::Ternary(Box::new(sc), Box::new(st), Box::new(sf))
+            }
+            Expr::Repl(count, e) => {
+                let se = self.simplify_expr(e);
+                if se == Expr::Lit(0) {
+                    Expr::Lit(0)
+                } else {
+                    Expr::Repl(*count, Box::new(se))
+                }
+            }
+            Expr::BitSel(..) | Expr::PartSel(..) | Expr::XLit { .. } => expr.clone(),
             Expr::Lit(_) | Expr::Var(_) => expr.clone(),
         }
     }

@@ -163,8 +163,11 @@ pub fn check(input: &GenInput) -> OracleResult {
                         match icarus_y(&src_ref) {
                             Some(iv) if iv & mask_of(input.w) == actual => {
                                 eprintln!(
-                                    "[oracle] golden divergence (maria==icarus={:#x}, golden={:#x}) — model emas diperbarui perlu",
-                                    actual, expected
+                                    "[oracle] golden divergence (maria==icarus={:#x}, golden={:#x}) w={} expr=`{}` — model emas diperbarui perlu",
+                                    actual,
+                                    expected,
+                                    input.w,
+                                    input.expr.to_sv(input.w)
                                 );
                                 OracleResult {
                                     verdict: Verdict::Pass,

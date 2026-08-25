@@ -13,11 +13,15 @@
 //! - Differential Executor (bandingkan dengan Verilator/Icarus)
 
 #[cfg(test)]
+mod case_fuzz;
+#[cfg(test)]
 mod concurrency_diff;
 #[allow(dead_code)]
 mod differential;
 #[cfg(test)]
 mod eof_truncation;
+#[cfg(test)]
+mod function_fuzz;
 #[allow(dead_code)]
 mod expr;
 #[allow(dead_code)]
@@ -27,7 +31,19 @@ mod guide;
 #[allow(dead_code)]
 mod hierarchy_mutator;
 #[cfg(test)]
+mod loop_fuzz;
+#[cfg(test)]
 mod metamorphic;
+#[cfg(test)]
+mod multivec;
+#[cfg(test)]
+mod partsel_fuzz;
+#[cfg(test)]
+mod seq_fuzz;
+#[cfg(test)]
+mod signed_fuzz;
+#[cfg(test)]
+mod struct_equiv;
 #[allow(dead_code)]
 mod mgte;
 #[allow(dead_code)]
@@ -141,8 +157,18 @@ fn guided_fuzz_deterministic_regression() {
     let mut bugs = 0u64;
     for i in 0..50 {
         let input = guide.next(i);
-        if matches!(check(&input).verdict, Verdict::Bug(_)) {
+        if let Verdict::Bug(ref msg) = check(&input).verdict {
             bugs += 1;
+            eprintln!(
+                "[regression-dbg] i={} seed={} w={} wb={} expr=`{}`\n{}\nmsg={}",
+                i,
+                input.seed,
+                input.w,
+                input.wb,
+                input.expr.to_sv(input.w),
+                input.to_source(),
+                msg
+            );
         }
         guide.observe(&input, true);
     }

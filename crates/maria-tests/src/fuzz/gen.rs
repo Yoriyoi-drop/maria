@@ -9,16 +9,40 @@ use fastrand::Rng;
 use super::expr::{gen_node, Expr};
 
 /// Satu input fuzz: lebar, nilai stimulus a/b, ekspresi, dan seed RNG.
+///
+/// `wb` = lebar variabel `b`, SELALU `≤ w`. Dengan `b` tersimpan pre-masked
+/// ke `wb`, model emas yang ada tetap eksak tanpa perubahan semantik:
+/// - `Var('b')`: zero-extension ke konteks identik dengan masking;
+/// - `BitSel/PartSel('b', …)` di luar `wb` → X (LRM §11.5.1) — persis
+///   seperti select pada variabel sempit di dunia nyata;
+/// - kelas bug baru yang tercakup: implicit truncation/extension saat dua
+///   operan berbeda lebar bertemu di satu ekspresi.
 #[derive(Debug, Clone)]
 pub struct GenInput {
     pub w: u32,
+    /// Lebar deklarasi `b` (≤ w).
+    pub wb: u32,
     pub a: u64,
     pub b: u64,
     pub expr: Expr,
     pub seed: u64,
 }
 
-fn lit_sv(v: u64, w: u32) -> String {
+impl GenInput {
+    /// Paksa invariant: `1 ≤ wb ≤ w`, `b` ter-mask ke `wb`.
+    pub fn normalize(&mut self) {
+        if self.w == 0 {
+            self.w = 1;
+        }
+        self.wb = self.wb.clamp(1, self.w);
+        self.b &= mask_of(self.wb);
+        self.a &= mask_of(self.w);
+    }
+}
+
+/// Render literal sized `{w}'b...` — dipakai generator source DAN modul
+/// fuzz multi-vektor (stimulus berurutan).
+pub fn lit_sv(v: u64, w: u32) -> String {
     if w == 0 {
         return "0".to_string();
     }
@@ -35,9 +59,10 @@ fn lit_sv(v: u64, w: u32) -> String {
 /// Pilihan lebar bit — termasuk boundary (31/32/33, 15/16/17) untuk
 /// menyentuh jalur kode width-handling di lexer/parser/elaborator/engine.
 /// 63/64/65 menguji batas u64 internal (`mask_of` cabang `w >= 64`,
-/// `to_u64`, truncation literal >64 bit).
-pub const WIDTH_CHOICES: [u32; 15] = [
-    1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65,
+/// `to_u64`, truncation literal >64 bit). 72/96/128 melatih penyimpanan
+/// multi-word LogicVec (>64 bit) end-to-end.
+pub const WIDTH_CHOICES: [u32; 18] = [
+    1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 72, 96, 128,
 ];
 
 /// Nilai stimulus boundary — 0, 1, all-ones, dan pola bit ekstrem sering
@@ -53,6 +78,15 @@ const BOUNDARY_VALUES: [u64; 8] = [
     0xFFFF_FFFF_FFFF_FFFF, // = u64::MAX, duplikat disengaja untuk bobot
 ];
 
+/// Mask nilai stimulus ke lebar `w` (nilai selalu muat u64; bit ≥ 64 = 0).
+pub fn mask_of(w: u32) -> u64 {
+    if w >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << w) - 1
+    }
+}
+
 impl GenInput {
     /// Render ke source SystemVerilog lengkap.
     pub fn to_source(&self) -> String {
@@ -61,7 +95,7 @@ impl GenInput {
         format!(
             "module fuzz_mod;\n\
              \x20   reg [{hi}:0] a;\n\
-             \x20   reg [{hi}:0] b;\n\
+             \x20   reg [{bhi}:0] b;\n\
              \x20   wire [{hi}:0] y;\n\
              \x20   assign y = {expr};\n\
              \x20   initial begin\n\
@@ -72,10 +106,22 @@ impl GenInput {
              \x20   end\n\
              endmodule\n",
             hi = w - 1,
+            bhi = self.wb - 1,
             expr = expr_sv,
             aval = lit_sv(self.a, w),
-            bval = lit_sv(self.b, w),
+            bval = lit_sv(self.b, self.wb),
         )
+    }
+}
+
+/// Pilih lebar `b` ≤ `w` dari WIDTH_CHOICES (termasuk == w agar ~setengah
+/// kasus tetap selebar sama).
+fn pick_wb(w: u32, rng: &mut Rng) -> u32 {
+    let candidates: Vec<u32> = WIDTH_CHOICES.iter().copied().filter(|&c| c <= w).collect();
+    if rng.bool() {
+        w
+    } else {
+        candidates[rng.usize(0..candidates.len())]
     }
 }
 
@@ -95,16 +141,21 @@ pub fn generate(seed: u64) -> GenInput {
     } else {
         rng.u64(0..) & m
     };
-    // Kedalaman 4 (dulu maks 3): subtree lebih dalam menaikkan kemungkinan
+    // Kedalaman 5 (dulu 4): subtree lebih dalam menaikkan kemungkinan
     // bug intermediet width/X yang tak muncul di ekspresi dangkal.
     let expr = gen_node(w, &mut rng, 0);
-    GenInput {
+    let wb = pick_wb(w, &mut rng);
+    let b = b & mask_of(wb);
+    let mut input = GenInput {
         w,
+        wb,
         a,
         b,
         expr,
         seed,
-    }
+    };
+    input.normalize();
+    input
 }
 
 /// Kloning input lalu mutasi ekspresinya (structure-aware mutation).
@@ -135,13 +186,17 @@ pub fn mutate_from(src: &GenInput, seed: u64) -> GenInput {
     } else {
         w_choices_pick(&mut rng)
     };
-    GenInput {
+    let wb = pick_wb(w, &mut rng);
+    let mut input = GenInput {
         w,
+        wb,
         a,
         b,
         expr,
         seed,
-    }
+    };
+    input.normalize();
+    input
 }
 
 fn w_choices_pick(rng: &mut Rng) -> u32 {
