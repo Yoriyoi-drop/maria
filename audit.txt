@@ -1650,7 +1650,18 @@ FORMAL-16:[] No cover property formal analysis (Medium)
 
 LSP-01: ✅ LSP server MVP (tower-lsp 0.20, --lsp flag, publishDiagnostics via parser)
 LSP-02:[] No autocomplete/suggestions (Critical)
-LSP-03:[] No go-to-definition (Critical)
+LSP-03: ⚠️ IN PROGRESS (ROUND 93) — go-to-definition tahap 1:
+         crates/maria-env/src/lsp/backend.rs — goto_definition handler
+         (capability definition_provider), cache dokumen terbuka
+         (+ fallback baca file dari disk), core murni find_definition():
+         word_at_position + deteksi definisi berbasis token per baris
+         (scope kw module/interface/package/program/class/checker/
+         function/task/property/sequence; parameter/localparam di mana
+         pun termasuk #(...); port/signal decl via direction/type
+         keyword). Test 5 unit (module, signal/port, parameter dalam
+         #( ), not-found, word_at_position). MASIH OPEN: cross-file
+         index, find-references (LSP-04), rename (LSP-05), hover
+         (LSP-06), workspace symbol (LSP-11).
 LSP-04:[] No find-references (Critical)
 LSP-05:[] No rename (Critical)
 LSP-06:[] No hover documentation (Critical)
@@ -4013,6 +4024,39 @@ Test baru (+1): test_assume_constrains_counterexample —
    - cargo build --workspace (default + features formal): 0 error
    - cargo test --workspace: 2134 passed, 0 failed
    - cargo test -p maria-formal --features formal: 29/29 pass
+
+═══ ROUND 93 — LSP-03 go-to-definition (tahap 1) ═══
+
+Kerja bertahap pada LSP-03 (Critical) — tahap 1 single-file selesai,
+item tetap ⚠️ IN PROGRESS (cross-file/references/rename masih open).
+
+✅ GOTO-DEFINITION TAHAP 1 (crates/maria-env/src/lsp/backend.rs):
+   - Capability definition_provider + handler goto_definition.
+   - Cache dokumen terbuka (documents: Mutex<HashMap<uri, text>>) diisi
+     did_open/did_change; fallback baca file dari disk via uri path.
+   - Core murni find_definition(source, line, char) → (line, col_start,
+     col_end) — bisa diuji tanpa LSP plumbing:
+     * word_at_position: ekstraksi identifier SV [A-Za-z0-9_$] di kursor
+       (termasuk posisi akhir kata).
+     * definition_col: deteksi definisi per baris berbasis token:
+       1. parameter/localparam di mana pun dalam baris (menangani
+          `module m #(parameter WIDTH = 8) (` satu-baris),
+       2. scope keyword module/macromodule/interface/package/program/
+          class/checker/function/task/property/sequence + nama,
+       3. port/signal decl: baris diawali direction/type keyword dan
+          memuat word sebagai token mandiri (guard prev "." utk
+          hierarki a.b).
+   - Komentar // di-skip oleh tokenizer baris.
+
+Test (+5 unit inline backend.rs): word_at_position (tengah/akhir kata,
+non-ident, $), find_definition module (self + instance → definisi
+module lain), signal `reg enable` dari pemakaian always_ff, port clk
+dari `.clk(clk)` → port decl, parameter WIDTH dari `[WIDTH-1:0]` →
+`#(parameter WIDTH = 8)`, not-found cases.
+
+📊 VERIFIKASI ROUND 93:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2139 passed, 0 failed (+5)
 
 ========================================
 END OF AUDIT REPORT
