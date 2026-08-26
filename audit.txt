@@ -1743,7 +1743,14 @@ LSP-06: ⚠️ IN PROGRESS (ROUND 95) — hover tahap 1:
          port input/output/inout/parameter/function/task, fallback
          "declaration"). MASIH OPEN: dokumentasi kaya (port direction +
          range), doc comment extraction.
-LSP-07:[] No semantic tokens highlighting (High)
+LSP-07: ⚠️ IN PROGRESS (ROUND 109) — semantic tokens tahap 1:
+         backend.rs — capability SemanticTokensOptions dengan legend
+         8 tipe (namespace/type/class/interface/function/variable/
+         parameter/keyword); handler semantic_tokens_full; core murni
+         compute_semantic_tokens(): flatten outline → definisi sebagai
+         token + keyword SV scan per baris, delta-encoded LSP format.
+         Test 1 unit (module type=0, variable type=5, keyword type=7).
+         MASIH OPEN: range request, delta update, modifier bitset.
 LSP-08:[] No code lens (Test/References) (High)
 LSP-09:[] No inlay hints (type hints) (Medium)
 LSP-10:[] No code actions (quick-fix) (High)
@@ -4553,6 +4560,29 @@ tetap di dalam.
 📊 VERIFIKASI ROUND 107/108:
    - cargo build --workspace: 0 error, 0 warning
    - cargo test --workspace: 2157 passed, 0 failed (+2)
+
+═══ ROUND 109 — LSP-07 semantic tokens (tahap 1) ═══
+
+Kerja bertahap LSP-07 (High) — tahap 1 full-document selesai, item
+tetap ⚠️ IN PROGRESS (range/delta/modifier masih open).
+
+✅ SEMANTIC TOKENS TAHAP 1 (crates/maria-env/src/lsp/backend.rs):
+   - Capability SemanticTokensOptions dengan legend 8 tipe:
+     0=namespace(module) 1=type(interface/package)
+     2=class(checker) 3=interface 4=function/task
+     5=variable(signal/port) 6=parameter(param/localparam) 7=keyword.
+   - Handler semantic_tokens_full → SemanticTokensResult::Tokens.
+   - Core murni compute_semantic_tokens(source):
+     * Flatten outline (document_symbols) → definisi sbg token.
+     * Scan keyword SV (~32 kata) per baris sebagai token type=7.
+     * Sort by (line,col), delta-encode ke SemanticToken LSP format.
+
+Test (+1): test_semantic_tokens — module type=0 di line 0, variable
+type=5 untuk `clk`, keyword type=7 untuk `endmodule`.
+
+📊 VERIFIKASI ROUND 109:
+   - cargo build --workspace: 0 error, 0 warning
+   - cargo test --workspace: 2158 passed, 0 failed (+1)
 
 ========================================
 END OF AUDIT REPORT

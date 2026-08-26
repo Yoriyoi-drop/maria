@@ -16,8 +16,9 @@ use lsp_types::{
     FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse,
     Hover, HoverContents, InitializeParams, InitializeResult, LanguageString, Location,
     MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
-    ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    SemanticToken, SemanticTokens, SemanticTokensLegend, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensResult, ServerCapabilities, ServerInfo,
+    SymbolInformation, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     WorkspaceEdit, WorkspaceSymbolParams,
 };
 use maria_parser::lexer::Lexer;
@@ -875,6 +876,75 @@ impl LspBackend {
         out
     }
 
+    /// Semantic tokens core (murni, bisa diuji) — LSP-07 tahap 1.
+    /// Legend: 0=namespace(module), 1=type(interface), 2=class,
+    ///         3=interface, 4=function, 5=variable,
+    ///         6=constant(param), 7=keyword.
+    pub(crate) fn compute_semantic_tokens(source: &str) -> Vec<SemanticToken> {
+        // Kumpulkan definisi dari outline → (line, col, len, legend_idx).
+        let syms = Self::document_symbols(source);
+        let mut raw: Vec<(u32, u32, u32, u32)> = Vec::new();
+
+        fn collect(syms: &[DocSymbol], raw: &mut Vec<(u32, u32, u32, u32)>) {
+            for s in syms {
+                let idx = match s.kind {
+                    DocSymbol::KIND_MODULE => 0,
+                    DocSymbol::KIND_INTERFACE => 1,
+                    DocSymbol::KIND_CLASS => 2,
+                    DocSymbol::KIND_PACKAGE => 1,
+                    DocSymbol::KIND_FUNCTION => 4,
+                    DocSymbol::KIND_CONSTANT => 6,
+                    DocSymbol::KIND_VARIABLE => 5,
+                    _ => 5,
+                };
+                raw.push((s.line, s.col, s.name.len() as u32, idx));
+                collect(&s.children, raw);
+            }
+        }
+        collect(&syms, &mut raw);
+
+        // Tambah keyword SV sebagai token type=7 (keyword).
+        const KW: &[&str] = &[
+            "module", "endmodule", "always_comb", "always_ff", "assign",
+            "begin", "case", "default", "else", "end", "endcase", "if",
+            "input", "logic", "output", "parameter", "reg", "wire", "localparam",
+            "function", "task", "endfunction", "endtask", "interface", "endinterface",
+            "package", "endpackage", "typedef", "enum", "struct", "posedge", "negedge",
+        ];
+        for (idx, line) in source.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for (w, col) in Self::line_tokens(line) {
+                if KW.contains(&w.as_str()) {
+                    raw.push((idx as u32, col as u32, w.len() as u32, 7));
+                }
+            }
+        }
+
+        // Urutkan by (line, col).
+        raw.sort_by_key(|&(l, c, _, _)| (l, c));
+
+        // Konversi ke delta encoding LSP.
+        let mut out: Vec<SemanticToken> = Vec::with_capacity(raw.len());
+        let mut prev_line = 0u32;
+        let mut prev_col = 0u32;
+        for &(l, c, len, typ) in &raw {
+            let dl = l - prev_line;
+            let ds = if l == prev_line { c - prev_col } else { c };
+            out.push(SemanticToken {
+                delta_line: dl,
+                delta_start: ds,
+                length: len,
+                token_type: typ,
+                token_modifiers_bitset: 0,
+            });
+            prev_line = l;
+            prev_col = c;
+        }
+        out
+    }
+
     /// Find-references core (murni, bisa diuji) — LSP-04 tahap 1:
     /// semua kemunculan identifier (sebagai token mandiri) dalam dokumen,
     /// urut baris. `include_declaration` tetap dikembalikan penuh — caller
@@ -952,6 +1022,28 @@ impl LanguageServer for LspBackend {
                     work_done_progress_options: Default::default(),
                     completion_item: Default::default(),
                 }),
+                semantic_tokens_provider: Some(
+                    lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            work_done_progress_options: Default::default(),
+                            legend: SemanticTokensLegend {
+                                token_types: vec![
+                                    lsp_types::SemanticTokenType::NAMESPACE,
+                                    lsp_types::SemanticTokenType::TYPE,
+                                    lsp_types::SemanticTokenType::CLASS,
+                                    lsp_types::SemanticTokenType::INTERFACE,
+                                    lsp_types::SemanticTokenType::FUNCTION,
+                                    lsp_types::SemanticTokenType::VARIABLE,
+                                    lsp_types::SemanticTokenType::PARAMETER,
+                                    lsp_types::SemanticTokenType::KEYWORD,
+                                ],
+                                token_modifiers: vec![],
+                            },
+                            range: None,
+                            full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
+                        },
+                    ),
+                ),
                 folding_range_provider: Some(
                     lsp_types::FoldingRangeProviderCapability::Simple(true),
                 ),
@@ -1259,6 +1351,22 @@ impl LanguageServer for LspBackend {
             })
             .collect();
         Ok(Some(ranges))
+    }
+
+    /// Semantic tokens full (LSP-07 tahap 1).
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> JsonRpcResult<Option<SemanticTokensResult>> {
+        let uri = &params.text_document.uri;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let tokens = Self::compute_semantic_tokens(&text);
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data: tokens,
+        })))
     }
 
     /// Text document didClose — clear diagnostics.
@@ -1711,6 +1819,31 @@ endmodule
 
         // Prefix kosong (kursor setelah spasi) → tidak ada kandidat (MVP).
         assert!(LspBackend::compute_completions(SAMPLE, 7, 0).is_empty());
+    }
+
+    #[test]
+    fn test_semantic_tokens() {
+        let src = "module counter;\n  logic clk;\n  assign a = b;\nendmodule\n";
+        let toks = LspBackend::compute_semantic_tokens(src);
+        assert!(!toks.is_empty());
+        // Ada token module (type=0) di line 0.
+        assert!(
+            toks.iter().any(|t| t.delta_line == 0 && t.token_type == 0),
+            "module keyword: {:?}",
+            toks
+        );
+        // Ada token variable (type=5) untuk `clk`.
+        assert!(
+            toks.iter().any(|t| t.token_type == 5),
+            "variable: {:?}",
+            toks
+        );
+        // Ada token keyword (type=7) untuk endmodule.
+        assert!(
+            toks.iter().any(|t| t.token_type == 7),
+            "keyword: {:?}",
+            toks
+        );
     }
 
     #[test]

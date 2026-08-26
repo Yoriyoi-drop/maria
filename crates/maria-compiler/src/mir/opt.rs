@@ -546,13 +546,10 @@ fn licm(instrs: &mut Vec<MirInstr>) -> bool {
         // Setelah semua move, header Label bergeser; tapi karena kita pakai
         // remove+insert dan proses dari tail→head, index header turun setiap
         // kali. Simpan offset: jumlah hoisted so far.
-        let mut insert_at = hdr; // posisi Label
-        let mut removed_before = 0usize;
+        let insert_at = hdr; // posisi Label
         for &ci in candidates.iter().rev() {
             let instr = instrs.remove(ci);
             instrs.insert(insert_at, instr);
-            removed_before += 1;
-            insert_at += 1;
         }
         changed = true;
     }
