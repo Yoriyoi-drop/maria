@@ -2689,7 +2689,6 @@ impl Elaborator {
                         SignalKind::Input => "input",
                         SignalKind::Output => "output",
                         SignalKind::Inout => "inout",
-                        SignalKind::Wire => "wire",
                     };
                     let signed_str = if info.is_signed { " signed" } else { "" };
                     format!("{}{} [{}:{}]", type_str, signed_str, info.msb, info.lsb)

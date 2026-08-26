@@ -196,6 +196,7 @@ fn synth_tool_emit_mapped_netlist_smoke() {
         report_util: None,
         constraint: None,
         timing: false,
+        fsm_report: false,
         quiet: true,
     };
     maria_api::tools::synth::run(&args).expect("maria synth --emit-netlist --tech-map");

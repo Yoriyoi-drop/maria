@@ -3592,6 +3592,7 @@ fn dispatch_synth(a: &crate::cli::SynthArgs) -> ! {
         report_util: a.report_util.clone(),
         constraint: a.constraint.clone(),
         timing: a.timing,
+        fsm_report: a.fsm_report,
         quiet: a.quiet,
     };
     exit_tool(maria_api::tools::synth::run(&args));

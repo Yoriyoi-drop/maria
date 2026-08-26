@@ -597,6 +597,10 @@ pub struct SynthArgs {
     #[arg(long = "timing")]
     pub timing: bool,
 
+    /// Laporan FSM extraction (deteksi state register + transisi)
+    #[arg(long = "fsm-report")]
+    pub fsm_report: bool,
+
     /// Tambahkan include search path
     #[arg(short = 'I', long = "incdir", num_args = 1)]
     pub incdirs: Vec<String>,

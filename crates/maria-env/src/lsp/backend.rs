@@ -17,7 +17,7 @@ use lsp_types::{
     Hover, HoverContents, InitializeParams, InitializeResult, LanguageString, Location,
     MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
     ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     WorkspaceEdit, WorkspaceSymbolParams,
 };
 use maria_parser::lexer::Lexer;
@@ -448,7 +448,7 @@ impl LspBackend {
         let line_text = source.lines().nth(line as usize)?;
         let (word, _, _) = Self::word_at_position(line_text, character)?;
 
-        let (def_line, col, _) = Self::find_definition(source, line, character)?;
+        let (def_line, _, _) = Self::find_definition(source, line, character)?;
         let decl_text = source
             .lines()
             .nth(def_line as usize)?
@@ -705,7 +705,7 @@ impl LspBackend {
         // Stack: (keyword pembuka, start_line).
         let mut stack: Vec<(&str, u32)> = Vec::new();
 
-        let mut close_top = |stack: &mut Vec<(&str, u32)>, out: &mut Vec<(u32, u32)>, idx: u32| {
+        let close_top = |stack: &mut Vec<(&str, u32)>, out: &mut Vec<(u32, u32)>, idx: u32| {
             if let Some((_, start)) = stack.pop() {
                 out.push((start, idx));
             }

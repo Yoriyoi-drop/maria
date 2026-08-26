@@ -250,7 +250,8 @@ mod tests {
     use super::*;
 
     // VHPI_ENGINE global — test handle/object murni tanpa engine.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // FIX flake (ROUND 106): lock bersama lintas modul vhpi.
+    use crate::vhpi::VHPI_TEST_LOCK as TEST_LOCK;
 
     #[test]
     fn test_vhpi_is_defined_supported() {

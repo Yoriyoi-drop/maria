@@ -91,8 +91,8 @@ fn constant_fold(instrs: &mut Vec<MirInstr>) -> bool {
                             0
                         }
                     }
-                    MirBinOp::LogicalAnd => ((lv != 0 && rv != 0) as u64),
-                    MirBinOp::LogicalOr => ((lv != 0 || rv != 0) as u64),
+                    MirBinOp::LogicalAnd => (lv != 0 && rv != 0) as u64,
+                    MirBinOp::LogicalOr => (lv != 0 || rv != 0) as u64,
                 };
                 instrs[i] = MirInstr::Const {
                     dest: *dest,

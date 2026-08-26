@@ -468,7 +468,7 @@ impl Elaborator {
         ir_lhs: &IrLValue,
         rhs_ast: &Expr,
         ir_rhs: &mut IrExpr,
-        signal_map: &HashMap<Symbol, SignalId>,
+        _signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
     ) {
         let lhs_w = match ir_lhs {

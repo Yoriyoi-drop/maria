@@ -231,6 +231,44 @@ pub fn extract_fsms(design: &IrDesign) -> Vec<FsmInfo> {
     fsms
 }
 
+/// Render laporan FSM ke teks (COMP-11 tahap 2) — dipakai synth CLI.
+pub fn render_fsm_report(fsms: &[FsmInfo]) -> String {
+    let mut out = String::new();
+    out.push_str("\n─── FSM Report ───\n");
+    if fsms.is_empty() {
+        out.push_str("  (tidak ada FSM terdeteksi)\n");
+        return out;
+    }
+    for f in fsms {
+        out.push_str(&format!(
+            "  {} [{}]\n",
+            f.process_name, f.state_signal
+        ));
+        out.push_str(&format!(
+            "    states ({}): {}\n",
+            f.states.len(),
+            f.states
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        out.push_str(&format!(
+            "    transitions ({}):\n",
+            f.transitions.len()
+        ));
+        for t in &f.transitions {
+            let from = match t.from {
+                Some(v) => v.to_string(),
+                None => "*".to_string(),
+            };
+            out.push_str(&format!("      {} → {}\n", from, t.to));
+        }
+    }
+    out.push_str(&format!("  total: {} FSM\n", fsms.len()));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +340,21 @@ mod tests {
         let mut design = make_design();
         design.top.processes = vec![];
         assert!(extract_fsms(&design).is_empty());
+    }
+
+    #[test]
+    fn test_render_fsm_report() {
+        let design = make_design();
+        let fsms = extract_fsms(&design);
+        let report = render_fsm_report(&fsms);
+        assert!(report.contains("FSM Report"));
+        assert!(report.contains("state_machine [state]"));
+        assert!(report.contains("states (3): 0, 1, 2"));
+        assert!(report.contains("0 → 1"));
+        assert!(report.contains("total: 1 FSM"));
+        // Kosong → pesan jelas.
+        let empty = render_fsm_report(&[]);
+        assert!(empty.contains("tidak ada FSM"));
     }
 
     #[test]

@@ -27,7 +27,7 @@ struct VcdSignal {
 
 /// Hasil parse satu file VCD.
 #[derive(Debug, Clone)]
-struct VcdData {
+pub struct VcdData {
     timescale: String,
     signals: Vec<VcdSignal>,
     /// (time, signal id, nilai mentah)

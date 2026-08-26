@@ -753,9 +753,6 @@ impl SimulationEngine {
                                     let sig_info = &self.design.top.signals[*sig_id];
                                     if let Some(dest_class_name) = sig_info.class_name {
                                         // Destination signal is a class handle - check class hierarchy
-                                        // Get the object ID currently stored in the destination signal
-                                        let dest_obj_id = self.state.read_signal(*sig_id).to_u64();
-
                                         // Source value is the object ID to cast from
                                         let src_obj_id = src_val.to_u64();
 
@@ -799,7 +796,7 @@ impl SimulationEngine {
                                         // Destination is not a class handle - simple type cast, always succeeds
                                         // Just assign the value (truncate/extend as needed)
                                         let dest_width = sig_info.width;
-                                        let mut assigned = src_val.resize(dest_width);
+                                        let assigned = src_val.resize(dest_width);
                                         self.state.write_signal(*sig_id, assigned);
                                     }
                                 }

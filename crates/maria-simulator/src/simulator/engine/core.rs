@@ -1,7 +1,7 @@
 use super::SimulationEngine;
 use super::SimulationLimit;
 use super::EVENT_COMPACT_THRESHOLD;
-use crate::foreign::{ForeignEvent, ForeignKind};
+use crate::foreign::ForeignEvent;
 use crate::scheduler::clock_domain::ClockDomain;
 use crate::simulator::parallel::ParallelConfig;
 use crate::simulator::sdf::SdfData;
@@ -2229,14 +2229,14 @@ impl SimulationEngine {
                 }
                 ForeignEvent::ReadWriteSync => {
                     // Read-Write Synch: VPI cbReadWriteSynch + VHPI vhpiCbReadWriteSynch
-                    crate::vpi::with_vpi_engine(|engine| {
+                    crate::vpi::with_vpi_engine(|_engine| {
                         crate::vpi::callback::fire_value_change_callbacks(
                             "",
                             &crate::vpi::types::t_vpi_value::default(),
                             &crate::vpi::types::t_vpi_value::default(),
                         );
                     });
-                    crate::vhpi::object::with_vhpi_engine(|engine| {
+                    crate::vhpi::object::with_vhpi_engine(|_engine| {
                         crate::vhpi::callback::dispatch_callback(
                             crate::vhpi::callback::vhpiCbReadWriteSynch,
                         );
@@ -2244,14 +2244,14 @@ impl SimulationEngine {
                 }
                 ForeignEvent::ReadOnlySync => {
                     // Read-Only Synch: VPI cbReadOnlySynch + VHPI vhpiCbReadOnlySynch
-                    crate::vpi::with_vpi_engine(|engine| {
+                    crate::vpi::with_vpi_engine(|_engine| {
                         crate::vpi::callback::fire_value_change_callbacks(
                             "",
                             &crate::vpi::types::t_vpi_value::default(),
                             &crate::vpi::types::t_vpi_value::default(),
                         );
                     });
-                    crate::vhpi::object::with_vhpi_engine(|engine| {
+                    crate::vhpi::object::with_vhpi_engine(|_engine| {
                         crate::vhpi::callback::dispatch_callback(
                             crate::vhpi::callback::vhpiCbReadOnlySynch,
                         );
@@ -2259,7 +2259,7 @@ impl SimulationEngine {
                 }
                 ForeignEvent::NextTimeStep => {
                     // Next Time Step: VHPI vhpiCbNextTimeStep
-                    crate::vhpi::object::with_vhpi_engine(|engine| {
+                    crate::vhpi::object::with_vhpi_engine(|_engine| {
                         crate::vhpi::callback::dispatch_callback(
                             crate::vhpi::callback::vhpiCbNextTimeStep,
                         );
@@ -2270,14 +2270,14 @@ impl SimulationEngine {
                 }
                 ForeignEvent::EndOfSimulation => {
                     // End of simulation: VPI cbEndOfSimulation + VHPI vhpiCbEndOfSimulation
-                    crate::vpi::with_vpi_engine(|engine| {
+                    crate::vpi::with_vpi_engine(|_engine| {
                         crate::vpi::callback::fire_value_change_callbacks(
                             "",
                             &crate::vpi::types::t_vpi_value::default(),
                             &crate::vpi::types::t_vpi_value::default(),
                         );
                     });
-                    crate::vhpi::object::with_vhpi_engine(|engine| {
+                    crate::vhpi::object::with_vhpi_engine(|_engine| {
                         crate::vhpi::callback::dispatch_callback(
                             crate::vhpi::callback::vhpiCbEndOfSimulation,
                         );

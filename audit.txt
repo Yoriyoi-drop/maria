@@ -4485,6 +4485,45 @@ selector tanpa NBA-write → bukan FSM.
    - Catatan: satu run paralel sempat 4 fail (interferensi state global
      antar crate saat concurrent) — rerun terisolasi & full suite hijau.
 
+═══ ROUND 106 — LSP-15 folding range + FIX FLAKE vhpi + 0 WARNING RUST ═══
+
+✅ LSP-15 FOLDING RANGE (tahap 1) — ditutup:
+   - Capability FoldingRangeProviderCapability::Simple + handler
+     folding_range → Vec<FoldingRange> (kind Region).
+   - Core murni compute_folding_ranges: stack pairing scope utama
+     (module/interface/package/program/class/checker/function/task/
+     generate) + begin...end dan case...endcase; urutan close-before-
+     open utk baris `end else begin`; komentar // di-skip.
+   - Test (+1): module fold, begin always_ff, case/endcase, nested
+     if/else-begin (3 fold), sorted & start ≤ end.
+
+✅ FIX FLAKE vhpi handle registry (ditemukan saat full-suite run):
+   test_vhpi_handle_registry_roundtrip gagal intermiten — registry
+   global VHPI di-clear oleh test modul lain yang berjalan paralel di
+   binary yang sama (lock TEST_LOCK lama hanya lokal per-file).
+   Fix: VHPI_TEST_LOCK pub(crate) di vhpi/mod.rs dipakai bersama oleh
+   test handle/object/callback/iterator → clear_all dan register
+   saling serial. Verified: isolated run 336/336 ×3.
+
+✅ ZERO WARNING RUST (default + features formal,jit) — 28 lokasi:
+   - maria-ast const_eval.rs: parens ganda Div/Mod unsigned.
+   - mir/opt.rs: parens LogicalAnd/LogicalOr constant_fold.
+   - elaborator expr.rs: arm SignalKind::Wire duplikat (unreachable).
+   - elaborator stmt.rs: param tak terpakai → _signal_map.
+   - util/const_fold.rs: parens `let abs`.
+   - lsp/backend.rs: import TextDocumentPositionParams tak terpakai,
+     col tak terpakai, mut closure tidak perlu.
+   - formal bmc.rs: doc-comment `///` pada statement → `//`.
+   - parser expr.rs: num_line/num_col tak terpakai.
+   - simulator core.rs/mod.rs: import ForeignKind; 6 closure `engine`
+     → `_engine`; eval/expr.rs: dest_obj_id tak terpakai + mut.
+   - tools wave.rs: VcdData private → pub (private_interfaces).
+
+📊 VERIFIKASI ROUND 106:
+   - cargo build --workspace: 0 error, **0 warning** (juga dgn
+     features formal+jit)
+   - cargo test --workspace: 2155 passed, 0 failed (+1)
+
 ========================================
 END OF AUDIT REPORT
 

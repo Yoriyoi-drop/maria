@@ -96,7 +96,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // FIX flake (ROUND 106): lock bersama lintas modul vhpi.
+    use crate::vhpi::VHPI_TEST_LOCK as TEST_LOCK;
 
     #[test]
     fn test_vhpi_scan_null_and_non_iterator() {

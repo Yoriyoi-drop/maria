@@ -22,3 +22,10 @@ pub mod value;
 
 pub use handle::{VhpiHandle, VhpiObjectKind};
 pub use object::{vhpi_get, vhpi_get_str, vhpi_handle_by_name, vhpi_is_defined};
+
+/// LOCK TEST BERSAMA (fix flake ROUND 106): registry/callback VHPI adalah
+/// global static — test di handle/object/callback/iterator yang saling
+/// `clear_all` harus serial satu sama lain, bukan hanya sesama file.
+/// Lock ini HANYA untuk #[cfg(test)] lintas modul vhpi.
+#[cfg(test)]
+pub(crate) static VHPI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

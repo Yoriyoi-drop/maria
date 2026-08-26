@@ -377,7 +377,9 @@ impl MirJitCompiler {
         let mut ctx = cranelift::codegen::Context::new();
         ctx.func = func;
         self.module.define_function(id, &mut ctx).ok()?;
-        self.module.finalize_definitions();
+        // Result dibuang sengaja — kegagalan finalize terdeteksi lewat
+        // get_finalized_function yang mengembalikan null di bawah.
+        let _ = self.module.finalize_definitions();
 
         let code_ptr = self.module.get_finalized_function(id) as *const u8;
         self.module.clear_context(&mut ctx);

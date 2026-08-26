@@ -123,7 +123,9 @@ pub(crate) fn vhpi_objects_for_scan(
 mod tests {
     use super::*;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // FIX flake (ROUND 106): lock bersama lintas modul vhpi — registry
+    // global bisa di-clear oleh test modul lain saat paralel.
+    use crate::vhpi::VHPI_TEST_LOCK as TEST_LOCK;
 
     #[test]
     fn test_vhpi_handle_registry_roundtrip() {

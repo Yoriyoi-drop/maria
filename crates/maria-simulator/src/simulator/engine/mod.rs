@@ -9,7 +9,7 @@ pub mod sequence;
 pub mod uvm;
 pub mod waveform;
 
-use crate::foreign::{ForeignEvent, ForeignKind};
+use crate::foreign::ForeignEvent;
 use crate::scheduler::clock_domain::ClockDomainAnalysis;
 use crate::scheduler::SimulationDag;
 use crate::simulator::arena::SimulationArena;

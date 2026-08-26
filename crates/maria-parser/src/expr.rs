@@ -702,8 +702,6 @@ impl Parser {
                 width,
                 is_signed,
             } => {
-                let num_line = self.peek_line();
-                let num_col = self.peek_col();
                 self.advance();
                 if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen {
                     self.advance();

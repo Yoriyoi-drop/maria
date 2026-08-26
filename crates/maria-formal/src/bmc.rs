@@ -353,8 +353,8 @@ impl FormalEngine {
         let n_frames = (k + 1) as usize;
 
         // Frames F0..Fk — TANPA initial-state constraints (inti induction:
-        /// membuktikan atas SEMUA state yang memenuhi asumsi, bukan hanya
-        /// yang reachable dari init).
+        // membuktikan atas SEMUA state yang memenuhi asumsi, bukan hanya
+        // yang reachable dari init).
         let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity(n_frames);
         for d in 0..n_frames {
             let mut depth_vars = Vec::with_capacity(n_signals);

@@ -179,7 +179,8 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicI32;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // FIX flake (ROUND 106): lock bersama lintas modul vhpi.
+    use crate::vhpi::VHPI_TEST_LOCK as TEST_LOCK;
     static FIRED: AtomicI32 = AtomicI32::new(0);
 
     extern "C" fn stub_cb(_data: *mut t_vhpi_cb_data) -> i32 {

@@ -350,7 +350,7 @@ pub fn const_eval_with_params(
             // SV unsigned semantics: literal besar (> i64::MAX) adalah
             // bit-pattern u64 — pembagian unsigned (ditemukan fuzzer
             // seed=120172402: modulo literal 64-bit salah tanda).
-            Ok((((l as u64) / (r as u64)) as i64))
+            Ok(((l as u64) / (r as u64)) as i64)
         }
         Expr::BinaryOp {
             op: BinaryOp::Power,
@@ -402,7 +402,7 @@ pub fn const_eval_with_params(
                 return Ok(0);
             }
             // Unsigned semantics (sama dgn Div — lihat catatan di atas).
-            Ok((((l as u64) % (r as u64)) as i64))
+            Ok(((l as u64) % (r as u64)) as i64)
         }
         Expr::BinaryOp {
             op: BinaryOp::Eq,

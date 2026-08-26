@@ -48,6 +48,9 @@ pub struct SynthArgs<'a> {
     /// Static timing + area analysis (phase 5): WNS/TNS/critical path + area
     /// → <prefix>.timing.rpt / <prefix>.area.rpt.
     pub timing: bool,
+    /// Laporan FSM extraction (COMP-11 tahap 2): deteksi state register +
+    /// transisi dari proses Sequential.
+    pub fsm_report: bool,
     pub quiet: bool,
 }
 
@@ -82,6 +85,15 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
     let syn_report = render_syn_report(&check);
     if !args.quiet {
         print!("{}", syn_report);
+    }
+
+    // ── FSM extraction report (COMP-11 tahap 2) ──
+    if args.fsm_report {
+        let fsms = maria_synth::fsm::extract_fsms(&ir);
+        let report = maria_synth::fsm::render_fsm_report(&fsms);
+        if !args.quiet {
+            print!("{}", report);
+        }
     }
 
     // ── SIR: lowering + optimizer (Phase 2, SYNTHESIS.md §4/§6) ──
