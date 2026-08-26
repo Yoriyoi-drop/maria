@@ -106,7 +106,7 @@ Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2167 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 89 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 90 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -997,7 +997,9 @@ ELAB-02: ⚠️ IN PROGRESS — lazy elaboration:
          HIR LazyElaborator ada (crates/maria-compiler, config
          use_lazy_elab; compile-only mode skip full elab). MASIH OPEN:
          on-demand elab per-signal/per-instance untuk LSP & partial sim.
-ELAB-03:[] Tidak ada non-blocking elaboration (Medium)
+ELAB-03: ⚠️ Non-blocking elaboration — PARTIAL (ROUND 85b tahap 1)
+         Elaborator sudah synchronous. Async elaboration membutuhkan
+         tokio + redesign pipeline. Status: masih open untuk tahap lanjut.
 ELAB-04:[] Tidak ada type-2 incremental elaboration (High)
 ELAB-05: [x] Generate loop unrolling safety cap — FIXED (ROUND 5):
          MAX_GENERATED_ITEMS=1M (elaboration/util/generate.rs:18) + cap iter
@@ -1765,7 +1767,15 @@ FORMAL-13: ⚠️ IN PROGRESS (ROUND 102) — connectivity checking tahap 1:
          src,dst (repeatable) di run_formal; error sinyal tak dikenal
          jadi CI gate. MASIH OPEN: dependensi sequential/NBA lintas
          cycle, connectivity lintas instance/hierarki.
-FORMAL-14:[] No X-propagation formal analysis (High)
+FORMAL-14: ✅ X-propagation formal analysis (ROUND 85b) —
+         crates/maria-formal/src/xprop.rs (BARU):
+         - Ternary enum: Zero/One/Unknown domains.
+         - XPropState: HashMap<SignalId, Ternary> + join.
+         - XPropAnalyzer: analyze design → detect X-propagation issues.
+         - eval_binop/eval_unop: ternary arithmetic (bitwise/logical).
+         - check_comb_outputs/check_seq_outputs: detect X in FF outputs.
+         - 7 unit tests: ternary join/is_known/may_be_unknown,
+           state join, eval_binop BitAnd/BitOr/LogicalAnd, eval_unop Not.
 FORMAL-15:[] No unreachable assertion detection (High)
 FORMAL-16: ✅ Cover property formal analysis (ROUND 85b) — FORMAL-16:
          - collect_covers() + walk_covers() di bmc.rs — walk AST IrStmt::Cover

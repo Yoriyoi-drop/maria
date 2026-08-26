@@ -12,6 +12,7 @@ pub mod bmc;
 pub mod connectivity;
 pub mod sat;
 pub mod abstract_interp;
+pub mod xprop;
 
 #[cfg(test)]
 pub mod tests;
