@@ -1043,7 +1043,16 @@ COMP-03: ✅ Constant propagation — FIXED (stale; const_fold.rs + MIR)
          & package constants (ROUND 11), width-aware, X/Z guard.
          MIR: constant_fold pass 17 binary ops + copy propagate +
          constant_branch_fold (CRIT-041). Marker stale.
-COMP-04:[] Tidak ada common subexpression elimination (CSE) (High)
+COMP-04: ✅ Common subexpression elimination — FIXED (ROUND 104)
+         Pass baru common_subexpr_eliminate di MIR opt pipeline
+         (crates/maria-compiler/src/mir/opt.rs): Binary/Unary identik
+         dalam straight-line block dihilangkan — Nop + forward rewrite
+         semua pemakaian dest → cached dest (stop di redefinition /
+         boundary). Konservatif: table reset di Branch/Jump/Label,
+         operan harus belum ditulis ulang sejak cache, Load sinyal
+         tidak di-CSE. Komutatif dinormalisasi (Add/Mul/And/Or/Xor/Eq/
+         Ne/Logical). Ter-wire di fixed-point pipeline + jalur JIT.
+         Test 3 unit: duplikat, komutatif, non-komutatif & cross-label.
 COMP-05:[] Tidak ada loop invariant code motion (LICM) (High)
 COMP-06: ✅ Strength reduction — FIXED (stale; CRIT-041 + ROUND 97 wiring)
          MIR opt pass 5: Mul/Div by power-of-2 → Shl/Shr; Mul 0/1 →
@@ -4412,6 +4421,31 @@ hop, ! ERROR zz tak dikenal.
 📊 VERIFIKASI ROUND 103:
    - Tidak ada perubahan kode (re-verifikasi, bukti kode)
    - cargo test --workspace: 2148 passed, 0 failed
+
+═══ ROUND 104 — COMP-04: CSE pass di MIR opt pipeline ═══
+
+✅ COMMON SUBEXPRESSION ELIMINATION (COMP-04) — DIIMPLEMENTASIKAN:
+   - Pass baru common_subexpr_eliminate (crates/maria-compiler/src/mir/
+     opt.rs) masuk pipeline fixed-point optimize_process.
+   - Algoritma (konservatif, straight-line only):
+     * CseKey = op+operands (+width); operan komutatif dinormalisasi
+       (Add/Mul/And/Or/Xor/Eq/Ne/LogicalAnd/LogicalOr).
+     * Hit valid bila: kedua operan belum ditulis ulang sejak entri
+       dicache + dest entri juga belum ditulis ulang.
+     * Aksi: instr duplikat → Nop; semua PEMBACAAN dest di-forward-
+       rewrite ke cached dest sampai dest ditulis ulang / block boundary
+       (Branch/Jump/Label reset table — konsisten dengan DSE).
+     * Load sinyal tidak di-CSE (nilai bisa berubah antar cycle).
+   - Ter-wire otomatis via fixed-point pipeline → jalur JIT (ROUND 97).
+
+Test (+3 unit): test_cse_duplicate_binary (duplikat hilang + Store
+di-rewrite ke cached reg), test_cse_commutative_operands (r0+r1 ≡
+r1+r0), test_cse_not_cross_block_and_not_noncommutative (Sub tertukar
+tidak digabung; CSE tidak melintasi Label).
+
+📊 VERIFIKASI ROUND 104:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2151 passed, 0 failed (+3)
 
 ========================================
 END OF AUDIT REPORT

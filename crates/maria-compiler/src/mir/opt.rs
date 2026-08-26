@@ -27,6 +27,7 @@ pub fn optimize_process(instrs: &mut Vec<MirInstr>) {
         changed |= copy_propagate(instrs);
         changed |= dead_store_eliminate(instrs);
         changed |= constant_branch_fold(instrs);
+        changed |= common_subexpr_eliminate(instrs);
         changed |= strength_reduce(instrs);
         changed |= remove_nops(instrs);
     }
@@ -224,6 +225,227 @@ fn reads_register(instr: &MirInstr, reg: usize) -> bool {
     }
 }
 
+// ── Pass 3b: Common Subexpression Elimination (COMP-04, conservative) ──
+
+/// Eliminasi komputasi ulang yang identik dalam straight-line block:
+/// `r4 = r2 + r1` setelah `r3 = r2 + r1` → Nop + rewrite semua pemakaian
+/// `r4` menjadi `r3` (sampai `r4` ditulis ulang).
+///
+/// CONSERVATIVE:
+/// - Table dibuang pada Branch/Jump/Label (tidak melintasi basic block).
+/// - Hanya Binary/Unary murni; Load sinyal tidak di-CSE (bisa berubah).
+/// - Operan harus belum ditulis ulang sejak entri di-cache.
+fn common_subexpr_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
+    #[derive(Hash, PartialEq, Eq, Clone)]
+    enum CseKey {
+        Bin(String, usize, usize, usize),
+        Un(String, usize, usize),
+    }
+
+    struct Entry {
+        dest: usize,
+        def_idx: usize,
+        operand_defs: Vec<(usize, usize)>,
+    }
+
+    fn is_commutative(op: &str) -> bool {
+        matches!(
+            op,
+            "Add" | "Mul" | "And" | "Or" | "Xor" | "Eq" | "Ne"
+                | "LogicalAnd" | "LogicalOr"
+        )
+    }
+
+    let mut changed = false;
+    // defs: reg → posisi instruksi penulisan terakhir.
+    let mut defs: HashMap<usize, usize> = HashMap::new();
+    let mut table: HashMap<CseKey, Entry> = HashMap::new();
+
+    for i in 0..instrs.len() {
+        // Basic block boundary → reset analisis.
+        if matches!(
+            instrs[i],
+            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
+        ) {
+            defs.clear();
+            table.clear();
+            continue;
+        }
+
+        match &instrs[i] {
+            MirInstr::Binary { op, dest, lhs, rhs, width } => {
+                let (a, b) = if is_commutative(&format!("{:?}", op)) {
+                    (*lhs.min(rhs), *lhs.max(rhs))
+                } else {
+                    (*lhs, *rhs)
+                };
+                let key = CseKey::Bin(format!("{:?}", op), a, b, *width);
+                // Cek hit valid: operan tak berubah + dest cache belum
+                // ditulis ulang sejak def aslinya.
+                if let Some(e) = table.get(&key) {
+                    let operands_unchanged = e
+                        .operand_defs
+                        .iter()
+                        .all(|(r, d)| defs.get(r) == Some(d));
+                    let dest_fresh = defs.get(&e.dest) == Some(&e.def_idx);
+                    if operands_unchanged && dest_fresh {
+                        let dest = *dest;
+                        let cached_dest = e.dest;
+                        // Nop-kan komputasi ulang, lalu rewrite semua
+                        // pemakaian dest → cached_dest sampai dest ditulis.
+                        instrs[i] = MirInstr::Nop;
+                        let mut j = i + 1;
+                        while j < instrs.len() {
+                            if matches!(
+                                instrs[j],
+                                MirInstr::Branch { .. }
+                                    | MirInstr::Jump { .. }
+                                    | MirInstr::Label(_)
+                            ) {
+                                break;
+                            }
+                            if writes_register(&instrs[j], dest) {
+                                break;
+                            }
+                            rewrite_read_register(&mut instrs[j], dest, cached_dest);
+                            j += 1;
+                        }
+                        defs.insert(dest, i);
+                        changed = true;
+                        continue;
+                    }
+                }
+                // Cache komputasi ini (simpan posisi def terakhir operan).
+                let mut operand_defs = Vec::new();
+                for r in [a, b] {
+                    operand_defs.push((r, defs.get(&r).copied()));
+                }
+                let _ = operand_defs;
+                // Simpan dengan Option agar "belum pernah didefinisikan"
+                // juga terekam (None ≠ ada def baru).
+                table.insert(
+                    key,
+                    Entry {
+                        dest: *dest,
+                        def_idx: i,
+                        operand_defs: [a, b]
+                            .iter()
+                            .map(|&r| (r, defs.get(&r).copied().unwrap_or(usize::MAX)))
+                            .collect(),
+                    },
+                );
+                // Catatan validitas: operand None direkam sebagai usize::MAX,
+                // dan cek kesamaan `defs.get(r) == Some(&MAX)` tidak akan cocok
+                // bila kemudian didefinisikan → konservatif benar.
+                defs.insert(*dest, i);
+            }
+            MirInstr::Unary { op, dest, operand, width } => {
+                let key = CseKey::Un(format!("{:?}", op), *operand, *width);
+                if let Some(e) = table.get(&key) {
+                    let operands_unchanged =
+                        e.operand_defs.iter().all(|(r, d)| defs.get(r) == Some(d));
+                    let dest_fresh = defs.get(&e.dest) == Some(&e.def_idx);
+                    if operands_unchanged && dest_fresh {
+                        let dest = *dest;
+                        let cached_dest = e.dest;
+                        instrs[i] = MirInstr::Nop;
+                        let mut j = i + 1;
+                        while j < instrs.len() {
+                            if matches!(
+                                instrs[j],
+                                MirInstr::Branch { .. }
+                                    | MirInstr::Jump { .. }
+                                    | MirInstr::Label(_)
+                            ) {
+                                break;
+                            }
+                            if writes_register(&instrs[j], dest) {
+                                break;
+                            }
+                            rewrite_read_register(&mut instrs[j], dest, cached_dest);
+                            j += 1;
+                        }
+                        defs.insert(dest, i);
+                        changed = true;
+                        continue;
+                    }
+                }
+                let od = vec![(
+                    *operand,
+                    defs.get(operand).copied().unwrap_or(usize::MAX),
+                )];
+                table.insert(
+                    key,
+                    Entry { dest: *dest, def_idx: i, operand_defs: od },
+                );
+                defs.insert(*dest, i);
+            }
+            MirInstr::Const { dest, .. } => {
+                defs.insert(*dest, i);
+                // Const juga invalidasi entri CSE yang memakai dest sbg
+                // operan? Tidak — Const adalah DEFINISI, dan definisi baru
+                // mengubah nilai reg → entri dengan operan reg tsb harus
+                // divalidasi. defs.update di atas menangani via cek
+                // kesamaan posisi. Namun Const tidak masuk table sendiri.
+            }
+            MirInstr::Load { dest, .. } => {
+                defs.insert(*dest, i);
+            }
+            _ => {}
+        }
+    }
+
+    if changed {
+        remove_nops(instrs);
+    }
+    changed
+}
+
+/// Apakah instruksi MENULIS ke register tertentu?
+fn writes_register(instr: &MirInstr, reg: usize) -> bool {
+    match instr {
+        MirInstr::Const { dest, .. }
+        | MirInstr::Binary { dest, .. }
+        | MirInstr::Unary { dest, .. } => *dest == reg,
+        _ => false,
+    }
+}
+
+/// Rewrite semua PEMBACAAN `from` menjadi `to` pada satu instruksi.
+fn rewrite_read_register(instr: &mut MirInstr, from: usize, to: usize) {
+    match instr {
+        MirInstr::Binary { lhs, rhs, .. } => {
+            if *lhs == from {
+                *lhs = to;
+            }
+            if *rhs == from {
+                *rhs = to;
+            }
+        }
+        MirInstr::Unary { operand, .. } => {
+            if *operand == from {
+                *operand = to;
+            }
+        }
+        MirInstr::Store { src, .. } => {
+            if *src == from {
+                *src = to;
+            }
+        }
+        MirInstr::NonBlocking { src, .. } => {
+            if *src == from {
+                *src = to;
+            }
+        }
+        MirInstr::Branch { cond, .. } => {
+            if *cond == from {
+                *cond = to;
+            }
+        }
+        _ => {}
+    }
+}
+
 // ── Pass 4: Constant Branch Folding ──
 
 /// Replace branches with constant conditions: if cond is always true → Jump,
@@ -372,6 +594,67 @@ fn remove_nops(instrs: &mut Vec<MirInstr>) -> bool {
 mod tests {
     use super::*;
     use crate::mir::mir::*;
+
+    #[test]
+    fn test_cse_duplicate_binary() {
+        // r3 = r2 + r1 ; r4 = r2 + r1 → duplikat; Store memakai r4
+        // di-rewrite menjadi r3, Binary kedua jadi Nop.
+        let mut instrs = vec![
+            MirInstr::Const { dest: 0, value: 5, width: 32 },
+            MirInstr::Load { dest: 1, signal: 0 },
+            MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 1, rhs: 0, width: 32 },
+            MirInstr::Binary { op: MirBinOp::Add, dest: 3, lhs: 1, rhs: 0, width: 32 },
+            MirInstr::Store { signal: 1, src: 3 },
+        ];
+        assert!(common_subexpr_eliminate(&mut instrs));
+        // Tepat SATU Add tersisa (yang pertama); duplikat jadi Nop+hapus.
+        assert_eq!(
+            instrs.iter().filter(|i| matches!(i, MirInstr::Binary { op: MirBinOp::Add, .. })).count(),
+            1,
+            "hanya satu Add tersisa: {:?}",
+            instrs
+        );
+        // Store sekarang membaca reg 2 (hasil CSE pertama).
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 2 })));
+    }
+
+    #[test]
+    fn test_cse_commutative_operands() {
+        // r2 = r0 + r1 vs r3 = r1 + r0 → komutatif, tetap ter-CSE.
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Load { dest: 1, signal: 1 },
+            MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 0, rhs: 1, width: 32 },
+            MirInstr::Binary { op: MirBinOp::Add, dest: 3, lhs: 1, rhs: 0, width: 32 },
+        ];
+        assert!(common_subexpr_eliminate(&mut instrs));
+        assert_eq!(
+            instrs.iter().filter(|i| matches!(i, MirInstr::Binary { op: MirBinOp::Add, .. })).count(),
+            1,
+            "Add komutatif ter-CSE"
+        );
+    }
+
+    #[test]
+    fn test_cse_not_cross_block_and_not_noncommutative() {
+        // Sub non-komutatif dengan operan tertukar TIDAK boleh merge.
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Load { dest: 1, signal: 1 },
+            MirInstr::Binary { op: MirBinOp::Sub, dest: 2, lhs: 0, rhs: 1, width: 32 },
+            MirInstr::Binary { op: MirBinOp::Sub, dest: 3, lhs: 1, rhs: 0, width: 32 },
+        ];
+        assert!(!common_subexpr_eliminate(&mut instrs), "Sub tertukar bukan CSE");
+
+        // Reset di Label: duplikat melintasi label tidak digabung.
+        let mut cross = vec![
+            MirInstr::Label(0),
+            MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 0, rhs: 1, width: 32 },
+            MirInstr::Label(1),
+            MirInstr::Binary { op: MirBinOp::Add, dest: 3, lhs: 0, rhs: 1, width: 32 },
+        ];
+        assert!(!common_subexpr_eliminate(&mut cross), "CSE tidak melintasi Label");
+    }
 
     #[test]
     fn test_constant_fold_add() {
