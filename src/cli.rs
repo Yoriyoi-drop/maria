@@ -907,6 +907,11 @@ pub struct Cli {
     #[arg(long = "formal-induction")]
     pub formal_induction: bool,
 
+    /// Connectivity check (FORMAL-13): pasangan sinyal "src,dst" — cek
+    /// jalur kombinational dari src ke dst (boleh diulang)
+    #[arg(long = "formal-connect")]
+    pub formal_connect: Vec<String>,
+
     /// DPI shared library to load (can be specified multiple times)
     #[arg(long = "dpi-lib", num_args = 1)]
     pub dpi_libs: Vec<String>,

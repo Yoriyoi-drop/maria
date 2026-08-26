@@ -901,6 +901,99 @@ mod tests {
     }
 
     #[test]
+    fn test_connectivity_chain_and_isolated() {
+        // FORMAL-13: jalur kombinational.
+        //   b = a; c = b | a; d = c
+        //   check(a, c) → connected, 1 hop (edge langsung via OR)
+        //   check(a, d) → connected, 2 hop [a, c, d]
+        //   check(c, a) → NOT connected
+        //   check(zz, a) → error sinyal tak dikenal
+        use crate::connectivity::check_connectivity;
+        let assigns = vec![
+            IrStmt::BlockingAssign {
+                lhs: IrLValue::Signal(1, 1),
+                rhs: IrExpr::Signal(0, 0),
+                delay: None,
+            },
+            IrStmt::BlockingAssign {
+                lhs: IrLValue::Signal(2, 1),
+                rhs: IrExpr::BinaryOp(
+                    BinaryIrOp::BitOr,
+                    Box::new(IrExpr::Signal(1, 0)),
+                    Box::new(IrExpr::Signal(0, 0)),
+                ),
+                delay: None,
+            },
+            IrStmt::BlockingAssign {
+                lhs: IrLValue::Signal(3, 1),
+                rhs: IrExpr::Signal(2, 0),
+                delay: None,
+            },
+        ];
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("t"),
+                signals: vec![
+                    SignalInfo { name: Symbol::from("a"), width: 1, ..Default::default() },
+                    SignalInfo { name: Symbol::from("b"), width: 1, ..Default::default() },
+                    SignalInfo { name: Symbol::from("c"), width: 1, ..Default::default() },
+                    SignalInfo { name: Symbol::from("d"), width: 1, ..Default::default() },
+                ],
+                inputs: vec![],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![Process::Combinational {
+                    name: Symbol::from("comb"),
+                    sensitivity: vec![],
+                    body: assigns,
+                }],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            source_file: None,
+            source_lines: None,
+            module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
+        };
+
+        let pairs = vec![
+            ("a".to_string(), "c".to_string()),
+            ("c".to_string(), "a".to_string()),
+            ("a".to_string(), "d".to_string()),
+            ("zz".to_string(), "a".to_string()),
+        ];
+        let r = check_connectivity(&design, &pairs);
+        assert_eq!(r.len(), 4);
+
+        // a→c: connected langsung 1 hop (c = b|a memuat edge a→c).
+        assert!(r[0].connected);
+        assert_eq!(r[0].path_len, Some(1));
+        assert_eq!(r[0].path, vec!["a", "c"]);
+
+        // c→a: tidak ada jalur mundur.
+        assert!(!r[1].connected);
+
+        // a→d: jalur 2 hop [a, c, d].
+        assert!(r[2].connected);
+        assert_eq!(r[2].path_len, Some(2));
+        assert_eq!(r[2].path, vec!["a", "c", "d"]);
+
+        // Sinyal tidak dikenal → error.
+        assert!(r[3].error.is_some());
+        assert!(!r[3].connected);
+    }
+
+    #[test]
     fn test_z3_bvadd_simple() {
         // Minimal Z3 test: a=0, b=a+1. Assert b < 0 (should be unsat).
         // Then assert b = 1 (should be sat).

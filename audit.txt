@@ -1655,7 +1655,14 @@ FORMAL-10: ⚠️ IN PROGRESS (ROUND 92) — assume-guarantee tahap 1:
            assume-guarantee antar module, proof obligations per component.
 FORMAL-11:[] No equivalence checking combinational (Critical)
 FORMAL-12:[] No equivalence checking sequential (Critical)
-FORMAL-13:[] No connectivity checking (High)
+FORMAL-13: ⚠️ IN PROGRESS (ROUND 102) — connectivity checking tahap 1:
+         crates/maria-formal/src/connectivity.rs — analisis statis jalur
+         kombinational: graf dependensi (rhs → lhs) dari assignment proses
+         Comb/CombReactive/Initial, BFS dari src, rekonstruksi jalur
+         terpendek (nama sinyal + jumlah hop). CLI --formal-connect
+         src,dst (repeatable) di run_formal; error sinyal tak dikenal
+         jadi CI gate. MASIH OPEN: dependensi sequential/NBA lintas
+         cycle, connectivity lintas instance/hierarki.
 FORMAL-14:[] No X-propagation formal analysis (High)
 FORMAL-15:[] No unreachable assertion detection (High)
 FORMAL-16:[] No cover property formal analysis (Medium)
@@ -4346,6 +4353,37 @@ kosong → kosong.
 📊 VERIFIKASI ROUND 101:
    - Tidak ada perubahan kode (re-verifikasi, bukti workflow + tool)
    - cargo test --workspace: 2147 passed, 0 failed
+
+═══ ROUND 102 — FORMAL-13 connectivity checking (tahap 1) ═══
+
+Kerja bertahap FORMAL-13 (High) — tahap 1 jalur kombinational selesai,
+item tetap ⚠️ IN PROGRESS (sequential/NBA + hierarki masih open).
+
+✅ CONNECTIVITY CHECKING (crates/maria-formal/src/connectivity.rs BARU):
+   - collect_assignments(): BlockingAssign dari proses Comb/CombReactive/
+     Initial (walk Block/NamedBlock/If/Case).
+   - collect_expr_signals(): id sinyal dari IrExpr (Signal/BinaryOp/
+     UnaryOp/Cond/Signed).
+   - check_connectivity(design, pairs) → Vec<ConnectivityResult>
+     {connected, path_len, path: Vec<nama sinyal>, error}: graf
+     dependensi rhs→lhs, BFS dari src, jalur terpendek direkonstruksi.
+     Self-loop src==dst → connected hop 0; sinyal tak dikenal → error.
+
+✅ CLI: --formal-connect <src,dst> (repeatable) — kehadiran flag juga
+   mengaktifkan jalur formal tanpa perlu --formal. Laporan:
+   "✓ CONNECTED: a → c via 1 hop (a → c)" / "✗ NOT CONNECTED" /
+   "! ERROR". Pair dengan error → has_error → exit non-zero (CI gate).
+
+Test (+1): test_connectivity_chain_and_isolated — chain b=a, c=b|a,
+d=c: a→c 1 hop (edge langsung via OR), a→d 2 hop [a,c,d], c→a NOT
+connected, sinyal tak dikenal error.
+
+E2e CLI (--formal-connect): conn.sv → ✓ a→c 1 hop, ✗ c→a, ✓ a→b 1
+hop, ! ERROR zz tak dikenal.
+
+📊 VERIFIKASI ROUND 102:
+   - cargo build --workspace (default + features formal): 0 error
+   - cargo test --workspace: 2148 passed, 0 failed (+1)
 
 ========================================
 END OF AUDIT REPORT

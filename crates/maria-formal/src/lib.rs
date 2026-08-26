@@ -9,6 +9,7 @@
 //! Usage: `cargo run -- --formal --formal-bound 10 test.sv`
 
 pub mod bmc;
+pub mod connectivity;
 pub mod sat;
 
 #[cfg(test)]

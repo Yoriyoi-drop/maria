@@ -307,13 +307,33 @@ fn anim_abort(anim: &mut Option<PipelineAnimator>, errors: usize, warnings: usiz
 /// Run formal verification (BMC) and print results.
 /// Returns Err if any assertion fails (counterexample found — for CI/CD integration).
 #[cfg(feature = "formal")]
-fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool, induction: bool) -> Result<(), SimError> {
+fn run_formal(
+    ir_design: &maria_ir::IrDesign,
+    bound: u64,
+    quiet: bool,
+    induction: bool,
+    connect_pairs: &[String],
+) -> Result<(), SimError> {
     use maria_api::formal::*;
     let mut formal_cfg = FormalConfig::default();
     formal_cfg.bound = bound;
     formal_cfg.induction = induction;
     let mut formal_engine = FormalEngine::new(formal_cfg);
     let results = formal_engine.check_assertions_bmc(ir_design);
+
+    // FORMAL-13: connectivity check (statis, tanpa solver).
+    let conn_results = if !connect_pairs.is_empty() {
+        let pairs: Vec<(String, String)> = connect_pairs
+            .iter()
+            .filter_map(|s| {
+                let (a, b) = s.split_once(',')?;
+                Some((a.trim().to_string(), b.trim().to_string()))
+            })
+            .collect();
+        Some(maria_api::formal::connectivity::check_connectivity(ir_design, &pairs))
+    } else {
+        None
+    };
 
     if !quiet {
         println!("\n── Formal Verification Results (BMC bound={}) ──", bound);
@@ -322,9 +342,42 @@ fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool, induction
     let has_fail = results
         .iter()
         .any(|(_, r)| matches!(r, FormalResult::Counterexample(_)));
-    let has_error = results
+    let mut has_error = results
         .iter()
         .any(|(_, r)| matches!(r, FormalResult::Error(_)));
+
+    // FORMAL-13: laporan konektivitas.
+    if let Some(conn) = &conn_results {
+        if !quiet {
+            println!("\n── Connectivity Check ──");
+            for r in conn {
+                if let Some(err) = &r.error {
+                    println!("  ! ERROR: {} → {} — {}", r.src, r.dst, err);
+                } else if r.connected {
+                    let path = r.path.join(" → ");
+                    match r.path_len {
+                        Some(0) => println!("  ✓ CONNECTED (self): {}", r.src),
+                        Some(n) => {
+                            println!(
+                                "  ✓ CONNECTED: {} → {} via {} hop{} ({})",
+                                r.src, r.dst, n, if n == 1 { "" } else { "s" }, path
+                            )
+                        }
+                        None => println!("  ✗ NOT CONNECTED: {} → {}", r.src, r.dst),
+                    }
+                } else {
+                    println!("  ✗ NOT CONNECTED: {} → {}", r.src, r.dst);
+                }
+            }
+        }
+        // Pasangan dengan error ikut dihitung sebagai kegagalan CI gate.
+        if conn_results
+            .as_ref()
+            .is_some_and(|c| c.iter().any(|r| r.error.is_some()))
+        {
+            has_error = true;
+        }
+    }
 
     for (name, result) in &results {
         if quiet {
@@ -1633,8 +1686,8 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── Formal Verification (runs before simulation, skips sim) ──
     #[cfg(feature = "formal")]
-    if cli.formal {
-        return run_formal(&ir_design, cli.formal_bound, cli.quiet, cli.formal_induction);
+    if cli.formal || !cli.formal_connect.is_empty() {
+        return run_formal(&ir_design, cli.formal_bound, cli.quiet, cli.formal_induction, &cli.formal_connect);
     }
     #[cfg(not(feature = "formal"))]
     if cli.formal {
@@ -2793,8 +2846,8 @@ fn run_fast(
 
     // ── Formal Verification (runs before simulation, skips sim) ──
     #[cfg(feature = "formal")]
-    if cli.formal {
-        return run_formal(&ir_design, cli.formal_bound, cli.quiet, cli.formal_induction);
+    if cli.formal || !cli.formal_connect.is_empty() {
+        return run_formal(&ir_design, cli.formal_bound, cli.quiet, cli.formal_induction, &cli.formal_connect);
     }
     #[cfg(not(feature = "formal"))]
     if cli.formal {
