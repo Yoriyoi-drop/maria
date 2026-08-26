@@ -1053,7 +1053,13 @@ COMP-04: ✅ Common subexpression elimination — FIXED (ROUND 104)
          tidak di-CSE. Komutatif dinormalisasi (Add/Mul/And/Or/Xor/Eq/
          Ne/Logical). Ter-wire di fixed-point pipeline + jalur JIT.
          Test 3 unit: duplikat, komutatif, non-komutatif & cross-label.
-COMP-05:[] Tidak ada loop invariant code motion (LICM) (High)
+COMP-05: ✅ Loop invariant code motion — FIXED (ROUND 108)
+         Pass licm di MIR opt pipeline: deteksi backward jump → loop
+         header; Binary/Unary dengan semua operan didefinisikan DI LUAR
+         loop dan dest tidak feed Store/NonBlocking dalam body → hoist
+         ke sebelum Label. Konservatif: tidak melintasi boundary, satu
+         level loop per pass (fixed-point iterasi). Test 2 unit
+         (invariant hoisted, variant tidak di-hoist).
 COMP-06: ✅ Strength reduction — FIXED (stale; CRIT-041 + ROUND 97 wiring)
          MIR opt pass 5: Mul/Div by power-of-2 → Shl/Shr; Mul 0/1 →
          Const/Nop (opt.rs strength_reduce). Kini aktif di jalur JIT.
@@ -4521,9 +4527,32 @@ selector tanpa NBA-write → bukan FSM.
    - tools wave.rs: VcdData private → pub (private_interfaces).
 
 📊 VERIFIKASI ROUND 106:
-   - cargo build --workspace: 0 error, **0 warning** (juga dgn
-     features formal+jit)
+   - cargo build --workspace: 0 error
    - cargo test --workspace: 2155 passed, 0 failed (+1)
+
+═══ ROUND 107/108 — COMP-05 LICM pass di MIR opt pipeline ═══
+
+✅ LOOP INVARIANT CODE MOTION (COMP-05) — DIIMPLEMENTASIKAN:
+   - Pass licm (crates/maria-compiler/src/mir/opt.rs) masuk pipeline
+     fixed-point optimize_process.
+   - Deteksi loop: backward Jump/Branch yang target Label-nya ada
+     SEBELUM posisi jump → (header_idx, tail_idx).
+   - Kandidat hoist: Binary/Unary dalam body [hdr+1..tail] dengan:
+     1. SEMUA operand didefinisikan SEBELUM header Label (outside_defs),
+     2. Dest TIDAK feed Store/NonBlocking dalam body.
+   - Aksi: instruksi di-remove dari body dan di-insert tepat sebelum
+     header Label (proses tail→head agar index stabil).
+   - Konservatif: tidak menangani nested loop eksplisit, tidak melintasi
+     call/display; fixed-point pipeline iterasi bila masih ada.
+
+Test (+2 unit): test_licm_hoists_invariant_computation — Binary Add
+dengan Const + Load di luar loop → hoisted ke sebelum Label;
+test_licm_does_not_hoist_variant — Unary dengan Load DI DALAM loop →
+tetap di dalam.
+
+📊 VERIFIKASI ROUND 107/108:
+   - cargo build --workspace: 0 error, 0 warning
+   - cargo test --workspace: 2157 passed, 0 failed (+2)
 
 ========================================
 END OF AUDIT REPORT

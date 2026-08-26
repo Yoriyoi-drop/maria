@@ -28,6 +28,7 @@ pub fn optimize_process(instrs: &mut Vec<MirInstr>) {
         changed |= dead_store_eliminate(instrs);
         changed |= constant_branch_fold(instrs);
         changed |= common_subexpr_eliminate(instrs);
+        changed |= licm(instrs);
         changed |= strength_reduce(instrs);
         changed |= remove_nops(instrs);
     }
@@ -444,6 +445,119 @@ fn rewrite_read_register(instr: &mut MirInstr, from: usize, to: usize) {
         }
         _ => {}
     }
+}
+
+// ── Pass 3c: Loop Invariant Code Motion (COMP-05, conservative) ──
+
+/// Hoist komputasi murni yang invariant keluar dari loop.
+///
+/// Deteksi loop: Label L ... Jump/Branch yang kembali ke L (backward jump).
+/// Sebuah Binary/Unary di body loop adalah INVARIANT bila:
+///   1. Semua operand terakhir didefinisikan SEBELUM label loop (di luar),
+///   2. Dest TIDAK pernah jadi target Store/NonBlocking dalam body
+///      (hasil hanya dipakai komputasi lain / setelah loop).
+///
+/// CONSERVATIVE: tidak menangani nested loop, tidak menghoist melintasi
+/// call/display, dan hanya satu level loop per pass (fixed-point pipeline
+/// akan iterasi bila masih ada).
+fn licm(instrs: &mut Vec<MirInstr>) -> bool {
+    // 1. Cari backward jump → (header_idx, tail_idx).
+    let mut loops: Vec<(usize, usize)> = Vec::new();
+    for i in 0..instrs.len() {
+        match &instrs[i] {
+            MirInstr::Jump { label } => {
+                if let Some(hdr) = instrs[..i].iter().position(|s| matches!(s, MirInstr::Label(l) if l == label)) {
+                    loops.push((hdr, i));
+                }
+            }
+            MirInstr::Branch { then_label, else_label, .. } => {
+                for lbl in [then_label, else_label] {
+                    if let Some(hdr) = instrs[..i].iter().position(|s| matches!(s, MirInstr::Label(l) if l == lbl)) {
+                        if hdr < i {
+                            loops.push((hdr, i));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    loops.sort_by_key(|&(h, _)| h);
+    loops.dedup();
+    if loops.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+
+    // Proses loop dari belakang agar index stabil saat hoist.
+    for &(hdr, tail) in loops.iter().rev() {
+        // Definisi sebelum header: reg → true.
+        let mut outside_defs: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for instr in &instrs[..hdr] {
+            match instr {
+                MirInstr::Const { dest, .. }
+                | MirInstr::Load { dest, .. }
+                | MirInstr::Binary { dest, .. }
+                | MirInstr::Unary { dest, .. } => {
+                    outside_defs.insert(*dest);
+                }
+                _ => {}
+            }
+        }
+
+        // Kumpulkan sinyal Store/NonBlocking dalam body (dest yang feed ke
+        // sini tidak boleh di-hoist — hasilnya side-effect).
+        let mut signal_writes: Vec<usize> = Vec::new();
+        for instr in &instrs[hdr..=tail] {
+            match instr {
+                MirInstr::Store { src, .. } | MirInstr::NonBlocking { src, .. } => {
+                    signal_writes.push(*src);
+                }
+                _ => {}
+            }
+        }
+
+        // Kandidat hoist: posisi instruksi invariant (urut naik).
+        let mut candidates: Vec<usize> = Vec::new();
+        for i in hdr + 1..tail {
+            let (opnds, dest) = match &instrs[i] {
+                MirInstr::Binary { lhs, rhs, dest, .. } => (vec![*lhs, *rhs], *dest),
+                MirInstr::Unary { operand, dest, .. } => (vec![*operand], *dest),
+                _ => continue,
+            };
+            // Semua operan harus didefinisikan di luar loop.
+            if !opnds.iter().all(|r| outside_defs.contains(r)) {
+                continue;
+            }
+            // Dest tidak boleh feed Store/NonBlocking dalam body.
+            if signal_writes.contains(&dest) {
+                continue;
+            }
+            candidates.push(i);
+        }
+
+        if candidates.is_empty() {
+            continue;
+        }
+
+        // Hoist: pindahkan instruksi (dari belakang ke depan agar index
+        // tetap valid) ke tepat sebelum header Label.
+        // Setelah semua move, header Label bergeser; tapi karena kita pakai
+        // remove+insert dan proses dari tail→head, index header turun setiap
+        // kali. Simpan offset: jumlah hoisted so far.
+        let mut insert_at = hdr; // posisi Label
+        let mut removed_before = 0usize;
+        for &ci in candidates.iter().rev() {
+            let instr = instrs.remove(ci);
+            instrs.insert(insert_at, instr);
+            removed_before += 1;
+            insert_at += 1;
+        }
+        changed = true;
+    }
+
+    changed
 }
 
 // ── Pass 4: Constant Branch Folding ──
@@ -1022,5 +1136,46 @@ mod tests {
         // The const at index 0 is across a branch boundary from the next write at index 6
         // So it should NOT be eliminated
         assert!(!changed, "should not eliminate writes across control flow");
+    }
+
+    #[test]
+    fn test_licm_hoists_invariant_computation() {
+        // Loop: Label(0) ... Binary dest=3, lhs=1(sig load), rhs=2(const)
+        // Binary invariant (kedua operan didefinisikan di luar loop)
+        // → hoist ke sebelum Label(0).
+        let mut instrs = vec![
+            MirInstr::Const { dest: 2, value: 10, width: 32 },
+            MirInstr::Load { dest: 1, signal: 0 },
+            MirInstr::Label(0),
+            MirInstr::Binary { op: MirBinOp::Add, dest: 3, lhs: 1, rhs: 2, width: 32 },
+            MirInstr::Load { dest: 4, signal: 1 },
+            MirInstr::Store { signal: 1, src: 4 },
+            MirInstr::Branch {
+                cond: 4,
+                then_label: 0,
+                else_label: 1,
+            },
+            MirInstr::Label(1),
+        ];
+        assert!(licm(&mut instrs));
+        let add_pos = instrs.iter().position(|i| matches!(i, MirInstr::Binary { .. })).unwrap();
+        let label_pos = instrs.iter().position(|i| matches!(i, MirInstr::Label(0))).unwrap();
+        assert!(add_pos < label_pos, "Add harus di-hoist keluar loop: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_licm_does_not_hoist_variant() {
+        // Unary yang operannya didefinisikan DI DALAM loop → tidak boleh
+        // di-hoist.
+        let mut instrs = vec![
+            MirInstr::Label(0),
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Unary { op: MirUnOp::Not, dest: 1, operand: 0, width: 32 },
+            MirInstr::Jump { label: 0 },
+        ];
+        assert!(!licm(&mut instrs), "variant tidak boleh hoist");
+        let unary_pos = instrs.iter().position(|i| matches!(i, MirInstr::Unary { .. })).unwrap();
+        let label_pos = instrs.iter().position(|i| matches!(i, MirInstr::Label(0))).unwrap();
+        assert!(unary_pos > label_pos);
     }
 }
