@@ -4485,9 +4485,10 @@ selector tanpa NBA-write → bukan FSM.
    - Catatan: satu run paralel sempat 4 fail (interferensi state global
      antar crate saat concurrent) — rerun terisolasi & full suite hijau.
 
-═══ ROUND 106 — LSP-15 folding range + FIX FLAKE vhpi + 0 WARNING RUST ═══
+═══ ROUND 106 — RESTORE LSP-15 + FIX FLAKE vhpi + ZERO WARNING RUST ═══
 
-✅ LSP-15 FOLDING RANGE (tahap 1) — ditutup:
+✅ LSP-15 FOLDING RANGE — PULIHKAN (implementasi tahap 1 sempat hilang
+   saat refactor backend.rs; kini kembali lengkap & teruji):
    - Capability FoldingRangeProviderCapability::Simple + handler
      folding_range → Vec<FoldingRange> (kind Region).
    - Core murni compute_folding_ranges: stack pairing scope utama
