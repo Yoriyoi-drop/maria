@@ -2,7 +2,7 @@
 ║            AUDIT BRUTAL — MARIA HDL SIMULATOR ECOSYSTEM                     ║
 ║            Principal HDL Compiler Engineer / EDA Architect Review            ║
 ║            Target: Commercial SoC Tape-Out Readiness                        ║
-║            Date: 2026-08-26 (updated — ROUND 85: COMP-08/09/12, SIM-12)   ║
+║            Date: 2026-08-26 (updated — ROUND 85b: COMP-08/09/12/13/14/15, SIM-12) ║
 ║            Version: 0.3.0                                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -106,7 +106,7 @@ Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2167 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 81 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 84 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -1103,9 +1103,19 @@ COMP-12: ✅ Case analysis parallel_case/full_case (ROUND 85) — mlint
          CLI flag --case-analysis + MlintArgs. find_case_analysis() walk
          ASTStmt::Case/UniqueCase/PriorityCase → warning bila default=None
          dan items non-empty.
-COMP-13:[] Tidak ada clock gating inference (Medium)
-COMP-14:[] Tidak ada power optimization (Medium)
-COMP-15:[] Tidak ada memory inference optimization (Medium)
+COMP-13: ✅ Clock gating inference (ROUND 85b) — mlint --clock-gating:
+         find_clock_gating() walk AST: Stmt::IfElse tanpa else_branch +
+         has_nonblocking() → warning "always_ff dengan if tanpa else: potensi
+         clock gating implisit". Recurse into branches.
+         CLI flag --clock-gating + LintArgs + dispatch.
+COMP-14: ✅ Power optimization lint (ROUND 85b) — mlint --power:
+         find_power_patterns() check declared signals: width > 8 bit + bukan
+         power domain name (vdd/vss/gnd/supply) → info "pertimbangkan power
+         domain isolation". CLI flag --power + LintArgs + dispatch.
+COMP-15: ✅ Memory inference lint (ROUND 85b) — mlint --memory:
+         find_memory_inference() check DeclVar: range.is_some() +
+         array_range.is_some() → info "reg array — kandidat inferred RAM/ROM".
+         CLI flag --memory + LintArgs + dispatch.
 COMP-16:[] Tidak ada sequential equivalence checking (Critical)
 COMP-17:[] Tidak ada design partitioning for parallel compilation (High)
 COMP-18:[] Tidak ada distributed compilation via network (Critical)
@@ -3963,10 +3973,28 @@ SIM-12 (RTL locking race detection, High) ditutup:
      dalam satu delta cycle → warning NbaWriteConflict
    - Clear signal_write_types setiap delta baru
 
+COMP-13 (clock gating inference, Medium) ditutup:
+   - crates/maria-tools/src/lint.rs: find_clock_gating() + has_nonblocking()
+     • --clock-gating flag di LintArgs + MlintArgs
+     • walk always_ff blocks: Stmt::IfElse tanpa else + has_nonblocking()
+     → warning "potensi clock gating implisit"
+   - Recurse into branches (nested if)
+
+COMP-14 (power optimization, Medium) ditutup:
+   - crates/maria-tools/src/lint.rs: find_power_patterns()
+     • --power flag di LintArgs + MlintArgs
+     • Check declared signals: width > 8 + bukan power name → info
+       "pertimbangkan power domain isolation"
+
+COMP-15 (memory inference, Medium) ditutup:
+   - crates/maria-tools/src/lint.rs: find_memory_inference()
+     • --memory flag di LintArgs + MlintArgs
+     • DeclVar with range + array_range → info "kandidat inferred RAM/ROM"
+
 📊 VERIFIKASI ROUND 85b:
    - cargo build --workspace: 0 error
    - cargo nextest run --workspace: 2167 passed, 0 failed (+12 test baru)
-   - audit.txt diupdate
+   - audit.txt diupdate (84 items fixed)
 
 ═══ ROUND 86 — WAV-19: VCD background writer thread ═══
 

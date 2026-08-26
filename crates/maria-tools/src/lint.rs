@@ -24,6 +24,9 @@ pub struct LintArgs<'a> {
     pub loop_check: bool,
     pub fsm: bool,
     pub case_analysis: bool,
+    pub clock_gating: bool,
+    pub power: bool,
+    pub memory: bool,
     pub quiet: bool,
 }
 
@@ -46,6 +49,9 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
     let do_loop = chk(args.loop_check);
     let do_fsm = chk(args.fsm);
     let do_case_analysis = chk(args.case_analysis);
+    let do_clock_gating = chk(args.clock_gating);
+    let do_power = chk(args.power);
+    let do_memory = chk(args.memory);
 
     let (design, _session) = open_project(args.targets, args.incdirs, args.defines, None)?;
 
@@ -59,6 +65,9 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
             do_loop,
             do_fsm,
             do_case_analysis,
+            do_clock_gating,
+            do_power,
+            do_memory,
             &mut findings,
         );
     }
@@ -75,6 +84,9 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
             do_loop,
             do_fsm,
             do_case_analysis,
+            do_clock_gating,
+            do_power,
+            do_memory,
             &mut findings,
         );
     }
@@ -119,6 +131,9 @@ fn lint_module(
     do_loop: bool,
     do_fsm: bool,
     do_case_analysis: bool,
+    do_clock_gating: bool,
+    do_power: bool,
+    do_memory: bool,
     out: &mut Vec<Finding>,
 ) {
     lint_items(
@@ -132,6 +147,9 @@ fn lint_module(
         do_loop,
         do_fsm,
         do_case_analysis,
+        do_clock_gating,
+        do_power,
+        do_memory,
         out,
     );
 }
@@ -147,6 +165,9 @@ fn lint_items(
     do_loop: bool,
     do_fsm: bool,
     do_case_analysis: bool,
+    do_clock_gating: bool,
+    do_power: bool,
+    do_memory: bool,
     out: &mut Vec<Finding>,
 ) {
     // ── Kumpulkan deklarasi sinyal (decls + decl items + ports) ──
@@ -304,6 +325,25 @@ fn lint_items(
         for block in &always_blocks {
             find_case_analysis(scope, &block.stmts, out);
         }
+    }
+
+    // COMP-13: Clock gating inference — deteksi always_ff dengan if-gate
+    if do_clock_gating {
+        for block in &always_blocks {
+            if matches!(block.kind, maria_ast::stmt::AlwaysKind::AlwaysFF) {
+                find_clock_gating(scope, &block.stmts, out);
+            }
+        }
+    }
+
+    // COMP-14: Power optimization — deteksi UPF power domain patterns
+    if do_power {
+        find_power_patterns(scope, &declared, out);
+    }
+
+    // COMP-15: Memory inference — deteksi reg array patterns
+    if do_memory {
+        find_memory_inference(scope, decls, items, out);
     }
 }
 
@@ -1151,6 +1191,135 @@ fn find_case_analysis(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// COMP-13: Clock gating inference — deteksi always_ff dengan if-gate.
+///
+/// Pola `always_ff @(posedge clk) if (en) q <= d;` tanpa else → clock gating
+/// implisit. Synthesizer mungkin menginfer ICG (Integrated Clock Gating) cell,
+/// tapi intent lebih jelas bila menggunakan `always_latch` atau eksplicit
+/// clock gating. Warning untuk awareness designer.
+fn find_clock_gating(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::IfElse {
+                true_branch,
+                false_branch,
+                ..
+            } => {
+                // if tanpa else di always_ff → clock gating pattern
+                if false_branch.is_none() {
+                    // Cek apakah true_branch berisi non-blocking assign (FF pattern)
+                    if has_nonblocking(std::slice::from_ref(true_branch)) {
+                        out.push(Finding {
+                            module: scope.to_string(),
+                            check: "clock_gating",
+                            severity: "W",
+                            message: format!(
+                                "always_ff dengan if tanpa else: potensi clock gating implisit"
+                            ),
+                        });
+                    }
+                }
+                // Recurse into branches
+                find_clock_gating(scope, std::slice::from_ref(true_branch), out);
+                if let Some(fb) = false_branch {
+                    find_clock_gating(scope, std::slice::from_ref(fb), out);
+                }
+            }
+            Stmt::Block { stmts }
+            | Stmt::NamedBlock { stmts, .. }
+            | Stmt::LoopForever { stmts } => {
+                find_clock_gating(scope, stmts, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Cek apakah ada non-blocking assign dalam stmts (FF pattern).
+fn has_nonblocking(stmts: &[Stmt]) -> bool {
+    for stmt in stmts {
+        match stmt {
+            Stmt::NonBlockingAssign { .. } => return true,
+            Stmt::Block { stmts } | Stmt::NamedBlock { stmts, .. } => {
+                if has_nonblocking(stmts) {
+                    return true;
+                }
+            }
+            Stmt::IfElse {
+                true_branch,
+                false_branch,
+                ..
+            } => {
+                if has_nonblocking(std::slice::from_ref(true_branch)) {
+                    return true;
+                }
+                if let Some(fb) = false_branch {
+                    if has_nonblocking(std::slice::from_ref(fb)) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// COMP-14: Power optimization — deteksi signal besar tanpa isolasi.
+///
+/// Signal output > 8 bit tanpa `supply`/`power`/`ground` declaration →
+/// warning agar designer pertimbangkan power domain isolation.
+fn find_power_patterns(scope: &str, declared: &HashMap<Symbol, usize>, out: &mut Vec<Finding>) {
+    for (name, &width) in declared {
+        if width > 8 {
+            // Cek apakah signal ada dalam nama power domain common
+            let n = name.as_str().to_lowercase();
+            if n.contains("vdd") || n.contains("vss") || n.contains("gnd") || n.contains("supply") {
+                continue;
+            }
+            // Signal lebar tanpa power annotation — info
+            out.push(Finding {
+                module: scope.to_string(),
+                check: "power",
+                severity: "I",
+                message: format!(
+                    "signal '{}' ({} bit) — pertimbangkan power domain isolation untuk sinyal lebar",
+                    name.as_str(), width
+                ),
+            });
+        }
+    }
+}
+
+/// COMP-15: Memory inference — deteksi reg array patterns.
+///
+/// `reg [W-1:0] mem [0:N-1]` → array reg dengan unpacked dimension →
+/// kandidat inferred RAM/ROM. Warning untuk awareness designer bahwa
+/// synthesizer mungkin menginfer RAM dari pattern ini.
+fn find_memory_inference(
+    scope: &str,
+    decls: &[maria_ast::types::Decl],
+    _items: &[ModuleItem],
+    out: &mut Vec<Finding>,
+) {
+    for d in decls {
+        for v in &d.names {
+            // Array unpacked: ada array_range setelah range packed
+            if v.range.is_some() && v.array_range.is_some() {
+                out.push(Finding {
+                    module: scope.to_string(),
+                    check: "memory",
+                    severity: "I",
+                    message: format!(
+                        "reg '{}' array — kandidat inferred RAM/ROM",
+                        v.name.as_str()
+                    ),
+                });
+            }
         }
     }
 }

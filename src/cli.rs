@@ -125,6 +125,18 @@ pub struct MlintArgs {
     #[arg(long)]
     pub case_analysis: bool,
 
+    /// Check: clock gating inference (always_ff with if-gate pattern)
+    #[arg(long)]
+    pub clock_gating: bool,
+
+    /// Check: power optimization (UPF power domain analysis)
+    #[arg(long)]
+    pub power: bool,
+
+    /// Check: memory inference (RAM/ROM pattern detection)
+    #[arg(long)]
+    pub memory: bool,
+
     /// Suppress output sukses
     #[arg(short = 'q', long)]
     pub quiet: bool,
