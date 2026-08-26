@@ -106,7 +106,7 @@ Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2167 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 88 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 89 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -1741,7 +1741,14 @@ FORMAL-06: [x] SAT solver — FIXED (CRIT-003): Z3 bit-vector solver
 FORMAL-07:[] No BDD engine (High)
 FORMAL-08: [x] SMT solver — FIXED (CRIT-003): Z3 SMT (BV + Bool) dipakai BMC;
          solver-level integration ada (maria-formal sat.rs).
-FORMAL-09:[] No abstract interpretation (Medium)
+FORMAL-09: ✅ Abstract interpretation framework (ROUND 85b) —
+         crates/maria-formal/src/abstract_interp.rs (BARU):
+         - AbsValue enum: Const/Interval/Top/Bottom domains.
+         - AbsState: HashMap<SignalId, AbsValue> + join/widening/narrowing.
+         - AbstractInterpreter: analyze design → per-process AbsState.
+         - eval_binop/eval_unop: constant + interval arithmetic.
+         - 8 unit tests: join const/interval/bottom/top, may_be_zero,
+           eval_binop const/interval, eval_unop, state join.
 FORMAL-10: ⚠️ IN PROGRESS (ROUND 92) — assume-guarantee tahap 1:
            `assume` dikonstrain pada SEMUA depth BMC (collect_assumptions
            + persisten melintasi depth checks) → counterexample hanya
