@@ -11,17 +11,92 @@ use std::collections::HashMap;
 
 use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverContents, InitializeParams, InitializeResult, LanguageString, Location, MarkedString,
-    OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
-    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, WorkspaceEdit,
+    Diagnostic, DiagnosticSeverity, DocumentSymbol, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverContents, InitializeParams, InitializeResult, LanguageString, Location,
+    MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
+    ServerCapabilities, ServerInfo, SymbolKind, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url, WorkspaceEdit,
 };
 use maria_parser::lexer::Lexer;
 use maria_parser::preprocessor::Preprocessor;
 use maria_parser::Parser;
 use tower_lsp::jsonrpc::Result as JsonRpcResult;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+
+/// Simbol dokumen versi lite (LSP-12) — dikonversi ke
+/// lsp_types::DocumentSymbol oleh handler.
+#[derive(Debug, Clone)]
+pub(crate) struct DocSymbol {
+    pub name: String,
+    pub kind: u8,
+    pub line: u32,
+    pub col: u32,
+    pub children: Vec<DocSymbol>,
+}
+
+impl DocSymbol {
+    const KIND_MODULE: u8 = 0;
+    const KIND_INTERFACE: u8 = 1;
+    const KIND_PACKAGE: u8 = 2;
+    const KIND_CLASS: u8 = 3;
+    const KIND_FUNCTION: u8 = 4;
+    const KIND_CONSTANT: u8 = 5;
+    const KIND_VARIABLE: u8 = 6;
+
+    fn lsp_kind(&self) -> SymbolKind {
+        match self.kind {
+            DocSymbol::KIND_INTERFACE => SymbolKind::INTERFACE,
+            DocSymbol::KIND_PACKAGE => SymbolKind::PACKAGE,
+            DocSymbol::KIND_CLASS => SymbolKind::CLASS,
+            DocSymbol::KIND_FUNCTION => SymbolKind::FUNCTION,
+            DocSymbol::KIND_CONSTANT => SymbolKind::CONSTANT,
+            DocSymbol::KIND_VARIABLE => SymbolKind::VARIABLE,
+            _ => SymbolKind::MODULE,
+        }
+    }
+
+    /// Konversi rekursif ke lsp_types::DocumentSymbol.
+    /// Range = satu baris deklarasi; selection_range = nama saja.
+    fn to_lsp(&self, uri_line_len: impl Fn(u32) -> u32 + Copy) -> DocumentSymbol {
+        let line_end = uri_line_len(self.line);
+        let name_start = self.col;
+        let name_end = (self.col + self.name.len() as u32).min(line_end);
+        DocumentSymbol {
+            name: self.name.clone(),
+            detail: None,
+            kind: self.lsp_kind(),
+            tags: None,
+            #[allow(deprecated)]
+            deprecated: None,
+            range: Range {
+                start: Position {
+                    line: self.line,
+                    character: 0,
+                },
+                end: Position {
+                    line: self.line,
+                    character: line_end,
+                },
+            },
+            selection_range: Range {
+                start: Position {
+                    line: self.line,
+                    character: name_start,
+                },
+                end: Position {
+                    line: self.line,
+                    character: name_end,
+                },
+            },
+            children: Some(
+                self.children
+                    .iter()
+                    .map(|c| c.to_lsp(uri_line_len))
+                    .collect(),
+            ),
+        }
+    }
+}
 
 /// LSP backend for SystemVerilog language server.
 pub struct LspBackend {
@@ -374,6 +449,206 @@ impl LspBackend {
         ))
     }
 
+    /// Document symbol core (murni, bisa diuji) — LSP-12 tahap 1:
+    /// outline simbol dokumen dengan nesting scope sederhana
+    /// (module/interface/package/class sebagai container; function/task/
+    /// parameter/port/signal sebagai anak).
+    pub(crate) fn document_symbols(source: &str) -> Vec<DocSymbol> {
+        const OPEN_KW: &[(&str, u8)] = &[
+            ("module", DocSymbol::KIND_MODULE),
+            ("macromodule", DocSymbol::KIND_MODULE),
+            ("interface", DocSymbol::KIND_INTERFACE),
+            ("package", DocSymbol::KIND_PACKAGE),
+            ("class", DocSymbol::KIND_CLASS),
+            ("checker", DocSymbol::KIND_CLASS),
+        ];
+        const CLOSE_KW: &[&str] = &[
+            "endmodule",
+            "endinterface",
+            "endpackage",
+            "endclass",
+            "endchecker",
+        ];
+        const FUNC_KW: &[&str] = &["function", "task"];
+        const CONST_KW: &[&str] = &["parameter", "localparam"];
+        const VAR_KW: &[&str] = &[
+            "input", "output", "inout", "wire", "reg", "logic", "bit", "int",
+            "integer", "byte", "shortint", "longint", "real", "time", "string",
+        ];
+
+        struct Frame {
+            sym: Option<DocSymbol>,
+            children: Vec<DocSymbol>,
+        }
+
+        let mut stack: Vec<Frame> = vec![Frame {
+            sym: None,
+            children: Vec::new(),
+        }];
+
+        for (idx, line) in source.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let toks = Self::line_tokens(line);
+            let Some((t0, c0)) = toks.first().cloned() else {
+                continue;
+            };
+
+            // Tutup scope → merge symbol dengan children terkumpul.
+            if CLOSE_KW.contains(&t0.as_str()) && stack.len() > 1 {
+                let mut frame = stack.pop().unwrap();
+                if let Some(sym) = frame.sym.as_mut() {
+                    std::mem::swap(&mut sym.children, &mut frame.children);
+                }
+                if let Some(sym) = frame.sym.take() {
+                    stack.last_mut().unwrap().children.push(sym);
+                } else {
+                    stack
+                        .last_mut()
+                        .unwrap()
+                        .children
+                        .extend(frame.children);
+                }
+                continue;
+            }
+
+            // Buka scope: keyword + nama.
+            if let Some((_, kind)) = OPEN_KW.iter().find(|(kw, _)| *kw == t0.as_str()) {
+                if let Some((w1, _)) = toks.get(1) {
+                    if Self::is_valid_identifier(w1) {
+                        stack.push(Frame {
+                            sym: Some(DocSymbol {
+                                name: w1.clone(),
+                                kind: *kind,
+                                line: idx as u32,
+                                col: c0 as u32,
+                                children: Vec::new(),
+                            }),
+                            children: Vec::new(),
+                        });
+                        // Parameter inline pada baris yang sama
+                        // (`module m #(parameter WIDTH = 8) (`).
+                        let frame = stack.last_mut().unwrap();
+                        for i in 2..toks.len() {
+                            if matches!(
+                                toks[i].0.as_str(),
+                                "parameter" | "localparam"
+                            ) {
+                                for (w, c) in toks.iter().skip(i + 1).cloned() {
+                                    if Self::is_valid_identifier(&w)
+                                        && !matches!(
+                                            w.as_str(),
+                                            "logic" | "bit" | "int" | "integer"
+                                                | "signed" | "unsigned" | "real"
+                                                | "string" | "type"
+                                        )
+                                        && !frame
+                                            .children
+                                            .iter()
+                                            .any(|ch| ch.name == w)
+                                    {
+                                        frame.children.push(DocSymbol {
+                                            name: w,
+                                            kind: DocSymbol::KIND_CONSTANT,
+                                            line: idx as u32,
+                                            col: c as u32,
+                                            children: Vec::new(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Function/task → Function symbol (leaf).
+            if FUNC_KW.contains(&t0.as_str()) {
+                for (w, c) in toks.iter().skip(1).cloned() {
+                    if Self::is_valid_identifier(&w)
+                        && !matches!(
+                            w.as_str(),
+                            "logic" | "bit" | "int" | "integer" | "signed"
+                                | "unsigned" | "automatic" | "static" | "void"
+                        )
+                    {
+                        stack.last_mut().unwrap().children.push(DocSymbol {
+                            name: w.clone(),
+                            kind: DocSymbol::KIND_FUNCTION,
+                            line: idx as u32,
+                            col: c as u32,
+                            children: Vec::new(),
+                        });
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            // parameter/localparam → Constant.
+            if CONST_KW.contains(&t0.as_str()) {
+                for (w, c) in toks.iter().skip(1).cloned() {
+                    if Self::is_valid_identifier(&w)
+                        && !matches!(
+                            w.as_str(),
+                            "logic" | "bit" | "int" | "integer" | "signed"
+                                | "unsigned" | "real" | "string" | "type"
+                        )
+                    {
+                        stack.last_mut().unwrap().children.push(DocSymbol {
+                            name: w.clone(),
+                            kind: DocSymbol::KIND_CONSTANT,
+                            line: idx as u32,
+                            col: c as u32,
+                            children: Vec::new(),
+                        });
+                    }
+                }
+                continue;
+            }
+
+            // Port/signal decl → Variable per nama.
+            if VAR_KW.contains(&t0.as_str()) {
+                for (w, c) in toks.iter().skip(1).cloned() {
+                    if Self::is_valid_identifier(&w)
+                        && !matches!(
+                            w.as_str(),
+                            "logic" | "reg" | "wire" | "bit" | "int" | "integer"
+                                | "signed" | "unsigned" | "real" | "string"
+                                | "input" | "output" | "inout"
+                        )
+                    {
+                        stack.last_mut().unwrap().children.push(DocSymbol {
+                            name: w.clone(),
+                            kind: DocSymbol::KIND_VARIABLE,
+                            line: idx as u32,
+                            col: c as u32,
+                            children: Vec::new(),
+                        });
+                    }
+                }
+                continue;
+            }
+        }
+
+        // Tutup scope yang belum tertutup (dokumen rusak).
+        while stack.len() > 1 {
+            let mut frame = stack.pop().unwrap();
+            if let Some(sym) = frame.sym.as_mut() {
+                std::mem::swap(&mut sym.children, &mut frame.children);
+            }
+            if let Some(sym) = frame.sym.take() {
+                stack.last_mut().unwrap().children.push(sym);
+            } else {
+                stack.last_mut().unwrap().children.extend(frame.children);
+            }
+        }
+        let roots = std::mem::take(&mut stack[0].children);
+        roots
+    }
+
     /// Find-references core (murni, bisa diuji) — LSP-04 tahap 1:
     /// semua kemunculan identifier (sebagai token mandiri) dalam dokumen,
     /// urut baris. `include_declaration` tetap dikembalikan penuh — caller
@@ -442,6 +717,7 @@ impl LanguageServer for LspBackend {
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -624,6 +900,28 @@ impl LanguageServer for LspBackend {
             })),
             None => Ok(None),
         }
+    }
+
+    /// Document symbol / outline (LSP-12 tahap 1).
+    async fn document_symbol(
+        &self,
+        params: lsp_types::DocumentSymbolParams,
+    ) -> JsonRpcResult<Option<lsp_types::DocumentSymbolResponse>> {
+        let uri = &params.text_document.uri;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let line_len = |l: u32| -> u32 {
+            text.lines()
+                .nth(l as usize)
+                .map(|s| s.chars().count() as u32)
+                .unwrap_or(0)
+        };
+        let symbols: Vec<DocumentSymbol> = Self::document_symbols(&text)
+            .into_iter()
+            .map(|s| s.to_lsp(line_len))
+            .collect();
+        Ok(Some(lsp_types::DocumentSymbolResponse::Nested(symbols)))
     }
 
     /// Text document didClose — clear diagnostics.
@@ -927,6 +1225,45 @@ endmodule
 
         // Bukan identifier → None.
         assert!(LspBackend::hover_info(SAMPLE, 7, 0).is_none());
+    }
+
+    #[test]
+    fn test_document_symbols_outline() {
+        let syms = LspBackend::document_symbols(SAMPLE);
+        // 2 module di root.
+        assert_eq!(syms.len(), 2, "root: {:?}", syms.iter().map(|s| &s.name).collect::<Vec<_>>());
+        assert_eq!(syms[0].name, "counter");
+        assert_eq!(syms[0].kind, DocSymbol::KIND_MODULE);
+        assert_eq!(syms[0].line, line_of("module counter"));
+        assert_eq!(syms[1].name, "counter_aux");
+
+        // Children module counter: port + signal + param.
+        let counter = &syms[0];
+        let names: Vec<&str> = counter.children.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"WIDTH"), "{:?}", names);
+        assert!(names.contains(&"clk"), "{:?}", names);
+        assert!(names.contains(&"count"), "{:?}", names);
+        assert!(names.contains(&"state"), "{:?}", names);
+        assert!(names.contains(&"enable"), "{:?}", names);
+
+        // Kind per jenis.
+        let width = counter.children.iter().find(|c| c.name == "WIDTH").unwrap();
+        assert_eq!(width.kind, DocSymbol::KIND_CONSTANT);
+        let clk = counter.children.iter().find(|c| c.name == "clk").unwrap();
+        assert_eq!(clk.kind, DocSymbol::KIND_VARIABLE);
+
+        // Dokumen rusak (module tak ditutup) — tetap menghasilkan symbol.
+        let broken = "module m;\n  reg x;\n";
+        let syms2 = LspBackend::document_symbols(broken);
+        assert_eq!(syms2.len(), 1);
+        assert_eq!(syms2[0].name, "m");
+        assert!(syms2[0].children.iter().any(|c| c.name == "x"));
+
+        // Konversi ke lsp_types: kind + selection range benar.
+        let lsp = syms2[0].to_lsp(|l| {
+            broken.lines().nth(l as usize).map(|s| s.chars().count() as u32).unwrap_or(0)
+        });
+        assert_eq!(lsp.kind, SymbolKind::MODULE);
     }
 
     #[test]

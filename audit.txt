@@ -1687,7 +1687,17 @@ LSP-08:[] No code lens (Test/References) (High)
 LSP-09:[] No inlay hints (type hints) (Medium)
 LSP-10:[] No code actions (quick-fix) (High)
 LSP-11:[] No workspace symbol search (High)
-LSP-12:[] No document symbol (outline) (High)
+LSP-12: ⚠️ IN PROGRESS (ROUND 96) — document symbol tahap 1:
+         backend.rs — capability document_symbol_provider + handler
+         document_symbol → DocumentSymbolResponse::Nested; core murni
+         document_symbols(): stack-based scope nesting (module/interface/
+         package/class/checker sebagai container via Frame {sym,children}),
+         anak: function/task (FUNCTION), parameter/localparam inline
+         `#(parameter ...)` di baris module (CONSTANT), port/signal decl
+         (VARIABLE); dokumen rusak tetap menghasilkan outline.
+         Konversi DocSymbol → lsp_types::DocumentSymbol (range = baris
+         decl, selection_range = nama). MASIH OPEN: nested function scope
+         penuh, workspace symbol search (LSP-11), folding range (LSP-15).
 LSP-13:[] No call hierarchy (Medium)
 LSP-14:[] No type hierarchy (Medium)
 LSP-15:[] No folding range (Low)
@@ -4126,6 +4136,35 @@ test_hover_info (reg decl, module kind, non-ident None).
 📊 VERIFIKASI ROUND 95:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2143 passed, 0 failed (+2)
+
+═══ ROUND 96 — LSP-12 document symbol / outline (tahap 1) ═══
+
+Kerja bertahap LSP-12 (High) — tahap 1 single-file selesai, item tetap
+⚠️ IN PROGRESS (workspace symbol, folding range masih open).
+
+✅ DOCUMENT SYMBOL TAHAP 1 (crates/maria-env/src/lsp/backend.rs):
+   - Capability document_symbol_provider + handler document_symbol →
+     DocumentSymbolResponse::Nested.
+   - Core murni document_symbols(source) → Vec<DocSymbol> — outline
+     dengan NESTING SCOPE via stack Frame {sym, children}:
+     * OPEN: module/macromodule/interface/package/class/checker + nama
+       (frame baru; saat end* → merge children ke symbol).
+     * Anak: function/task (FUNCTION), parameter/localparam — TERMASUK
+       parameter inline `module m #(parameter WIDTH = 8) (` pada baris
+       yang sama dengan module keyword (dedup antar keyword), port/
+       signal decl (VARIABLE per nama token, skip type/direction words).
+     * Komentar // di-skip; dokumen rusak (end* hilang) tetap menghasilkan
+       outline via drain stack.
+   - DocSymbol.to_lsp(): range = satu baris deklarasi, selection_range =
+       span nama; kind mapping ke SymbolKind LSP.
+
+Test (+1): test_document_symbols_outline — 2 module root, WIDTH sebagai
+CONSTANT dari #(parameter inline), clk/count/state/enable VARIABLE,
+dokumen rusak tetap outline, konversi lsp kind MODULE benar.
+
+📊 VERIFIKASI ROUND 96:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2144 passed, 0 failed (+1)
 
 ========================================
 END OF AUDIT REPORT
