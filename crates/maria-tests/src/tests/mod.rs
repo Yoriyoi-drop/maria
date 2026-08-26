@@ -13423,6 +13423,48 @@ endmodule
     );
 }
 
+// PARSER-10: module parameter type list edge cases
+#[test]
+fn test_parameter_type_edge_cases() {
+    // Scoped type default, signed type, multiple type params,
+    // mixed type+value params, type with packed range default.
+    let source = r#"
+module pkg_types (input int a, output int y);
+    assign y = a;
+endmodule
+module param_edge_test #(
+    parameter type T1 = int,
+    parameter type T2 = logic,
+    parameter int W = 8,
+    parameter signed [7:0] SP = -1,
+    parameter logic [3:0] MASK = 4'hF
+) (
+    input T1 a,
+    input T2 b,
+    output logic [W-1:0] y
+);
+    assign y = a[W-1:0] + {b, 3'b000} + {1'b0, MASK};
+endmodule
+module tb;
+    logic [7:0] a_val = 8'h05;
+    logic b_val = 1'b1;
+    logic [7:0] y_val;
+    param_edge_test #(.T1(int), .T2(logic)) u1(.a(a_val), .b(b_val), .y(y_val));
+    initial begin
+        #1;
+        $display("y = %h", y_val);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let result = compile_str(source);
+    assert!(
+        result.is_ok(),
+        "PARSER-10 parameter edge cases failed: {:?}",
+        result.err()
+    );
+}
+
 // ===== Category 1: Top-level design errors (parse_design) =====
 
 #[test]

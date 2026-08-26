@@ -106,7 +106,7 @@ Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2167 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 84 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 85 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -968,8 +968,12 @@ PARSER-07:[] Dua parser (legacy + FastLexer) — maintenance burden (Medium)
 PARSER-08:[] FastLexer belum digabung dengan parser baru — hanya
            tokenisasi (High)
 PARSER-09:[] Tidak ada parser for SVA properties full syntax (High)
-PARSER-10:[] Tidak ada parser for module/interface parameter type
-           list edge cases (Medium)
+PARSER-10: ✅ Module/interface parameter type list edge cases (ROUND 85b)
+           — parse_type_expr fix: scoped type (pkg::type_name), signed/byte/
+           shortint/longint/real type keywords in param list. Double-advance
+           bug fix (Ident arm + built-in arms now each advance exactly once).
+           Test: test_parameter_type_edge_cases (scoped types, signed param,
+           multiple type params, mixed type+value params).
 PARSER-11: ✅ lexical edge case tests (ROUND 54) — 5 test baru: escaped
            ident module name, escaped signal + port connect, escaped dgn $
            + spasi ganda, Unicode di string/komentar (ok), Unicode ident

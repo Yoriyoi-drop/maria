@@ -1241,25 +1241,31 @@ impl Parser {
 
     pub(crate) fn parse_type_expr(&mut self) -> Result<DataType, SimError> {
         let dt = match self.peek() {
-            Token::Bit => DataType::Bit,
-            Token::Logic => DataType::Logic,
-            Token::Int => DataType::Int,
-            Token::Integer => DataType::Integer,
-            Token::Byte => DataType::Byte,
-            Token::Shortint => DataType::Shortint,
-            Token::Longint => DataType::Longint,
-            Token::Time => DataType::Time,
-            Token::Reg => DataType::Logic,
-            Token::Real => DataType::Real,
-            Token::RealTime => DataType::Realtime,
-            Token::String => DataType::String,
+            Token::Bit => { self.advance(); DataType::Bit }
+            Token::Logic => { self.advance(); DataType::Logic }
+            Token::Int => { self.advance(); DataType::Int }
+            Token::Integer => { self.advance(); DataType::Integer }
+            Token::Byte => { self.advance(); DataType::Byte }
+            Token::Shortint => { self.advance(); DataType::Shortint }
+            Token::Longint => { self.advance(); DataType::Longint }
+            Token::Time => { self.advance(); DataType::Time }
+            Token::Reg => { self.advance(); DataType::Logic }
+            Token::Real => { self.advance(); DataType::Real }
+            Token::RealTime => { self.advance(); DataType::Realtime }
+            Token::String => { self.advance(); DataType::String }
             Token::Ident(_) => {
+                // PARSER-10: user-defined type, possibly scoped (pkg::type_name)
                 let name = self.expect_ident()?;
-                DataType::UserDefined(name)
+                if self.peek() == &Token::Scope {
+                    self.advance(); // ::
+                    let _inner = self.expect_ident()?;
+                    DataType::UserDefined(_inner)
+                } else {
+                    DataType::UserDefined(name)
+                }
             }
             _ => return Err(self.err("expected type")),
         };
-        self.advance();
         if self.peek() == &Token::Signed {
             self.advance();
             Ok(DataType::Signed(Box::new(dt)))
@@ -1283,7 +1289,7 @@ impl Parser {
                 _ => {}
             }
 
-            // Skip optional type keyword (integer, int, reg, logic, bit, string)
+            // Skip optional type keyword (integer, int, reg, logic, bit, string, signed)
             let mut type_ident = None;
             match self.peek() {
                 Token::Integer
@@ -1291,7 +1297,12 @@ impl Parser {
                 | Token::Reg
                 | Token::Logic
                 | Token::Bit
-                | Token::String => {
+                | Token::String
+                | Token::Signed
+                | Token::Byte
+                | Token::Shortint
+                | Token::Longint
+                | Token::Real => {
                     self.advance();
                 }
                 Token::Ident(_)
