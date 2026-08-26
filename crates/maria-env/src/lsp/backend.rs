@@ -13,7 +13,8 @@ use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
     InitializeResult, Location, OneOf, Position, PublishDiagnosticsParams, Range,
-    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
+    ReferenceParams, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind,
 };
 use maria_parser::lexer::Lexer;
 use maria_parser::preprocessor::Preprocessor;
@@ -290,6 +291,38 @@ impl LspBackend {
         None
     }
 
+    /// Find-references core (murni, bisa diuji) — LSP-04 tahap 1:
+    /// semua kemunculan identifier (sebagai token mandiri) dalam dokumen,
+    /// urut baris. `include_declaration` tetap dikembalikan penuh — caller
+    /// (handler) yang memfilter bila diminta tanpa deklarasi.
+    pub(crate) fn find_references(
+        source: &str,
+        line: u32,
+        character: u32,
+    ) -> Vec<(u32, u32, u32)> {
+        let Some(line_text) = source.lines().nth(line as usize) else {
+            return Vec::new();
+        };
+        let Some((word, _, _)) = Self::word_at_position(line_text, character) else {
+            return Vec::new();
+        };
+
+        let mut out = Vec::new();
+        for (idx, text) in source.lines().enumerate() {
+            // Skip komentar baris.
+            let trimmed = text.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for (w, col) in Self::line_tokens(text) {
+                if w == word {
+                    out.push((idx as u32, col as u32, (col + w.len()) as u32));
+                }
+            }
+        }
+        out
+    }
+
     /// Core go-to-definition (murni, bisa diuji): cari lokasi definisi dari
     /// identifier di posisi kursor. Mengembalikan (line, col_start, col_end)
     /// posisi definisi pertama dalam dokumen.
@@ -323,6 +356,7 @@ impl LanguageServer for LspBackend {
                     TextDocumentSyncKind::FULL,
                 )),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -414,6 +448,36 @@ impl LanguageServer for LspBackend {
             }))),
             None => Ok(None),
         }
+    }
+
+    /// Find-references (LSP-04 tahap 1): semua kemunculan identifier di
+    /// dokumen yang sama.
+    async fn references(&self, params: ReferenceParams) -> JsonRpcResult<Option<Vec<Location>>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let refs: Vec<Location> = Self::find_references(&text, pos.line, pos.character)
+            .into_iter()
+            .map(|(line, start, end)| Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position {
+                        line,
+                        character: start,
+                    },
+                    end: Position {
+                        line,
+                        character: end,
+                    },
+                },
+            })
+            .collect();
+        if refs.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(refs))
     }
 
     /// Text document didClose — clear diagnostics.
@@ -575,6 +639,65 @@ endmodule
             SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("WIDTH"),
             true
         );
+    }
+
+    #[test]
+    fn test_find_references() {
+        // Referensi `clk`: port decl + instance connection + always_ff.
+        let decl_line = line_of("input logic clk,");
+        let inst_line = line_of(".clk(clk)");
+        let ff_line = line_of("always_ff @(posedge clk)");
+        let refs = LspBackend::find_references(SAMPLE, inst_line, 26);
+        let refs = if refs.is_empty() {
+            // fallback: kolom clk kedua di baris instance.
+            let col = SAMPLE.lines().nth(inst_line as usize).unwrap().rfind("(clk)").unwrap() as u32 + 1;
+            LspBackend::find_references(SAMPLE, inst_line, col)
+        } else {
+            refs
+        };
+        assert_eq!(refs.len(), 5, "clk muncul 5x: {:?}", refs);
+        let lines: Vec<u32> = refs.iter().map(|(l, _, _)| *l).collect();
+        assert!(lines.contains(&decl_line));
+        assert!(lines.contains(&inst_line));
+        assert!(lines.contains(&ff_line));
+        assert!(lines.contains(&line_of("input logic clk"))); // port counter_aux
+
+        // Referensi `enable` (decl + pemakaian di else-if).
+        let en_line = line_of("reg enable;");
+        let use_line = line_of("else if (enable)");
+        let col = SAMPLE
+            .lines()
+            .nth(use_line as usize)
+            .unwrap()
+            .find("enable")
+            .unwrap() as u32;
+        let refs2 = LspBackend::find_references(SAMPLE, use_line, col);
+        assert_eq!(refs2.len(), 2, "enable muncul 2x: {:?}", refs2);
+        let lines2: Vec<u32> = refs2.iter().map(|(l, _, _)| *l).collect();
+        assert!(lines2.contains(&en_line));
+        assert!(lines2.contains(&use_line));
+
+        // Word boundary: `count` TIDAK match dengan `counter`/`count_aux`.
+        let cnt_line = line_of("output logic [WIDTH-1:0] count");
+        let c_col = SAMPLE.lines().nth(cnt_line as usize).unwrap().rfind("count").unwrap() as u32;
+        let refs3 = LspBackend::find_references(SAMPLE, cnt_line, c_col);
+        assert!(!refs3.is_empty(), "count harus ditemukan");
+        for (l, s, e) in &refs3 {
+            let text = SAMPLE.lines().nth(*l as usize).unwrap();
+            assert!(
+                !text[*s as usize..*e as usize].contains("counter"),
+                "word boundary bocor: {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_references_empty_and_miss() {
+        // Kursor bukan identifier → kosong.
+        assert!(LspBackend::find_references(SAMPLE, 7, 0).is_empty());
+        // Baris di luar dokumen → kosong.
+        assert!(LspBackend::find_references(SAMPLE, 999, 0).is_empty());
     }
 
     #[test]

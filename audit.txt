@@ -1662,7 +1662,13 @@ LSP-03: ⚠️ IN PROGRESS (ROUND 93) — go-to-definition tahap 1:
          #( ), not-found, word_at_position). MASIH OPEN: cross-file
          index, find-references (LSP-04), rename (LSP-05), hover
          (LSP-06), workspace symbol (LSP-11).
-LSP-04:[] No find-references (Critical)
+LSP-04: ⚠️ IN PROGRESS (ROUND 94) — find-references tahap 1:
+         backend.rs — capability references_provider + handler
+         references; core murni find_references(): semua kemunculan
+         token mandiri identifier dalam dokumen (skip komentar //),
+         word-boundary dijamin tokenizer. Test 2 unit (clk 5 lokusi
+         lintas module, enable 2, word boundary count vs counter;
+         empty/miss). MASIH OPEN: cross-file index, rename (LSP-05).
 LSP-05:[] No rename (Critical)
 LSP-06:[] No hover documentation (Critical)
 LSP-07:[] No semantic tokens highlighting (High)
@@ -4057,6 +4063,28 @@ dari `.clk(clk)` → port decl, parameter WIDTH dari `[WIDTH-1:0]` →
 📊 VERIFIKASI ROUND 93:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2139 passed, 0 failed (+5)
+
+═══ ROUND 94 — LSP-04 find-references (tahap 1) ═══
+
+Kerja bertahap pada LSP-04 (Critical) — tahap 1 single-file selesai,
+item tetap ⚠️ IN PROGRESS (cross-file index masih open).
+
+✅ FIND-REFERENCES TAHAP 1 (crates/maria-env/src/lsp/backend.rs):
+   - Capability references_provider + handler references.
+   - Core murni find_references(source, line, char) → Vec<(line, col_
+     start, col_end)>: semua kemunculan identifier sebagai token
+     mandiri dalam dokumen (tokenizer baris sama dengan goto-def —
+     word-boundary dijamin; komentar // di-skip).
+   - Handler mengembalikan Vec<Location> pada uri dokumen yang sama.
+
+Test (+2 unit): test_find_references — `clk` 5 lokusi (port decl ×2,
+instance label + connection, always_ff sensitivity), `enable` 2,
+word-boundary check (`count` tidak bocor ke `counter`);
+test_find_references_empty_and_miss.
+
+📊 VERIFIKASI ROUND 94:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2141 passed, 0 failed (+2)
 
 ========================================
 END OF AUDIT REPORT
