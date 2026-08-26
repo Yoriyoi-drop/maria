@@ -1663,7 +1663,15 @@ FORMAL-16:[] No cover property formal analysis (Medium)
 4.9 LSP/IDE GAPS
 
 LSP-01: ✅ LSP server MVP (tower-lsp 0.20, --lsp flag, publishDiagnostics via parser)
-LSP-02:[] No autocomplete/suggestions (Critical)
+LSP-02: ⚠️ IN PROGRESS (ROUND 100) — autocomplete tahap 1:
+         backend.rs — capability CompletionOptions + handler completion;
+         core murni compute_completions(): prefix identifier di kursor →
+         kandidat simbol dokumen (via outline: module/port/signal/param/
+         function) + ~70 keyword SystemVerilog, dedup + sorted.
+         Kind mapping ke CompletionItemKind. Test 1 unit (prefix "cou"
+         → module; prefix "en" → enable VARIABLE + end/endcase KEYWORD;
+         prefix kosong → kosong). MASIH OPEN: snippet, context-aware
+         (port vs statement), resolve detail/dokumentasi.
 LSP-03: ⚠️ IN PROGRESS (ROUND 93) — go-to-definition tahap 1:
          crates/maria-env/src/lsp/backend.rs — goto_definition handler
          (capability definition_provider), cache dokumen terbuka
@@ -4269,6 +4277,32 @@ alu, empty query = semua, "zzz" kosong.
 📊 VERIFIKASI ROUND 99:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2146 passed, 0 failed (+1)
+
+═══ ROUND 100 — LSP-02 autocomplete (tahap 1) ═══
+
+Kerja bertahap LSP-02 (Critical) — tahap 1 selesai, item tetap
+⚠️ IN PROGRESS (snippet/context-aware/resolve masih open).
+
+✅ AUTOCOMPLETE TAHAP 1 (crates/maria-env/src/lsp/backend.rs):
+   - Capability CompletionOptions + handler completion →
+     CompletionResponse::Array.
+   - Core murni compute_completions(source, line, char) →
+     Vec<(label, kind)>:
+     * Prefix = identifier yang sudah diketik sebelum kursor;
+       prefix kosong → tanpa kandidat (menghindari noise).
+     * Kandidat: simbol dokumen via outline (module/interface/class/
+       port/signal/param/function — reuse document_symbols), lalu ~70
+       keyword SystemVerilog umum; dedup by name, sorted.
+   - DocSymbol + KIND_KEYWORD=7 + mapping completion_kind() ke
+     CompletionItemKind.
+
+Test (+1): test_completions — prefix "cou" → counter+counter_aux;
+prefix "en" di module → enable VARIABLE + end/endcase KEYWORD; prefix
+kosong → kosong.
+
+📊 VERIFIKASI ROUND 100:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2147 passed, 0 failed (+1)
 
 ========================================
 END OF AUDIT REPORT

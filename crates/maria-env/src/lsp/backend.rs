@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
+    CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticSeverity, DocumentSymbol, FoldingRange, FoldingRangeKind,
     FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse,
     Hover, HoverContents, InitializeParams, InitializeResult, LanguageString, Location,
@@ -53,6 +54,7 @@ impl DocSymbol {
     const KIND_FUNCTION: u8 = 4;
     const KIND_CONSTANT: u8 = 5;
     const KIND_VARIABLE: u8 = 6;
+    const KIND_KEYWORD: u8 = 7;
 
     pub(crate) fn lsp_kind(&self) -> SymbolKind {
         match self.kind {
@@ -62,7 +64,22 @@ impl DocSymbol {
             DocSymbol::KIND_FUNCTION => SymbolKind::FUNCTION,
             DocSymbol::KIND_CONSTANT => SymbolKind::CONSTANT,
             DocSymbol::KIND_VARIABLE => SymbolKind::VARIABLE,
+            DocSymbol::KIND_KEYWORD => SymbolKind::KEY,
             _ => SymbolKind::MODULE,
+        }
+    }
+
+    /// Konversi kind internal → CompletionItemKind (LSP-02).
+    pub(crate) fn completion_kind(kind: u8) -> CompletionItemKind {
+        match kind {
+            DocSymbol::KIND_INTERFACE => CompletionItemKind::INTERFACE,
+            DocSymbol::KIND_PACKAGE => CompletionItemKind::MODULE,
+            DocSymbol::KIND_CLASS => CompletionItemKind::CLASS,
+            DocSymbol::KIND_FUNCTION => CompletionItemKind::FUNCTION,
+            DocSymbol::KIND_CONSTANT => CompletionItemKind::CONSTANT,
+            DocSymbol::KIND_VARIABLE => CompletionItemKind::VARIABLE,
+            DocSymbol::KIND_KEYWORD => CompletionItemKind::KEYWORD,
+            _ => CompletionItemKind::MODULE,
         }
     }
 
@@ -756,6 +773,69 @@ impl LspBackend {
         out
     }
 
+    /// Autocomplete core (murni, bisa diuji) — LSP-02 tahap 1:
+    /// kandidat = simbol dokumen (module/port/signal/param/function via
+    /// outline) + keyword SystemVerilog umum, difilter prefix identifier
+    /// di kursor. Return (label, kind) dengan kind DocSymbol::KIND_*;
+    /// keyword memakai KIND_KEYWORD.
+    pub(crate) fn compute_completions(source: &str, line: u32, character: u32) -> Vec<(String, u8)> {
+        const KEYWORDS: &[&str] = &[
+            "always", "always_comb", "always_ff", "always_latch", "assign", "begin", "case",
+            "casex", "casez", "class", "clocking", "default", "disable", "else", "end",
+            "endcase", "endclass", "endfunction", "endgenerate", "endinterface", "endmodule",
+            "endpackage", "endtask", "enum", "for", "forever", "fork", "function", "generate",
+            "genvar", "if", "iff", "import", "initial", "inout", "input", "int", "integer",
+            "interface", "join", "logic", "localparam", "longint", "macromodule", "modport",
+            "module", "negedge", "or", "output", "package", "parameter", "posedge", "primitive",
+            "priority", "program", "property", "reg", "repeat", "return", "sequence", "shortint",
+            "signed", "string", "struct", "time", "typedef", "unique", "unsigned", "wait",
+            "while", "wire", "with",
+        ];
+
+        let line_text = source
+            .lines()
+            .nth(line as usize)
+            .unwrap_or("");
+        // Prefix = karakter identifier yang sudah diketik sebelum kursor.
+        let bytes = line_text.as_bytes();
+        let ch = (character as usize).min(bytes.len());
+        let mut start = ch;
+        while start > 0
+            && (bytes[start - 1].is_ascii_alphanumeric()
+                || bytes[start - 1] == b'_'
+                || bytes[start - 1] == b'$')
+        {
+            start -= 1;
+        }
+        let prefix = line_text[start..ch].to_lowercase();
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+
+        let mut out: Vec<(String, u8)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // Simbol dokumen dulu (lebih relevan).
+        fn walk(items: &[DocSymbol], prefix: &str, out: &mut Vec<(String, u8)>, seen: &mut std::collections::HashSet<String>) {
+            for s in items {
+                if s.name.to_lowercase().starts_with(prefix) && seen.insert(s.name.clone()) {
+                    out.push((s.name.clone(), s.kind));
+                }
+                walk(&s.children, prefix, out, seen);
+            }
+        }
+        walk(&Self::document_symbols(source), &prefix, &mut out, &mut seen);
+
+        // Keyword SystemVerilog.
+        for kw in KEYWORDS {
+            if kw.starts_with(&prefix) && seen.insert((*kw).to_string()) {
+                out.push(((*kw).to_string(), DocSymbol::KIND_KEYWORD));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     /// Workspace symbol search core (murni, bisa diuji) — LSP-11 tahap 1:
     /// cari di SEMUA dokumen terbuka (cache), flatten outline, filter
     /// case-insensitive substring. Query kosong = semua simbol.
@@ -865,6 +945,13 @@ impl LanguageServer for LspBackend {
                 hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
+                completion_provider: Some(lsp_types::CompletionOptions {
+                    resolve_provider: None,
+                    trigger_characters: None,
+                    all_commit_characters: None,
+                    work_done_progress_options: Default::default(),
+                    completion_item: Default::default(),
+                }),
                 folding_range_provider: Some(
                     lsp_types::FoldingRangeProviderCapability::Simple(true),
                 ),
@@ -1072,6 +1159,30 @@ impl LanguageServer for LspBackend {
             .map(|s| s.to_lsp(line_len))
             .collect();
         Ok(Some(lsp_types::DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    /// Autocomplete (LSP-02 tahap 1).
+    async fn completion(
+        &self,
+        params: CompletionParams,
+    ) -> JsonRpcResult<Option<CompletionResponse>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let items: Vec<CompletionItem> = Self::compute_completions(&text, pos.line, pos.character)
+            .into_iter()
+            .map(|(label, kind)| CompletionItem {
+                label,
+                kind: Some(DocSymbol::completion_kind(kind)),
+                ..Default::default()
+            })
+            .collect();
+        if items.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(CompletionResponse::Array(items)))
     }
 
     /// Workspace symbol search (LSP-11 tahap 1): cari di dokumen terbuka.
@@ -1569,6 +1680,37 @@ endmodule
 
         // Tidak ada match → kosong.
         assert!(LspBackend::search_workspace_symbols(&docs, "zzz").is_empty());
+    }
+
+    #[test]
+    fn test_completions() {
+        // Prefix "cou" → counter + counter_aux (simbol), bukan keyword.
+        let use_line = line_of("counter_aux aux");
+        let comps = LspBackend::compute_completions(SAMPLE, use_line, 7);
+        let names: Vec<&str> = comps.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"counter"), "{:?}", names);
+        assert!(names.contains(&"counter_aux"), "{:?}", names);
+
+        // Prefix "en" di dalam module → signal enable + keyword end/endcase.
+        let en_line = line_of("reg enable;");
+        let comps2 = LspBackend::compute_completions(SAMPLE, en_line, 10);
+        let names2: Vec<&str> = comps2.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names2.contains(&"enable"), "{:?}", names2);
+        assert!(names2.contains(&"end"), "{:?}", names2);
+        assert!(names2.contains(&"endcase"), "{:?}", names2);
+
+        // Kind benar: enable VARIABLE, end KEYWORD.
+        for (n, k) in &comps2 {
+            if n == "enable" {
+                assert_eq!(*k, DocSymbol::KIND_VARIABLE);
+            }
+            if n == "end" {
+                assert_eq!(*k, DocSymbol::KIND_KEYWORD);
+            }
+        }
+
+        // Prefix kosong (kursor setelah spasi) → tidak ada kandidat (MVP).
+        assert!(LspBackend::compute_completions(SAMPLE, 7, 0).is_empty());
     }
 
     #[test]
