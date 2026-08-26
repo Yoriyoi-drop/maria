@@ -1751,7 +1751,10 @@ LSP-25:[] Tauri GUI uses Monaco — hanya text editor, no
 
 4.10 ENTERPRISE GAPS
 
-ENT-01:[] No CI/CD pipeline (Critical)
+ENT-01: ✅ CI/CD pipeline — FIXED (stale; CRIT-036 + ROUND 101)
+         .github/workflows/ci.yml aktif: push/PR main → cargo test
+         --workspace (+ clippy, fmt, benchmark job). Marker stale —
+         CRIT-036 sudah menutup ini sejak lama.
 ENT-02:[] No regression test infrastructure (Critical)
 ENT-03:[] No build artifacts management (High)
 ENT-04:[] No remote distributed caching (Critical)
@@ -1766,7 +1769,11 @@ ENT-12:[] No IP encryption/decryption (Critical)
 ENT-13:[] No RTL secure vault (Medium)
 ENT-14:[] No user authentication (Medium)
 ENT-15:[] No audit trail (Medium)
-ENT-16:[] No project-level configuration (High)
+ENT-16: ✅ Project-level configuration — FIXED (stale; file .maria)
+         File project `.maria` didukung penuh: daftar file .sv per baris
+         (# komentar), dibaca via --filelist/-f, bagian [foreign] TOML-like
+         untuk VHPI/PLI/DPI libs (read_project_with_foreign + load_project_
+         foreign_libs di run_fast). Marker stale.
 ENT-17:[] No team collaboration features (High)
 ENT-18:[] No parallel multi-user simulation server (Critical)
 ENT-19:[] No job scheduling / batch simulation (High)
@@ -2604,13 +2611,22 @@ FEAT-13:[] IP encryption (IEEE 1735) — Critical
 FEAT-14:[] IP packaging (IP-XACT) — High
 FEAT-15:[] Design-for-debug infrastructure — Medium
 FEAT-16:[] Simulation farm orchestration — Critical
-FEAT-17:[] CI/CD pipeline integration kit — Critical
 FEAT-18:[] Post-silicon validation alignment — Medium
 FEAT-19:[] Emulation/prototyping integration — High
 FEAT-20:[] Hardware acceleration co-simulation — High
 FEAT-21:[] ECO support (Engineering Change Order) — High
 FEAT-22:[] Automated testbench generation — Medium
-FEAT-23:[] Bus protocol checker library (AXI, AHB, APB) — Critical
+FEAT-17: ✅ CI/CD pipeline integration kit — FIXED (stale + ROUND 101)
+         Komponen kit sudah ada dan aktif: GitHub Actions CI
+         (.github/workflows/ci.yml), `--formal` exit non-zero bila
+         counterexample (run_formal untuk CI), `--coverage-threshold`
+         exit error bila coverage di bawah ambang, `mcheck --ast-diff`
+         exit 1 sebagai regression gate AST.
+FEAT-23: ⚠️ IN PROGRESS (ROUND 101) — protokol bus:
+         sisi ANALISIS sudah ada — mwave decode APB/AXI4-Lite/AHB dari
+         VCD (WAV-16, ROUND 84/85) dengan transaksi + wait-state + resp.
+         MASIH OPEN: checker runtime VIP style (assertion library yang
+         di-drive saat simulasi, bukan post-sim decode).
 FEAT-24:[] Standard VIP for industry protocols (USB, PCIe, DDR,
          Ethernet) — Critical
 FEAT-25:[] Waiver management for lint/formal violations — High
@@ -4303,6 +4319,33 @@ kosong → kosong.
 📊 VERIFIKASI ROUND 100:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2147 passed, 0 failed (+1)
+
+═══ ROUND 101 — BATCH RE-VERIFIKASI ENT/FEAT (stale) ═══
+
+✅ ENT-01 CI/CD pipeline — STALE → ✅:
+   .github/workflows/ci.yml aktif dengan 4 job: test (cargo test
+   --workspace), benchmark, clippy, fmt. CRIT-036 sudah menutup ini;
+   marker section 4.10 tidak pernah diupdate.
+
+✅ ENT-16 project-level configuration — STALE → ✅:
+   File project `.maria` didukung penuh (filelist .sv + komentar # +
+   bagian [foreign] TOML-like utk VHPI/PLI/DPI libs; path relatif ke
+   direktori .maria). Bukti: read_project_with_foreign (maria-api),
+   load_project_foreign_libs (run_fast), 4 unit test project file.
+
+✅ FEAT-17 CI/CD integration kit — STALE → ✅:
+   Komponen lengkap & aktif: CI workflow + `--formal` exit non-zero
+   bila counterexample + `--coverage-threshold` exit error + `mcheck
+   --ast-diff` exit 1 sebagai regression gate.
+
+⚠️ FEAT-23 protokol bus [] → IN PROGRESS:
+   Sisi ANALISIS sudah ada (mwave decode APB/AXI4-Lite/AHB dari VCD,
+   WAV-16). MASIH OPEN: checker runtime VIP-style yang di-drive saat
+   simulasi.
+
+📊 VERIFIKASI ROUND 101:
+   - Tidak ada perubahan kode (re-verifikasi, bukti workflow + tool)
+   - cargo test --workspace: 2147 passed, 0 failed
 
 ========================================
 END OF AUDIT REPORT
