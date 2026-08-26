@@ -195,6 +195,26 @@ const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_root",
     // VERIF-05: uvm_phase — handle phase (jump/get_name/skip).
     "uvm_phase",
+    // VERIF-20: OVM compatibility — OVM class names map to UVM equivalents.
+    "ovm_object",
+    "ovm_component",
+    "ovm_driver",
+    "ovm_monitor",
+    "ovm_sequencer",
+    "ovm_sequence",
+    "ovm_sequence_item",
+    "ovm_env",
+    "ovm_agent",
+    "ovm_test",
+    "ovm_scoreboard",
+    "ovm_config_db",
+    "ovm_factory",
+    "ovm_report_object",
+    "ovm_tlm_fifo",
+    "ovm_analysis_port",
+    "ovm_analysis_imp",
+    "ovm_analysis_export",
+    "ovm_subscriber",
 ];
 
 /// Kumpulkan nama module yang diinstansiasi dari daftar ModuleItem,

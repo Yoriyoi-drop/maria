@@ -526,7 +526,8 @@ impl SimulationEngine {
     pub(crate) fn is_uvm_object_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_object" {
+            // VERIF-20: OVM compatibility — ovm_object maps to uvm_object
+            if current == "__uvm_object" || current == "__ovm_object" {
                 return true;
             }
             match self.design.classes.get(&Symbol::intern(current)) {
@@ -547,7 +548,8 @@ impl SimulationEngine {
     pub(crate) fn is_uvm_component_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_component" {
+            // VERIF-20: OVM compatibility — ovm_component maps to uvm_component
+            if current == "__uvm_component" || current == "__ovm_component" {
                 return true;
             }
             match self.design.classes.get(&Symbol::intern(current)) {

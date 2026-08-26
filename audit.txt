@@ -106,7 +106,7 @@ Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2167 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 85 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 86 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -1560,7 +1560,17 @@ VERIF-19: ✅ uvm_tr_stream / uvm_recorded_item (ROUND 69) — stream objek
            stream, get_tr_count() per stream; execute_uvm_tr_stream_method +
            report_tr_records() (ringkasan total/terbuka/per-stream dicetak
            saat end-of-sim bila ada record). Test: test_uvm_tr_database_stream_singleton.
-VERIF-20:[] No full OVM compatibility (Medium)
+VERIF-20: ✅ OVM compatibility (ROUND 85b) — tahap 1:
+         - BUILTIN_UVM_CLASSES: +18 OVM class names (ovm_object, ovm_component,
+           ovm_driver, ovm_monitor, ovm_sequencer, ovm_sequence, ovm_sequence_item,
+           ovm_env, ovm_agent, ovm_test, ovm_scoreboard, ovm_config_db,
+           ovm_factory, ovm_report_object, ovm_tlm_fifo, ovm_analysis_port,
+           ovm_analysis_imp, ovm_analysis_export, ovm_subscriber).
+         - hierarchy.rs: is_uvm_object_hierarchy + is_uvm_component_hierarchy
+           recognize __ovm_object/__ovm_component base classes.
+         - builtin.rs: OVM library class fallback (ovm_* → dispatch to uvm_object).
+         Catatan: OVM class dispatch ke UVM implementations yang sama.
+         Masih open: OVM-specific APIs (ovm_phase, ovm_factory specifics).
 VERIF-21: [x] Functional coverage integration ke coverage database —
          RE-VERIFIKASI (ROUND 66): CoverageDatabase.merge_from_engine
          (coverage_db.rs:232) sudah membawa covergroup/coverpoint/cross

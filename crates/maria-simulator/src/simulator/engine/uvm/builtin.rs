@@ -126,6 +126,10 @@ impl SimulationEngine {
         if parent == "__uvm_object" || self.is_uvm_object_hierarchy(parent.as_str()) {
             return self.execute_uvm_object_method(obj_id, method, args);
         }
+        // VERIF-20: OVM compatibility — fallback for OVM library classes
+        if !self.design.classes.contains_key(&parent) && parent.as_str().starts_with("ovm_") {
+            return self.execute_uvm_object_method(obj_id, method, args);
+        }
         // Parent UVM library class TIDAK terdaftar di design (filelist tanpa
         // library UVM penuh, mis. `uvm_default_report_server` yang di-extends
         // OpenTitan `dv_report_server`). Di UVM asli class tersebut
