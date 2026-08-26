@@ -1669,8 +1669,19 @@ LSP-04: ⚠️ IN PROGRESS (ROUND 94) — find-references tahap 1:
          word-boundary dijamin tokenizer. Test 2 unit (clk 5 lokusi
          lintas module, enable 2, word boundary count vs counter;
          empty/miss). MASIH OPEN: cross-file index, rename (LSP-05).
-LSP-05:[] No rename (Critical)
-LSP-06:[] No hover documentation (Critical)
+LSP-05: ⚠️ IN PROGRESS (ROUND 95) — rename tahap 1:
+         backend.rs — capability rename_provider + handler rename;
+         core murni compute_rename_edits(): validasi identifier baru
+         ([A-Za-z_][A-Za-z0-9_$]*), hasilkan edit semua kemunculan
+         (via find_references → word-boundary aman). MASIH OPEN:
+         cross-file rename, prepare_rename handler.
+LSP-06: ⚠️ IN PROGRESS (ROUND 95) — hover tahap 1:
+         backend.rs — capability hover_provider + handler hover;
+         core murni hover_info(): markdown **kind** `name` + snippet
+         baris deklarasi (kind dari keyword definisi: module/interface/
+         port input/output/inout/parameter/function/task, fallback
+         "declaration"). MASIH OPEN: dokumentasi kaya (port direction +
+         range), doc comment extraction.
 LSP-07:[] No semantic tokens highlighting (High)
 LSP-08:[] No code lens (Test/References) (High)
 LSP-09:[] No inlay hints (type hints) (Medium)
@@ -4085,6 +4096,36 @@ test_find_references_empty_and_miss.
 📊 VERIFIKASI ROUND 94:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2141 passed, 0 failed (+2)
+
+═══ ROUND 95 — LSP-05 rename + LSP-06 hover (tahap 1) ═══
+
+Kerja bertahap LSP-05/LSP-06 (Critical) — tahap 1 single-file selesai,
+kedua item tetap ⚠️ IN PROGRESS (cross-file rename, hover kaya: open).
+
+✅ RENAME TAHAP 1 (crates/maria-env/src/lsp/backend.rs):
+   - Capability rename_provider + handler rename → WorkspaceEdit dengan
+     TextEdit per lokusi.
+   - compute_rename_edits(source, line, char, new_name): validasi nama
+     baru ([A-Za-z_][A-Za-z0-9_$]*), hasilkan edit SEMUA kemunculan via
+     find_references (word-boundary dijamin — `count` tidak menyentuh
+     `counter_aux`). Nama sama → edits kosong; invalid → Err pesan jelas.
+
+✅ HOVER TAHAP 1:
+   - Capability hover_provider (HoverProviderCapability::Simple) +
+     handler hover → HoverContents markdown.
+   - hover_info(): resolve definisi (find_definition) → **kind** `name`
+     + snippet baris deklarasi dalam blok ```systemverilog. Kind dari
+     keyword baris definisi: module/interface/package/program/class/
+     checker/port input/output/inout/parameter/localparam/function/
+     task; fallback "declaration".
+
+Test (+2 unit): test_rename_edits (2 lokusi enable + simulasi apply
+edit reversed + validasi nama + word boundary count/counter 4 lokusi),
+test_hover_info (reg decl, module kind, non-ident None).
+
+📊 VERIFIKASI ROUND 95:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2143 passed, 0 failed (+2)
 
 ========================================
 END OF AUDIT REPORT

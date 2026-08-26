@@ -11,10 +11,11 @@ use std::collections::HashMap;
 
 use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
-    InitializeResult, Location, OneOf, Position, PublishDiagnosticsParams, Range,
-    ReferenceParams, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind,
+    Diagnostic, DiagnosticSeverity, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverContents, InitializeParams, InitializeResult, LanguageString, Location, MarkedString,
+    OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
+    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, WorkspaceEdit,
 };
 use maria_parser::lexer::Lexer;
 use maria_parser::preprocessor::Preprocessor;
@@ -291,6 +292,88 @@ impl LspBackend {
         None
     }
 
+    /// Validasi identifier SV sederhana (LSP-05): [A-Za-z_][A-Za-z0-9_$]*.
+    fn is_valid_identifier(name: &str) -> bool {
+        let bytes = name.as_bytes();
+        if bytes.is_empty() {
+            return false;
+        }
+        let first = bytes[0];
+        if !(first.is_ascii_alphabetic() || first == b'_') {
+            return false;
+        }
+        bytes[1..]
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$')
+    }
+
+    /// Rename core (murni, bisa diuji) — LSP-05 tahap 1: hasilkan edit
+    /// (range) untuk SEMUA kemunculan identifier di dokumen. Return
+    /// Err dengan pesan jelas bila kursor bukan identifier atau nama
+    /// baru tidak valid.
+    pub(crate) fn compute_rename_edits(
+        source: &str,
+        line: u32,
+        character: u32,
+        new_name: &str,
+    ) -> Result<Vec<(u32, u32, u32)>, String> {
+        if !Self::is_valid_identifier(new_name) {
+            return Err(format!(
+                "'{}' bukan identifier SystemVerilog yang valid",
+                new_name
+            ));
+        }
+        let Some(line_text) = source.lines().nth(line as usize) else {
+            return Err("posisi kursor di luar dokumen".into());
+        };
+        let Some((word, _, _)) = Self::word_at_position(line_text, character) else {
+            return Err("kursor tidak berada di atas identifier".into());
+        };
+        if word == new_name {
+            return Ok(Vec::new());
+        }
+        // find_references menjamin token mandiri + word-boundary.
+        Ok(Self::find_references(source, line, character)
+            .into_iter()
+            .collect())
+    }
+
+    /// Hover core (murni, bisa diuji) — LSP-06 tahap 1: konteks deklarasi
+    /// identifier di posisi kursor, berformat markdown:
+    ///   **kind** `name` — snippet baris deklarasi.
+    fn hover_info(source: &str, line: u32, character: u32) -> Option<String> {
+        let line_text = source.lines().nth(line as usize)?;
+        let (word, _, _) = Self::word_at_position(line_text, character)?;
+
+        let (def_line, col, _) = Self::find_definition(source, line, character)?;
+        let decl_text = source
+            .lines()
+            .nth(def_line as usize)?
+            .trim()
+            .to_string();
+
+        // Tebak kind dari keyword di baris definisi.
+        let toks = Self::line_tokens(&decl_text);
+        let kind = toks
+            .iter()
+            .find_map(|(w, _)| match w.as_str() {
+                "module" | "interface" | "package" | "program" | "class" | "checker" => {
+                    Some(w.clone())
+                }
+                "input" => Some("port input".into()),
+                "output" => Some("port output".into()),
+                "inout" => Some("port inout".into()),
+                "parameter" | "localparam" => Some(w.clone()),
+                "function" | "task" => Some(w.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "declaration".into());
+
+        Some(format!(
+            "**{kind}** `{word}`\n\n```systemverilog\n{decl_text}\n```"
+        ))
+    }
+
     /// Find-references core (murni, bisa diuji) — LSP-04 tahap 1:
     /// semua kemunculan identifier (sebagai token mandiri) dalam dokumen,
     /// urut baris. `include_declaration` tetap dikembalikan penuh — caller
@@ -357,6 +440,8 @@ impl LanguageServer for LspBackend {
                 )),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -478,6 +563,67 @@ impl LanguageServer for LspBackend {
             return Ok(None);
         }
         Ok(Some(refs))
+    }
+
+    /// Rename (LSP-05 tahap 1): rename identifier di seluruh dokumen.
+    async fn rename(
+        &self,
+        params: RenameParams,
+    ) -> JsonRpcResult<Option<WorkspaceEdit>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        match Self::compute_rename_edits(&text, pos.line, pos.character, &params.new_name) {
+            Ok(edits) => {
+                let changes: std::collections::HashMap<
+                    lsp_types::Url,
+                    Vec<lsp_types::TextEdit>,
+                > = std::collections::HashMap::from([(
+                    uri.clone(),
+                    edits
+                        .into_iter()
+                        .map(|(line, start, end)| lsp_types::TextEdit {
+                            range: Range {
+                                start: Position {
+                                    line,
+                                    character: start,
+                                },
+                                end: Position {
+                                    line,
+                                    character: end,
+                                },
+                            },
+                            new_text: params.new_name.clone(),
+                        })
+                        .collect(),
+                )]);
+                Ok(Some(WorkspaceEdit::new(changes)))
+            }
+            Err(msg) => Err(tower_lsp::jsonrpc::Error::invalid_params(msg)),
+        }
+    }
+
+    /// Hover (LSP-06 tahap 1): konteks deklarasi identifier.
+    async fn hover(&self, params: lsp_types::HoverParams) -> JsonRpcResult<Option<Hover>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        match Self::hover_info(&text, pos.line, pos.character) {
+            Some(markdown) => Ok(Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::LanguageString(
+                    LanguageString {
+                        language: "markdown".into(),
+                        value: markdown,
+                    },
+                )),
+                range: None,
+            })),
+            None => Ok(None),
+        }
     }
 
     /// Text document didClose — clear diagnostics.
@@ -698,6 +844,89 @@ endmodule
         assert!(LspBackend::find_references(SAMPLE, 7, 0).is_empty());
         // Baris di luar dokumen → kosong.
         assert!(LspBackend::find_references(SAMPLE, 999, 0).is_empty());
+    }
+
+    #[test]
+    fn test_rename_edits() {
+        // Rename `enable` (2 lokusi) → `en`.
+        let decl_line = line_of("reg enable;");
+        let use_line = line_of("else if (enable)");
+        let col = SAMPLE
+            .lines()
+            .nth(use_line as usize)
+            .unwrap()
+            .find("enable")
+            .unwrap() as u32;
+        let edits =
+            LspBackend::compute_rename_edits(SAMPLE, use_line, col, "en").unwrap();
+        assert_eq!(edits.len(), 2, "enable di-rename 2 lokusi: {:?}", edits);
+        let lines: Vec<u32> = edits.iter().map(|(l, _, _)| *l).collect();
+        assert!(lines.contains(&decl_line));
+        assert!(lines.contains(&use_line));
+        // Simulasi apply edit (dari bawah ke atas agar offset aman).
+        let mut lines_mut: Vec<String> = SAMPLE.lines().map(|s| s.to_string()).collect();
+        for (l, s, e) in edits.iter().rev() {
+            let text = lines_mut[*l as usize].clone();
+            lines_mut[*l as usize] = format!(
+                "{}{}{}",
+                &text[..*s as usize],
+                "en",
+                &text[*e as usize..]
+            );
+        }
+        assert!(lines_mut[decl_line as usize].contains("reg en;"));
+        assert!(lines_mut[use_line as usize].contains("if (en)"));
+
+        // Nama tidak valid → Err.
+        assert!(LspBackend::compute_rename_edits(SAMPLE, use_line, col, "1bad").is_err());
+        assert!(LspBackend::compute_rename_edits(SAMPLE, use_line, col, "").is_err());
+
+        // Kursor bukan identifier → Err.
+        assert!(LspBackend::compute_rename_edits(SAMPLE, 7, 0, "x").is_err());
+
+        // Word boundary: rename `count` TIDAK menyentuh `counter_aux`/
+        // `count <=`. count muncul: port decl + 3 pemakaian always_ff.
+        let cnt_decl = line_of("[WIDTH-1:0] count");
+        let cnt_use = line_of("count <= count + 1");
+        let c_col = SAMPLE
+            .lines()
+            .nth(cnt_use as usize)
+            .unwrap()
+            .find("count")
+            .unwrap() as u32;
+        let edits_cnt =
+            LspBackend::compute_rename_edits(SAMPLE, cnt_use, c_col, "cnt").unwrap();
+        assert_eq!(
+            edits_cnt.len(),
+            4,
+            "count 4 lokusi (decl+3): {:?}",
+            edits_cnt
+        );
+        assert!(edits_cnt.iter().all(|(l, _, _)| *l >= cnt_decl));
+    }
+
+    #[test]
+    fn test_hover_info() {
+        // Hover di pemakaian `enable` → konteks deklarasi reg.
+        let use_line = line_of("else if (enable)");
+        let col = SAMPLE.lines().nth(use_line as usize).unwrap().find("enable").unwrap() as u32;
+        let info = LspBackend::hover_info(SAMPLE, use_line, col).unwrap();
+        assert!(info.contains("enable"), "{}", info);
+        assert!(info.contains("reg enable;"), "{}", info);
+
+        // Hover di nama module instance → konteks module.
+        let inst_line = line_of("counter_aux aux");
+        let aux_col = SAMPLE
+            .lines()
+            .nth(inst_line as usize)
+            .unwrap()
+            .find("counter_aux")
+            .unwrap() as u32;
+        let info2 = LspBackend::hover_info(SAMPLE, inst_line, aux_col).unwrap();
+        assert!(info2.contains("**module**"), "{}", info2);
+
+        // Bukan identifier → None.
+        assert!(LspBackend::hover_info(SAMPLE, 7, 0).is_none());
     }
 
     #[test]
