@@ -333,6 +333,21 @@ pub enum MwaveCmd {
         #[arg(required = true)]
         input: String,
     },
+    /// Query nilai sinyal dari VCD — random access (WAV-07)
+    Get {
+        /// VCD input
+        #[arg(required = true)]
+        input: String,
+        /// Sinyal yang di-query (koma/space terpisah, dukung * dan ?)
+        #[arg(required = true)]
+        signals: Vec<String>,
+        /// Nilai pada waktu T (perubahan terakhir ≤ T)
+        #[arg(long)]
+        at: Option<u64>,
+        /// Rentang waktu t1:t2 (semua perubahan dalam [t1, t2])
+        #[arg(long = "range", value_parser = parse_time_range)]
+        range: Option<(u64, u64)>,
+    },
     /// Decode transaksi protokol bus dari VCD (apb/axi4lite/ahb) — WAV-16
     Decode {
         /// VCD input
@@ -342,6 +357,25 @@ pub enum MwaveCmd {
         #[arg(long = "proto", default_value = "apb")]
         proto: String,
     },
+}
+
+/// Parser argumen `--range t1:t2` untuk `mwave get`.
+fn parse_time_range(s: &str) -> Result<(u64, u64), String> {
+    let (a, b) = s
+        .split_once(':')
+        .ok_or_else(|| format!("format range harus t1:t2, dapat: '{}'", s))?;
+    let lo: u64 = a
+        .trim()
+        .parse()
+        .map_err(|_| format!("t1 bukan angka: '{}'", a.trim()))?;
+    let hi: u64 = b
+        .trim()
+        .parse()
+        .map_err(|_| format!("t2 bukan angka: '{}'", b.trim()))?;
+    if lo > hi {
+        return Err(format!("t1 ({}) tidak boleh > t2 ({})", lo, hi));
+    }
+    Ok((lo, hi))
 }
 
 /// mfmt — Formatter.
@@ -684,6 +718,11 @@ pub struct Cli {
     #[arg(long = "waveform-stream")]
     pub waveform_stream: bool,
 
+    /// Write VCD via background writer thread (WAV-19) — dump tidak
+    /// blocking simulasi; byte dikirim via channel ke thread penulis.
+    #[arg(long = "waveform-bg")]
+    pub waveform_bg: bool,
+
     /// Launch the native GUI (egui) — requires --features gui
     #[arg(long = "gui")]
     pub gui: bool,
@@ -862,6 +901,11 @@ pub struct Cli {
     /// Maximum unrolling bound for BMC (default: 20)
     #[arg(long = "formal-bound", default_value = "20")]
     pub formal_bound: u64,
+
+    /// Enable k-induction proof after BMC (FORMAL-03/04) — iterasi k=1..8;
+    /// UNSAT di kedalaman k → invariant terbukti untuk SEMUA depth
+    #[arg(long = "formal-induction")]
+    pub formal_induction: bool,
 
     /// DPI shared library to load (can be specified multiple times)
     #[arg(long = "dpi-lib", num_args = 1)]

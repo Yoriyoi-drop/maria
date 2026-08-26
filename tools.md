@@ -189,6 +189,9 @@ mwave search t.vcd "c*"     # cari sinyal by wildcard (WAV-10): * dan ?
 mwave tree t.vcd            # index hierarki scope + sinyal (WAV-08)
 mwave stats t.vcd           # statistik per sinyal (WAV-17): toggle, transitions,
                              # first/last change, activity% + stuck detection
+mwave get t.vcd cnt --at 47 # random access nilai sinyal (WAV-07): sample di waktu T
+mwave get t.vcd "c*"        # timeline penuh (tanpa --at/--range), wildcard * ?
+mwave get t.vcd cnt --range 20:40  # semua perubahan dalam [t1, t2]
 7. mfmt
 
 Formatter.

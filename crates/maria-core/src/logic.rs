@@ -138,17 +138,23 @@ impl LogicVec {
         if self.width == 0 {
             return Some(false);
         }
-        let all_x_or_z = self
+        let any_one = self.bits.contains(&LogicVal::One);
+        if any_one {
+            // Ada bit 1 yang diketahui → true (dominasi OR-scalarization).
+            return Some(true);
+        }
+        let has_x_or_z = self
             .bits
             .iter()
-            .all(|b| *b == LogicVal::X || *b == LogicVal::Z);
-        if all_x_or_z {
+            .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+        if has_x_or_z {
+            // Tanpa 1 tapi ada X/Z → UNKNOWN (LRM §11.4.4). Dulu diam-diam
+            // Some(false) sehingga `x && 1` = 0 padahal x (ditemukan
+            // xprop_fuzz seed=0). Pemakai kondisional (`unwrap_or(false)`)
+            // tetap konsisten: LRM 12.4 — kondisi x → cabang else.
             return None;
         }
-        let any_one = self.bits.contains(&LogicVal::One);
-        // In Verilog, X/Z in a conditional is treated as false
-        let any_zero_or_x_or_z = self.bits.contains(&LogicVal::Zero);
-        Some(any_one && (!any_zero_or_x_or_z || any_one))
+        Some(false)
     }
 
     pub fn resize(&self, new_width: usize) -> Self {

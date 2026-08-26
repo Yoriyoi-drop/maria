@@ -204,6 +204,8 @@ impl SimulationEngine {
             // VERIF-27: assertion coverage metrics utk concurrent
             // assertion (sequence) — pass/fail saat attempt selesai.
             self.record_assertion(a_line, a_col, success);
+            // VERIF-32: sequence coverage — matched/failed per sequence.
+            self.record_sequence_result(a_line, a_col, success);
             if !stmts.is_empty() {
                 self.evaluate_block_with_delay_fork(&stmts, None)?;
             }

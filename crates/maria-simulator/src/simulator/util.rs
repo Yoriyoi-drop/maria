@@ -444,15 +444,49 @@ impl SimulationEngine {
                     }
                     Some('h') => {
                         if let Some((val, _)) = value_args.next() {
-                            let n = val.to_u64();
-                            let ndigits = u64_hex_digits(n);
-                            if width > ndigits {
-                                let pad = if zero_fill { '0' } else { ' ' };
-                                for _ in 0..(width - ndigits) {
-                                    result.push(pad);
+                            if val.width <= 64 {
+                                let n = val.to_u64();
+                                let ndigits = u64_hex_digits(n);
+                                if width > ndigits {
+                                    let pad = if zero_fill { '0' } else { ' ' };
+                                    for _ in 0..(width - ndigits) {
+                                        result.push(pad);
+                                    }
                                 }
+                                let _ = write!(result, "{:x}", n);
+                            } else {
+                                // >64-bit: format per-nibble dari pola bit —
+                                // to_u64 memotong bit tinggi (ditemukan
+                                // wide_fuzz seed=11).
+                                let vw = val.width;
+                                let ndigits = vw.div_ceil(4);
+                                let mut s = String::new();
+                                let mut started = false;
+                                for i in (0..ndigits).rev() {
+                                    let mut nib = 0u8;
+                                    for j in 0..4 {
+                                        let bi = i * 4 + j;
+                                        if bi < vw && val.bits[bi] == LogicVal::One {
+                                            nib |= 1 << j;
+                                        }
+                                    }
+                                    if !started && nib == 0 && i > 0 {
+                                        continue;
+                                    }
+                                    started = true;
+                                    s.push(char::from_digit(nib as u32, 16).unwrap_or('0'));
+                                }
+                                if !started {
+                                    s.push('0');
+                                }
+                                if width > s.len() {
+                                    let pad = if zero_fill { '0' } else { ' ' };
+                                    for _ in 0..(width - s.len()) {
+                                        result.push(pad);
+                                    }
+                                }
+                                result.push_str(&s);
                             }
-                            let _ = write!(result, "{:x}", n);
                         }
                     }
                     Some('f') => {

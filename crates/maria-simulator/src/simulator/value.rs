@@ -138,9 +138,16 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
             }
         }
         UnaryIrOp::Not => {
-            // Logical not: result is 1-bit
-            let truthy = val.to_bool().unwrap_or(false);
-            LogicVec::from_u64(if truthy { 0 } else { 1 }, 1)
+            // Logical not: skalarisasi LRM — ada X → hasil X (dulu
+            // unwrap_or(false) membuat `!x` = 1; xprop_fuzz seed=38).
+            let truthy = val.to_bool();
+            match truthy {
+                Some(t) => LogicVec::from_u64(if t { 0 } else { 1 }, 1),
+                None => LogicVec {
+                    bits: vec![LogicVal::X],
+                    width: 1,
+                },
+            }
         }
         UnaryIrOp::BitNot => {
             if val.width <= 64 {
@@ -169,6 +176,10 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
             }
         }
         UnaryIrOp::RedAnd => {
+            // LRM Tabel 11-19: 0 MENDOMINASI reduction AND — satu bit 0
+            // yang diketahui menghasilkan 0 walau bit lain X/Z. Dulu
+            // fast path langsung X bila ada X/Z (ditemukan guided_fuzz
+            // seed=111666772; emas + Icarus: 0).
             if val.width <= 64 {
                 // Fast path: u64 bitmasks
                 let (known, value) = to_bitmasks(val);
@@ -177,8 +188,12 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
                 } else {
                     (1u64 << val.width) - 1
                 };
-                if known != mask {
-                    // Some bits are X/Z → result is X
+                let known_zeros = !value & known & mask;
+                if known_zeros != 0 {
+                    // Ada bit 0 yang diketahui → hasil pasti 0
+                    LogicVec::from_u64(0, 1)
+                } else if known != mask {
+                    // Ada X/Z tanpa bit 0 yang diketahui → X
                     LogicVec {
                         bits: vec![LogicVal::X],
                         width: 1,
@@ -214,6 +229,8 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
             eval_unary(UnaryIrOp::BitNot, &and)
         }
         UnaryIrOp::RedOr => {
+            // LRM Tabel 11-19: 1 MENDOMINASI reduction OR — satu bit 1
+            // yang diketahui menghasilkan 1 walau bit lain X/Z.
             if val.width <= 64 {
                 // Fast path: u64 bitmasks
                 let (known, value) = to_bitmasks(val);
@@ -222,8 +239,12 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
                 } else {
                     (1u64 << val.width) - 1
                 };
-                if known != mask {
-                    // Some bits are X/Z → result is X
+                let known_ones = value & known & mask;
+                if known_ones != 0 {
+                    // Ada bit 1 yang diketahui → hasil pasti 1
+                    LogicVec::from_u64(1, 1)
+                } else if known != mask {
+                    // Ada X/Z tanpa bit 1 yang diketahui → X
                     LogicVec {
                         bits: vec![LogicVal::X],
                         width: 1,
@@ -338,23 +359,25 @@ pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> Log
     let rhs_ext = sign_extend_to(rhs, max_width);
     match op {
         BinaryIrOp::Lt => {
-            let l = lhs_ext.to_i64();
-            let r = rhs_ext.to_i64();
+            // >64-bit: to_i64 memotong — pakai i128 (wide_fuzz seed=17:
+            // `a >= b` 65-bit salah tanda).
+            let l = to_i128_signed(&lhs_ext);
+            let r = to_i128_signed(&rhs_ext);
             LogicVec::from_u64(if l < r { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Le => {
-            let l = lhs_ext.to_i64();
-            let r = rhs_ext.to_i64();
+            let l = to_i128_signed(&lhs_ext);
+            let r = to_i128_signed(&rhs_ext);
             LogicVec::from_u64(if l <= r { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Gt => {
-            let l = lhs_ext.to_i64();
-            let r = rhs_ext.to_i64();
+            let l = to_i128_signed(&lhs_ext);
+            let r = to_i128_signed(&rhs_ext);
             LogicVec::from_u64(if l > r { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Ge => {
-            let l = lhs_ext.to_i64();
-            let r = rhs_ext.to_i64();
+            let l = to_i128_signed(&lhs_ext);
+            let r = to_i128_signed(&rhs_ext);
             LogicVec::from_u64(if l >= r { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Div => {
@@ -451,6 +474,25 @@ fn to_i128_signed(lv: &LogicVec) -> i128 {
         }
     }
     v as i128
+}
+
+/// Bandingkan dua LogicVec sebagai pola UNSIGNED dari MSB → LSB.
+/// Bit di luar lebar operan dianggap Zero. Pemanggil menjamin bebas X/Z
+/// (xprop ditangani sebelum masuk sini).
+fn cmp_unsigned_bits(l: &LogicVec, r: &LogicVec) -> std::cmp::Ordering {
+    let w = l.width.max(r.width);
+    for i in (0..w).rev() {
+        let lo = l.bits.get(i).copied().unwrap_or(LogicVal::Zero) == LogicVal::One;
+        let ro = r.bits.get(i).copied().unwrap_or(LogicVal::Zero) == LogicVal::One;
+        if lo != ro {
+            return if lo {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Less
+            };
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
@@ -605,19 +647,18 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     bits: vec![LogicVal::X; max_width],
                     width: max_width,
                 }
-            } else {
-                let exp = rhs_ext.to_u64();
-                // Eksponensiasi modular biner mod 2^max_width (semantik SV:
-                // hasil di-size ke max operand, aritmetika modular — divalidasi
-                // differential vs Icarus). Dulu `exp >= 64 → 0` — salah total;
-                // ditemukan fuzzer (seed 4900864: `b ** 33'h1B1CF1D8` ≠ 0).
-                let m: u64 = if max_width >= 64 {
-                    u64::MAX
+            } else if max_width <= 128 {
+                // Square-and-multiply pada u128 — operan SV bisa >64-bit;
+                // dulu jatuh ke jalur u64 yang memotong pola 96/128-bit
+                // (ditemukan guided_fuzz seed=79912420; emas + Icarus).
+                let exp = to_u128_wide(&rhs_ext);
+                let m: u128 = if max_width >= 128 {
+                    u128::MAX
                 } else {
-                    (1u64 << max_width) - 1
+                    (1u128 << max_width) - 1
                 };
-                let mut base = lhs_ext.to_u64() & m;
-                let mut acc: u64 = 1 & m;
+                let mut base = to_u128_wide(&lhs_ext) & m;
+                let mut acc: u128 = 1 & m;
                 let mut e = exp;
                 while e > 0 {
                     if e & 1 == 1 {
@@ -628,13 +669,72 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                         base = base.wrapping_mul(base) & m;
                     }
                 }
-                LogicVec::from_u64(acc, max_width)
+                from_u128_wide(acc, max_width)
+            } else {
+                // >128 bit: square-and-multiply generik pada bit LogicVal
+                // (perkalian shift-add mod 2^max_width, tanpa X — X sudah
+                // ditangani di atas).
+                let w = max_width;
+                let zero = || vec![LogicVal::Zero; w];
+                let mut acc = {
+                    let mut v = zero();
+                    v[0] = LogicVal::One;
+                    v
+                };
+                let mut base = lhs_ext.bits.clone();
+                base.resize(w, LogicVal::Zero);
+                let exp_bits: Vec<LogicVal> = rhs_ext.bits.iter().copied().take(w).collect();
+                let add_mod = |dst: &mut Vec<LogicVal>, src: &[LogicVal]| {
+                    // Operan bebas X (X ditangani di atas) → adder biner murni.
+                    let mut carry = false;
+                    for i in 0..w {
+                        let sum =
+                            (dst[i] == LogicVal::One) as u8 + (src[i] == LogicVal::One) as u8
+                                + u8::from(carry);
+                        dst[i] = if sum & 1 == 1 {
+                            LogicVal::One
+                        } else {
+                            LogicVal::Zero
+                        };
+                        carry = sum >= 2;
+                    }
+                };
+                for i in 0..w {
+                    if exp_bits[i] == LogicVal::One {
+                        // acc *= base (shifted by i)
+                        let mut shifted = vec![LogicVal::Zero; w];
+                        for j in i..w {
+                            shifted[j] = base[j - i];
+                        }
+                        add_mod(&mut acc, &shifted);
+                    }
+                    // base *= base (square) — hanya perlu bila masih ada
+                    // bit eksponen lebih tinggi.
+                    if i + 1 < w {
+                        let old = base.clone();
+                        let mut sq = vec![LogicVal::Zero; w];
+                        for j in 0..w {
+                            if old[j] == LogicVal::One {
+                                let mut shifted = vec![LogicVal::Zero; w];
+                                for k in j..w {
+                                    shifted[k] = old[k - j];
+                                }
+                                add_mod(&mut sq, &shifted);
+                            }
+                        }
+                        base = sq;
+                    }
+                }
+                LogicVec { bits: acc, width: w }
             }
         }
         BinaryIrOp::Eq | BinaryIrOp::CaseEq => {
-            // Pessimistic: X/Z in either operand → X result
+            // `===` (CaseEq) membandingkan pola LITERAL termasuk X/Z
+            // (LRM §11.4.5) — TIDAK boleh X-pessimistic. Hanya `==`
+            // (Eq) yang mengikuti mode xprop.
             let mode = get_xprop_mode();
-            if (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+            if op == BinaryIrOp::Eq
+                && (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
                 && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
             {
                 return LogicVec {
@@ -653,8 +753,13 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             LogicVec::from_u64(if eq { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Neq | BinaryIrOp::CaseNeq => {
+            // `!==` (CaseNeq) = negasi pola literal termasuk X/Z — TIDAK
+            // boleh X-pessimistic (`x !== 0` = TRUE, LRM §11.4.5). Dulu
+            // digabung dgn `!=` → hasil X (ditemukan guided_fuzz
+            // seed=4655880324794; emas + Icarus: 1).
             let mode = get_xprop_mode();
-            if (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+            if op == BinaryIrOp::Neq
+                && (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
                 && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
             {
                 return LogicVec {
@@ -690,9 +795,14 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: 1,
                 };
             }
-            let l = lhs_ext.to_u64();
-            let r = rhs_ext.to_u64();
-            LogicVec::from_u64(if l < r { 1 } else { 0 }, 1)
+            // >64-bit: to_u64 memotong MSB → perbandingan salah
+            // (ditemukan guided_fuzz seed=79912420; emas + Icarus).
+            let lt = if max_width <= 64 {
+                lhs_ext.to_u64() < rhs_ext.to_u64()
+            } else {
+                cmp_unsigned_bits(&lhs_ext, &rhs_ext) == std::cmp::Ordering::Less
+            };
+            LogicVec::from_u64(if lt { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Le => {
             let mode = get_xprop_mode();
@@ -704,9 +814,12 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: 1,
                 };
             }
-            let l = lhs_ext.to_u64();
-            let r = rhs_ext.to_u64();
-            LogicVec::from_u64(if l <= r { 1 } else { 0 }, 1)
+            let le = if max_width <= 64 {
+                lhs_ext.to_u64() <= rhs_ext.to_u64()
+            } else {
+                cmp_unsigned_bits(&lhs_ext, &rhs_ext) != std::cmp::Ordering::Greater
+            };
+            LogicVec::from_u64(if le { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Gt => {
             let mode = get_xprop_mode();
@@ -718,9 +831,12 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: 1,
                 };
             }
-            let l = lhs_ext.to_u64();
-            let r = rhs_ext.to_u64();
-            LogicVec::from_u64(if l > r { 1 } else { 0 }, 1)
+            let gt = if max_width <= 64 {
+                lhs_ext.to_u64() > rhs_ext.to_u64()
+            } else {
+                cmp_unsigned_bits(&lhs_ext, &rhs_ext) == std::cmp::Ordering::Greater
+            };
+            LogicVec::from_u64(if gt { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Ge => {
             let mode = get_xprop_mode();
@@ -732,9 +848,12 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: 1,
                 };
             }
-            let l = lhs_ext.to_u64();
-            let r = rhs_ext.to_u64();
-            LogicVec::from_u64(if l >= r { 1 } else { 0 }, 1)
+            let ge = if max_width <= 64 {
+                lhs_ext.to_u64() >= rhs_ext.to_u64()
+            } else {
+                cmp_unsigned_bits(&lhs_ext, &rhs_ext) != std::cmp::Ordering::Less
+            };
+            LogicVec::from_u64(if ge { 1 } else { 0 }, 1)
         }
         BinaryIrOp::BitAnd => {
             let mode = get_xprop_mode();
@@ -795,7 +914,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Shl => {
             let shift = rhs_ext.to_u64() as usize;
-            let result_width = lhs.width.max(rhs.width); // LRM §11.8.1: operand kiri shift context-determined — extend ke lebar operand kanan (unsized literal = 32). Dulu lhs.width saja → hasil shift dari comparison 1-bit tak ter-extend (ditemukan fuzzer seed=57554764, dikonfirmasi Icarus).
+            let result_width = lhs.width; // LRM §11.8.1: hasil shift = lebar operan kiri; shift amount self-determined TIDAK melebarkan hasil (ekstensi konteks assignment ditangani evaluate_expr_ctx / propagate_context_width — xprop_fuzz seed=39: `(xvec <<< 8)` harus all-zero, emas + Icarus).
                                           // If shift amount has X/Z, result is unknown
             if has_xz(&rhs_ext) {
                 return LogicVec {
@@ -813,14 +932,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 };
                 LogicVec::from_u64(shifted, result_width)
             } else {
-                // Slow path: per-bit
-                // If lhs has X/Z, shift result is X (unknown shifted by any amount = unknown)
-                if has_xz(lhs) {
-                    return LogicVec {
-                        bits: vec![LogicVal::X; result_width],
-                        width: result_width,
-                    };
-                }
+                // Slow path: per-bit — zero-fill; bit X/Z bergeser normal
+                // dan terbuang bila melewati batas (LRM §11.4.10; sama dgn
+                // fix Shr — xprop_fuzz seed=39: `(xvec <<< 8) == 0` harus
+                // TRUE, bukan X).
                 let mut result = lhs.clone();
                 if result_width > lhs.width {
                     // Operan kiri di-zero-extend ke result_width (LRM
@@ -855,7 +970,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Shr => {
             let shift = rhs_ext.to_u64() as usize;
-            let result_width = lhs.width.max(rhs.width); // LRM §11.8.1: operand kiri shift context-determined — extend ke lebar operand kanan (unsized literal = 32). Dulu lhs.width saja → hasil shift dari comparison 1-bit tak ter-extend (ditemukan fuzzer seed=57554764, dikonfirmasi Icarus).
+            let result_width = lhs.width; // LRM §11.8.1: hasil shift = lebar operan kiri; shift amount self-determined TIDAK melebarkan hasil (ekstensi konteks assignment ditangani evaluate_expr_ctx / propagate_context_width — xprop_fuzz seed=39: `(xvec <<< 8)` harus all-zero, emas + Icarus).
                                           // If shift amount has X/Z, result is unknown
             if has_xz(&rhs_ext) {
                 return LogicVec {
@@ -873,14 +988,13 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 };
                 LogicVec::from_u64(shifted, result_width)
             } else {
-                // Slow path: per-bit
-                // If lhs has X/Z, shift result is X
-                if has_xz(lhs) {
-                    return LogicVec {
-                        bits: vec![LogicVal::X; result_width],
-                        width: result_width,
-                    };
-                }
+                // Slow path: per-bit — zero-fill logis (LRM §11.4.10): bit
+                // X/Z yang bergeser melewati LSB TERBUANG, yang tersisa
+                // tetap X di posisi barunya, sisanya zero-fill. Dulu
+                // `has_xz(lhs) → all-X` tanpa melihat jumlah shift —
+                // shift ≥ lebar harus menghasilkan 0 murni walau operan
+                // ber-X (ditemukan guided_fuzz seed=72459868; emas +
+                // Icarus: 0).
                 let mut result = lhs.clone();
                 if result_width > lhs.width {
                     // Operan kiri di-zero-extend ke result_width (LRM
@@ -915,7 +1029,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Sshl => {
             let shift = rhs_ext.to_u64() as usize;
-            let result_width = lhs.width.max(rhs.width); // LRM §11.8.1: operand kiri shift context-determined — extend ke lebar operand kanan (unsized literal = 32). Dulu lhs.width saja → hasil shift dari comparison 1-bit tak ter-extend (ditemukan fuzzer seed=57554764, dikonfirmasi Icarus).
+            let result_width = lhs.width; // LRM §11.8.1: hasil shift = lebar operan kiri; shift amount self-determined TIDAK melebarkan hasil (ekstensi konteks assignment ditangani evaluate_expr_ctx / propagate_context_width — xprop_fuzz seed=39: `(xvec <<< 8)` harus all-zero, emas + Icarus).
                                           // If shift amount has X/Z, result is unknown
             if has_xz(&rhs_ext) {
                 return LogicVec {
@@ -934,13 +1048,11 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 LogicVec::from_u64(shifted, result_width)
             } else {
                 // Slow path: per-bit
-                // If lhs has X/Z, shift result is X
-                if has_xz(lhs) {
-                    return LogicVec {
-                        bits: vec![LogicVal::X; result_width],
-                        width: result_width,
-                    };
-                }
+                // Shift kiri LOGIS (Sshl ≡ Shl aritmetika): zero-fill —
+                // bit X/Z yang tergeser keluar MSB terbuang, yang tersisa
+                // tetap X di posisinya. Dulu `has_xz(lhs) → all-X` tanpa
+                // melihat jumlah shift (LRM §11.4.10; guided_fuzz
+                // seed=72459868; emas + Icarus: shift ≥ lebar = 0).
                 let _msb = lhs.bits.last().copied().unwrap_or(LogicVal::Zero);
                 let mut result = lhs.clone();
                 if result_width > lhs.width {
@@ -970,7 +1082,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Sshr => {
             let shift = rhs_ext.to_u64() as usize;
-            let result_width = lhs.width.max(rhs.width); // LRM §11.8.1: operand kiri shift context-determined — extend ke lebar operand kanan (unsized literal = 32). Dulu lhs.width saja → hasil shift dari comparison 1-bit tak ter-extend (ditemukan fuzzer seed=57554764, dikonfirmasi Icarus).
+            let result_width = lhs.width; // LRM §11.8.1: hasil shift = lebar operan kiri; shift amount self-determined TIDAK melebarkan hasil (ekstensi konteks assignment ditangani evaluate_expr_ctx / propagate_context_width — xprop_fuzz seed=39: `(xvec <<< 8)` harus all-zero, emas + Icarus).
                                           // If shift amount has X/Z, result is unknown
             if has_xz(&rhs_ext) {
                 return LogicVec {
@@ -1035,14 +1147,34 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             }
         }
         BinaryIrOp::LogicalAnd => {
-            let l = lhs.to_bool().unwrap_or(false);
-            let r = rhs.to_bool().unwrap_or(false);
-            LogicVec::from_u64(if l && r { 1 } else { 0 }, 1)
+            // Skalarisasi LRM §11.4.4: 0-dominan, ada X → X (dulu
+            // unwrap_or(false) memperlakukan X sebagai FALSE —
+            // `x && 1` harus x, bukan 0; ditemukan xprop_fuzz seed=0).
+            let l = lhs.to_bool();
+            let r = rhs.to_bool();
+            let v = match (l, r) {
+                (Some(false), _) | (_, Some(false)) => LogicVal::Zero,
+                (Some(true), Some(true)) => LogicVal::One,
+                _ => LogicVal::X,
+            };
+            LogicVec {
+                bits: vec![v],
+                width: 1,
+            }
         }
         BinaryIrOp::LogicalOr => {
-            let l = lhs.to_bool().unwrap_or(false);
-            let r = rhs.to_bool().unwrap_or(false);
-            LogicVec::from_u64(if l || r { 1 } else { 0 }, 1)
+            // 1-dominan; dua-duanya diketahui-false → 0; selain itu X.
+            let l = lhs.to_bool();
+            let r = rhs.to_bool();
+            let v = match (l, r) {
+                (Some(true), _) | (_, Some(true)) => LogicVal::One,
+                (Some(false), Some(false)) => LogicVal::Zero,
+                _ => LogicVal::X,
+            };
+            LogicVec {
+                bits: vec![v],
+                width: 1,
+            }
         }
     }
 }
@@ -1090,8 +1222,16 @@ pub fn eval_sshr_signed(lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         } else {
             let sv = val >> shift;
             if sign_bit == 1 {
-                let fill_bits = (!0u64) << (lw.saturating_sub(shift).min(64));
-                sv | fill_bits
+                // Fill ones dari posisi (lw-shift) ke atas; guard anti
+                // shift-overflow (lw=64 & shift=0 dulu panic — signed_fuzz
+                // w=64).
+                let fill_start = lw.saturating_sub(shift).min(64);
+                let fill = match fill_start {
+                    0 => !0u64,
+                    64 => 0u64,
+                    n => (!0u64) << n,
+                };
+                sv | fill
             } else {
                 sv
             }

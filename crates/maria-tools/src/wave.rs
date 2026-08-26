@@ -65,6 +65,16 @@ pub enum WaveArgs {
     Stats {
         input: String,
     },
+    Get {
+        /// VCD input
+        input: String,
+        /// Sinyal yang di-query (koma/space terpisah, dukung * dan ?)
+        signals: Vec<String>,
+        /// Nilai pada waktu T (random access — perubahan terakhir ≤ T)
+        at: Option<u64>,
+        /// Rentang waktu t1:t2 (semua perubahan dalam [t1, t2])
+        range: Option<(u64, u64)>,
+    },
     Decode {
         /// VCD input
         input: String,
@@ -91,6 +101,12 @@ pub fn run(args: &WaveArgs) -> Result<(), SimError> {
         WaveArgs::Search { input, patterns } => search(input, patterns),
         WaveArgs::Tree { input } => tree(input),
         WaveArgs::Stats { input } => stats(input),
+        WaveArgs::Get {
+            input,
+            signals,
+            at,
+            range,
+        } => get(input, signals, *at, *range),
         WaveArgs::Decode { input, proto } => decode(input, proto),
     }
 }
@@ -766,6 +782,123 @@ fn tree(input: &str) -> Result<(), SimError> {
     Ok(())
 }
 
+/// ── get ──
+///
+/// Random access query nilai sinyal dari VCD (WAV-07): diberikan pola sinyal
+/// (wildcard `*`/`?`) dan mode query, kembalikan nilai sinyal tanpa harus
+/// memindai seluruh dump secara manual. Tiga mode:
+///   - `--at T`      : sample di waktu T (perubahan terakhir ≤ T; "x" bila
+///                     belum ada perubahan) — random access murni.
+///   - `--range a:b` : semua perubahan dalam [a, b].
+///   - (tanpa flag)  : timeline penuh per sinyal.
+///
+/// Hasil terstruktur di `get_data` (bisa diuji); `get` hanya mencetak.
+
+/// Satu entri hasil query: sinyal + daftar (waktu, nilai mentah bits).
+#[derive(Debug, Clone)]
+struct GetEntry {
+    name: String,
+    width: usize,
+    values: Vec<(u64, String)>,
+}
+
+fn get(input: &str, patterns: &[String], at: Option<u64>, range: Option<(u64, u64)>) -> Result<(), SimError> {
+    let data = parse_vcd(input)?;
+    let entries = get_data(&data, patterns, at, range)?;
+
+    println!(
+        "  get: {} ({} sinyal cocok, timescale={})",
+        input,
+        entries.len(),
+        data.timescale
+    );
+    for e in &entries {
+        match (at, range) {
+            (Some(t), _) => {
+                let v = e.values.first().map(|(_, v)| v.as_str()).unwrap_or("x");
+                println!("  {} [{}:0] @ {} = {}", e.name, e.width - 1, t, format_bits(v));
+            }
+            (None, Some((lo, hi))) => {
+                println!("  {} [{}:0] [{}:{}]", e.name, e.width - 1, lo, hi);
+                for (t, v) in &e.values {
+                    println!("    {:>10}  {}", t, format_bits(v));
+                }
+            }
+            (None, None) => {
+                println!(
+                    "  {} [{}:0] ({} perubahan)",
+                    e.name,
+                    e.width - 1,
+                    e.values.len()
+                );
+                for (t, v) in &e.values {
+                    println!("    {:>10}  {}", t, format_bits(v));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Core query (murni, bisa diuji): resolve pola → entri nilai.
+/// Mode `at`: satu sample per sinyal. Mode range/full: perubahan dalam window.
+fn get_data(
+    data: &VcdData,
+    patterns: &[String],
+    at: Option<u64>,
+    range: Option<(u64, u64)>,
+) -> Result<Vec<GetEntry>, SimError> {
+    let pats: Vec<&str> = patterns
+        .iter()
+        .flat_map(|p| p.split([',', ' ', ';']))
+        .filter(|p| !p.is_empty())
+        .collect();
+    if pats.is_empty() {
+        return Err(err("get membutuhkan minimal 1 pola sinyal (dukung * dan ?)"));
+    }
+
+    let mut entries: Vec<GetEntry> = Vec::new();
+    for sig in &data.signals {
+        let full = full_name(sig);
+        let hit = pats
+            .iter()
+            .any(|p| wildcard_match(p, &sig.name) || wildcard_match(p, &full));
+        if !hit {
+            continue;
+        }
+        let tl = timeline_of(data, sig);
+        let values = match at {
+            Some(t) => vec![(t, sample_at(&tl, t))],
+            None => match range {
+                Some((lo, hi)) => tl.into_iter().filter(|(t, _)| *t >= lo && *t <= hi).collect(),
+                None => tl,
+            },
+        };
+        entries.push(GetEntry {
+            name: full,
+            width: sig.width,
+            values,
+        });
+    }
+
+    if entries.is_empty() {
+        return Err(err(format!(
+            "tidak ada sinyal yang cocok dengan: {}",
+            pats.join(", ")
+        )));
+    }
+    Ok(entries)
+}
+
+/// Format nilai untuk tampilan: bits mentah + desimal bila biner murni.
+fn format_bits(v: &str) -> String {
+    if !v.is_empty() && v.chars().all(|c| c == '0' || c == '1') {
+        format!("{} ({})", v, bits_val(v))
+    } else {
+        v.to_string()
+    }
+}
+
 /// ── stats ──
 ///
 /// Statistik aktivitas per sinyal (WAV-17): dari timeline VCD hitung per
@@ -1407,6 +1540,83 @@ mod tests {
         assert!(!wildcard_match("c?t", "count"));
         assert!(!wildcard_match("top.*", "other.cnt"));
         assert!(!wildcard_match("cnt", "clk"));
+    }
+
+    #[test]
+    fn test_get_at_samples_value() {
+        std::fs::write("/tmp/__get_at.vcd", vcd(false, &["0010", "0011", "0100"])).unwrap();
+        let data = parse_vcd("/tmp/__get_at.vcd").unwrap();
+        // cnt berubah di t=0(0000), 5(0010), 10(0011), 15(0100).
+        let r = get_data(&data, &["cnt".to_string()], Some(7), None).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "top.cnt");
+        assert_eq!(r[0].width, 4);
+        assert_eq!(
+            r[0].values,
+            vec![(7, "0010".to_string())],
+            "@7 = perubahan terakhir ≤ 7 (t=5)"
+        );
+        // @0 sebelum perubahan pertama cnt tetap b0000 (perubahan #0 ada).
+        let r0 = get_data(&data, &["cnt".to_string()], Some(0), None).unwrap();
+        assert_eq!(r0[0].values, vec![(0, "0000".to_string())]);
+        // Sinyal tanpa perubahan sebelum t → "x".
+        let rx = get_data(&data, &["extra".to_string()], Some(3), None);
+        assert!(rx.is_err(), "extra tidak ada di VCD ini → error no-match");
+        let _ = std::fs::remove_file("/tmp/__get_at.vcd");
+    }
+
+    #[test]
+    fn test_get_range_filters_changes() {
+        std::fs::write(
+            "/tmp/__get_range.vcd",
+            vcd(false, &["0010", "0011", "0100", "0101"]),
+        )
+        .unwrap();
+        let data = parse_vcd("/tmp/__get_range.vcd").unwrap();
+        // cnt changes: 0, 5, 10, 15, 20 → range [5:15] = 3 perubahan.
+        let r =
+            get_data(&data, &["top.cnt".to_string()], None, Some((5, 15))).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            r[0].values,
+            vec![
+                (5, "0010".to_string()),
+                (10, "0011".to_string()),
+                (15, "0100".to_string())
+            ],
+            "range [5:15] menyaring perubahan di luar window"
+        );
+        // Range kosong → 0 nilai (sinyal cocok tapi tak ada perubahan).
+        let re =
+            get_data(&data, &["cnt".to_string()], None, Some((100, 200))).unwrap();
+        assert!(re[0].values.is_empty());
+        let _ = std::fs::remove_file("/tmp/__get_range.vcd");
+    }
+
+    #[test]
+    fn test_get_wildcard_multiple_and_full_timeline() {
+        std::fs::write(
+            "/tmp/__get_multi.vcd",
+            vcd(false, &["0010", "0011"]),
+        )
+        .unwrap();
+        let data = parse_vcd("/tmp/__get_multi.vcd").unwrap();
+        // Pola "c*" cocok clk + cnt; timeline penuh (tanpa at/range).
+        let r = get_data(&data, &["c*".to_string()], None, None).unwrap();
+        assert_eq!(r.len(), 2, "c* → clk + cnt");
+        let clk = r.iter().find(|e| e.name == "top.clk").unwrap();
+        assert_eq!(
+            clk.values,
+            vec![(0, "0".to_string()), (5, "1".to_string()), (10, "0".to_string())],
+            "timeline penuh clk"
+        );
+        // Nama polos (tanpa scope) juga match.
+        let r2 = get_data(&data, &["clk".to_string()], None, None).unwrap();
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r2[0].name, "top.clk");
+        // Tidak ada yang cocok → error.
+        assert!(get_data(&data, &["nosuch".to_string()], None, None).is_err());
+        let _ = std::fs::remove_file("/tmp/__get_multi.vcd");
     }
 
     #[test]

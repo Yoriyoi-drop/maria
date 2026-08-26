@@ -209,20 +209,23 @@ impl SimulationEngine {
                 } else {
                     (*msb, *lsb)
                 };
-                // Guard: index di luar lebar signal (elab kadang menghasilkan
-                // select out-of-range utk memory/struct yang lebarnya dinamis)
-                // — clamp ke X, jangan panic. Konsisten dgn BitSelect yang
-                // pakai `get().unwrap_or(X)`.
+                // Out-of-range select → bit luar batas X, bit dalam batas
+                // tetap NILAI ASLI (LRM 1800 §11.5.1). Dulu seluruh hasil
+                // X bila sebagian di luar batas — menghilangkan bit known-0
+                // yang seharusnya mendominasi reduction (&(b[14:1]) pada
+                // reg 2-bit harus 0, bukan X; ditemukan guided_fuzz
+                // seed=111666772; emas + Icarus).
                 let n = val.bits.len();
-                if start >= n || end >= n || start > end {
+                if start > end || n == 0 {
                     let w = (end - start + 1).max(1);
                     return Ok(LogicVec::fill(LogicVal::X, w));
                 }
-                let bits = val.bits[start..=end].to_vec();
-                Ok(LogicVec {
-                    width: bits.len(),
-                    bits,
-                })
+                let w = end - start + 1;
+                let mut bits = Vec::with_capacity(w);
+                for i in start..=end {
+                    bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
+                }
+                Ok(LogicVec { width: w, bits })
             }
             IrExpr::BitSelect(sig_id, idx) => {
                 let val = self.state.read_signal(*sig_id);
@@ -239,19 +242,18 @@ impl SimulationEngine {
                 } else {
                     (*msb, *lsb)
                 };
-                // Out-of-range select → X (LRM 1800 §11.5.1: part-select di
-                // luar batas menghasilkan X). Jangan error/panic — lebar
-                // dinamis (struct/memory) kadang menghasilkan select OOB
-                // yang legal secara runtime (flash_bank: [1:0] pada lebar 1).
-                if end >= val.width {
+                // Out-of-range select → bit luar batas X, bit dalam batas
+                // tetap nilai asli (LRM §11.5.1 — sama dgn RangeSelect).
+                if start > end {
                     let w = (end - start + 1).max(1);
                     return Ok(LogicVec::fill(LogicVal::X, w));
                 }
-                let bits = val.bits[start..=end].to_vec();
-                Ok(LogicVec {
-                    width: bits.len(),
-                    bits,
-                })
+                let w = end - start + 1;
+                let mut bits = Vec::with_capacity(w);
+                for i in start..=end {
+                    bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
+                }
+                Ok(LogicVec { width: w, bits })
             }
             IrExpr::ExprBitSelect(inner, idx) => {
                 let val = self.evaluate_expr(inner)?;
@@ -263,28 +265,53 @@ impl SimulationEngine {
             }
             IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
                 let val = self.evaluate_expr(inner)?;
-                let base = self.evaluate_expr(base_expr)?;
+                let base_lv = self.evaluate_expr(base_expr)?;
                 let width = self.evaluate_expr(width_expr)?;
-                let base = base.to_u64() as usize;
+                let base_w = base_lv.width;
+                let base = base_lv.to_u64() as usize;
                 let width = width.to_u64() as usize;
                 if width == 0 {
                     return Ok(LogicVec::new(1));
                 }
-                // LRM 1800 §11.5.1: bila SEBAGIAN mana pun dari indexed
-                // part-select berada di luar batas deklarasi, SELURUH hasil
-                // bernilai x (selebar yang diminta). Dulu: end di-clamp ke
-                // batas dan sisa bit jadi 0-extension diam-diam, plus kasus
-                // `base >= width` mengembalikan vektor 1-bit (lebar salah).
-                match base.checked_add(width - 1) {
-                    Some(end) if base < val.width && end < val.width => {
-                        let bits = val.bits[base..=end].to_vec();
-                        Ok(LogicVec {
-                            width: bits.len(),
-                            bits,
-                        })
+                // LRM 1800 §11.5.1 + realita Icarus: indexed part-select
+                // sebagian di luar batas → bit luar batas x, bit dalam
+                // batas tetap nilai asli (`a[0 +: 6]` pada reg [3:0] =
+                // xx1010). Dulu seluruh hasil x (ditemukan saat verifikasi
+                // fix guided_fuzz seed=111666772).
+                let mut bits = Vec::with_capacity(width);
+                // Reinterpretasi base ter-wrap NEGATIF: hasil rewrite parser
+                // `a[b -: ws]` → base = b-(ws-1) yang bisa wrap two's-
+                // complement (mis. 0xFFFFFFFB @32 = -5). HANYA bentuk
+                // Const/Sub yang direinterpretasi — base unsigned murni
+                // (mis. reg 17-bit bernilai besar pada `a[b +: ws]`) tetap
+                // unsigned sehingga seluruhnya OOB→X sesuai Icarus
+                // (LRM §11.5.1; guided_fuzz partsel).
+                let neg_ok = matches!(
+                    base_expr.as_ref(),
+                    IrExpr::Const(_) | IrExpr::BinaryOp(BinaryIrOp::Sub, ..)
+                );
+                let neg_base: i128 = if neg_ok
+                    && base >= val.bits.len()
+                    && base_w > 0
+                    && base_w < 64
+                    && ((base as u64) >> (base_w - 1)) & 1 == 1
+                {
+                    ((base as u64) as i64).wrapping_sub(1i64 << base_w) as i128
+                } else {
+                    base as i128
+                };
+                for k in 0..width {
+                    let idx = neg_base + k as i128;
+                    if idx >= 0 {
+                        bits.push(val.bits.get(idx as usize).copied().unwrap_or(LogicVal::X));
+                    } else {
+                        bits.push(LogicVal::X);
                     }
-                    _ => Ok(LogicVec::fill(LogicVal::X, width)),
                 }
+                Ok(LogicVec {
+                    width: bits.len(),
+                    bits,
+                })
             }
             IrExpr::ArrayIndex {
                 sig_id,
@@ -373,11 +400,13 @@ impl SimulationEngine {
                         }
                     }
                     eprintln!(
-                        "[DBG-BIN] op={:?} l={:?}({}b) r={:?}({}b) ls={} rs={} lnode={} rnode={}",
+                        "[DBG-BIN] op={:?} l={:x}({}b) r={:x}({}b) ls={} rs={} lnode={} rnode={} lxz={} rxz={}",
                         op, lval.to_u64(), lval.width, rval.to_u64(), rval.width,
                         is_signed_expr(lhs.as_ref(), &self.design.top.signals),
                         is_signed_expr(rhs.as_ref(), &self.design.top.signals),
-                        tag(lhs.as_ref()), tag(rhs.as_ref())
+                        tag(lhs.as_ref()), tag(rhs.as_ref()),
+                        lval.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z)),
+                        rval.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z)),
                     );
                 }
                 let lhs_is_real = matches!(lhs.as_ref(), IrExpr::Signal(id, _) if self.design.top.signals.get(*id).map(|s| s.is_real).unwrap_or(false));

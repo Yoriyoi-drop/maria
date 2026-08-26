@@ -4,9 +4,34 @@ use std::io::Write;
 
 use maria_ir::{IrDesign, LogicVal};
 
+/// Pesan untuk writer thread background (WAV-19).
+enum BgMsg {
+    /// Tulis byte ke file.
+    Bytes(Vec<u8>),
+    /// Flush buffer + kirim ack balik (sinkronisasi flush()).
+    Flush(std::sync::mpsc::Sender<()>),
+}
+
+/// Writer thread background: pemilik eksklusif file; menulis semua byte
+/// dari channel sampai channel tertutup, lalu flush + exit.
+struct BgWriter {
+    tx: Option<std::sync::mpsc::Sender<BgMsg>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+/// Tujuan tulisan VCD: file langsung (default, sinkron) atau writer thread
+/// background (opt-in via enable_background — dump tidak lagi blocking sim).
+enum Out {
+    File(fs::File),
+    Bg(BgWriter),
+    /// Placeholder transien saat mengambil File dari self.out
+    /// (hanya ada di dalam enable_background).
+    Detached,
+}
+
 /// VCD waveform writer.
 pub struct VcdWriter {
-    file: fs::File,
+    out: Out,
     last_values: HashMap<String, String>,
     code_by_key: HashMap<(Vec<String>, String), String>,
     pub enabled: bool,
@@ -38,7 +63,7 @@ impl VcdWriter {
             .map_err(|e| format!("cannot create VCD file '{}': {}", path, e))?;
 
         let mut writer = VcdWriter {
-            file,
+            out: Out::File(file),
             last_values: HashMap::new(),
             code_by_key: HashMap::new(),
             enabled: true,
@@ -61,7 +86,7 @@ impl VcdWriter {
         self.close_inner()?;
         let file = fs::File::create(path)
             .map_err(|e| format!("cannot create VCD file '{}': {}", path, e))?;
-        self.file = file;
+        self.out = Out::File(file);
         self.last_values.clear();
         self.code_by_key.clear();
         self.total_written = 0;
@@ -77,9 +102,22 @@ impl VcdWriter {
                 return Ok(());
             }
         }
-        self.file
-            .write_all(buf)
-            .map_err(|e| format!("VCD write error: {}", e))?;
+        match &mut self.out {
+            Out::File(f) => f
+                .write_all(buf)
+                .map_err(|e| format!("VCD write error: {}", e))?,
+            Out::Bg(bg) => {
+                if let Some(tx) = &bg.tx {
+                    // Kirim byte ke writer thread (non-blocking bagi sim
+                    // kecuali buffer channel penuh — backpressure alami).
+                    if tx.send(BgMsg::Bytes(buf.to_vec())).is_err() {
+                        // Thread mati → matikan dump agar tidak silent-loss.
+                        self.enabled = false;
+                    }
+                }
+            }
+            Out::Detached => {}
+        }
         self.total_written += buf.len() as u64;
         Ok(())
     }
@@ -186,7 +224,7 @@ impl VcdWriter {
 
         let keep = current.len() - close_count;
         for p in &target[keep..] {
-            writeln!(self.file, "$scope module {} $end", p).unwrap();
+            self.write_raw(format!("$scope module {} $end\n", p).as_bytes())?;
         }
 
         for (bare_name, width, array_depth) in sigs {
@@ -208,12 +246,13 @@ impl VcdWriter {
                     } else {
                         format!(" [{}:0]", width - 1)
                     };
-                    writeln!(
-                        self.file,
-                        "$var wire {} {} {} {} $end",
-                        width_disp, code, elem_name, range
-                    )
-                    .unwrap();
+                    self.write_raw(
+                        format!(
+                            "$var wire {} {} {} {} $end\n",
+                            width_disp, code, elem_name, range
+                        )
+                        .as_bytes(),
+                    )?;
                     self.code_by_key.insert((target.to_vec(), elem_name), code);
                 }
             } else {
@@ -229,12 +268,13 @@ impl VcdWriter {
                 } else {
                     format!(" [{}:0]", width - 1)
                 };
-                writeln!(
-                    self.file,
-                    "$var wire {} {} {} {} $end",
-                    width_disp, code, bare_name, range
-                )
-                .unwrap();
+                self.write_raw(
+                    format!(
+                        "$var wire {} {} {} {} $end\n",
+                        width_disp, code, bare_name, range
+                    )
+                    .as_bytes(),
+                )?;
                 self.code_by_key
                     .insert((target.to_vec(), bare_name.clone()), code);
             }
@@ -268,7 +308,7 @@ impl VcdWriter {
         let mut sorted_scopes: Vec<Vec<String>> = scope_map.keys().cloned().collect();
         sorted_scopes.sort();
 
-        writeln!(self.file, "$scope module {} $end", design.top.name).unwrap();
+        self.write_raw(format!("$scope module {} $end\n", design.top.name).as_bytes())?;
 
         let mut current_scope: Vec<String> = Vec::new();
         let mut entry_idx = 0usize;
@@ -280,9 +320,9 @@ impl VcdWriter {
         }
 
         for _ in 0..current_scope.len() {
-            writeln!(self.file, "$upscope $end").unwrap();
+            self.write_raw(b"$upscope $end\n")?;
         }
-        writeln!(self.file, "$upscope $end").unwrap();
+        self.write_raw(b"$upscope $end\n")?;
         self.write_raw(b"$enddefinitions $end\n")?;
         self.write_raw(b"$dumpvars\n")?;
 
@@ -371,16 +411,87 @@ impl VcdWriter {
     }
 
     fn close_inner(&mut self) -> Result<(), String> {
-        let _ = self.file.flush();
+        // Background: tutup channel → thread flush lalu exit; join agar
+        // file benar-benar final sebelum fungsi ini kembali.
+        if matches!(self.out, Out::Bg(_)) {
+            if let Out::Bg(bg) = &mut self.out {
+                bg.tx = None;
+                if let Some(h) = bg.handle.take() {
+                    let _ = h.join();
+                }
+            }
+        }
+        if let Out::File(f) = &mut self.out {
+            let _ = f.flush();
+        }
+        Ok(())
+    }
+
+    /// Aktifkan writer thread background (WAV-19): setelah ini semua byte
+    /// dump dikirim via channel ke thread penulis terpisah — simulasi tidak
+    /// lagi menunggu I/O disk di jalur panas. Opt-in (default sinkron).
+    pub fn enable_background(&mut self) -> Result<(), String> {
+        if matches!(self.out, Out::Bg(_)) {
+            return Ok(()); // sudah aktif
+        }
+        // Ambil File dari self.out (placeholder Detached sementara).
+        let taken = std::mem::replace(&mut self.out, Out::Detached);
+        let file = match taken {
+            Out::File(f) => f,
+            other => {
+                self.out = other;
+                return Ok(());
+            }
+        };
+        let (tx, rx) = std::sync::mpsc::channel::<BgMsg>();
+        let handle = std::thread::Builder::new()
+            .name("maria-vcd-writer".to_string())
+            .spawn(move || {
+                let mut out = std::io::BufWriter::new(file);
+                for msg in rx {
+                    match msg {
+                        BgMsg::Bytes(b) => {
+                            let _ = out.write_all(&b);
+                        }
+                        BgMsg::Flush(ack) => {
+                            let _ = out.flush();
+                            let _ = ack.send(());
+                        }
+                    }
+                }
+                // Channel tertutup → finalisasi file.
+                let _ = out.flush();
+            })
+            .map_err(|e| format!("cannot spawn VCD writer thread: {}", e))?;
+        self.out = Out::Bg(BgWriter {
+            tx: Some(tx),
+            handle: Some(handle),
+        });
         Ok(())
     }
 
     /// Flush file buffer to disk (for streaming mode).
     pub fn flush(&mut self) -> Result<(), String> {
-        self.file
-            .flush()
-            .map_err(|e| format!("VCD flush error: {}", e))?;
-        Ok(())
+        match &mut self.out {
+            Out::File(f) => f
+                .flush()
+                .map_err(|e| format!("VCD flush error: {}", e)),
+            Out::Bg(bg) => {
+                if let Some(tx) = &bg.tx {
+                    // Sinkron: tunggu ack dari writer thread sehingga
+                    // setelah flush() kembali, semua antrean sudah di-disk.
+                    let (ack_tx, ack_rx) = std::sync::mpsc::channel();
+                    if tx.send(BgMsg::Flush(ack_tx)).is_ok() {
+                        let _ = ack_rx.recv();
+                    } else {
+                        bg.tx = None;
+                        self.enabled = false;
+                    }
+                }
+                Ok(())
+            }
+            Out::Detached => Ok(()),
+        }
     }
 
     /// Flush to disk if stream_flush_interval reached.
@@ -406,7 +517,10 @@ impl Drop for VcdWriter {
     fn drop(&mut self) {
         // DEBT-19: pastikan buffer ter-flush walau engine return early
         // (mis. error sim) tanpa sempat memanggil close() eksplisit.
+        // WAV-19: flush (tunggu ack antrean background) lalu join thread —
+        // file finalisasi meski drop tanpa close().
         let _ = self.flush();
+        let _ = self.close_inner();
     }
 }
 
@@ -421,4 +535,112 @@ fn vec_to_vcd(val: &maria_ir::LogicVec) -> String {
         }
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use maria_core::intern::Symbol;
+    use maria_ir::*;
+
+    fn make_design() -> IrDesign {
+        let mut design = IrDesign::default();
+        design.top.name = Symbol::intern("bg_top");
+        design.top.signals = vec![
+            SignalInfo {
+                name: Symbol::intern("clk"),
+                width: 1,
+                ..Default::default()
+            },
+            SignalInfo {
+                name: Symbol::intern("data"),
+                width: 8,
+                ..Default::default()
+            },
+        ];
+        design
+    }
+
+    fn state(clk: u64, data: u64) -> Vec<LogicVec> {
+        vec![LogicVec::from_u64(clk, 1), LogicVec::from_u64(data, 8)]
+    }
+
+    #[test]
+    fn test_background_mode_writes_identical_output() {
+        let dir = std::env::temp_dir().join("maria_vcd_bg_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let design = make_design();
+
+        // Sinkron (baseline).
+        let sync_path = dir.join("sync.vcd");
+        {
+            let mut w = VcdWriter::new(sync_path.to_str().unwrap(), &design).unwrap();
+            w.dump_all(&design, &state(0, 42)).unwrap();
+            w.write_time_header(10).unwrap();
+            w.dump_state(&design, &state(1, 99)).unwrap();
+            w.close().unwrap();
+        }
+
+        // Background (WAV-19) — output harus identik.
+        let bg_path = dir.join("bg.vcd");
+        {
+            let mut w = VcdWriter::new(bg_path.to_str().unwrap(), &design).unwrap();
+            w.enable_background().unwrap();
+            w.dump_all(&design, &state(0, 42)).unwrap();
+            w.write_time_header(10).unwrap();
+            w.dump_state(&design, &state(1, 99)).unwrap();
+            w.close().unwrap(); // join thread → file final
+        }
+
+        let sync_out = std::fs::read_to_string(&sync_path).unwrap();
+        let bg_out = std::fs::read_to_string(&bg_path).unwrap();
+        assert_eq!(sync_out, bg_out, "background output identik dengan sinkron");
+        assert!(bg_out.contains("#10"), "time header tertulis");
+        assert!(bg_out.contains("$enddefinitions $end"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_background_flush_synchronizes() {
+        let dir = std::env::temp_dir().join("maria_vcd_bg_flush");
+        let _ = std::fs::create_dir_all(&dir);
+        let design = make_design();
+        let path = dir.join("flush.vcd");
+
+        let mut w = VcdWriter::new(path.to_str().unwrap(), &design).unwrap();
+        w.enable_background().unwrap();
+        w.dump_all(&design, &state(0, 7)).unwrap();
+
+        // flush() sinkron — setelah kembali, semua byte harus sudah di-disk.
+        w.flush().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("$enddefinitions $end"),
+            "header lengkap setelah flush"
+        );
+        assert!(content.contains("b00000111"), "nilai data=7 ter-flush");
+
+        w.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_background_drop_finalizes_file() {
+        let dir = std::env::temp_dir().join("maria_vcd_bg_drop");
+        let _ = std::fs::create_dir_all(&dir);
+        let design = make_design();
+        let path = dir.join("drop.vcd");
+
+        {
+            let mut w = VcdWriter::new(path.to_str().unwrap(), &design).unwrap();
+            w.enable_background().unwrap();
+            w.dump_all(&design, &state(0, 3)).unwrap();
+            // Drop TANPA close() — Drop impl harus join thread + flush.
+        }
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("b00000011"), "Drop mem-finalisasi file bg");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

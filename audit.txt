@@ -419,7 +419,16 @@ Mem-02: ✅ Memory budget — CacheManager LRU eviction (ROUND 77)
   macro=16MB). hit_rate() + memory_used() untuk monitoring.
   Severity: High → RESOLVED
 
-Mem-03: ⚠️ mmap semua files — masih open
+Mem-03: ✅ mmap semua files — FIXED (ROUND 88)
+           MmapFile (frontend/io.rs) versi lama MENAHAN region Mmap di
+           struct walau isinya sudah di-copy ke heap `bytes` (field
+           dead_code) → memori dobel + address space tertahan per file
+           tanpa batas jumlah file concurrent. Fix: mapping dilepas
+           SEGERA setelah salinan dibuat (mmap-copy path untuk file
+           >=4KB; file kecil read biasa) — tidak ada map tertahan selama
+           compile, address space langsung bebas. Zero-copy penuh tetap
+           di jalur MICD (micd/format.rs) yang memang membaca database
+           ter-map dengan scope terbatas. Severity: Medium → RESOLVED
   Root Cause: FastLexer + MmapFile mmap seluruh file sebelum
   diproses. Tidak ada limit jumlah file concurrent.
   Impact: 100K files x 10KB average = 1GB virtual address.
@@ -939,8 +948,17 @@ PARSER-03: ✅ error suggestions (did you mean?) (ROUND 75) — Levenshtein
            format with/without match) + 3 e2e maria-tests (signal typo
            data_oun→data_out, long name no match, dat_in→data_in).
 PARSER-04: ✅ Fix-it hints (ROUND 84) — parser err() kini generate FixItHint untuk error umum: ExpectedSemi (tambah ';'), UnclosedBlock/ExpectedToken endmodule/endfunction/endtask/endclass/endinterface/endpackage/end (tambah 'end'), UnexpectedToken (hapus token tak diharapkan). Fix-it termasuk file, line, col, replacement text, description. Terintegrasi ke Diagnostic.fix_its + TerminalEmitter display. Test: missing endmodule → fix-it insert '\nend', missing ';' → fix-it insert ';'.
-PARSER-05:[] Tidak ada code formatting (verible-format equivalent) (High)
-PARSER-06:[] Tidak ada parser performance benchmark vs Verilator (High)
+PARSER-05: ✅ Code formatting — mfmt (STALE: sudah ada sebelum audit)
+           crates/maria-tools/src/fmt.rs — formatter SV/Verilog berbasis
+           lexer (stdout/--inplace/--check, indentasi configurable).
+           Verifikasi ROUND 89: `mfmt fmt_test.sv` memformat output
+           benar. Bukan verible-clone tapi formatter SV fungsional.
+PARSER-06: ✅ Parser performance benchmark — mbench (parsial vs Verilator)
+           crates/maria-tools/src/bench.rs: parse_ms per run + avg +
+           throughput (file/s, lines/s) + compile/elab split. Verifikasi
+           ROUND 89: `mbench f.sv --runs 2` lapor parse avg + throughput.
+           Catatan: perbandingan langsung vs Verilator butuh instalasi
+           tool eksternal — metrik parser internal lengkap.
 PARSER-07:[] Dua parser (legacy + FastLexer) — maintenance burden (Medium)
 PARSER-08:[] FastLexer belum digabung dengan parser baru — hanya
            tokenisasi (High)
@@ -976,7 +994,15 @@ ELAB-05: [x] Generate loop unrolling safety cap — FIXED (ROUND 5):
 ELAB-06: ✅ Generate loop runtime bounds — MAX_GENERATED_ITEMS=1M di
           crates/maria-elaboration/src/util/generate.rs:18 + cap iter
           nested generate (line 334). Marker audit stale — bounds sudah ada.
-ELAB-07:[] Tidak ada cross-module parameter dependency tracking (High)
+ELAB-07: ✅ Cross-module parameter dependency tracking — FIXED
+         (stale; tercakup CRIT-016 + flatten):
+         (1) Per-instance override: ModuleInstance.param_assigns/
+         type_param_assigns di-resolve elaborator/flatten.rs — test e2e
+         test_parameterized_module_instance_override (#(16) → WIDTH=16) +
+         ELAB-10 type override. (2) Tracking antar-module utk incremental
+         elab: compute_module_checksum meng-hash params + instances,
+         signature dep-aware (hash × child signatures), topo order Kahn +
+         cascade invalidation + session cache (CRIT-016). Marker stale.
 ELAB-08:[] Tidak ada config/libraray mapping full implementation (Medium)
 ELAB-09:[] Tidak ada instance array with parameter override per
          instance path (High)
@@ -996,7 +1022,13 @@ ELAB-12: ✅ Elab-time assertion evaluation (ROUND 47) — assert immediate
 
 COMP-01:[] Tidak ada multi-pass optimization pipeline (Critical)
 COMP-02:[] Tidak ada dead code elimination (Critical)
-COMP-03:[] Tidak ada constant propagation beyond $clog2 etc (High)
+COMP-03: ✅ Constant propagation — FIXED (stale; const_fold.rs + MIR)
+         Elaborator: util/const_fold.rs (755 LOC) try_fold_const/
+         try_fold_const_at_width — folding ekspresi konstanta luas
+         (bukan hanya $clog2): aritmetika, bit/part select atas param
+         & package constants (ROUND 11), width-aware, X/Z guard.
+         MIR: constant_fold pass 17 binary ops + copy propagate +
+         constant_branch_fold (CRIT-041). Marker stale.
 COMP-04:[] Tidak ada common subexpression elimination (CSE) (High)
 COMP-05:[] Tidak ada loop invariant code motion (LICM) (High)
 COMP-06:[] Tidak ada strength reduction (Medium)
@@ -1166,14 +1198,40 @@ WAV-01:[] No FSDB format (Synopsys standard) (Critical)
 WAV-02:[] No VPD format (Synopsys VCD Plus) (Critical)
 WAV-03:[] No SHM/WDB format (Cadence/Siemens) (Critical)
 WAV-04:[] No compressed waveform database (beyond FST gzip) (High)
-WAV-05:[] No incremental waveform dump (Critical)
+WAV-05: ✅ Incremental waveform dump — FIXED (stale; VCD diff + WAV-06)
+         vcd.rs write_vals: nilai hanya ditulis bila BERUBAH dari
+         last_values (diff per time step) = incremental dump inti;
+         plus streaming ke disk (--waveform-stream / stream_flush_
+         interval, WAV-06) dan background writer (--waveform-bg,
+         ROUND 86). Marker audit stale.
 WAV-06: ✅ Waveform streaming to disk — periodic flush + CLI
            src/waveform/vcd.rs — stream_flush_interval + flush() + maybe_flush()
            src/waveform/fst.rs — same API (flush is no-op, wavefst crate limitation)
            src/simulator/engine/waveform.rs — dump_state calls maybe_flush()
            src/cli.rs + src/main.rs — --waveform-stream flag (flush every delta)
            STATUS: ✅ FIXED (VCD streaming; FST: wavefst crate doesn't expose flush)
-WAV-07:[] No waveform random access for debugger (High)
+WAV-07: ✅ Waveform random access query — mwave get (ROUND 85)
+           crates/maria-tools/src/wave.rs — get(input, patterns, at, range)
+           + core murni get_data(data, patterns, at, range) → Vec<GetEntry>
+           (name/width/values). Tiga mode:
+             • `--at T`     : sample di waktu T (sample_at — perubahan
+                              terakhir ≤ T; "x" bila belum ada perubahan).
+             • `--range a:b`: semua perubahan dalam [a, b] (parser
+                              parse_time_range di cli.rs, tolak t1>t2).
+             • tanpa flag   : timeline penuh per sinyal.
+           Pola sinyal wildcard `*`/`?` terhadap nama polos + nama penuh
+           (reuse wildcard_match), multi-pola OR (koma/space/;). Output
+           nilai bits mentah + desimal bila biner murni (format_bits).
+           CLI: MwaveCmd::Get { input, signals, at, range } (cli.rs) +
+           dispatch main.rs. Sinyal tak cocok → error W0001 jelas.
+           Test: 3 unit inline wave.rs (test_get_at_samples_value — @7 =
+           nilai t=5, @0 = initial, no-match error; test_get_range_filters_
+           changes — window [5:15] 3 perubahan, range kosong → values
+           kosong; test_get_wildcard_multiple_and_full_timeline — c* →
+           clk+cnt, timeline penuh, nama polos match, no-match error).
+           Demo e2e: demo.sv cnt+8'h0F tiap posedge → VCD → `mwave get
+           demo.vcd cnt --at 47` = 01001011 (75) benar; `c*` 2 sinyal;
+           --range 20:40 = {25, 35}; nosuch → error.
 WAV-08: ✅ Hierarchical signal indexing — mwave tree (ROUND 41)
            crates/maria-tools/src/wave.rs — tree(input): kelompokkan signal
            per scope ($scope/$upscope), cetak pohon hierarki (indentasi per
@@ -1191,7 +1249,12 @@ WAV-10: ✅ Signal search — mwave search (ROUND 39)
            penuh (scope.name); output nama + lebar + scope. CLI: `maria mwave
            search t.vcd "c*"`. 2 unit test (wildcard_match DP + search by
            pola).
-WAV-11:[] No waveform reload for post-sim debugging (High)
+WAV-11: ✅ Waveform reload for post-sim debugging — mwave suite
+         Reload VCD post-sim utk debugging tercakup penuh tool mwave:
+         get (random access nilai @T / range / timeline, ROUND 85),
+         tree (index scope), search (wildcard), stats (aktivitas/
+         stuck), compare (diff 2 VCD), export (csv/txt). Marker
+         stale — ditutup ROUND 89.
 WAV-12: ✅ Multi-session waveform merge — mwave merge (wave.rs:274).
            Marker audit stale — merge sudah ada di tools CLI.
 WAV-13: ✅ SDF delay diterapkan ke timing sinyal + BUG FIX (ROUND 56)
@@ -1249,7 +1312,19 @@ WAV-17: ✅ No waveform statistics (ROUND 46) — mwave stats (toggle count,
 WAV-18: [x] Value change dump blocking — RE-VERIFIKASI (ROUND 59): diatasi
          WAV-06 waveform streaming (VCD periodic flush + --waveform-stream;
          FST via wavefst) — dump tidak lagi menumpuk di akhir sim.
-WAV-19:[] VCD writer single-threaded, blocking sim during dump (High)
+WAV-19: ✅ VCD writer background thread — non-blocking dump (ROUND 86)
+           crates/maria-simulator/src/waveform/vcd.rs — Out enum
+           { File | Bg | Detached } + BgWriter (mpsc channel + writer
+           thread pemilik file via BufWriter). enable_background()
+           opt-in: byte dump dikirim via channel (backpressure alami),
+           flush() sinkron via Msg::Flush + ack channel; close_inner()
+           drop tx → join thread → finalisasi file. Thread mati →
+           enabled=false (anti silent-loss). Semua writeln!(self.file)
+           header diroute lewat write_raw. Drop impl: flush + join.
+           CLI: --waveform-bg (cli.rs) wired di kedua jalur main.rs.
+           Test: 3 unit vcd.rs (output bg identik sinkron byte-per-byte,
+           flush tersinkron, drop tanpa close mem-finalisasi file).
+           E2e: demo.sv --waveform-bg vs sinkron → cmp IDENTIK.
 
 4.7 VERIFICATION GAPS
 
@@ -1495,7 +1570,13 @@ VERIF-31: [x] Transition coverage — RE-VERIFIKASI (ROUND 63): `=>` di-lex
          sebelumnya. Test test_covergroup_transition_bins (mod.rs:11580):
          rising (0=>1) kena 2x, falling (1=>0) kena 1x, sampel pertama
          (prev=None) → auto-bin, total 4. Marker stale.
-VERIF-32:[] No sequence coverage (Medium)
+VERIF-32: ✅ Sequence coverage (ROUND 87) — engine.sequence_coverage
+           HashMap<(line,col), SeqCovStats> {attempts, matched, failed}: record_sequence_attempt di 2 situs
+           push SequenceAttempt (block.rs), record_sequence_result saat
+           attempt selesai (sequence.rs). report_sequence_coverage() +
+           integration coverage_gaps() (matched==0 = hole).
+           coverage_stats(): sequence_tracked/attempts/matched/failed/
+           match_percent. Test e2e test_sequence_coverage_matched_and_hole.
 VERIF-33: ✅ SVA assertion coverage — RE-VERIFIKASI: sudah ada di VERIF-27
            (assertion_stats pass/fail + report_assertion_coverage di
            coverage.rs:259). Marker stale — coverage metrik assertion
@@ -1524,11 +1605,27 @@ VERIF-38: ✅ solve-before full ordering — method.rs before_map/ordered_fields
 4.8 FORMAL VERIFICATION GAPS
 
 FORMAL-01:[] No formal property checking engine (Critical)
+           ⚠️ CATATAN ROUND 91: engine formal (BMC + k-induction) sudah ada
+           di crates/maria-formal untuk assertion boolean immediate; yang
+           belum: property SVA concurrent penuh (sequence temporal, disable
+           iff) sebagai target formal. TETAP OPEN untuk scope penuh.
 FORMAL-02: [x] BMC — FIXED (CRIT-003): crates/maria-formal bmc.rs
          check_assertions_bmc (Z3 bit-vector, transition relation, per-depth
          assertion check, CLI --formal/--formal-bound, 22 test). Marker stale.
-FORMAL-03:[] No induction-based proof (Critical)
-FORMAL-04:[] No k-induction (High)
+FORMAL-03: ⚠️ IN PROGRESS (ROUND 91) — induction-based proof:
+           k-induction umum terimplementasi di crates/maria-formal/bmc.rs
+           (iterasi k=1..max_k, config.max_k, FormalResult::InductiveProof(k),
+           CLI --formal-induction). 3 bug blocking diperbaiki (lihat ROUND 91):
+           init X/Z dipaksa 0, initializer deklarasi tidak masuk relasi
+           transisi, IrExpr::Signed tidak diterjemahkan ke Z3.
+           MASIH OPEN: proof atas property SVA concurrent (sequence),
+           fairness/liveness properties, abstraction/refinement.
+FORMAL-04: ⚠️ IN PROGRESS (ROUND 91) — k-induction:
+           inti k-induction SELESAI (lihat FORMAL-03 + ROUND 91): iterasi
+           kedalaman k dengan frame F0..Fk, assume P(0..k-1), check ¬P(k);
+           terbukti e2e invariant yang butuh k=2 (test_k_induction_needs_
+           depth_2). MASIH OPEN: k-Induction dengan invariants helper,
+           IC3/PDR utk property yang butuh kedalaman tak terbatas.
 FORMAL-05:[] No IC3/PDR (Critical)
 FORMAL-06: [x] SAT solver — FIXED (CRIT-003): Z3 bit-vector solver
          (maria-formal sat.rs, thread-local context, IrExpr→Z3 BV/Bool).
@@ -1536,7 +1633,12 @@ FORMAL-07:[] No BDD engine (High)
 FORMAL-08: [x] SMT solver — FIXED (CRIT-003): Z3 SMT (BV + Bool) dipakai BMC;
          solver-level integration ada (maria-formal sat.rs).
 FORMAL-09:[] No abstract interpretation (Medium)
-FORMAL-10:[] No assume-guarantee reasoning (High)
+FORMAL-10: ⚠️ IN PROGRESS (ROUND 92) — assume-guarantee tahap 1:
+           `assume` dikonstrain pada SEMUA depth BMC (collect_assumptions
+           + persisten melintasi depth checks) → counterexample hanya
+           dilaporkan bila reachable di bawah asumsi. Test e2e
+           test_assume_constrains_counterexample. MASIH OPEN: compositional
+           assume-guarantee antar module, proof obligations per component.
 FORMAL-11:[] No equivalence checking combinational (Critical)
 FORMAL-12:[] No equivalence checking sequential (Critical)
 FORMAL-13:[] No connectivity checking (High)
@@ -2137,10 +2239,11 @@ PERF-01: ✅ Hierarchical timing wheel — O(1) event scheduling
          Impact: Setiap delta cycle scan seluruh event list
          Fix: Region-specific event bins with O(1) access
 
-PERF-02:[] Signal history in HashMap — O(N) lookup per cycle
-         core.rs: signal_history per signal
-         Impact: 1M signals x per-cycle store = memory + CPU
-         Fix: Array-backed signal history, fixed-size ring buffer
+PERF-02: ✅ Signal history — FIXED (stale; ROUND 9 + CRIT-019)
+         core.rs: signal_history per signal → kini SignalHistoryStore
+         (signal_history.rs) ring buffer per-signal (default 10K) +
+         disk spill opsional (Mem-01). Marker audit tidak diupdate
+         saat ROUND 9.
 
 PERF-03:[] Preponed snapshot clones ALL signals every cycle
          core.rs: snapshot Vec<LogicVec> per cycle
@@ -2227,10 +2330,10 @@ PERF-16:[] Covergroup sampling loops over all bins
          Impact: Many covergroups degrade performance
          Fix: Hash-based bin lookup, early-out on full bins
 
-PERF-17:[] All file mmaps held open during compile
-         io.rs: MmapFile stays mapped
-         Impact: 100K files = 100K mmap regions
-         Fix: Sequential processing, unmap after parse
+PERF-17: ✅ All file mmaps held open during compile — FIXED (ROUND 88)
+         io.rs: MmapFile tidak lagi menahan region map — mapping
+         dilepas segera setelah isi disalin ke heap (lihat Mem-03).
+         100K file compile tidak lagi memegang 100K mapping.
 
 PERF-18:[] StringTable.get() iterates string-slice for Symbol→String
          string_intern.rs: StringTable::get() lookup
@@ -3618,6 +3721,298 @@ Detail perbaikan per round:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2110 passed, 0 failed
    - Demo WAV-16: /tmp/opencode/wav16_demo/{apb,axi,ahb}_demo.sv → decode OK
+
+═══ ROUND 85 — WAV-07: mwave get (waveform random access query) ═══
+
+WAV-07 (No waveform random access for debugger, High) ditutup:
+   - crates/maria-tools/src/wave.rs:
+     • WaveArgs::Get { input, signals, at, range } + run arm.
+     • get(input, patterns, at, range) — cetak hasil; core murni
+       get_data(data, patterns, at, range) → Vec<GetEntry> { name, width,
+       values: Vec<(u64, String)> } agar bisa diuji tanpa stdout (pola
+       compare_data/stats_data).
+     • Tiga mode query:
+       * `--at T`      : sample_at(timeline, T) — perubahan terakhir ≤ T;
+                         "x" bila belum ada perubahan (random access murni).
+       * `--range a:b` : filter perubahan t ∈ [a, b].
+       * tanpa flag    : timeline penuh per sinyal.
+     • Pola sinyal wildcard `*`/`?` terhadap nama polos DAN nama penuh
+       scope.name (reuse wildcard_match DP); multi-pola OR via
+       koma/space/;. Tidak ada yang cocok → err W0001 jelas.
+     • format_bits(v) — bits mentah + desimal dalam kurung bila biner
+       murni (x/z dicetak apa adanya).
+   - src/cli.rs: MwaveCmd::Get { input, signals, at, range } +
+     parse_time_range() — value_parser `--range t1:t2`, tolak format
+     salah & t1 > t2 dengan pesan jelas.
+   - src/main.rs: dispatch arm MwaveCmd::Get → WaveArgs::Get.
+
+Test (+3 unit inline wave.rs):
+   - test_get_at_samples_value — cnt berubah di 0/5/10/15 → @7 = "0010"
+     (perubahan terakhir ≤ 7), @0 = "0000"; sinyal tak ada → error.
+   - test_get_range_filters_changes — window [5:15] = 3 perubahan
+     tepat; range [100:200] kosong → values kosong (sinyal tetap cocok).
+   - test_get_wildcard_multiple_and_full_timeline — `c*` → clk + cnt;
+     timeline penuh clk benar; nama polos match; no-match error.
+
+Demo e2e CLI (/tmp/opencode/wav07/demo.sv — cnt += 8'h0F tiap posedge):
+   - `maria mwave get demo.vcd cnt --at 47` → demo.cnt [7:0] @ 47 =
+     01001011 (75) ✓
+   - `mwave get demo.vcd "c*"` → 2 sinyal, timeline penuh ✓
+   - `mwave get demo.vcd cnt --range 20:40` → perubahan di 25, 35 ✓
+   - `mwave get demo.vcd nosuch --at 5` → error W0001 "tidak ada sinyal
+     yang cocok" ✓
+
+📊 VERIFIKASI ROUND 85:
+   - cargo build --workspace: 0 error (warning baru: 0 — sisa warning
+     pre-existing crate lain)
+   - cargo test --workspace: 2126 passed, 0 failed
+   - AGENTS.md baris mwave + tools.md bagian mwave di-update (subcommand get)
+
+═══ ROUND 86 — WAV-19: VCD background writer thread ═══
+
+WAV-19 (VCD writer single-threaded, blocking sim during dump, High) ditutup:
+   - crates/maria-simulator/src/waveform/vcd.rs (refactor jalur tulis):
+     • enum Out { File(fs::File) | Bg(BgWriter) | Detached } menggantikan
+       field `file` langsung. Detached = placeholder transien saat
+       mengambil File dari self.out di enable_background().
+     • BgWriter { tx: Option<Sender<BgMsg>>, handle: JoinHandle } +
+       enum BgMsg { Bytes(Vec<u8>) | Flush(Sender<()>) }. Writer thread
+       ("maria-vcd-writer") pemilik eksklusif file via BufWriter: loop
+       recv → write_all; Flush → flush + kirim ack; channel tertutup →
+       flush final + exit.
+     • enable_background() (opt-in, pub): pindahkan file ke thread,
+       semua dump berikutnya non-blocking bagi sim (backpressure alami
+       saat buffer channel penuh).
+     • flush(): File → f.flush(); Bg → Msg::Flush + tunggu ack (setelah
+       flush() kembali semua antrean sudah di-disk). Thread mati →
+       enabled = false (anti silent-loss data).
+     • close_inner(): drop tx → join handle → file final. reopen()
+       memakai jalur ini sebelum buat file baru.
+     • Drop impl: flush() + close_inner() — drop tanpa close tetap
+       mem-finalisasi file (DEBT-19 diperluas ke mode background).
+     • Semua writeln!(self.file, ...) di header ($scope/$var/$upscope)
+       diroute lewat write_raw agar konsisten lewat sink aktif.
+   - src/cli.rs: flag --waveform-bg.
+   - src/main.rs: enable_background() wired di KEDUA jalur (run legacy
+     + run_fast) setelah VcdWriter::new, dengan report status.
+
+Test (+3 unit inline vcd.rs):
+   - test_background_mode_writes_identical_output — dump sinkron vs
+     background (dump_all + time header + dump_state) → isi file
+     IDENTIK byte-per-byte.
+   - test_background_flush_synchronizes — flush() sinkron; setelah
+     kembali header + nilai data=7 sudah terbaca dari disk.
+   - test_background_drop_finalizes_file — drop TANPA close() → Drop
+     impl join thread; b00000011 terbaca di file.
+
+Demo e2e CLI: demo.sv --waveform-bg → "Waveform background writer
+enabled"; cmp bg.vcd sync.vcd → IDENTIK.
+
+📊 VERIFIKASI ROUND 86:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2129 passed, 0 failed (+3)
+
+═══ ROUND 87 — VERIF-32 sequence coverage + FIX BUG GLOBAL FastLexer `##` ═══
+
+✅ VERIF-32 SEQUENCE COVERAGE — DIIMPLEMENTASIKAN:
+   - maria-simulator engine/mod.rs: struct SeqCovStats {attempts, matched,
+     failed} + field engine.sequence_coverage HashMap<(line,col), SeqCovStats>.
+   - coverage.rs: record_sequence_attempt() (dipanggil di KEDUA situs push
+     SequenceAttempt di block.rs) + record_sequence_result() (dipanggil saat
+     attempt selesai di sequence.rs, berdampingan record_assertion VERIF-27)
+     + report_sequence_coverage() (per line:col attempts/matched/failed +
+     penanda [HOLE] + match rate; dipanggil report_full_coverage) +
+     integration coverage_gaps(): sequence matched==0 → gap "tidak pernah
+     match" + coverage_stats(): sequence_tracked/attempts/matched/failed/
+     match_percent (mengalir ke Coverage Summary msim + cache pipeline).
+   - Test e2e maria-tests test_sequence_coverage_matched_and_hole: `a ##1 b`
+     match sekali + fail sekali → stats tercatat; design kedua yang tidak
+     pernah match → hole terdeteksi + muncul di coverage_gaps(). Mutation-
+     verified: hook attempt dimatikan → test FAIL.
+
+⚠️ BUG GLOBAL DITEMUKAN & DIPERBAIKI — FastLexer TIDAK menghasilkan
+   Token::HashHash untuk `##`:
+   Gejala: module-level `assert property (@(posedge clk) a ##1 b)` bekerja
+   di jalur CLI legacy (concatenate + Lexer legacy) tapi HILANG diam-diam
+   di seluruh jalur CompileSession: `maria sim` (msim), melab/mlint/
+   filelist run_fast/LSP. Assertion Summary failed=0 padahal property
+   harusnya fail; sequence/assertion coverage kosong.
+   Akar masalah: frontend/lexer.rs FastLexer arm b'#' SELALU → Token::Hash
+   (dua kali untuk `##`). Parser menerima `a # # 1 b` → parse_immediate_
+   assertion gagal → jalur rollback ROUND 71 me-skip assertion SENGAJA
+   (desain anti-crash) → PropertyAssert hilang dari AST/IR.
+   Fix: FastLexer b'#' peek '#' → konsumsi dua byte → Token::HashHash
+   (paritas lexer legacy lexer.rs:1283). `#` tunggal (delay) tetap Hash.
+   Dampak fix: SEMUA SVA temporal (`##N`, `##[min:max]`, concat/or/and/
+   repeat/implication) kini hidup kembali di jalur CompileSession —
+   terverifikasi e2e: msim sequence_tracked=1 (8 attempts / 0 matched /
+   5 failed), filelist run_fast menampilkan Sequence Coverage + Coverage
+   Gaps [HOLE], identik dengan jalur legacy.
+   Test regresi: test_fast_lexer_hashhash_temporal_delay (maria-compiler
+   lexer.rs) — `a ##1 b` → HashHash + Number; `#5` tetap Hash.
+
+📊 VERIFIKASI ROUND 87:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2131 passed, 0 failed (+2: sequence coverage
+     e2e + fast_lexer hashhash regresi)
+   - E2e 3 jalur (legacy single-file / run_fast filelist / msim): sequence
+     coverage + gap analysis konsisten setelah fix FastLexer.
+
+═══ ROUND 88 — Mem-03/PERF-17 mmap retention + PERF-02 stale ═══
+
+✅ Mem-03 + PERF-17 — MMAP RETENTION DIHAPUS (frontend/io.rs):
+   Temuan: MmapFile MENAHAN region `Mmap` di struct (field dead_code)
+   PADAHAL isinya sudah di-copy ke heap `bytes` sejak awal → (1) memori
+   dobel per file besar (mapped pages + heap copy), (2) address space
+   tertahan selama MmapFile hidup tanpa batas jumlah file concurrent
+   (akar klaim Mem-03 "100K files = 1GB virtual" dan PERF-17 "mmaps
+   held open during compile").
+   Fix: mapping dilepas SEGERA setelah salinan dibuat:
+     - File >=4KB (MMAP_THRESHOLD): mmap → advise Sequential → copy →
+       drop map (unmap otomatis). I/O tetap secepat mmap utk file besar.
+     - File kecil: read biasa (tidak berubah).
+   - track_mmap_bytes() kini benar-benar terpanggil di jalur mmap-copy.
+   - Zero-copy penuh tetap ada di jalur MICD (micd/format.rs) yang
+     membaca database ter-map dengan scope terbatas & terkelola.
+   - Test: test_large_file_no_map_retained (file >=4KB konten utuh +
+     checksum xxh3 atas salinan heap) + test_small_file_read_directly
+     (pengganti test_small_file_no_mmap yang mengakses field mmap).
+
+✅ PERF-02 — RE-VERIFIKASI STALE → [x]:
+   Signal history sudah VecDeque O(1) pop_front sejak ROUND 9, kini
+   SignalHistoryStore ring buffer per-signal (default 10K) + disk spill
+   opsional (CRIT-019/Mem-01). Marker audit tidak pernah diupdate.
+
+📊 VERIFIKASI ROUND 88:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2132 passed, 0 failed (+1 net)
+
+═══ ROUND 89 — BATCH RE-VERIFIKASI: PARSER-05/06, WAV-05/11 (stale) ═══
+
+Batch re-verifikasi item [] yang ternyata sudah terimplementasi
+(bukti kode + CLI langsung, tanpa perubahan kode):
+
+✅ PARSER-05 code formatting — STALE → [x]:
+   mfmt (crates/maria-tools/src/fmt.rs) sudah ada: formatter SV/Verilog
+   berbasis lexer, stdout/--inplace/--check. Verifikasi CLI:
+   `maria mfmt fmt_test.sv` memformat module/always_ff dengan benar.
+
+✅ PARSER-06 parser benchmark — [x] parsial:
+   mbench mengukur parse_ms per run + avg + throughput (file/s,
+   lines/s) dengan split compile/elab. Verifikasi CLI: `mbench f.sv
+   --runs 2` lapor metrik lengkap. Perbandingan head-to-head vs
+   Verilator membutuhkan tool eksternal — dicatat sebagai batasan.
+
+✅ WAV-05 incremental waveform dump — STALE → [x]:
+   vcd.rs write_vals hanya menulis nilai yang BERUBAH vs last_values
+   (diff per time step) = incremental dump inti sejak awal; ditambah
+   streaming (--waveform-stream) dan background writer (--waveform-bg).
+
+✅ WAV-11 waveform reload post-sim — STALE → [x]:
+   Suite mwave membaca VCD post-sim untuk debugging: get (random
+   access @T/range/timeline), tree, search, stats, compare, export.
+
+📊 VERIFIKASI ROUND 89:
+   - Tidak ada perubahan kode (re-verifikasi murni, bukti CLI)
+   - cargo test --workspace: 2132 passed, 0 failed
+
+═══ ROUND 90 — BATCH RE-VERIFIKASI: ELAB-07, COMP-03 (stale) ═══
+
+✅ ELAB-07 cross-module parameter dependency tracking — STALE → [x]:
+   Dua lapis bukti:
+   1. Override per-instance: ModuleInstance.param_assigns (HashMap
+      Symbol→Expr) + type_param_assigns di-resolve elaborator/flatten.rs.
+      Test e2e: test_parameterized_module_instance_override (adder #(16)
+      → WIDTH=16, sum benar) + test_parameter_type_override (ELAB-10).
+   2. Dependency tracking antar-module utk incremental elaboration:
+      compute_module_checksum meng-hash params + instance edges,
+      signature dep-aware (hash × child signatures — parent di-re-elab
+      bila child berubah), compute_topo_order Kahn, cascade invalidation,
+      session-level cached_elab_modules (CRIT-016).
+
+✅ COMP-03 constant propagation — STALE → [x]:
+   Elaborator: util/const_fold.rs (755 LOC) — try_fold_const +
+   try_fold_const_at_width: folding aritmetika penuh, bit/part select
+   atas parameter & package constants (ROUND 11), width-aware fold,
+   X/Z guard. MIR opt: constant_fold 17 binary ops + copy_propagate +
+   constant_branch_fold (CRIT-041). Klaim audit "beyond $clog2 tidak
+   ada" sudah tidak akurat.
+
+📊 VERIFIKASI ROUND 90:
+   - Tidak ada perubahan kode (re-verifikasi murni, bukti kode + test)
+   - cargo test --workspace: 2132 passed, 0 failed
+
+═══ ROUND 91 — FORMAL-03/04 k-INDUCTION (TAHAP 1) + 3 FIX BUG FORMAL ═══
+
+Kerja bertahap pada FORMAL-03 (induction proof) & FORMAL-04 (k-induction)
+— inti algoritma SELESAI, item tetap ⚠️ IN PROGRESS (scope penuh: SVA
+concurrent property, liveness, IC3/PDR masih open).
+
+✅ k-INDUCTION UMUM (crates/maria-formal/bmc.rs):
+   - check_inductive digeneralisasi: iterasi k = 1..config.max_k (default
+     8). Per iterasi: bangun k+1 frame F0..Fk TANPA initial constraint,
+     hubungkan via relasi transisi, ASSUME P(F0)..P(Fk-1), CHECK ¬P(Fk).
+     UNSAT → InductiveProof(k); SAT → spurious, coba k lebih dalam.
+   - enum InductionOutcome { Proved | Spurious | Inconclusive | Error }.
+   - FormalResult::InductiveProof → InductiveProof(k) (bawa kedalaman
+     bukti). FormalConfig + field max_k.
+   - CLI: --formal-induction (cli.rs) wired ke run_formal (main.rs);
+     report mencetak "✓ INDUCTIVE PROOF (k=N)".
+
+✅ 3 BUG BLOCKING DITEMUKAN & DIPERBAIKI saat verifikasi CLI:
+   1. init X/Z dipaksa 0: sinyal tanpa initializer punya init_val X-fill;
+      to_u64() membaca X=0 → constraint state awal SALAH → false FAIL di
+      depth 0. Fix: init yang mengandung X/Z dibiarkan unconstrained
+      (abstraksi 2-state sound), hanya init terdefinisi penuh di-constrain.
+   2. Initializer deklarasi hilang dari relasi transisi: `reg x = 1;`
+      di-elaborasi menjadi proses Initial `decl_init_*`, tidak pernah
+      masuk BMC. Fix: collect_initial_state_assignments() — BlockingAssign
+      leading proses Initial jadi constraint sig_0 == rhs (walk berhenti
+      di statement non-assign).
+   3. IrExpr::Signed tidak diterjemahkan ke Z3: sejak fix signedness
+      ROUND 36, literal desimal unsized dibungkus Signed → expr_to_z3_
+      int_at mengembalikan None → constraint/assertion DI-SKIP diam-diam.
+      Fix: arm IrExpr::Signed delegasi ke inner (semantik BV sama).
+
+✅ Test baru (+1): test_k_induction_needs_depth_2 — invariant a|b dengan
+   transisi a'=b, b'=b, init (0,1): TIDAK terbukti di k=1 (spurious),
+   TERBUKTI di k=2 → membuktikan iterative deepening bekerja.
+
+E2e CLI (--formal --formal-induction):
+   - f_simple.sv (assert x==1): ✓ INDUCTIVE PROOF (k=1)
+   - formal_k2.sv (a||b, butuh k>=2): ✓ INDUCTIVE PROOF (k=2)
+
+📊 VERIFIKASI ROUND 91:
+   - cargo build --workspace (default + features formal): 0 error
+   - cargo test --workspace: 2133 passed, 0 failed
+   - cargo test -p maria-formal --features formal: 28/28 pass
+
+═══ ROUND 92 — FORMAL-10 tahap 1: assume sebagai constraint BMC ═══
+
+✅ FORMAL-10 ASSUME-GUARANTEE TAHAP 1 (crates/maria-formal/bmc.rs):
+   - collect_assumptions(): kumpulkan IrStmt::Assume dari proses
+     Comb/Seq/Initial/CombReactive (walk Block/NamedBlock/If/Case).
+   - bmc_check_single: asumsi di-assert pada SETIAP depth 0..bound DI
+     LUAR push/pop depth check — persisten melintasi semua iterasi →
+     counterexample hanya dilaporkan bila reachable DI BAWAH asumsi.
+✅ FIX MODELING terkait: logika kombinational kini juga di-constrain di
+   depth 0 untuk sinyal tanpa nilai awal terdefinisi (always_comb meng-
+   drive kontinu sejak t=0; sebelumnya grant_0 bebas → false FAIL).
+   Sinyal dengan init eksplisit tetap pakai init (tidak dobel-constrain).
+✅ SOUNDNESS NOTE (induction_step): logika combinational SENGAJA tidak
+   di-constrain di frame F0 induction — F0 mewakili state arbitrer
+   termasuk transien awal; meng-constrain-nya mengeksklusi state
+   reachable → bukti palsu. Terdokumentasi di kode.
+
+Test baru (+1): test_assume_constrains_counterexample —
+   grant'=req, assert(grant==1):
+   - tanpa asumsi → Counterexample (req=0 reachable) ✓
+   - assume(req==1) → Pass ✓
+
+📊 VERIFIKASI ROUND 92:
+   - cargo build --workspace (default + features formal): 0 error
+   - cargo test --workspace: 2134 passed, 0 failed
+   - cargo test -p maria-formal --features formal: 29/29 pass
 
 ========================================
 END OF AUDIT REPORT

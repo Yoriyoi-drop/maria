@@ -307,10 +307,11 @@ fn anim_abort(anim: &mut Option<PipelineAnimator>, errors: usize, warnings: usiz
 /// Run formal verification (BMC) and print results.
 /// Returns Err if any assertion fails (counterexample found — for CI/CD integration).
 #[cfg(feature = "formal")]
-fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool) -> Result<(), SimError> {
+fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool, induction: bool) -> Result<(), SimError> {
     use maria_api::formal::*;
     let mut formal_cfg = FormalConfig::default();
     formal_cfg.bound = bound;
+    formal_cfg.induction = induction;
     let mut formal_engine = FormalEngine::new(formal_cfg);
     let results = formal_engine.check_assertions_bmc(ir_design);
 
@@ -336,7 +337,9 @@ fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool) -> Result
             }
             FormalResult::Unknown => println!("  ? UNKNOWN: {}", name),
             FormalResult::Error(e) => println!("  ! ERROR: {} — {}", name, e),
-            FormalResult::InductiveProof => println!("  ✓ INDUCTIVE PROOF: {}", name),
+            FormalResult::InductiveProof(k) => {
+                println!("  ✓ INDUCTIVE PROOF (k={}): {} — holds for ALL depths", k, name)
+            }
         }
     }
 
@@ -1631,7 +1634,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // ── Formal Verification (runs before simulation, skips sim) ──
     #[cfg(feature = "formal")]
     if cli.formal {
-        return run_formal(&ir_design, cli.formal_bound, cli.quiet);
+        return run_formal(&ir_design, cli.formal_bound, cli.quiet, cli.formal_induction);
     }
     #[cfg(not(feature = "formal"))]
     if cli.formal {
@@ -2014,6 +2017,14 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         vcd.stream_flush_interval = 1;
         if !cli.quiet {
             println!("Waveform streaming enabled (flush every time step)");
+        }
+    }
+    if cli.waveform_bg {
+        vcd.enable_background().map_err(|e| {
+            SimError::with_diag(DiagCode::WaveformError, format!("VCD background: {}", e))
+        })?;
+        if !cli.quiet {
+            println!("Waveform background writer enabled (non-blocking dump)");
         }
     }
     engine.set_vcd(vcd);
@@ -2783,7 +2794,7 @@ fn run_fast(
     // ── Formal Verification (runs before simulation, skips sim) ──
     #[cfg(feature = "formal")]
     if cli.formal {
-        return run_formal(&ir_design, cli.formal_bound, cli.quiet);
+        return run_formal(&ir_design, cli.formal_bound, cli.quiet, cli.formal_induction);
     }
     #[cfg(not(feature = "formal"))]
     if cli.formal {
@@ -3047,6 +3058,14 @@ fn run_fast(
         vcd.stream_flush_interval = 1;
         if !cli.quiet {
             println!("Waveform streaming enabled (flush every time step)");
+        }
+    }
+    if cli.waveform_bg {
+        vcd.enable_background().map_err(|e| {
+            SimError::with_diag(DiagCode::WaveformError, format!("VCD background: {}", e))
+        })?;
+        if !cli.quiet {
+            println!("Waveform background writer enabled (non-blocking dump)");
         }
     }
     engine.set_vcd(vcd);
@@ -3421,6 +3440,17 @@ fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
         },
         crate::cli::MwaveCmd::Stats { input } => maria_api::tools::wave::WaveArgs::Stats {
             input: input.clone(),
+        },
+        crate::cli::MwaveCmd::Get {
+            input,
+            signals,
+            at,
+            range,
+        } => maria_api::tools::wave::WaveArgs::Get {
+            input: input.clone(),
+            signals: signals.clone(),
+            at: *at,
+            range: *range,
         },
         crate::cli::MwaveCmd::Decode { input, proto } => maria_api::tools::wave::WaveArgs::Decode {
             input: input.clone(),

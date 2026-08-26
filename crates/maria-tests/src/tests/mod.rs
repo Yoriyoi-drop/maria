@@ -11811,6 +11811,83 @@ endmodule
 }
 
 #[test]
+fn test_sequence_coverage_matched_and_hole() {
+    // VERIF-32: sequence coverage — concurrent assertion `a ##1 b`
+    // di-track per (line, col): attempts, matched, failed. Sequence yang
+    // tidak pernah match (matched == 0) muncul sebagai coverage gap.
+    let src = r#"
+module tb_seqcov;
+  reg clk = 0;
+  reg a = 0;
+  reg b = 0;
+  always #5 clk = ~clk;
+  assert property (@(posedge clk) a ##1 b);
+  initial begin
+    @(posedge clk); a = 1;
+    @(posedge clk); b = 1;      // match: a di cycle-1, b di cycle ini
+    @(posedge clk); a = 1; b = 0;
+    @(posedge clk);             // b tetap 0 → attempt ini timeout → fail
+    @(posedge clk); a = 0; b = 0;
+    #60; $finish;
+  end
+endmodule
+"#;
+    let design = compile_str(src).expect("compile seqcov");
+    let mut engine = crate::simulator::SimulationEngine::new(design, 200);
+    let _ = engine.run();
+
+    assert!(
+        !engine.sequence_coverage.is_empty(),
+        "sequence coverage tercatat"
+    );
+    let stats: Vec<_> = engine.sequence_coverage.values().collect();
+    let total_attempts: u64 = stats.iter().map(|s| s.attempts).sum();
+    let total_matched: u64 = stats.iter().map(|s| s.matched).sum();
+    let total_failed: u64 = stats.iter().map(|s| s.failed).sum();
+    assert!(total_attempts >= 2, ">=2 attempt dimulai: {}", total_attempts);
+    assert!(total_matched >= 1, "a##1 b match sekali: {}", total_matched);
+    assert!(
+        total_failed >= 1 || total_matched < total_attempts,
+        "ada attempt yang tidak match (fail): failed={}",
+        total_failed
+    );
+
+    // Coverage gap: buat design kedua dengan sequence yang TIDAK PERNAH
+    // match → matched == 0 → gap "sequence ... tidak pernah match".
+    let hole_src = r#"
+module tb_hole;
+  reg clk = 0;
+  reg a = 0;
+  reg b = 0;
+  always #5 clk = ~clk;
+  assert property (@(posedge clk) a ##1 b);
+  initial begin
+    @(posedge clk); a = 1;   // b tidak pernah 1 → hole
+    @(posedge clk); a = 0;
+    #60; $finish;
+  end
+endmodule
+"#;
+    let design2 = compile_str(hole_src).expect("compile hole");
+    let mut engine2 = crate::simulator::SimulationEngine::new(design2, 200);
+    let _ = engine2.run();
+    let holes: Vec<&(usize, usize)> = engine2
+        .sequence_coverage
+        .iter()
+        .filter(|(_, s)| s.matched == 0 && s.attempts > 0)
+        .map(|(k, _)| k)
+        .collect();
+    assert!(!holes.is_empty(), "sequence tanpa match terdeteksi sbg hole");
+    let gaps = engine2.coverage_gaps();
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("tidak pernah match")),
+        "coverage_gaps() memuat sequence hole: {:?}",
+        gaps
+    );
+}
+
+#[test]
 fn test_cover_pass() {
     let source = r#"
 module tb;

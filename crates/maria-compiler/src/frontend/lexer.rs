@@ -889,7 +889,20 @@ impl<'a> FastLexer<'a> {
             b';' => Token::Semi,
             b',' => Token::Comma,
             b'.' => Token::Dot,
-            b'#' => Token::Hash,
+            b'#' => {
+                // FIX BUG (VERIF-32 sesi): `##` (delay temporal SVA) harus
+                // satu token HashHash — paritas dengan lexer legacy
+                // (lexer.rs). Tanpa ini `a ##1 b` di-lex sebagai `a # # 1`
+                // → parser gagal → module-level assert property DI-SKIP
+                // diam-diam di seluruh jalur CompileSession (msim/melab/
+                // run_fast filelist/LSP).
+                if self.peek() == b'#' {
+                    self.skip_byte();
+                    Token::HashHash
+                } else {
+                    Token::Hash
+                }
+            }
             b'@' => Token::At,
             b'$' => Token::Dollar,
             b'\'' => {
@@ -1017,6 +1030,31 @@ pub fn fast_tokenize(input: &str) -> Vec<(Token, usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_fast_lexer_hashhash_temporal_delay() {
+        // FIX BUG (VERIF-32 sesi): `##` harus satu token HashHash — paritas
+        // dengan lexer legacy. Sebelumnya FastLexer menghasilkan dua Hash →
+        // parser gagal parse sequence SVA `a ##1 b` → module-level assert
+        // property DI-SKIP diam-diam di seluruh jalur CompileSession.
+        let tokens = fast_tokenize("a ##1 b");
+        assert_eq!(
+            tokens[0].0,
+            Token::Ident(Symbol::intern("a")),
+            "`a` tetap Ident"
+        );
+        assert_eq!(tokens[1].0, Token::HashHash, "`##` = SATU token HashHash");
+        match &tokens[2].0 {
+            Token::Number { value, .. } => {
+                assert_eq!(value.as_str(), "1", "delay `1` setelah ##");
+            }
+            other => panic!("expected Number setelah ##, dapat {:?}", other),
+        }
+        assert_eq!(tokens[3].0, Token::Ident(Symbol::intern("b")));
+        // `#` tunggal (delay) tetap Token::Hash.
+        let tokens2 = fast_tokenize("#5");
+        assert_eq!(tokens2[0].0, Token::Hash, "delay `#5` tetap Hash + Number");
+    }
 
     #[test]
     fn test_fast_lexer_basic_module() {

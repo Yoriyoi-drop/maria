@@ -139,6 +139,7 @@ impl SimulationEngine {
             current_process_id: None,
             cover_hits: HashMap::new(),
             assertion_stats: HashMap::new(),
+            sequence_coverage: HashMap::new(),
             cover_total: HashMap::new(),
             cover_bins: HashMap::new(),
             covergroup_prev: HashMap::new(),

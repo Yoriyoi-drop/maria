@@ -19,6 +19,18 @@ use super::{FormalEngine, FormalResult};
 use maria_ir::*;
 use std::collections::HashSet;
 
+/// Hasil satu langkah k-induction pada kedalaman k.
+enum InductionOutcome {
+    /// UNSAT — invariant terbukti untuk semua depth.
+    Proved,
+    /// SAT — counterexample palsu di kedalaman ini; butuh k lebih dalam.
+    Spurious,
+    /// Z3 unknown / kondisi tidak dapat diterjemahkan.
+    Inconclusive,
+    /// Kesalahan internal (solver hilang).
+    Error(String),
+}
+
 impl FormalEngine {
     /// Run BMC on all assertions in the design.
     pub fn check_assertions_bmc(&mut self, design: &IrDesign) -> Vec<(String, FormalResult)> {
@@ -38,6 +50,16 @@ impl FormalEngine {
         // Extract combinational assignments: for each signal, the RHS expression(s)
         let assignments = collect_combinational_assignments(&design.top.processes);
 
+        // FORMAL-10 (tahap 1): kumpulkan asumsi (`assume`) — di-constrain
+        // pada setiap depth sehingga counterexample hanya dilaporkan bila
+        // reachable DI BAWAH asumsi (semantik formal assume-guarantee).
+        let assumptions = collect_assumptions(&design.top.processes);
+
+        // FIX BUG (ROUND 91): deklarasi initializer (`reg x = 1;`) di-elaborasi
+        // menjadi proses Initial `decl_init_*` — TIDAK masuk init_val maupun
+        // assignments kombinational. Kumpulkan sebagai constraint state awal.
+        let init_assigns = collect_initial_state_assignments(&design.top.processes);
+
         // Pre-allocate signal variable context
         // sig_id_d = { name: "sig_{id}_{d}", width }
         let signal_widths: Vec<u32> = design
@@ -47,12 +69,28 @@ impl FormalEngine {
             .map(|s| s.width.clamp(1, 64) as u32)
             .collect();
 
-        // Collect initial values for each signal
-        let init_vals: Vec<u64> = design
+        // Collect initial values for each signal.
+        // FIX BUG (ROUND 91): init_val yang mengandung X/Z (sinyal tanpa
+        // initializer deklarasi — LogicVec::new = X-fill / wire = Z-fill)
+        // TIDAK boleh dipaksa ke to_u64() (X dibaca 0) → constraint awal
+        // palsu → false counterexample di depth 0. Sinyal tidak terdefinisi
+        // dibiarkan unconstrained di depth 0 (abstraksi 2-state yang sound).
+        let init_vals: Vec<Option<u64>> = design
             .top
             .signals
             .iter()
-            .map(|s| s.init_val.to_u64())
+            .map(|s| {
+                let has_unknown = s
+                    .init_val
+                    .bits
+                    .iter()
+                    .any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+                if has_unknown {
+                    None
+                } else {
+                    Some(s.init_val.to_u64())
+                }
+            })
             .collect();
 
         for (aidx, (assert_name, cond)) in all_assertions.iter().enumerate() {
@@ -62,6 +100,8 @@ impl FormalEngine {
                 &signal_widths,
                 &init_vals,
                 &assignments,
+                &init_assigns,
+                &assumptions,
                 cond,
             );
             results.push((format!("{}.assert_{}", assert_name, aidx), result));
@@ -75,8 +115,10 @@ impl FormalEngine {
         bound: u64,
         n_signals: usize,
         signal_widths: &[u32],
-        init_vals: &[u64],
+        init_vals: &[Option<u64>],
         assignments: &[Vec<(usize, Box<IrExpr>)>],
+        init_assigns: &[(usize, IrExpr)],
+        assumptions: &[IrExpr],
         cond: &IrExpr,
     ) -> FormalResult {
         self.reset();
@@ -104,15 +146,29 @@ impl FormalEngine {
         }
 
         // STEP 2: Add initial state constraints for depth 0
-        // sig_i_0 == init_val_i — apply to ALL signals at depth 0
-        // (init_val comes from reg declaration like `reg [7:0] sig = 5;`,
-        //  and is always the initial state regardless of combinational assignments)
+        // sig_i_0 == init_val_i — hanya untuk sinyal dengan init terdefinisi
+        // penuh (tanpa X/Z); sinyal lain unconstrained (lihat catatan FIX di
+        // atas).
         for i in 0..n_signals {
-            let init = *init_vals.get(i).unwrap_or(&0);
-            let width = *signal_widths.get(i).unwrap_or(&64);
-            let init_z3 = z3::ast::BV::from_u64(init, width);
-            let sig_var = &sig_vars[0][i];
-            solver.assert(sig_var.eq(&init_z3));
+            if let Some(Some(init)) = init_vals.get(i) {
+                let width = *signal_widths.get(i).unwrap_or(&64);
+                let init_z3 = z3::ast::BV::from_u64(*init, width);
+                let sig_var = &sig_vars[0][i];
+                solver.assert(sig_var.eq(&init_z3));
+            }
+        }
+
+        // STEP 2b: constraint state awal dari initializer deklarasi
+        // (proses Initial `decl_init_*`) — sig_0 == rhs pada depth 0.
+        for (sig_id, rhs) in init_assigns {
+            if *sig_id >= n_signals {
+                continue;
+            }
+            if let Some(rhs_val) = self.expr_to_z3_int_at(rhs, 0, &sig_vars) {
+                let lhs_var = &sig_vars[0][*sig_id];
+                let (lhs_mw, rhs_mw) = self.zero_extend_match(lhs_var, &rhs_val);
+                solver.assert(lhs_mw.eq(&rhs_mw));
+            }
         }
 
         // STEP 3: Add next-state constraints for each depth d ≥ 1
@@ -144,6 +200,39 @@ impl FormalEngine {
                     let prev = &sig_vars[(d - 1) as usize][i];
                     let curr = &sig_vars[d as usize][i];
                     solver.assert(prev.eq(curr));
+                }
+            }
+        }
+
+        // STEP 2c: logika kombinational berlaku JUGA di depth 0 utk sinyal
+        // tanpa nilai awal terdefinisi (always_comb meng-drive kontinu —
+        // nilai di waktu 0 ditentukan inputnya, bukan bebas).
+        let init_defined: HashSet<usize> = init_vals
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_some())
+            .map(|(i, _)| i)
+            .chain(init_assigns.iter().map(|(id, _)| *id))
+            .collect();
+        if let Some(group) = assignments.first() {
+            for (sig_id, rhs) in group {
+                if *sig_id >= n_signals || init_defined.contains(sig_id) {
+                    continue;
+                }
+                if let Some(rhs_val) = self.expr_to_z3_int_at(rhs, 0, &sig_vars) {
+                    let lhs_var = &sig_vars[0][*sig_id];
+                    let (lhs_mw, rhs_mw) = self.zero_extend_match(lhs_var, &rhs_val);
+                    solver.assert(lhs_mw.eq(&rhs_mw));
+                }
+            }
+        }
+
+        // FORMAL-10: asumsi berlaku pada SETIAP depth — di-assert DI LUAR
+        // push/pop depth check agar persisten melintasi semua iterasi.
+        for a in assumptions {
+            for d in 0..=bound {
+                if let Some(a_bool) = self.expr_to_z3_bool_at(a, d as isize, &sig_vars) {
+                    solver.assert(&a_bool);
                 }
             }
         }
@@ -198,49 +287,76 @@ impl FormalEngine {
 
     // ─── k-Induction Proof ───
     //
-    // Algorithm:
-    //   1. BASE: BMC up to k (already done above — property holds at depths 0..k)
-    //   2. STEP: For induction depth k, assume property holds at depths 1..k,
-    //      and prove at depth k+1. If all these checks are UNSAT (property
-    //      holds at k+1 under assumption it holds at 1..k), then by induction
-    //      the property holds for all depths.
+    // Algorithm (generalized k-induction, FORMAL-03/04):
+    //   For k = 1..max_k:
+    //     1. BASE: BMC already proved P holds at depths 0..bound with the
+    //        real initial state (done above).
+    //     2. STEP: build k+1 unconstrained frames F0..Fk connected by the
+    //        transition relation, ASSUME P(F0)..P(Fk-1), then check ¬P(Fk):
+    //          - UNSAT → no reachable-in-k-steps state violates P while all
+    //            predecessors satisfy it → P holds for ALL depths → PROOF.
+    //          - SAT  → spurious counterexample at this depth; try deeper k.
     //
-    // Simple k=1 induction:
-    //   - BASE: prove P(0) and P(1) — already done by BMC
-    //   - STEP: assume P(d), prove P(d+1) — check if ¬P(d+1) ∧ P(d) is SAT
-    //   - If UNSAT → P holds for all depths (inductive proof)
+    // A property that is not k-inductive often becomes (k+1)-inductive —
+    // hence the iterative deepening instead of a fixed k=1 step.
 
-    /// Try to prove the property holds for ALL depths using k-induction.
+    /// Try to prove the property holds for ALL depths using k-induction,
+    /// iterating k = 1..max_k until a proof is found or depths exhausted.
     fn check_inductive(
         &mut self,
         bound: u64,
         n_signals: usize,
         signal_widths: &[u32],
-        _init_vals: &[u64],
+        _init_vals: &[Option<u64>],
         assignments: &[Vec<(usize, Box<IrExpr>)>],
         cond: &IrExpr,
     ) -> FormalResult {
-        // Try k=1 induction first (simplest)
-        // STEP: assume P(d) for arbitrary d, prove P(d+1)
-        // We construct a transition at depths 0 and 1 with:
-        //   - P(0) assumed true
-        //   - ¬P(1) checked for SAT
-        // If UNSAT → P(0) ⇒ P(1) holds → induction succeeds
-
-        let k: u64 = 1;
-        if bound < k {
-            return FormalResult::Unknown;
+        let max_k = self.config.max_k.min(bound.max(1));
+        for k in 1..=max_k {
+            if bound < k {
+                break;
+            }
+            // Reset solver per iterasi — constraint frame k sebelumnya
+            // tidak boleh bocor ke iterasi berikutnya.
+            self.reset();
+            match self.induction_step(k, n_signals, signal_widths, assignments, cond) {
+                InductionOutcome::Proved => return FormalResult::InductiveProof(k),
+                InductionOutcome::Spurious => continue, // coba k lebih dalam
+                InductionOutcome::Inconclusive => return FormalResult::Unknown,
+                InductionOutcome::Error(e) => return FormalResult::Error(e),
+            }
         }
+        // Tidak terbukti sampai max_k — BMC tetap valid sampai bound.
+        FormalResult::Pass
+    }
 
-        // Note: solver was reset by caller (bmc_check_single resets before calling)
+    /// Satu langkah k-induction pada kedalaman k. Mengembalikan outcome:
+    /// - Proved      : asumsi P(0..k-1) ∧ ¬P(k) UNSAT → invariant.
+    /// - Spurious    : SAT (counterexample palsu di kedalaman ini) — butuh k
+    ///                 lebih dalam.
+    /// - Inconclusive: Z3 unknown / kondisi tidak bisa diterjemahkan.
+    fn induction_step(
+        &mut self,
+        k: u64,
+        n_signals: usize,
+        signal_widths: &[u32],
+        assignments: &[Vec<(usize, Box<IrExpr>)>],
+        cond: &IrExpr,
+    ) -> InductionOutcome {
         let solver = match self.solver.as_ref() {
             Some(s) => s,
-            None => return FormalResult::Error("Z3 solver not initialized".into()),
+            None => {
+                return InductionOutcome::Error("Z3 solver not initialized".into());
+            }
         };
 
-        // Create variables for 2 depths (0 = pre, 1 = post)
-        let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity(2);
-        for d in 0..2 {
+        let n_frames = (k + 1) as usize;
+
+        // Frames F0..Fk — TANPA initial-state constraints (inti induction:
+        /// membuktikan atas SEMUA state yang memenuhi asumsi, bukan hanya
+        /// yang reachable dari init).
+        let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity(n_frames);
+        for d in 0..n_frames {
             let mut depth_vars = Vec::with_capacity(n_signals);
             for i in 0..n_signals {
                 let width = if i < signal_widths.len() {
@@ -254,63 +370,62 @@ impl FormalEngine {
             sig_vars.push(depth_vars);
         }
 
-        // Add next-state constraints from pre (d=0) to post (d=1)
+        // Transisi antar frame berurutan Fi → Fi+1 (sama dengan BMC STEP 3).
         let all_assigned: HashSet<usize> = if !assignments.is_empty() {
             assignments[0].iter().map(|(id, _)| *id).collect()
         } else {
             HashSet::new()
         };
 
-        for assign_group in assignments.iter() {
-            for (sig_id, rhs) in assign_group.iter() {
-                if *sig_id >= n_signals {
-                    continue;
+        for d in 1..n_frames {
+            for assign_group in assignments.iter() {
+                for (sig_id, rhs) in assign_group.iter() {
+                    if *sig_id >= n_signals {
+                        continue;
+                    }
+                    let rhs_z3 = self.expr_to_z3_int_at(rhs, d as isize - 1, &sig_vars);
+                    if let Some(rhs_val) = rhs_z3 {
+                        let lhs_var = &sig_vars[d][*sig_id];
+                        let (lhs_mw, rhs_mw) = self.zero_extend_match(lhs_var, &rhs_val);
+                        solver.assert(lhs_mw.eq(&rhs_mw));
+                    }
                 }
-                let rhs_z3 = self.expr_to_z3_int_at(rhs, 0, &sig_vars);
-                if let Some(rhs_val) = rhs_z3 {
-                    let lhs_var = &sig_vars[1][*sig_id];
-                    let (lhs_mw, rhs_mw) = self.zero_extend_match(lhs_var, &rhs_val);
-                    solver.assert(lhs_mw.eq(&rhs_mw));
+            }
+            // Frame constraints — sinyal tanpa driver mempertahankan nilai.
+            for i in 0..n_signals {
+                if !all_assigned.contains(&i) {
+                    let prev = &sig_vars[d - 1][i];
+                    let curr = &sig_vars[d][i];
+                    solver.assert(prev.eq(curr));
                 }
             }
         }
 
-        // Frame constraints for pre→post
-        for i in 0..n_signals {
-            if !all_assigned.contains(&i) {
-                let prev = &sig_vars[0][i];
-                let curr = &sig_vars[1][i];
-                solver.assert(prev.eq(curr));
+        // CATATAN soundness: logika kombinational TIDAK di-constrain di F0
+        // induction — F0 mewakili state arbitrer termasuk state transien
+        // awal sebelum always_comb eksekusi; meng-constrain-nya bisa
+        // mengeksklusi state reachable → bukti palsu.
+
+        // ASUMSI: P(Fi) untuk i = 0..k-1.
+        for d in 0..n_frames.saturating_sub(1) {
+            match self.expr_to_z3_bool_at(cond, d as isize, &sig_vars) {
+                Some(p) => solver.assert(&p),
+                None => return InductionOutcome::Inconclusive,
             }
         }
 
-        // Assume P(0) holds (property at pre-state)
-        if let Some(p_at_0) = self.expr_to_z3_bool_at(cond, 0, &sig_vars) {
-            solver.assert(&p_at_0);
-        } else {
-            return FormalResult::Unknown;
-        }
+        // CHECK: ¬P(Fk).
+        let last = n_frames - 1;
+        let neg_p = match self.expr_to_z3_bool_at(cond, last as isize, &sig_vars) {
+            Some(p) => p.not(),
+            None => return InductionOutcome::Inconclusive,
+        };
+        solver.assert(&neg_p);
 
-        // Check ¬P(1) (property fails at post-state)
-        if let Some(p_at_1) = self.expr_to_z3_bool_at(cond, 1, &sig_vars) {
-            solver.assert(p_at_1.not());
-        } else {
-            return FormalResult::Unknown;
-        }
-
-        // UNSAT → induction step holds → property proved for all depths
         match solver.check() {
-            z3::SatResult::Unsat => FormalResult::InductiveProof,
-            z3::SatResult::Sat => {
-                // Induction step failed (SAT = counterexample found at step k+1)
-                // Could try higher k (k=2, k=3) for more complex properties
-                FormalResult::Pass // BMC already proved up to bound
-            }
-            z3::SatResult::Unknown => {
-                // Z3 timeout or inconclusive
-                // Fall back to BMC result (Pass up to bound)
-                FormalResult::Pass
-            }
+            z3::SatResult::Unsat => InductionOutcome::Proved,
+            z3::SatResult::Sat => InductionOutcome::Spurious,
+            z3::SatResult::Unknown => InductionOutcome::Inconclusive,
         }
     }
 
@@ -334,6 +449,11 @@ impl FormalEngine {
                 };
                 Some(z3::ast::BV::from_u64(bit, 1))
             }
+            // FIX BUG (ROUND 91): literal desimal unsized dibungkus Signed
+            // sejak fix signedness (ROUND 36) — tanpa arm ini semua ekspresi
+            // ber-Signed diterjemahkan None → constraint/assertion di-skip
+            // diam-diam. Semantik BV: pola bit sama.
+            IrExpr::Signed(inner) => self.expr_to_z3_int_at(inner, depth, sig_vars),
             IrExpr::Signal(id, _) => {
                 // Use the signal variable at the specified depth
                 let d = if depth >= 0 { depth as usize } else { 0 };
@@ -506,10 +626,87 @@ impl FormalEngine {
     }
 }
 
+/// Collect assumptions (`assume` statements) — FORMAL-10 tahap 1.
+/// Struktur sama dengan collect_assertions; dikonstrain di semua depth
+/// sehingga counterexample hanya dilaporkan bila reachable di bawah asumsi.
+pub(crate) fn collect_assumptions(processes: &[Process]) -> Vec<IrExpr> {
+    let mut result = Vec::new();
+    for process in processes {
+        let body = match process {
+            Process::Combinational { body, .. }
+            | Process::Sequential { body, .. }
+            | Process::Initial { name: _, body }
+            | Process::CombReactive { body, .. } => body,
+            _ => continue,
+        };
+        walk_assumptions(body, &mut result);
+    }
+    result
+}
+
+fn walk_assumptions(stmts: &[IrStmt], result: &mut Vec<IrExpr>) {
+    for stmt in stmts {
+        match stmt {
+            IrStmt::Assume { cond, .. } => {
+                result.push(cond.clone());
+            }
+            IrStmt::Block { stmts: inner } => walk_assumptions(inner, result),
+            IrStmt::NamedBlock { stmts: inner, .. } => walk_assumptions(inner, result),
+            IrStmt::If {
+                true_branch,
+                false_branch,
+                ..
+            } => {
+                walk_assumptions(true_branch, result);
+                walk_assumptions(false_branch, result);
+            }
+            IrStmt::Case { items, default, .. } => {
+                for item in items {
+                    walk_assumptions(item.body.as_slice(), result);
+                }
+                walk_assumptions(default, result);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Collect initial-state assignments dari proses Initial (FIX ROUND 91):
+/// deklarasi initializer (`reg x = 1;`) di-elaborasi menjadi proses
+/// Initial `decl_init_*` berisi BlockingAssign — dipakai sebagai constraint
+/// state awal BMC. Walk berhenti di statement pertama yang bukan assignment
+/// / block (setelah delay/event control, nilai tidak lagi "initial").
+pub(crate) fn collect_initial_state_assignments(
+    processes: &[Process],
+) -> Vec<(usize, IrExpr)> {
+    let mut out: Vec<(usize, IrExpr)> = Vec::new();
+    for process in processes {
+        if let Process::Initial { body, .. } = process {
+            walk_initial_state(body, &mut out);
+        }
+    }
+    out
+}
+
+fn walk_initial_state(stmts: &[IrStmt], out: &mut Vec<(usize, IrExpr)>) {
+    for stmt in stmts {
+        match stmt {
+            IrStmt::BlockingAssign {
+                lhs: IrLValue::Signal(id, _),
+                rhs,
+                ..
+            } => out.push((*id, rhs.clone())),
+            IrStmt::Block { stmts: inner } => walk_initial_state(inner, out),
+            // Delay/EventControl/dll — berhenti; statement setelahnya sudah
+            // melewati kemajuan waktu, bukan lagi initial state.
+            _ => return,
+        }
+    }
+}
+
 /// Collect assertions from process bodies.
 /// Returns Vec<(module_name/process_name, condition)>.
-pub(crate) fn collect_assertions(processes: &[Process]) -> Vec<(String, IrExpr)> {
-    let mut result = Vec::new();
+pub(crate) fn collect_assertions(processes: &[Process]) -> Vec<(String, IrExpr)> {    let mut result = Vec::new();
     for process in processes {
         let (name, body) = match process {
             Process::Combinational { name, body, .. } => (name, body),

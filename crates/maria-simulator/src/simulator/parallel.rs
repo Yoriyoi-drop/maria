@@ -176,23 +176,45 @@ pub fn evaluate_expr_simple(
         }
         IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
             let val = evaluate_expr_simple(inner, signals, sig_info)?;
+            let base_w = evaluate_expr_simple(base_expr, signals, sig_info)?.width;
             let base = evaluate_expr_simple(base_expr, signals, sig_info)?.to_u64() as usize;
             let width = evaluate_expr_simple(width_expr, signals, sig_info)?.to_u64() as usize;
             if width == 0 {
                 return Ok(LogicVec::new(1));
             }
-            // LRM 1800 §11.5.1: sebagian OOB → SELURUH hasil x selebar
-            // permintaan (sama dengan evaluator utama; dulu di-clamp).
-            match base.checked_add(width - 1) {
-                Some(end) if base < val.bits.len() && end < val.bits.len() => {
-                    let bits = val.bits[base..=end].to_vec();
-                    Ok(LogicVec {
-                        width: bits.len(),
-                        bits,
-                    })
+            // LRM 1800 §11.5.1 + realita Icarus: bit luar batas → x, bit
+            // dalam batas tetap nilai asli. Base ter-wrap negatif (hasil
+            // rewrite parser `a[b -: ws]` → Const/Sub) direinterpretasi
+            // two's-complement pada lebar ekspresi base; base unsigned
+            // murni tetap unsigned — selaras dengan evaluator utama
+            // engine/eval/expr.rs.
+            let neg_ok = matches!(
+                base_expr.as_ref(),
+                IrExpr::Const(_) | IrExpr::BinaryOp(BinaryIrOp::Sub, ..)
+            );
+            let neg_base: i128 = if neg_ok
+                && base >= val.bits.len()
+                && base_w > 0
+                && base_w < 64
+                && ((base as u64) >> (base_w - 1)) & 1 == 1
+            {
+                ((base as u64) as i64).wrapping_sub(1i64 << base_w) as i128
+            } else {
+                base as i128
+            };
+            let mut bits = Vec::with_capacity(width);
+            for k in 0..width {
+                let idx = neg_base + k as i128;
+                if idx >= 0 {
+                    bits.push(val.bits.get(idx as usize).copied().unwrap_or(LogicVal::X));
+                } else {
+                    bits.push(LogicVal::X);
                 }
-                _ => Ok(LogicVec::fill(LogicVal::X, width)),
             }
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
         IrExpr::ArrayIndex {
             sig_id,

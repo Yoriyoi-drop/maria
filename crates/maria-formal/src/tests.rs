@@ -611,7 +611,7 @@ mod tests {
         assert!(
             matches!(
                 results[0].1,
-                FormalResult::InductiveProof | FormalResult::Pass
+                FormalResult::InductiveProof(_) | FormalResult::Pass
             ),
             "assert(1) with induction should prove: got {:?}",
             results[0].1
@@ -686,10 +686,217 @@ mod tests {
         assert!(
             matches!(
                 results[0].1,
-                FormalResult::InductiveProof | FormalResult::Pass
+                FormalResult::InductiveProof(_) | FormalResult::Pass
             ),
             "Signal invariant should prove: got {:?}",
             results[0].1
+        );
+    }
+
+    #[test]
+    fn test_k_induction_needs_depth_2() {
+        // FORMAL-04: invariant yang TIDAK 1-inductive tapi TERBUKTI di k=2.
+        //
+        // Design: a' = b (combinational), b tanpa driver (frame: b'=b).
+        // Init: a=0, b=1.
+        // Invariant P = a | b — selalu benar pada state reachable.
+        //
+        // k=1: assume P(F0); check ¬P(F1). State palsu (a=1,b=0) memenuhi
+        //      asumsi tapi transisi → (0,0) melanggar → SAT (spurious).
+        // k=2: assume P(F0) ∧ P(F1) — rantai (1,0)→(0,0) terblokir karena
+        //      F1=(0,0) melanggar asumsi → UNSAT → PROOF di k=2.
+        let assign_a_eq_b = IrStmt::BlockingAssign {
+            lhs: IrLValue::Signal(0, 1),
+            rhs: IrExpr::Signal(1, 0),
+            delay: None,
+        };
+        let assert_cond = IrExpr::BinaryOp(
+            BinaryIrOp::LogicalOr,
+            Box::new(IrExpr::Signal(0, 0)),
+            Box::new(IrExpr::Signal(1, 0)),
+        );
+        let assert_stmt = IrStmt::Assert {
+            cond: assert_cond,
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+            line: 0,
+            col: 0,
+        };
+
+        let mut engine = test_engine_with_induction();
+        engine.config.max_k = 4;
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![
+                    SignalInfo {
+                        name: Symbol::from("a"),
+                        width: 1,
+                        init_val: LogicVec::from_u64(0, 1),
+                        ..Default::default()
+                    },
+                    SignalInfo {
+                        name: Symbol::from("b"),
+                        width: 1,
+                        init_val: LogicVec::from_u64(1, 1),
+                        ..Default::default()
+                    },
+                ],
+                inputs: vec![],
+                outputs: vec![0],
+                inouts: vec![],
+                processes: vec![Process::Combinational {
+                    name: Symbol::from("always_comb"),
+                    sensitivity: vec![],
+                    body: vec![assign_a_eq_b, assert_stmt],
+                }],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            source_file: None,
+            source_lines: None,
+            module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
+        };
+
+        let results = engine.check_assertions_bmc(&design);
+        assert_eq!(results.len(), 1);
+        match &results[0].1 {
+            FormalResult::InductiveProof(k) => {
+                assert!(
+                    *k >= 2,
+                    "invariant ini butuh k>=2 (k=1 spurious): terbukti di k={}",
+                    k
+                );
+            }
+            other => panic!(
+                "invariant a|b harus terbukti k-induction (k>=2): got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_assume_constrains_counterexample() {
+        // FORMAL-10 tahap 1: `assume` dikonstrain pada semua depth —
+        // counterexample hanya dilaporkan bila reachable DI BAWAH asumsi.
+        //
+        // Design: grant' = req (comb), assert(grant == 1).
+        //   Tanpa asumsi : req unconstrained → req=0 → grant=0 → FAIL.
+        //   assume(req==1): req dipaksa 1 di semua depth → PASS.
+        let assign_grant = IrStmt::BlockingAssign {
+            lhs: IrLValue::Signal(1, 1),
+            rhs: IrExpr::Signal(0, 0),
+            delay: None,
+        };
+        let mk_assert = |cond| IrStmt::Assert {
+            cond,
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+            line: 0,
+            col: 0,
+        };
+        let mk_design = |processes: Vec<Process>| IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![
+                    SignalInfo {
+                        name: Symbol::from("req"),
+                        width: 1,
+                        ..Default::default()
+                    },
+                    SignalInfo {
+                        name: Symbol::from("grant"),
+                        width: 1,
+                        ..Default::default()
+                    },
+                ],
+                inputs: vec![],
+                outputs: vec![1],
+                inouts: vec![],
+                processes,
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            source_file: None,
+            source_lines: None,
+            module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
+        };
+
+        // Tanpa asumsi → FAIL (counterexample).
+        let mut engine = test_engine();
+        let design = mk_design(vec![Process::Combinational {
+            name: Symbol::from("comb"),
+            sensitivity: vec![],
+            body: vec![
+                assign_grant.clone(),
+                mk_assert(IrExpr::Signal(1, 0)),
+            ],
+        }]);
+        let results = engine.check_assertions_bmc(&design);
+        assert!(
+            matches!(results[0].1, FormalResult::Counterexample(_)),
+            "tanpa asumsi harus FAIL: got {:?}",
+            results[0].1
+        );
+
+        // Dengan assume(req == 1) → PASS.
+        let mut engine2 = test_engine();
+        let assume_stmt = IrStmt::Assume {
+            cond: IrExpr::BinaryOp(
+                BinaryIrOp::Eq,
+                Box::new(IrExpr::Signal(0, 0)),
+                Box::new(IrExpr::Const(LogicVec::from_u64(1, 1))),
+            ),
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+            line: 0,
+            col: 0,
+        };
+        let design2 = mk_design(vec![Process::Combinational {
+            name: Symbol::from("comb"),
+            sensitivity: vec![],
+            body: vec![
+                assign_grant,
+                assume_stmt,
+                mk_assert(IrExpr::Signal(1, 0)),
+            ],
+        }]);
+        let results2 = engine2.check_assertions_bmc(&design2);
+        assert!(
+            matches!(results2[0].1, FormalResult::Pass),
+            "dengan asumsi req==1 harus PASS: got {:?}",
+            results2[0].1
         );
     }
 

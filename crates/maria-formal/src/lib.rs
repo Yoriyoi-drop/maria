@@ -21,8 +21,9 @@ pub enum FormalResult {
     Pass,
     /// Counterexample found at given depth
     Counterexample(u64),
-    /// Induction proof successful (property holds for all depths)
-    InductiveProof,
+    /// Induction proof successful at induction depth k
+    /// (property holds for ALL depths — unbounded proof)
+    InductiveProof(u64),
     /// Formal check inconclusive (timeout or undecidable)
     Unknown,
     /// Error during formal check
@@ -38,6 +39,9 @@ pub struct FormalConfig {
     pub timeout: u64,
     /// Enable induction-based proof (requires BMC base case)
     pub induction: bool,
+    /// Maximum induction depth k to try (k-induction iterates k = 1..max_k;
+    /// property yang tidak terbukti di k sering terbukti di k lebih dalam)
+    pub max_k: u64,
     /// Only check assertions (ignore cover/property)
     pub assert_only: bool,
 }
@@ -48,6 +52,7 @@ impl Default for FormalConfig {
             bound: 20,
             timeout: 30,
             induction: false,
+            max_k: 8,
             assert_only: true,
         }
     }

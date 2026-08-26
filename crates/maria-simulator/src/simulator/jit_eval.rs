@@ -69,6 +69,13 @@ impl JITEvaluator {
         if width == 0 {
             return Some(LogicVec::new(0));
         }
+        // JIT Cranelift bekerja pada u64 — operan >64-bit WAJIB fallback ke
+        // evaluator utama (jalur u128); dulu to_u64 memotong bit tinggi
+        // diam-diam (ditemukan wide_fuzz seed=11: Mul 96-bit salah).
+        if width > 64 {
+            self.fallback_count += 1;
+            return None;
+        }
 
         // Check for X/Z — JIT hanya untuk 2-state
         let lhs_clean = !lhs
@@ -124,6 +131,11 @@ impl JITEvaluator {
         let width = val.width;
         if width == 0 {
             return Some(LogicVec::new(0));
+        }
+        // >64-bit: JIT u64 memotong — fallback (wide_fuzz seed=11).
+        if width > 64 {
+            self.fallback_count += 1;
+            return None;
         }
 
         // Check for X/Z

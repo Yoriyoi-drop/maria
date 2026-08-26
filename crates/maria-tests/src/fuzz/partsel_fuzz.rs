@@ -171,16 +171,18 @@ fn golden_bits(
         }
     };
     let mut out = Vec::with_capacity(idxs.len());
-    // Indeks sudah ascending = urutan LSB→MSB hasil select (a[hi:lo]
-    // menuliskan MSB pertama; LogicVec menyimpan LSB-first).
-    // Semantik §11.5.1: bila SEBAGIAN mana pun dari part/indexed-select
-    // berada di luar deklarasi, SELURUH hasil bernilai x.
-    let any_oob = idxs.iter().any(|idx| *idx >= w);
-    if any_oob {
-        return (vec![LogicVal::X; idxs.len()], yw);
-    }
+    // Semantik §11.5.1 + realita Icarus (differential ground truth):
+    // part-select SEBAGIAN di luar deklarasi → bit luar batas x, bit
+    // dalam batas tetap nilai asli (`a[7:2]` pada reg [3:0] = xxxxxx10 →
+    // xxxx10 menurut Icarus). Dulu seluruh hasil dipaksa x sehingga
+    // reduction kehilangan dominasi 0/1 (ditemukan saat verifikasi fix
+    // guided_fuzz seed=111666772).
     for idx in idxs {
         // `a` u64: bit ≥64 pasti 0 (stimulus ter-mask) — jangan shift.
+        if idx >= w {
+            out.push(LogicVal::X);
+            continue;
+        }
         let bit = if idx >= 64 {
             0
         } else {

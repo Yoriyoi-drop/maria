@@ -552,6 +552,8 @@ impl SimulationEngine {
                                     col: *col,
                                     ante_matched: None,
                                 });
+                                // VERIF-32: sequence coverage — attempt dimulai.
+                                self.record_sequence_attempt(*line, *col);
                             } else {
                                 // Immediate assertion: evaluate condition now
                                 let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
@@ -2342,6 +2344,8 @@ impl SimulationEngine {
                                     col: *col,
                                     ante_matched: None,
                                 });
+                                // VERIF-32: sequence coverage — attempt dimulai.
+                                self.record_sequence_attempt(*line, *col);
                             } else {
                                 let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
                                 // VERIF-27: assertion coverage metrics.

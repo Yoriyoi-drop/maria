@@ -44,6 +44,10 @@ mod seq_fuzz;
 mod signed_fuzz;
 #[cfg(test)]
 mod struct_equiv;
+#[cfg(test)]
+mod wide_fuzz;
+#[cfg(test)]
+mod xprop_fuzz;
 #[allow(dead_code)]
 mod mgte;
 #[allow(dead_code)]

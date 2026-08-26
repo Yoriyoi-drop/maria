@@ -19,7 +19,13 @@
 
 use super::gen::{generate, lit_sv, mask_of};
 
-/// Lebar yang dipakai (≤33 agar muat i128 nyaman; boundary 15/16/17/31/32).
+/// Lebar yang dipakai (boundary 15/16/17/31/32).
+///
+/// KNOWN GAP (future work): memperluas ke w>32 (33/47/63/64) membuka kasus
+/// shift-amount NEGATIF hasil konst-fold signed (`x <<< (negatif)`) di mana
+/// emas/Icarus/Maria saling berbeda interpretasi (emas saturasi→0, Icarus
+/// efektif 0-shift, Maria idem) — butuh investigasi §11.4.10 yang mendalam
+/// sebelum bisa dipakai sebagai oracle.
 const SIGNED_WIDTHS: [u32; 6] = [4, 8, 15, 16, 31, 32];
 
 /// Op biner aritmetika/shift signed.
@@ -200,8 +206,11 @@ impl SExpr {
                     SArith::Shl | SArith::Sassr | SArith::SshrLogical => {
                         let amt = rv.val.min(w as u64) as u32;
                         if *op == SArith::SshrLogical {
+                            // w=64 → amt bisa 64; u64 >> 64 panic di debug.
+                            // Hasil shift ≥ lebar memang 0.
+                            let v = if amt >= 64 { 0u64 } else { lv.val >> amt };
                             return SEval {
-                                val: (lv.val >> amt) & mask_of(w),
+                                val: v & mask_of(w),
                                 undefined: false,
                             };
                         }
@@ -353,7 +362,16 @@ fn signed_arithmetic_and_shifts_match_golden() {
     let mut mismatch = Vec::new();
     let mut checked = 0u32;
 
-    for seed in 0..150u64 {
+    // Jumlah seed bisa dinaikkan via MARIA_SIGNED_FUZZ_N (default 150).
+    // KNOWN GAP: seeds >150 menyentuh shift-amount NEGATIF hasil konst-fold
+    // (`x >>> (negatif)`) yang semantiknya belum disepakati lintas
+    // emas/Icarus/Maria (masih terbuka di hulu §11.4.10) — naikkan N hanya
+    // setelah itu diputuskan.
+    let n_seeds: u64 = std::env::var("MARIA_SIGNED_FUZZ_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(150);
+    for seed in 0..n_seeds {
         let base = generate(seed.wrapping_mul(11_311_927).wrapping_add(41));
         let w = SIGNED_WIDTHS[seed as usize % SIGNED_WIDTHS.len()];
         // Stimulus acak per-seed (boundary ~25%) di-mask ke w.

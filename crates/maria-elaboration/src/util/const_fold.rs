@@ -44,6 +44,11 @@ pub fn try_fold_const_at_width(
         return None;
     }
     let val = const_eval_with_params(expr, params).ok()?;
+    // Literal >64-bit: const_eval i64 memotong bit tinggi — jangan fold
+    // (wide_fuzz seed=11).
+    if contains_wide_literal(expr) {
+        return None;
+    }
     // String tidak boleh di-fold sebagai bit-pattern (lihat try_fold_const).
     if matches!(expr, Expr::String(_)) {
         return None;
@@ -148,9 +153,53 @@ fn contains_xz_literal(e: &Expr) -> bool {
 }
 
 /// Deteksi subtree `~x` / unary `-x` (context-determined, sensitif lebar).
-fn contains_ctx_sensitive_unary(e: &Expr) -> bool {
+/// Apakah subtree memuat literal berpola >64-bit? Aritmetika konstan di
+/// `const_eval_with_params` berjalan pada i64 — fold subtree semacam itu
+/// memotong bit tinggi diam-diam (ditemukan wide_fuzz seed=11:
+/// `(96'sh… * 96'sh…) | …` ter-fold salah 32 bit atas). Jalur runtime
+/// (evaluator u128) menangani dengan benar → jangan fold.
+fn contains_wide_literal(e: &Expr) -> bool {
     match e {
+        Expr::Value(Value::Binary { bits, .. }) => bits.len() > 64,
+        Expr::Value(Value::Hex { bits, .. }) => bits.len() * 4 > 64,
+        Expr::Value(Value::Octal { bits, .. }) => bits.len() * 3 > 64,
+        Expr::Paren(inner) => contains_wide_literal(inner),
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            contains_wide_literal(lhs) || contains_wide_literal(rhs)
+        }
+        Expr::UnaryOp { expr: inner, .. } => contains_wide_literal(inner),
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            contains_wide_literal(cond)
+                || contains_wide_literal(true_expr)
+                || contains_wide_literal(false_expr)
+        }
+        Expr::Concat(elems) => elems.iter().any(contains_wide_literal),
+        Expr::Replicate { expr: inner, .. } => contains_wide_literal(inner),
+        _ => false,
+    }
+}
+
+fn contains_ctx_sensitive_unary(e: &Expr) -> bool {    match e {
         Expr::UnaryOp { op: UnaryOp::BitNot | UnaryOp::Minus, .. } => true,
+        // Reduction & `!` juga context-sensitive pada lebar OPERAN: hasil
+        // bergantung lebar self-determined operan yang mungkin tak-diketahui
+        // struktur (TernaryOp/Ident). Fold di i64 penuh salah —
+        // `&(2'b11)` = 1 pada 2 bit tapi 0 pada 64 (ditemukan guided_fuzz
+        // seed=47753038; emas + Icarus: jalur runtime yang benar).
+        Expr::UnaryOp {
+            op: UnaryOp::Not
+            | UnaryOp::ReductionAnd
+            | UnaryOp::ReductionNand
+            | UnaryOp::ReductionOr
+            | UnaryOp::ReductionNor
+            | UnaryOp::ReductionXor
+            | UnaryOp::ReductionXnor,
+            ..
+        } => true,
         Expr::UnaryOp { expr: inner, .. } | Expr::Paren(inner) => {
             contains_ctx_sensitive_unary(inner)
         }
@@ -218,19 +267,51 @@ pub(crate) fn const_fold_width(expr: &Expr, params: &HashMap<Symbol, i64>) -> Op
         }
         Expr::String(s) => Some(s.len() * 8),
         Expr::UnaryOp { op, expr: inner } => {
-            let w = const_fold_width(inner, params)?;
-            Some(match op {
+            // Reduction & `!`: hasil SELF-DETERMINED 1-bit (LRM §11.8.1) —
+            // tidak membutuhkan lebar operan yang mungkin tak-kethitungan
+            // (operan berisi signal). Tanpa ini seluruh subtree lewati
+            // (None) dan try_fold_const jatuh ke fallback `.max(32)`:
+            // `2'b00 ? ^(x) : 2'b11` ter-fold jadi Const 32-bit 0x3 lalu
+            // `&(…)` = 0 padahal 1 (ditemukan guided_fuzz seed=47753038,
+            // dikonfirmasi Icarus).
+            match op {
                 UnaryOp::Not
                 | UnaryOp::ReductionAnd
                 | UnaryOp::ReductionNand
                 | UnaryOp::ReductionOr
                 | UnaryOp::ReductionNor
                 | UnaryOp::ReductionXor
-                | UnaryOp::ReductionXnor => 1,
-                _ => w,
-            })
+                | UnaryOp::ReductionXnor => return Some(1),
+                _ => {}
+            }
+            let w = const_fold_width(inner, params)?;
+            Some(w)
         }
         Expr::BinaryOp { op, lhs, rhs } => {
+            // Perbandingan & logical: hasil SELF-DETERMINED 1-bit (LRM
+            // §11.8.2 Tabel 11-21) — tidak bergantung pada keterhitungan
+            // lebar operan. Tanpa ini operan non-konst membuat lebar None →
+            // fallback `.max(32)` di try_fold_const → hasil fold "1"
+            // termaterialisasi sebagai pola 32-bit 0x…001 yang merusak
+            // reduction induk (`&(x || 64'h1)` = 0 padahal 1; ditemukan
+            // guided_fuzz seed=1688221143996, dikonfirmasi Icarus).
+            if matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::Neq
+                    | BinaryOp::CaseEq
+                    | BinaryOp::CaseNeq
+                    | BinaryOp::EqWild
+                    | BinaryOp::NeqWild
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+                    | BinaryOp::LogicalAnd
+                    | BinaryOp::LogicalOr
+            ) {
+                return Some(1);
+            }
             let lw = const_fold_width(lhs, params)?;
             let rw = const_fold_width(rhs, params)?;
             let m = lw.max(rw);
@@ -275,6 +356,12 @@ pub fn try_fold_const(
     // sebagai -1==1 (ditemukan fuzzer seed=177443644 / seed=197975).
     // Jalur runtime + propagasi konteks (Cast) yang menangani benar.
     if contains_ctx_sensitive_unary(expr) {
+        return Ok(None);
+    }
+    // Jangan fold subtree dengan literal >64-bit: const_eval berjalan di
+    // i64 → bit tinggi terpotong diam-diam (wide_fuzz seed=11). Jalur
+    // runtime u128 yang benar.
+    if contains_wide_literal(expr) {
         return Ok(None);
     }
     // Replikasi `{N{e}}`: konversi i64 kehilangan LEBAR POLA operan

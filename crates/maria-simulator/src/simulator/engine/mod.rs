@@ -41,9 +41,19 @@ pub(crate) const MAX_EVENT_SPAN: usize = 10_000_000;
 /// retired slots di-drain (lihat `SimulationEngine::retire_events`).
 pub(crate) const EVENT_COMPACT_THRESHOLD: usize = 65_536;
 
+/// VERIF-32: statistik sequence coverage per assertion sequence (keyed by
+/// line:col) — berapa kali attempt dimulai, berapa yang match, dan berapa
+/// yang fail (timeout tanpa match). Sequence dengan matched == 0 adalah
+/// coverage hole (laporan coverage_gaps).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SeqCovStats {
+    pub attempts: u64,
+    pub matched: u64,
+    pub failed: u64,
+}
+
 /// Tracks a single attempt of a concurrent assertion sequence evaluation
-pub struct SequenceAttempt {
-    pub sequence: Box<IrSequence>,
+pub struct SequenceAttempt {    pub sequence: Box<IrSequence>,
     pub cycles: u64,
     pub pass_stmt: Vec<IrStmt>,
     pub fail_stmt: Vec<IrStmt>,
@@ -324,6 +334,9 @@ pub struct SimulationEngine {
     /// VERIF-27: assertion coverage metrics — per (line, col) → (pass, fail).
     /// Dipakai report assertion coverage (assertion_pass/assertion_fail).
     pub assertion_stats: HashMap<(usize, usize), (u64, u64)>,
+    /// VERIF-32: sequence coverage — per (line, col) statistik attempt
+    /// concurrent assertion sequence (attempts/matched/failed).
+    pub sequence_coverage: HashMap<(usize, usize), SeqCovStats>,
     pub cover_total: HashMap<Symbol, u64>,
     pub cover_bins: HashMap<Symbol, HashMap<Symbol, u64>>,
     /// Nilai coverpoint terakhir per (covergroup, coverpoint) — dipakai

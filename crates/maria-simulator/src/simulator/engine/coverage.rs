@@ -9,6 +9,7 @@ use maria_ir::*;
 use std::collections::{HashMap, HashSet};
 
 use super::SimulationEngine;
+use super::SeqCovStats;
 
 /// Batas jumlah default bin per coverpoint/cross. Nilai unik di luar cap tetap
 /// dihitung sebagai sample (hits/total), tapi tidak membuat bin baru — mencegah
@@ -115,6 +116,30 @@ impl SimulationEngine {
             e.0 += 1;
         } else {
             e.1 += 1;
+        }
+    }
+
+    /// VERIF-32: catat bahwa sebuah concurrent assertion sequence attempt
+    /// DIMULAI pada posisi (line, col). Dipanggil dari 2 situs push
+    /// SequenceAttempt di block.rs.
+    pub(crate) fn record_sequence_attempt(&mut self, line: usize, col: usize) {
+        if line == 0 {
+            return;
+        }
+        self.sequence_coverage.entry((line, col)).or_default().attempts += 1;
+    }
+
+    /// VERIF-32: catat hasil completion sequence attempt — matched (property
+    /// terpenuhi) atau failed (timeout max_cycles tanpa match).
+    pub(crate) fn record_sequence_result(&mut self, line: usize, col: usize, ok: bool) {
+        if line == 0 {
+            return;
+        }
+        let e = self.sequence_coverage.entry((line, col)).or_default();
+        if ok {
+            e.matched += 1;
+        } else {
+            e.failed += 1;
         }
     }
 
@@ -303,6 +328,47 @@ impl SimulationEngine {
         );
     }
 
+    /// VERIF-32: laporan sequence coverage — attempts/matched/failed per
+    /// concurrent assertion sequence (keyed by line:col) + coverage hole
+    /// (sequence yang tidak pernah match).
+    fn report_sequence_coverage(&self) {
+        if self.sequence_coverage.is_empty() {
+            return;
+        }
+        eprintln!("\n=== Sequence Coverage ===");
+        let mut entries: Vec<((usize, usize), SeqCovStats)> = self
+            .sequence_coverage
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        entries.sort_by_key(|(k, _)| *k);
+        for ((line, col), s) in entries {
+            let status = if s.matched == 0 {
+                " [HOLE: tidak pernah match]"
+            } else {
+                ""
+            };
+            eprintln!(
+                "  line {}:{} — {} attempts / {} matched / {} failed{}",
+                line, col, s.attempts, s.matched, s.failed, status
+            );
+        }
+        let total_attempts: u64 = self.sequence_coverage.values().map(|s| s.attempts).sum();
+        let total_matched: u64 = self.sequence_coverage.values().map(|s| s.matched).sum();
+        let pct = if total_attempts > 0 {
+            (total_matched as f64 / total_attempts as f64) * 100.0
+        } else {
+            0.0
+        };
+        eprintln!(
+            "  ({} sequences tracked: {} attempts, {} matched, {:.1}% match rate)",
+            self.sequence_coverage.len(),
+            total_attempts,
+            total_matched,
+            pct
+        );
+    }
+
     /// VERIF-26: coverage gap analysis — daftar item coverage yang TIDAK
     /// pernah kena: covergroup/coverpoint/cross tidak pernah di-sample, bin
     /// eksplisit yang tidak pernah hit, dan sinyal yang tidak pernah toggle.
@@ -346,6 +412,16 @@ impl SimulationEngine {
                 if total == 0 {
                     gaps.push(format!("cross '{}' tidak pernah di-sample", key));
                 }
+            }
+        }
+        // VERIF-32: sequence coverage hole — concurrent assertion sequence
+        // yang tidak pernah match (semua attempt timeout).
+        for ((line, col), s) in &self.sequence_coverage {
+            if s.matched == 0 {
+                gaps.push(format!(
+                    "sequence di line {}:{} tidak pernah match ({} attempts)",
+                    line, col, s.attempts
+                ));
             }
         }
         // Sinyal yang tidak pernah toggle (hanya saat toggle coverage aktif).
@@ -498,6 +574,8 @@ impl SimulationEngine {
         self.report_branch_coverage();
         self.report_fsm_coverage();
         self.report_assertion_coverage();
+        // VERIF-32: sequence coverage (attempts/matched/failed per sequence).
+        self.report_sequence_coverage();
         // VERIF-26: coverage gap analysis — item yang tidak pernah kena.
         self.report_coverage_gaps();
     }
@@ -543,6 +621,21 @@ impl SimulationEngine {
         let fsm_states: f64 = self.cover_fsm.values().map(|s| s.len() as f64).sum();
         stats.insert("fsm_signals".to_string(), fsm_signals);
         stats.insert("fsm_states".to_string(), fsm_states);
+
+        // VERIF-32: sequence coverage (concurrent assertion sequences).
+        let seq_attempts: u64 = self.sequence_coverage.values().map(|s| s.attempts).sum();
+        let seq_matched: u64 = self.sequence_coverage.values().map(|s| s.matched).sum();
+        let seq_failed: u64 = self.sequence_coverage.values().map(|s| s.failed).sum();
+        let seq_pct = if seq_attempts > 0 {
+            (seq_matched as f64 / seq_attempts as f64) * 100.0
+        } else {
+            0.0
+        };
+        stats.insert("sequence_tracked".to_string(), self.sequence_coverage.len() as f64);
+        stats.insert("sequence_attempts".to_string(), seq_attempts as f64);
+        stats.insert("sequence_matched".to_string(), seq_matched as f64);
+        stats.insert("sequence_failed".to_string(), seq_failed as f64);
+        stats.insert("sequence_match_percent".to_string(), seq_pct);
 
         stats
     }

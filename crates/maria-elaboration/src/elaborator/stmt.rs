@@ -309,15 +309,17 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
                     wrap_cast(e, ctx, signals)
                 }
                 BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl => {
-                    // RHS shift self-determined; LHS context-determined —
-                    // extend LHS sebelum shift agar hasil selebar konteks.
+                    // RHS shift self-determined — TIDAK menyumbang konteks
+                    // untuk lhs (literal unsized 8 = "32-bit" jangan
+                    // menggelembungkan lebar inner-shift; LRM §11.8.1 hasil
+                    // shift = lebar operan kiri). xprop_fuzz seed=39.
                     let _wb = propagate_context_width(b, wb0, signals);
-                    let wa1 = propagate_context_width(a, ctx.max(wb0), signals);
-                    if wa1 >= ctx.max(wb0) {
+                    let wa1 = propagate_context_width(a, ctx.max(wa0), signals);
+                    if wa1 >= ctx {
                         wa1
                     } else {
-                        wrap_cast(a, ctx.max(wb0), signals);
-                        ctx.max(wb0)
+                        wrap_cast(a, ctx, signals);
+                        ctx
                     }
                 }
                 BinaryIrOp::Sshr => {
@@ -339,12 +341,12 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
                     if expr_ir_is_signed(a, signals) {
                         wa0
                     } else {
-                        let wa1 = propagate_context_width(a, ctx.max(wb0), signals);
-                        if wa1 >= ctx.max(wb0) {
+                        let wa1 = propagate_context_width(a, ctx.max(wa0), signals);
+                        if wa1 >= ctx {
                             wa1
                         } else {
-                            wrap_cast(a, ctx.max(wb0), signals);
-                            ctx.max(wb0)
+                            wrap_cast(a, ctx, signals);
+                            ctx
                         }
                     }
                 }
@@ -404,15 +406,14 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
             expr_approx_width(e, signals)
         }
         IrExpr::Concat(items) => {
-            // Concat juga self-determined, tapi elemen yang berisi op
-            // context-determined tetap saling di-size internal (sama dgn
-            // Replicate — descend dengan lebar elemen terlebar).
-            let mut wm = ctx;
-            for it in items.iter() {
-                wm = wm.max(expr_approx_width(it, signals));
-            }
+            // Elemen concat SELF-DETERMINED (LRM §11.8.1) — konteks luar
+            // TIDAK boleh masuk (wrap_cast ke konteks melipatgandakan lebar
+            // elemen → concat ter-truncate; regression `{(b<a), !(...)}`
+            // golden 0x3 maria 0x1). Descend hanya dengan lebar elemen
+            // sendiri agar op context-determined INTERNAL saling di-size.
             for it in items.iter_mut() {
-                let _ = propagate_context_width(it, wm, signals);
+                let wi = expr_approx_width(it, signals).max(1);
+                let _ = propagate_context_width(it, wi, signals);
             }
             expr_approx_width(e, signals)
         }
