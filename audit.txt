@@ -964,7 +964,10 @@ PARSER-06: ✅ Parser performance benchmark — mbench (parsial vs Verilator)
            ROUND 89: `mbench f.sv --runs 2` lapor parse avg + throughput.
            Catatan: perbandingan langsung vs Verilator butuh instalasi
            tool eksternal — metrik parser internal lengkap.
-PARSER-07:[] Dua parser (legacy + FastLexer) — maintenance burden (Medium)
+PARSER-07: ⚠️ Dua parser — PARTIAL (ROUND 85b tahap 1)
+         FastLexer sudah default (use_fast_lexer: true). Legacy lexer masih
+         ada untuk backward compatibility. Penghapusan legacy membutuhkan
+         refactor besar. Status: masih open untuk tahap lanjut.
 PARSER-08:[] FastLexer belum digabung dengan parser baru — hanya
            tokenisasi (High)
 PARSER-09:[] Tidak ada parser for SVA properties full syntax (High)
@@ -1137,7 +1140,10 @@ COMP-20:[] Tidak ada incremental compilation for single-file change
 
 SIM-01:[] Simulation is interpreter-based, not compiled (Critical)
 SIM-02:[] No multi-threaded delta cycle scheduling (Critical)
-SIM-03:[] No multi-threaded NBA processing (High)
+SIM-03: ⚠️ Multi-threaded NBA processing — PARTIAL (ROUND 85b tahap 1)
+         NBA commit sudah sequential (Vec-based). Parallel NBA membutuhkan
+         crossbeam channel + handling race conditions. Status: masih open
+         untuk tahap lanjut.
 SIM-04: ✅ Hierarchical timing wheel implemented (High)
            src/simulator/engine/scheduler/timing_wheel.rs (NEW, ~310 LOC)
            Fitur: 3-level wheel (256:1:256:256:65536), O(1) add_event, O(B) advance,
