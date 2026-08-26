@@ -17,6 +17,9 @@ rand = "0.8"
 rayon = "1"
 wavefst = { version = "0.1", default-features = false, features = ["gzip"] }
 
+# WAV-04: Compressed waveform database (gzip VCD output)
+flate2 = "1"
+
 # Optional: Cranelift JIT (simulator/jit.rs + jit_cranelift.rs) — feature "jit"
 cranelift = { version = "0.110", optional = true }
 cranelift-jit = { version = "0.110", optional = true }

@@ -2083,6 +2083,15 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             println!("Waveform background writer enabled (non-blocking dump)");
         }
     }
+    // WAV-04: Enable gzip compression for VCD output
+    if cli.waveform_gzip {
+        vcd.enable_compression().map_err(|e| {
+            SimError::with_diag(DiagCode::WaveformError, format!("VCD gzip: {}", e))
+        })?;
+        if !cli.quiet {
+            println!("Waveform gzip compression enabled");
+        }
+    }
     engine.set_vcd(vcd);
 
     // CSV waveform setup
@@ -3125,6 +3134,15 @@ fn run_fast(
         })?;
         if !cli.quiet {
             println!("Waveform background writer enabled (non-blocking dump)");
+        }
+    }
+    // WAV-04: Enable gzip compression for VCD output
+    if cli.waveform_gzip {
+        vcd.enable_compression().map_err(|e| {
+            SimError::with_diag(DiagCode::WaveformError, format!("VCD gzip: {}", e))
+        })?;
+        if !cli.quiet {
+            println!("Waveform gzip compression enabled");
         }
     }
     engine.set_vcd(vcd);

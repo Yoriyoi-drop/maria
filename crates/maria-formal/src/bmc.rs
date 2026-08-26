@@ -808,12 +808,182 @@ fn walk_assignments(
                 walk_assignments(false_branch, result, seen);
             }
             IrStmt::Case { items, default, .. } => {
-                for item in items {
-                    walk_assignments(&item.body, result, seen);
-                }
-                walk_assignments(default, result, seen);
+                for item in items {                walk_assignments(&item.body, result, seen);
+            }
+            walk_assignments(default, result, seen);
             }
             _ => {}
         }
+    }
+}
+
+// ─── FORMAL-16: Cover Property Formal Analysis ───
+
+/// Collect cover properties from all processes.
+/// Cover properties check reachability: is there a state where the
+/// property holds? (SAT check, not UNSAT like assertions.)
+pub(crate) fn collect_covers(processes: &[Process]) -> Vec<(String, IrExpr)> {
+    let mut result = Vec::new();
+    for process in processes {
+        let (name, body) = match process {
+            Process::Combinational { name, body, .. } => (name, body),
+            Process::Sequential { name, body, .. } => (name, body),
+            Process::Initial { name, body } => (name, body),
+            Process::CombReactive { name, body, .. } => (name, body),
+            _ => continue,
+        };
+        walk_covers(&name.to_string(), body, &mut result);
+    }
+    result
+}
+
+fn walk_covers(prefix: &str, stmts: &[IrStmt], result: &mut Vec<(String, IrExpr)>) {
+    for stmt in stmts {
+        match stmt {
+            IrStmt::Cover { cond, .. } => {
+                result.push((prefix.to_string(), cond.clone()));
+            }
+            IrStmt::Block { stmts: inner } => {
+                walk_covers(prefix, inner, result);
+            }
+            IrStmt::NamedBlock { stmts: inner, .. } => {
+                walk_covers(prefix, inner, result);
+            }
+            IrStmt::If {
+                true_branch,
+                false_branch,
+                ..
+            } => {
+                walk_covers(prefix, true_branch, result);
+                walk_covers(prefix, false_branch, result);
+            }
+            IrStmt::Case { items, default, .. } => {
+                for item in items {
+                    walk_covers(prefix, &item.body, result);
+                }
+                walk_covers(prefix, default, result);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl FormalEngine {
+    /// FORMAL-16: Run BMC on all cover properties in the design.
+    pub fn check_covers_bmc(&mut self, design: &IrDesign) -> Vec<(String, FormalResult)> {
+        if !self.is_available() {
+            self.init();
+        }
+        let mut results = Vec::new();
+        let bound = self.config.bound;
+        let n_signals = design.top.signals.len();
+
+        let all_covers = collect_covers(&design.top.processes);
+        if all_covers.is_empty() {
+            return Vec::new();
+        }
+
+        let assignments = collect_combinational_assignments(&design.top.processes);
+        let init_assigns = collect_initial_state_assignments(&design.top.processes);
+
+        let signal_widths: Vec<u32> = design
+            .top
+            .signals
+            .iter()
+            .map(|s| s.width.clamp(1, 64) as u32)
+            .collect();
+
+        let init_vals: Vec<Option<u64>> = design
+            .top
+            .signals
+            .iter()
+            .map(|s| {
+                let has_unknown = s.init_val.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+                if has_unknown { None } else { Some(s.init_val.to_u64()) }
+            })
+            .collect();
+
+        for (cidx, (cover_name, cond)) in all_covers.iter().enumerate() {
+            let result = self.cover_check_single(
+                bound, n_signals, &signal_widths, &init_vals,
+                &assignments, &init_assigns, cond,
+            );
+            results.push((format!("{}.cover_{}", cover_name, cidx), result));
+        }
+        results
+    }
+
+    /// FORMAL-16: Check a single cover property with BMC.
+    /// Cover BMC checks if P is SAT at any depth (reachability).
+    fn cover_check_single(
+        &mut self, bound: u64, n_signals: usize, signal_widths: &[u32],
+        init_vals: &[Option<u64>], assignments: &[Vec<(usize, Box<IrExpr>)>],
+        init_assigns: &[(usize, IrExpr)], cond: &IrExpr,
+    ) -> FormalResult {
+        self.reset();
+        let solver = match self.solver.as_ref() {
+            Some(s) => s,
+            None => return FormalResult::Error("Z3 solver not initialized".into()),
+        };
+
+        let n_vars = (bound + 1) as usize;
+        let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity(n_vars);
+        for d in 0..=bound {
+            let mut depth_vars = Vec::with_capacity(n_signals);
+            for i in 0..n_signals {
+                let width = signal_widths.get(i).copied().unwrap_or(64);
+                depth_vars.push(z3::ast::BV::new_const(format!("sig_{}_{}", i, d), width));
+            }
+            sig_vars.push(depth_vars);
+        }
+
+        for i in 0..n_signals {
+            if let Some(Some(init)) = init_vals.get(i) {
+                let width = *signal_widths.get(i).unwrap_or(&64);
+                solver.assert(sig_vars[0][i].eq(&z3::ast::BV::from_u64(*init, width)));
+            }
+        }
+        for (sig_id, rhs) in init_assigns {
+            if *sig_id < n_signals {
+                if let Some(rhs_val) = self.expr_to_z3_int_at(rhs, 0, &sig_vars) {
+                    let (a, b) = self.zero_extend_match(&sig_vars[0][*sig_id], &rhs_val);
+                    solver.assert(a.eq(&b));
+                }
+            }
+        }
+
+        let all_assigned: HashSet<usize> = assignments.first().map(|g| g.iter().map(|(id,_)| *id).collect()).unwrap_or_default();
+        for d in 1..=bound {
+            for assign_group in assignments.iter() {
+                for (sig_id, rhs) in assign_group.iter() {
+                    if *sig_id < n_signals {
+                        if let Some(rhs_val) = self.expr_to_z3_int_at(rhs, d as isize - 1, &sig_vars) {
+                            let (a, b) = self.zero_extend_match(&sig_vars[d as usize][*sig_id], &rhs_val);
+                            solver.assert(a.eq(&b));
+                        }
+                    }
+                }
+            }
+            for i in 0..n_signals {
+                if !all_assigned.contains(&i) {
+                    solver.assert(sig_vars[(d-1) as usize][i].eq(&sig_vars[d as usize][i]));
+                }
+            }
+        }
+
+        for d in 0..=bound {
+            solver.push();
+            if let Some(cond_val) = self.expr_to_z3_bool_at(cond, d as isize, &sig_vars) {
+                solver.assert(&cond_val);
+                match solver.check() {
+                    z3::SatResult::Sat => { solver.pop(1); return FormalResult::Pass; }
+                    z3::SatResult::Unsat => { solver.pop(1); continue; }
+                    z3::SatResult::Unknown => { solver.pop(1); return FormalResult::Unknown; }
+                }
+            } else {
+                solver.pop(1);
+            }
+        }
+        FormalResult::Counterexample(bound)
     }
 }

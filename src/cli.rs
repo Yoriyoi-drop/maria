@@ -743,6 +743,10 @@ pub struct Cli {
     #[arg(long = "waveform-bg")]
     pub waveform_bg: bool,
 
+    /// WAV-04: Enable gzip compression for VCD output (.vcd.gz)
+    #[arg(long = "waveform-gzip")]
+    pub waveform_gzip: bool,
+
     /// Launch the native GUI (egui) — requires --features gui
     #[arg(long = "gui")]
     pub gui: bool,

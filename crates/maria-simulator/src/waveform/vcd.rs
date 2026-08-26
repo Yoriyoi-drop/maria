@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use maria_ir::{IrDesign, LogicVal};
 
 /// Pesan untuk writer thread background (WAV-19).
@@ -21,8 +23,10 @@ struct BgWriter {
 
 /// Tujuan tulisan VCD: file langsung (default, sinkron) atau writer thread
 /// background (opt-in via enable_background — dump tidak lagi blocking sim).
+/// WAV-04: compressed output via GzEncoder.
 enum Out {
     File(fs::File),
+    Compressed(GzEncoder<fs::File>),
     Bg(BgWriter),
     /// Placeholder transien saat mengambil File dari self.out
     /// (hanya ada di dalam enable_background).
@@ -77,6 +81,42 @@ impl VcdWriter {
         Ok(writer)
     }
 
+    /// WAV-04: Enable gzip compression for VCD output.
+    /// Replaces File output with Compressed(GzEncoder) — all subsequent
+    /// writes will be gzip-compressed. Compression level: default (6).
+    pub fn enable_compression(&mut self) -> Result<(), String> {
+        match std::mem::replace(&mut self.out, Out::Detached) {
+            Out::File(file) => {
+                let enc = GzEncoder::new(file, Compression::default());
+                self.out = Out::Compressed(enc);
+                Ok(())
+            }
+            other => {
+                self.out = other;
+                Err("enable_compression: output is not a File".to_string())
+            }
+        }
+    }
+
+    /// WAV-04: Create a new VcdWriter with gzip compression from the start.
+    pub fn new_compressed(path: &str, design: &IrDesign) -> Result<Self, String> {
+        let file = fs::File::create(path)
+            .map_err(|e| format!("cannot create VCD file '{}': {}", path, e))?;
+        let enc = GzEncoder::new(file, Compression::default());
+        let mut writer = VcdWriter {
+            out: Out::Compressed(enc),
+            last_values: HashMap::new(),
+            code_by_key: HashMap::new(),
+            enabled: true,
+            max_dump_size: None,
+            total_written: 0,
+            stream_flush_interval: 0,
+            flush_counter: 0,
+        };
+        writer.write_header(design)?;
+        Ok(writer)
+    }
+
     pub fn reopen(
         &mut self,
         path: &str,
@@ -104,6 +144,9 @@ impl VcdWriter {
         }
         match &mut self.out {
             Out::File(f) => f
+                .write_all(buf)
+                .map_err(|e| format!("VCD write error: {}", e))?,
+            Out::Compressed(enc) => enc
                 .write_all(buf)
                 .map_err(|e| format!("VCD write error: {}", e))?,
             Out::Bg(bg) => {
@@ -424,6 +467,12 @@ impl VcdWriter {
         if let Out::File(f) = &mut self.out {
             let _ = f.flush();
         }
+        // WAV-04: flush compressed encoder (writes gzip footer)
+        if let Out::Compressed(_) = &self.out {
+            if let Out::Compressed(enc) = std::mem::replace(&mut self.out, Out::Detached) {
+                let _ = enc.finish();
+            }
+        }
         Ok(())
     }
 
@@ -474,6 +523,9 @@ impl VcdWriter {
     pub fn flush(&mut self) -> Result<(), String> {
         match &mut self.out {
             Out::File(f) => f
+                .flush()
+                .map_err(|e| format!("VCD flush error: {}", e)),
+            Out::Compressed(enc) => enc
                 .flush()
                 .map_err(|e| format!("VCD flush error: {}", e)),
             Out::Bg(bg) => {
@@ -640,6 +692,62 @@ mod tests {
         }
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("b00000011"), "Drop mem-finalisasi file bg");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── WAV-04: Compressed waveform database tests ──
+
+    #[test]
+    fn test_compressed_vcd_is_valid_gzip() {
+        let dir = std::env::temp_dir().join("maria_vcd_gzip_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let design = make_design();
+        let path = dir.join("compressed.vcd.gz");
+
+        {
+            let mut w = VcdWriter::new_compressed(path.to_str().unwrap(), &design).unwrap();
+            w.dump_all(&design, &state(0, 42)).unwrap();
+            w.write_time_header(10).unwrap();
+            w.dump_state(&design, &state(1, 99)).unwrap();
+            w.close().unwrap();
+        }
+
+        // File harus ada dan valid gzip (magic bytes 0x1f 0x8b)
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.len() > 2, "file gzip tidak kosong");
+        assert_eq!(bytes[0], 0x1f, "gzip magic byte 1");
+        assert_eq!(bytes[1], 0x8b, "gzip magic byte 2");
+
+        // Decompress dan verifikasi isi VCD valid
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(&bytes[..]);
+        let mut decompressed = String::new();
+        decoder.read_to_string(&mut decompressed).unwrap();
+        assert!(decompressed.contains("$enddefinitions $end"), "decompressed VCD header valid");
+        assert!(decompressed.contains("b00101010"), "decompressed VCD data valid (42 = 00101010)");
+        assert!(decompressed.contains("#10"), "decompressed VCD time header valid");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_compressed_vcd_new_compressed() {
+        let dir = std::env::temp_dir().join("maria_vcd_gzip_new");
+        let _ = std::fs::create_dir_all(&dir);
+        let design = make_design();
+        let path = dir.join("new_compressed.vcd.gz");
+
+        {
+            let mut w = VcdWriter::new_compressed(path.to_str().unwrap(), &design).unwrap();
+            w.dump_all(&design, &state(0, 7)).unwrap();
+            w.close().unwrap();
+        }
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(bytes[0], 0x1f, "new_compressed: gzip magic byte 1");
+        assert_eq!(bytes[1], 0x8b, "new_compressed: gzip magic byte 2");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

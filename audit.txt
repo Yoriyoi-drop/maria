@@ -106,7 +106,7 @@ Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2167 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 86 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 88 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -1290,7 +1290,13 @@ SIM-30: ✅ $coverage_control all modes implemented (Medium)
 WAV-01:[] No FSDB format (Synopsys standard) (Critical)
 WAV-02:[] No VPD format (Synopsys VCD Plus) (Critical)
 WAV-03:[] No SHM/WDB format (Cadence/Siemens) (Critical)
-WAV-04:[] No compressed waveform database (beyond FST gzip) (High)
+WAV-04: ✅ Compressed waveform database (ROUND 85b) — gzip VCD output:
+         - VcdWriter::new_compressed() + enable_compression() — gzip encoder
+           via flate2 crate. Out::Compressed(GzEncoder<File>) variant.
+         - CLI: --waveform-gzip flag wired di main.rs (2 jalur).
+         - close_inner() flush gzip footer, flush() handle Compressed variant.
+         - 2 unit test: test_compressed_vcd_is_valid_gzip (magic bytes +
+           decompress + verify VCD content), test_compressed_vcd_new_compressed.
 WAV-05: ✅ Incremental waveform dump — FIXED (stale; VCD diff + WAV-06)
          vcd.rs write_vals: nilai hanya ditulis bila BERUBAH dari
          last_values (diff per time step) = incremental dump inti;
@@ -1754,7 +1760,14 @@ FORMAL-13: ⚠️ IN PROGRESS (ROUND 102) — connectivity checking tahap 1:
          cycle, connectivity lintas instance/hierarki.
 FORMAL-14:[] No X-propagation formal analysis (High)
 FORMAL-15:[] No unreachable assertion detection (High)
-FORMAL-16:[] No cover property formal analysis (Medium)
+FORMAL-16: ✅ Cover property formal analysis (ROUND 85b) — FORMAL-16:
+         - collect_covers() + walk_covers() di bmc.rs — walk AST IrStmt::Cover
+           → collect cover conditions from all processes.
+         - FormalEngine::check_covers_bmc() — BMC reachability check:
+           for each depth d 0..bound, check if P(d) is SAT (cover reachable).
+           SAT at any depth → Pass, UNSAT all depths → Counterexample.
+         - cover_check_single() — transition relation + initial state +
+           frame constraints + SAT check per depth.
 
 4.9 LSP/IDE GAPS
 
