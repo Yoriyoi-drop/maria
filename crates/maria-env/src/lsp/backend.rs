@@ -11,7 +11,8 @@ use std::collections::HashMap;
 
 use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DocumentSymbol, GotoDefinitionParams, GotoDefinitionResponse,
+    Diagnostic, DiagnosticSeverity, DocumentSymbol, FoldingRange, FoldingRangeKind,
+    FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse,
     Hover, HoverContents, InitializeParams, InitializeResult, LanguageString, Location,
     MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
     ServerCapabilities, ServerInfo, SymbolKind, TextDocumentPositionParams,
@@ -649,6 +650,102 @@ impl LspBackend {
         roots
     }
 
+    /// Folding range core (murni, bisa diuji) — LSP-15 tahap 1:
+    /// region lipat untuk blok scope berdasarkan token baris:
+    ///   - module/interface/package/class/checker/function/task/generate
+    ///     dibuka sebagai token PERTAMA baris, ditutup end* sebagai token
+    ///     pertama baris.
+    ///   - begin...end dan case...endcase: `begin`/`case` membuka (begin
+    ///     sebagai token terakhir baris header; case sebagai token pertama),
+    ///     ditutup bila baris memuat token `end` / `endcase`.
+    /// Return (start_line, end_line) urut.
+    pub(crate) fn compute_folding_ranges(source: &str) -> Vec<(u32, u32)> {
+        // (keyword pembuka, keyword penutup) — pasangan scope utama.
+        const PAIRS: &[(&str, &str)] = &[
+            ("module", "endmodule"),
+            ("macromodule", "endmodule"),
+            ("interface", "endinterface"),
+            ("package", "endpackage"),
+            ("program", "endprogram"),
+            ("class", "endclass"),
+            ("checker", "endchecker"),
+            ("function", "endfunction"),
+            ("task", "endtask"),
+            ("generate", "endgenerate"),
+        ];
+
+        let mut out: Vec<(u32, u32)> = Vec::new();
+        // Stack: (keyword pembuka, start_line).
+        let mut stack: Vec<(&str, u32)> = Vec::new();
+
+        let mut close_top = |stack: &mut Vec<(&str, u32)>, out: &mut Vec<(u32, u32)>, idx: u32| {
+            if let Some((_, start)) = stack.pop() {
+                out.push((start, idx));
+            }
+        };
+
+        for (idx, line) in source.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let toks = Self::line_tokens(line);
+            if toks.is_empty() {
+                continue;
+            }
+            let t0 = toks[0].0.as_str();
+
+            // Scope utama dibuka sebagai token pertama.
+            if let Some((_, closer)) = PAIRS.iter().find(|(kw, _)| *kw == t0) {
+                stack.push((*closer, idx as u32));
+                continue;
+            }
+            // Scope utama ditutup sebagai token pertama.
+            if let Some((_, opener)) = PAIRS.iter().find(|(_, ew)| *ew == t0) {
+                let _ = opener;
+                close_top(&mut stack, &mut out, idx as u32);
+                continue;
+            }
+
+            let words: Vec<&str> = toks.iter().map(|(w, _)| w.as_str()).collect();
+
+            // Penutup DULU (baris `end else begin` menutup lalu membuka):
+            // endcase lalu end.
+            if words.contains(&"endcase") {
+                if let Some(pos) =
+                    stack.iter().rposition(|(kw, _)| matches!(*kw, "case" | "casex" | "casez"))
+                {
+                    let (_, start) = stack.remove(pos);
+                    out.push((start, idx as u32));
+                }
+            }
+            // Token `end` mandiri (bukan bagian endmodule dkk — tokenizer
+            // memisahkan kata utuh) menutup begin paling dalam.
+            if words.contains(&"end") {
+                if let Some(pos) = stack.iter().rposition(|(kw, _)| *kw == "begin") {
+                    let (_, start) = stack.remove(pos);
+                    out.push((start, idx as u32));
+                } else if stack.len() > 1 {
+                    // begin tidak ada → fallback tutup scope utama dalam.
+                    close_top(&mut stack, &mut out, idx as u32);
+                }
+            }
+
+            // Pembukaan setelah penutupan:
+            // case/casex/casez sebagai token pertama membuka blok.
+            if matches!(t0, "case" | "casex" | "casez") {
+                stack.push(("case", idx as u32));
+            }
+            // `begin` sebagai token TERAKHIR baris header membuka blok.
+            if words.len() > 1 && words[words.len() - 1] == "begin" {
+                stack.push(("begin", idx as u32));
+            }
+        }
+
+        out.sort_by_key(|(s, e)| (*s, *e));
+        out.dedup();
+        out
+    }
+
     /// Find-references core (murni, bisa diuji) — LSP-04 tahap 1:
     /// semua kemunculan identifier (sebagai token mandiri) dalam dokumen,
     /// urut baris. `include_declaration` tetap dikembalikan penuh — caller
@@ -718,6 +815,9 @@ impl LanguageServer for LspBackend {
                 rename_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                folding_range_provider: Some(
+                    lsp_types::FoldingRangeProviderCapability::Simple(true),
+                ),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -922,6 +1022,29 @@ impl LanguageServer for LspBackend {
             .map(|s| s.to_lsp(line_len))
             .collect();
         Ok(Some(lsp_types::DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    /// Folding range (LSP-15).
+    async fn folding_range(
+        &self,
+        params: FoldingRangeParams,
+    ) -> JsonRpcResult<Option<Vec<FoldingRange>>> {
+        let uri = &params.text_document.uri;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let ranges = Self::compute_folding_ranges(&text)
+            .into_iter()
+            .map(|(start, end)| FoldingRange {
+                start_line: start,
+                start_character: None,
+                end_line: end,
+                end_character: None,
+                kind: Some(FoldingRangeKind::Region),
+                collapsed_text: None,
+            })
+            .collect();
+        Ok(Some(ranges))
     }
 
     /// Text document didClose — clear diagnostics.
@@ -1264,6 +1387,56 @@ endmodule
             broken.lines().nth(l as usize).map(|s| s.chars().count() as u32).unwrap_or(0)
         });
         assert_eq!(lsp.kind, SymbolKind::MODULE);
+    }
+
+    #[test]
+    fn test_folding_ranges() {
+        let folds = LspBackend::compute_folding_ranges(SAMPLE);
+        // Module counter (0 → endmodule) dan counter_aux.
+        let m0 = line_of("module counter");
+        let m1 = line_of("module counter_aux");
+        let e1 = line_of("endmodule");
+        assert!(
+            folds.contains(&(m0, e1)),
+            "fold module pertama sampai endmodule terakhir: {:?}",
+            folds
+        );
+        // begin always_ff (baris always_ff) → `end`-nya.
+        let ff_line = line_of("always_ff @(posedge clk) begin");
+        assert!(
+            folds.iter().any(|(s, _)| *s == ff_line),
+            "blok begin always_ff terlipat: {:?}",
+            folds
+        );
+        // Urut & start ≤ end.
+        assert!(folds.iter().all(|(s, e)| s <= e));
+        assert!(
+            folds.windows(2).all(|w| w[0] <= w[1]),
+            "hasil urut: {:?}",
+            folds
+        );
+
+        // Case block.
+        let case_src = "module c;\n\
+            case (x)\n\
+                2'd0: y = 1;\n\
+                default: y = 0;\n\
+            endcase\n\
+        endmodule\n";
+        let f2 = LspBackend::compute_folding_ranges(case_src);
+        assert!(f2.contains(&(1, 4)), "case 1..endcase 4: {:?}", f2);
+        assert!(f2.contains(&(0, 5)), "module 0..endmodule 5: {:?}", f2);
+
+        // End else begin: dua blok begin bertumpuk di baris sama.
+        let nested = "module n;\n\
+            if (a) begin\n\
+                x = 1;\n\
+            end else begin\n\
+                x = 2;\n\
+            end\n\
+        endmodule\n";
+        let f3 = LspBackend::compute_folding_ranges(nested);
+        assert_eq!(f3.len(), 3, "{:?}", f3); // if-begin, else-begin, module
     }
 
     #[test]

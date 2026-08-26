@@ -1714,7 +1714,13 @@ LSP-12: ⚠️ IN PROGRESS (ROUND 96) — document symbol tahap 1:
          penuh, workspace symbol search (LSP-11), folding range (LSP-15).
 LSP-13:[] No call hierarchy (Medium)
 LSP-14:[] No type hierarchy (Medium)
-LSP-15:[] No folding range (Low)
+LSP-15: ⚠️ IN PROGRESS (ROUND 98) — folding range tahap 1:
+         backend.rs — capability folding_range_provider + handler
+         folding_range; core murni compute_folding_ranges(): stack
+         pairing untuk scope utama (module/interface/package/program/
+         class/checker/function/task/generate) + begin...end dan
+         case...endcase (urutan close-before-open utk baris `end else
+         begin`). MASIH OPEN: komentar block fold, region import.
 LSP-16:[] No signature help (Medium)
 LSP-17:[] No completion resolve (Medium)
 LSP-18:[] No incremental document sync (Medium)
@@ -4207,6 +4213,32 @@ di jalur kompilasi/JIT manapun.
    - cargo test --workspace: 2144 passed, 0 failed (0 regresi — hasil
      sim identik dengan sebelum wiring)
    - cargo test -p maria-simulator --features jit: 369/369 pass
+
+═══ ROUND 98 — LSP-15 folding range (tahap 1) ═══
+
+Kerja bertahap LSP-15 (Low) — tahap 1 single-file selesai, item tetap
+⚠️ IN PROGRESS (block comment fold, import region masih open).
+
+✅ FOLDING RANGE TAHAP 1 (crates/maria-env/src/lsp/backend.rs):
+   - Capability FoldingRangeProviderCapability::Simple + handler
+     folding_range → Vec<FoldingRange> (kind Region).
+   - Core murni compute_folding_ranges(source) → Vec<(start,end)>:
+     * Scope utama: module/macromodule/interface/package/program/class/
+       checker/function/task/generate dibuka token pertama, ditutup
+       end* token pertama.
+     * begin...end: `begin` sebagai token TERAKHIR baris header membuka;
+       token `end` mandiri menutup begin paling dalam.
+     * case/casex/casez...endcase.
+     * Urutan close-before-open agar baris `end else begin` benar.
+     * Komentar // di-skip; hasil sorted + dedup.
+
+Test (+1): test_folding_ranges — fold module, blok begin always_ff,
+case 1..endcase 4 + module 0..5, nested if/else-begin (3 fold), urutan
+& invariant start ≤ end.
+
+📊 VERIFIKASI ROUND 98:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2145 passed, 0 failed (+1)
 
 ========================================
 END OF AUDIT REPORT
