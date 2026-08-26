@@ -782,10 +782,14 @@ impl SimulationEngine {
         // Convert IrStmt block to MIR
         let n_sigs = self.state.signals.len();
         let mir_name = Symbol::intern(&format!("jit_proc_{}", pid));
-        let mir_process = match Self::ir_body_to_mir(body, n_sigs, mir_name) {
+        let mut mir_process = match Self::ir_body_to_mir(body, n_sigs, mir_name) {
             Some(p) => p,
             None => return Ok(false),
         };
+        // COMP-01: pipeline optimasi MIR (fixed-point: constant fold, copy
+        // propagate, DSE, branch fold, strength reduce, nop removal) kini
+        // TER-WIRE ke jalur JIT — instruksi teroptimasi sebelum compile.
+        maria_compiler::mir::optimize_process(&mut mir_process.instrs);
         // Pre-scan: recursively identify all signal IDs with NBA assignments in this body.
         // These must go through nba_pending, not direct write_signal.
         // Uses recursion to handle NBA inside if/case/loop/block control flow.

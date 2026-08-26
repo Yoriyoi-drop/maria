@@ -1020,8 +1020,20 @@ ELAB-12: ✅ Elab-time assertion evaluation (ROUND 47) — assert immediate
 
 4.4 COMPILER GAPS
 
-COMP-01:[] Tidak ada multi-pass optimization pipeline (Critical)
-COMP-02:[] Tidak ada dead code elimination (Critical)
+COMP-01: ⚠️ IN PROGRESS (ROUND 97) — multi-pass optimization pipeline:
+         pipeline MIR opt 6-pass run-to-fixed-point SUDAH ADA
+         (crates/maria-compiler/src/mir/opt.rs: constant_fold, copy_
+         propagate, dead_store_eliminate, constant_branch_fold,
+         strength_reduce, remove_nops) dan kini TER-WIRE ke jalur JIT
+         (engine/mir.rs try_evaluate_mir_jit memanggil optimize_process
+         sebelum compile_process). MASIH OPEN: SSA-based global opt
+         (CSE/GVN/LICM pada IR level, Arsitektur-01).
+COMP-02: ⚠️ IN PROGRESS (ROUND 97) — dead code elimination:
+         MIR: dead_store_eliminate pass (register liveness-based,
+         conservative across CFG edges — CRIT-041) kini aktif di jalur
+         JIT (lihat COMP-01). Module-level: dead module detection
+         reachability BFS (CRIT-042). MASIH OPEN: IR-level DCE utk
+         sinyal/always block yang tidak berpengaruh ke output.
 COMP-03: ✅ Constant propagation — FIXED (stale; const_fold.rs + MIR)
          Elaborator: util/const_fold.rs (755 LOC) try_fold_const/
          try_fold_const_at_width — folding ekspresi konstanta luas
@@ -1031,7 +1043,9 @@ COMP-03: ✅ Constant propagation — FIXED (stale; const_fold.rs + MIR)
          constant_branch_fold (CRIT-041). Marker stale.
 COMP-04:[] Tidak ada common subexpression elimination (CSE) (High)
 COMP-05:[] Tidak ada loop invariant code motion (LICM) (High)
-COMP-06:[] Tidak ada strength reduction (Medium)
+COMP-06: ✅ Strength reduction — FIXED (stale; CRIT-041 + ROUND 97 wiring)
+         MIR opt pass 5: Mul/Div by power-of-2 → Shl/Shr; Mul 0/1 →
+         Const/Nop (opt.rs strength_reduce). Kini aktif di jalur JIT.
 COMP-07:[] Tidak ada bit-width analysis for optimization (High)
 COMP-08:[] Tidak ada sign extension elimination (Medium)
 COMP-09:[] Tidak ada X/Z propagation optimization (Medium)
@@ -4165,6 +4179,34 @@ dokumen rusak tetap outline, konversi lsp kind MODULE benar.
 📊 VERIFIKASI ROUND 96:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2144 passed, 0 failed (+1)
+
+═══ ROUND 97 — COMP-01/02/06: wire MIR opt pipeline ke jalur JIT ═══
+
+Temuan: pipeline MIR opt 6-pass (CRIT-041) TERNYATA DEAD CODE —
+optimize_module/optimize_process diekspor tapi TIDAK PERNAH dipanggil
+di jalur kompilasi/JIT manapun.
+
+✅ FIX — WIRE OPT PIPELINE (crates/maria-simulator/src/simulator/
+   engine/mir.rs try_evaluate_mir_jit):
+   - Setelah ir_body_to_mir menghasilkan MirProcess, kini memanggil
+     maria_compiler::mir::optimize_process(&mut mir_process.instrs)
+     SEBELUM jit.compile_process → instruksi teroptimasi (constant fold,
+     copy propagate, DSE, branch fold, strength reduce, nop removal,
+     run to fixed point) dikompilasi ke native code.
+   - maria-compiler mir/mod.rs: re-export optimize_process.
+
+✅ Marker audit di-update:
+   - COMP-01 multi-pass pipeline [] → ⚠️ IN PROGRESS (pipeline ada +
+     ter-wire; sisa: SSA global opt — Arsitektur-01).
+   - COMP-02 DCE [] → ⚠️ IN PROGRESS (MIR DSE aktif + dead module
+     detect; sisa: IR-level DCE sinyal/blok).
+   - COMP-06 strength reduction [] → ✅ (pass 5 + wiring).
+
+📊 VERIFIKASI ROUND 97:
+   - cargo build --workspace (default + features jit): 0 error
+   - cargo test --workspace: 2144 passed, 0 failed (0 regresi — hasil
+     sim identik dengan sebelum wiring)
+   - cargo test -p maria-simulator --features jit: 369/369 pass
 
 ========================================
 END OF AUDIT REPORT

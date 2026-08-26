@@ -8,7 +8,7 @@ pub mod opt;
 
 pub use lower::lower_module;
 pub use mir::*;
-pub use opt::optimize_module;
+pub use opt::{optimize_module, optimize_process};
 
 // MirJitCompiler fallback when jit feature is disabled
 #[cfg(feature = "jit")]
