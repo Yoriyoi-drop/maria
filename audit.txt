@@ -1700,7 +1700,14 @@ LSP-07:[] No semantic tokens highlighting (High)
 LSP-08:[] No code lens (Test/References) (High)
 LSP-09:[] No inlay hints (type hints) (Medium)
 LSP-10:[] No code actions (quick-fix) (High)
-LSP-11:[] No workspace symbol search (High)
+LSP-11: ⚠️ IN PROGRESS (ROUND 99) — workspace symbol search tahap 1:
+         backend.rs — capability workspace_symbol_provider + handler
+         symbol; core murni search_workspace_symbols(docs, query):
+         flatten outline semua dokumen terbuka (cache), filter
+         case-insensitive substring, sorted by (uri,line,col).
+         Query kosong = semua simbol. Test 1 unit (multi-doc,
+         case-insensitive, empty query, no-match). MASIH OPEN: indeks
+         lintas file di disk (bukan hanya dokumen terbuka), caching.
 LSP-12: ⚠️ IN PROGRESS (ROUND 96) — document symbol tahap 1:
          backend.rs — capability document_symbol_provider + handler
          document_symbol → DocumentSymbolResponse::Nested; core murni
@@ -4239,6 +4246,29 @@ case 1..endcase 4 + module 0..5, nested if/else-begin (3 fold), urutan
 📊 VERIFIKASI ROUND 98:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2145 passed, 0 failed (+1)
+
+═══ ROUND 99 — LSP-11 workspace symbol search (tahap 1) ═══
+
+Kerja bertahap LSP-11 (High) — tahap 1 (dokumen terbuka) selesai,
+item tetap ⚠️ IN PROGRESS (indeks disk + caching masih open).
+
+✅ WORKSPACE SYMBOL TAHAP 1 (crates/maria-env/src/lsp/backend.rs):
+   - Capability workspace_symbol_provider + handler symbol →
+     Vec<SymbolInformation>.
+   - Core murni search_workspace_symbols(docs, query) → Vec<WsSymbolHit>:
+     flatten outline (document_symbols) dari SEMUA dokumen terbuka di
+     cache, filter case-insensitive substring, sorted by (uri,line,col);
+     query kosong = semua simbol.
+   - Handler konversi hit → SymbolInformation (location = selection range
+     nama; kind via DocSymbol::lsp_kind).
+
+Test (+1): test_workspace_symbol_search — query "count" lintas 2 dokumen
+(module counter/counter_aux + signal count), case-insensitive "ALU" →
+alu, empty query = semua, "zzz" kosong.
+
+📊 VERIFIKASI ROUND 99:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2146 passed, 0 failed (+1)
 
 ========================================
 END OF AUDIT REPORT

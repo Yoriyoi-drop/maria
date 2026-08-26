@@ -15,8 +15,9 @@ use lsp_types::{
     FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse,
     Hover, HoverContents, InitializeParams, InitializeResult, LanguageString, Location,
     MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
-    ServerCapabilities, ServerInfo, SymbolKind, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Url, WorkspaceEdit,
+    ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    WorkspaceEdit, WorkspaceSymbolParams,
 };
 use maria_parser::lexer::Lexer;
 use maria_parser::preprocessor::Preprocessor;
@@ -24,11 +25,20 @@ use maria_parser::Parser;
 use tower_lsp::jsonrpc::Result as JsonRpcResult;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+/// Hasil workspace symbol search (LSP-11).
+#[derive(Debug, Clone)]
+pub(crate) struct WsSymbolHit {
+    pub uri: String,
+    pub name: String,
+    pub kind: u8,
+    pub line: u32,
+    pub col: u32,
+}
+
 /// Simbol dokumen versi lite (LSP-12) — dikonversi ke
 /// lsp_types::DocumentSymbol oleh handler.
 #[derive(Debug, Clone)]
-pub(crate) struct DocSymbol {
-    pub name: String,
+pub(crate) struct DocSymbol {    pub name: String,
     pub kind: u8,
     pub line: u32,
     pub col: u32,
@@ -44,7 +54,7 @@ impl DocSymbol {
     const KIND_CONSTANT: u8 = 5;
     const KIND_VARIABLE: u8 = 6;
 
-    fn lsp_kind(&self) -> SymbolKind {
+    pub(crate) fn lsp_kind(&self) -> SymbolKind {
         match self.kind {
             DocSymbol::KIND_INTERFACE => SymbolKind::INTERFACE,
             DocSymbol::KIND_PACKAGE => SymbolKind::PACKAGE,
@@ -746,6 +756,45 @@ impl LspBackend {
         out
     }
 
+    /// Workspace symbol search core (murni, bisa diuji) — LSP-11 tahap 1:
+    /// cari di SEMUA dokumen terbuka (cache), flatten outline, filter
+    /// case-insensitive substring. Query kosong = semua simbol.
+    pub(crate) fn search_workspace_symbols(
+        docs: &[(String, String)],
+        query: &str,
+    ) -> Vec<WsSymbolHit> {
+        let q = query.to_lowercase();
+        let mut out: Vec<WsSymbolHit> = Vec::new();
+
+        fn walk(
+            items: &[DocSymbol],
+            uri: &str,
+            q: &str,
+            out: &mut Vec<WsSymbolHit>,
+        ) {
+            for s in items {
+                if q.is_empty() || s.name.to_lowercase().contains(q) {
+                    out.push(WsSymbolHit {
+                        uri: uri.to_string(),
+                        name: s.name.clone(),
+                        kind: s.kind,
+                        line: s.line,
+                        col: s.col,
+                    });
+                }
+                walk(&s.children, uri, q, out);
+            }
+        }
+
+        for (uri, text) in docs {
+            walk(&Self::document_symbols(text), uri, &q, &mut out);
+        }
+        out.sort_by(|a, b| {
+            (&a.uri, a.line, a.col).cmp(&(&b.uri, b.line, b.col))
+        });
+        out
+    }
+
     /// Find-references core (murni, bisa diuji) — LSP-04 tahap 1:
     /// semua kemunculan identifier (sebagai token mandiri) dalam dokumen,
     /// urut baris. `include_declaration` tetap dikembalikan penuh — caller
@@ -815,6 +864,7 @@ impl LanguageServer for LspBackend {
                 rename_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(
                     lsp_types::FoldingRangeProviderCapability::Simple(true),
                 ),
@@ -1022,6 +1072,59 @@ impl LanguageServer for LspBackend {
             .map(|s| s.to_lsp(line_len))
             .collect();
         Ok(Some(lsp_types::DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    /// Workspace symbol search (LSP-11 tahap 1): cari di dokumen terbuka.
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> JsonRpcResult<Option<Vec<SymbolInformation>>> {
+        let docs: Vec<(String, String)> = {
+            match self.documents.lock() {
+                Ok(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                Err(_) => Vec::new(),
+            }
+        };
+        let hits = Self::search_workspace_symbols(&docs, &params.query);
+        let mut out = Vec::new();
+        for h in hits {
+            let Ok(uri) = Url::parse(&h.uri) else {
+                continue;
+            };
+            let name_len = h.name.len() as u32;
+            out.push(SymbolInformation {
+                name: h.name,
+                kind: DocSymbol {
+                    name: String::new(),
+                    kind: h.kind,
+                    line: 0,
+                    col: 0,
+                    children: Vec::new(),
+                }
+                .lsp_kind(),
+                tags: None,
+                #[allow(deprecated)]
+                deprecated: None,
+                location: Location {
+                    uri,
+                    range: Range {
+                        start: Position {
+                            line: h.line,
+                            character: h.col,
+                        },
+                        end: Position {
+                            line: h.line,
+                            character: h.col + name_len,
+                        },
+                    },
+                },
+                container_name: None,
+            });
+        }
+        if out.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(out))
     }
 
     /// Folding range (LSP-15).
@@ -1437,6 +1540,35 @@ endmodule
         endmodule\n";
         let f3 = LspBackend::compute_folding_ranges(nested);
         assert_eq!(f3.len(), 3, "{:?}", f3); // if-begin, else-begin, module
+    }
+
+    #[test]
+    fn test_workspace_symbol_search() {
+        let doc_a = (
+            "file:///a.sv".to_string(),
+            SAMPLE.to_string(),
+        );
+        let doc_b = (
+            "file:///b.sv".to_string(),
+            "module alu;\n  wire carry;\nendmodule\n".to_string(),
+        );
+        let docs = vec![doc_a, doc_b];
+
+        // Query "count" → module counter + counter_aux + signal count.
+        let hits = LspBackend::search_workspace_symbols(&docs, "count");
+        assert!(hits.len() >= 3, "{:?}", hits);
+        assert!(hits.iter().all(|h| h.name.to_lowercase().contains("count")));
+
+        // Query case-insensitive.
+        let hits2 = LspBackend::search_workspace_symbols(&docs, "ALU");
+        assert!(hits2.iter().any(|h| h.name == "alu"));
+
+        // Query kosong → semua simbol (>= jumlah outline kedua dokumen).
+        let all = LspBackend::search_workspace_symbols(&docs, "");
+        assert!(all.len() > hits.len());
+
+        // Tidak ada match → kosong.
+        assert!(LspBackend::search_workspace_symbols(&docs, "zzz").is_empty());
     }
 
     #[test]
