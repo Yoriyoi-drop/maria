@@ -7,6 +7,8 @@
 //! 4. constant_branch_fold — replace branches on constant condition with Jump
 //! 5. strength_reduce      — replace Mul/Div by power-of-2 with Shl/Shr
 //! 6. remove_nops          — sweep NOP instructions
+//! 7. sign_ext_eliminate   — eliminate redundant sign-extension patterns (COMP-08)
+//! 8. xz_propagate         — fold operations with known-zero/X operands (COMP-09)
 
 use super::mir::{MirBinOp, MirInstr, MirModule};
 use std::collections::HashMap;
@@ -30,6 +32,8 @@ pub fn optimize_process(instrs: &mut Vec<MirInstr>) {
         changed |= common_subexpr_eliminate(instrs);
         changed |= licm(instrs);
         changed |= strength_reduce(instrs);
+        changed |= sign_ext_eliminate(instrs);
+        changed |= xz_propagate(instrs);
         changed |= remove_nops(instrs);
     }
 }
@@ -699,6 +703,409 @@ fn remove_nops(instrs: &mut Vec<MirInstr>) -> bool {
     instrs.len() != before
 }
 
+// ── Pass 7: Sign Extension Elimination (COMP-08) ──
+
+/// Eliminate redundant shift patterns (COMP-08):
+/// - `Shr(x, 0)` / `Shl(x, 0)` → x (identity: shift by 0)
+/// - `Shr(x, N)` where N >= width → Const 0 (logical shift right past width)
+/// - `Shl(x, N)` where N >= width → Const 0 (logical shift left past width)
+///
+/// CONSERVATIVE: only operates on constants found via find_const_value.
+fn sign_ext_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    while i < instrs.len() {
+        let matched = match &instrs[i] {
+            MirInstr::Binary {
+                op,
+                dest,
+                lhs,
+                rhs,
+                width,
+            } => Some((*op, *dest, *lhs, *rhs, *width)),
+            _ => None,
+        };
+        if let Some((op, dest, lhs, rhs, width)) = matched {
+            if let Some(shift) = find_const_value(instrs, rhs) {
+                match op {
+                    MirBinOp::Shr | MirBinOp::Shl => {
+                        if shift == 0 {
+                            // Identity: shift by 0 → just use lhs
+                            instrs[i] = MirInstr::Nop;
+                            let mut j = i + 1;
+                            while j < instrs.len() {
+                                if matches!(
+                                    instrs[j],
+                                    MirInstr::Branch { .. }
+                                        | MirInstr::Jump { .. }
+                                        | MirInstr::Label(_)
+                                ) {
+                                    break;
+                                }
+                                if writes_register(&instrs[j], dest) {
+                                    break;
+                                }
+                                rewrite_read_register(&mut instrs[j], dest, lhs);
+                                j += 1;
+                            }
+                            changed = true;
+                            continue;
+                        }
+                        // Shift >= width → result is always 0
+                        if shift >= width as u64 {
+                            instrs[i] = MirInstr::Const {
+                                dest,
+                                value: 0,
+                                width,
+                            };
+                            changed = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        i += 1;
+    }
+    changed
+}
+
+// ── Pass 8: X/Z Constant Propagation (COMP-09) ──
+
+/// Propagate known-zero and identity patterns through operations:
+/// - `x & 0` → 0 (AND with zero kills result)
+/// - `x | 0` → x (OR with zero is identity)
+/// - `x ^ 0` → x (XOR with zero is identity)
+/// - `x & all-ones` → x (AND with all-ones is identity)
+/// - `x * 0` → 0 (MUL by zero)
+/// - `x * 1` → x (MUL by one)
+/// - `x + 0` → x (ADD zero)
+/// - `x - 0` → x (SUB zero)
+/// - `x << 0` / `x >> 0` → x (already handled by sign_ext_eliminate)
+///
+/// This pass specifically targets patterns left by strength_reduce or
+/// constant_fold that operate on power-of-2 masks and bit-field operations
+/// common in RTL designs (masking MSB/LSB bits).
+fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    while i < instrs.len() {
+        let matched = match &instrs[i] {
+            MirInstr::Binary {
+                op,
+                dest,
+                lhs,
+                rhs,
+                width,
+            } => Some((*op, *dest, *lhs, *rhs, *width)),
+            _ => None,
+        };
+        if let Some((op, dest, lhs, rhs, width)) = matched {
+            let lhs_val = find_const_value(instrs, lhs);
+            let rhs_val = find_const_value(instrs, rhs);
+
+            // AND with zero → 0
+            if op == MirBinOp::And {
+                if Some(0) == lhs_val || Some(0) == rhs_val {
+                    instrs[i] = MirInstr::Const {
+                        dest,
+                        value: 0,
+                        width,
+                    };
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+                // AND with all-ones (mask) → identity on lhs
+                if let Some(rv) = rhs_val {
+                    let mask = if width < 64 {
+                        (1u64 << width) - 1
+                    } else {
+                        u64::MAX
+                    };
+                    if rv == mask {
+                        instrs[i] = MirInstr::Nop;
+                        let mut j = i + 1;
+                        while j < instrs.len() {
+                            if matches!(
+                                instrs[j],
+                                MirInstr::Branch { .. }
+                                    | MirInstr::Jump { .. }
+                                    | MirInstr::Label(_)
+                            ) {
+                                break;
+                            }
+                            if writes_register(&instrs[j], dest) {
+                                break;
+                            }
+                            rewrite_read_register(&mut instrs[j], dest, lhs);
+                            j += 1;
+                        }
+                        changed = true;
+                        i += 1;
+                        continue;
+                    }
+                }
+                if let Some(lv) = lhs_val {
+                    let mask = if width < 64 {
+                        (1u64 << width) - 1
+                    } else {
+                        u64::MAX
+                    };
+                    if lv == mask {
+                        instrs[i] = MirInstr::Nop;
+                        let mut j = i + 1;
+                        while j < instrs.len() {
+                            if matches!(
+                                instrs[j],
+                                MirInstr::Branch { .. }
+                                    | MirInstr::Jump { .. }
+                                    | MirInstr::Label(_)
+                            ) {
+                                break;
+                            }
+                            if writes_register(&instrs[j], dest) {
+                                break;
+                            }
+                            rewrite_read_register(&mut instrs[j], dest, rhs);
+                            j += 1;
+                        }
+                        changed = true;
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // OR with zero → identity
+            if op == MirBinOp::Or {
+                if Some(0) == lhs_val {
+                    instrs[i] = MirInstr::Nop;
+                    let mut j = i + 1;
+                    while j < instrs.len() {
+                        if matches!(
+                            instrs[j],
+                            MirInstr::Branch { .. }
+                                | MirInstr::Jump { .. }
+                                | MirInstr::Label(_)
+                        ) {
+                            break;
+                        }
+                        if writes_register(&instrs[j], dest) {
+                            break;
+                        }
+                        rewrite_read_register(&mut instrs[j], dest, rhs);
+                        j += 1;
+                    }
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+                if Some(0) == rhs_val {
+                    instrs[i] = MirInstr::Nop;
+                    let mut j = i + 1;
+                    while j < instrs.len() {
+                        if matches!(
+                            instrs[j],
+                            MirInstr::Branch { .. }
+                                | MirInstr::Jump { .. }
+                                | MirInstr::Label(_)
+                        ) {
+                            break;
+                        }
+                        if writes_register(&instrs[j], dest) {
+                            break;
+                        }
+                        rewrite_read_register(&mut instrs[j], dest, lhs);
+                        j += 1;
+                    }
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+            }
+
+            // XOR with zero → identity
+            if op == MirBinOp::Xor {
+                if Some(0) == lhs_val {
+                    instrs[i] = MirInstr::Nop;
+                    let mut j = i + 1;
+                    while j < instrs.len() {
+                        if matches!(
+                            instrs[j],
+                            MirInstr::Branch { .. }
+                                | MirInstr::Jump { .. }
+                                | MirInstr::Label(_)
+                        ) {
+                            break;
+                        }
+                        if writes_register(&instrs[j], dest) {
+                            break;
+                        }
+                        rewrite_read_register(&mut instrs[j], dest, rhs);
+                        j += 1;
+                    }
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+                if Some(0) == rhs_val {
+                    instrs[i] = MirInstr::Nop;
+                    let mut j = i + 1;
+                    while j < instrs.len() {
+                        if matches!(
+                            instrs[j],
+                            MirInstr::Branch { .. }
+                                | MirInstr::Jump { .. }
+                                | MirInstr::Label(_)
+                        ) {
+                            break;
+                        }
+                        if writes_register(&instrs[j], dest) {
+                            break;
+                        }
+                        rewrite_read_register(&mut instrs[j], dest, lhs);
+                        j += 1;
+                    }
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+            }
+
+            // MUL by zero → 0; MUL by one → identity
+            if op == MirBinOp::Mul {
+                if Some(0) == lhs_val || Some(0) == rhs_val {
+                    instrs[i] = MirInstr::Const {
+                        dest,
+                        value: 0,
+                        width,
+                    };
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+                if Some(1) == lhs_val {
+                    instrs[i] = MirInstr::Nop;
+                    let mut j = i + 1;
+                    while j < instrs.len() {
+                        if matches!(
+                            instrs[j],
+                            MirInstr::Branch { .. }
+                                | MirInstr::Jump { .. }
+                                | MirInstr::Label(_)
+                        ) {
+                            break;
+                        }
+                        if writes_register(&instrs[j], dest) {
+                            break;
+                        }
+                        rewrite_read_register(&mut instrs[j], dest, rhs);
+                        j += 1;
+                    }
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+                if Some(1) == rhs_val {
+                    instrs[i] = MirInstr::Nop;
+                    let mut j = i + 1;
+                    while j < instrs.len() {
+                        if matches!(
+                            instrs[j],
+                            MirInstr::Branch { .. }
+                                | MirInstr::Jump { .. }
+                                | MirInstr::Label(_)
+                        ) {
+                            break;
+                        }
+                        if writes_register(&instrs[j], dest) {
+                            break;
+                        }
+                        rewrite_read_register(&mut instrs[j], dest, lhs);
+                        j += 1;
+                    }
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+            }
+
+            // ADD with zero → identity; SUB with zero → identity
+            if op == MirBinOp::Add {
+                if Some(0) == lhs_val {
+                    instrs[i] = MirInstr::Nop;
+                    let mut j = i + 1;
+                    while j < instrs.len() {
+                        if matches!(
+                            instrs[j],
+                            MirInstr::Branch { .. }
+                                | MirInstr::Jump { .. }
+                                | MirInstr::Label(_)
+                        ) {
+                            break;
+                        }
+                        if writes_register(&instrs[j], dest) {
+                            break;
+                        }
+                        rewrite_read_register(&mut instrs[j], dest, rhs);
+                        j += 1;
+                    }
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+                if Some(0) == rhs_val {
+                    instrs[i] = MirInstr::Nop;
+                    let mut j = i + 1;
+                    while j < instrs.len() {
+                        if matches!(
+                            instrs[j],
+                            MirInstr::Branch { .. }
+                                | MirInstr::Jump { .. }
+                                | MirInstr::Label(_)
+                        ) {
+                            break;
+                        }
+                        if writes_register(&instrs[j], dest) {
+                            break;
+                        }
+                        rewrite_read_register(&mut instrs[j], dest, lhs);
+                        j += 1;
+                    }
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+            }
+            if op == MirBinOp::Sub && Some(0) == rhs_val {
+                instrs[i] = MirInstr::Nop;
+                let mut j = i + 1;
+                while j < instrs.len() {
+                    if matches!(
+                        instrs[j],
+                        MirInstr::Branch { .. }
+                            | MirInstr::Jump { .. }
+                            | MirInstr::Label(_)
+                    ) {
+                        break;
+                    }
+                    if writes_register(&instrs[j], dest) {
+                        break;
+                    }
+                    rewrite_read_register(&mut instrs[j], dest, lhs);
+                    j += 1;
+                }
+                changed = true;
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    changed
+}
+
 // ─── Tests ───
 
 #[cfg(test)]
@@ -1174,5 +1581,248 @@ mod tests {
         let unary_pos = instrs.iter().position(|i| matches!(i, MirInstr::Unary { .. })).unwrap();
         let label_pos = instrs.iter().position(|i| matches!(i, MirInstr::Label(0))).unwrap();
         assert!(unary_pos > label_pos);
+    }
+
+    // ── Tests: sign_ext_eliminate (COMP-08) ──
+
+    #[test]
+    fn test_sign_ext_eliminate_shr_zero() {
+        // Shr(x, 0) → identity: Store memakai x (reg 0), bukan hasil shift.
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::Shr,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(sign_ext_eliminate(&mut instrs), "Shr(x,0) harus di-eliminasi");
+        // Store sekarang membaca reg 0 (lhs asli)
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_sign_ext_eliminate_shl_zero() {
+        // Shl(x, 0) → identity
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::Shl,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(sign_ext_eliminate(&mut instrs), "Shl(x,0) harus di-eliminasi");
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_sign_ext_eliminate_shl_past_width() {
+        // Shl(x, 32) pada width 8 → Const 0 (shift melebihi lebar)
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 32, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::Shl,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(sign_ext_eliminate(&mut instrs));
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Const { value: 0, .. })),
+            "Harus jadi Const 0: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_sign_ext_eliminate_shr_past_width() {
+        // Shr(x, 32) pada width 8 → Const 0
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 32, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::Shr,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(sign_ext_eliminate(&mut instrs));
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Const { value: 0, .. })),
+            "Harus jadi Const 0: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_sign_ext_eliminate_non_constant_no_fold() {
+        // Shift by non-constant → no fold
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Load { dest: 1, signal: 1 },
+            MirInstr::Binary {
+                op: MirBinOp::Shr,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 2, src: 2 },
+        ];
+        assert!(!sign_ext_eliminate(&mut instrs), "non-constant shift tidak boleh fold");
+    }
+
+    // ── Tests: xz_propagate (COMP-09) ──
+
+    #[test]
+    fn test_xz_propagate_and_zero() {
+        // x & 0 → 0
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::And,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(xz_propagate(&mut instrs), "x & 0 harus fold ke 0");
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Const { value: 0, dest: 2, .. })),
+            "dest 2 harus jadi Const 0: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_xz_propagate_and_all_ones() {
+        // x & 0xFF (width=8, mask = all-ones) → x (identity)
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 0xFF, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::And,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(xz_propagate(&mut instrs), "x & all-ones harus identity");
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs asli: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_xz_propagate_or_zero() {
+        // x | 0 → x
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::Or,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(xz_propagate(&mut instrs), "x | 0 harus identity");
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_xz_propagate_mul_zero() {
+        // x * 0 → 0
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::Mul,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(xz_propagate(&mut instrs), "x * 0 harus fold ke 0");
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Const { value: 0, dest: 2, .. })),
+            "dest 2 harus jadi Const 0: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_xz_propagate_mul_one() {
+        // x * 1 → x
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 1, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::Mul,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(xz_propagate(&mut instrs), "x * 1 harus identity");
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_xz_propagate_add_zero() {
+        // 0 + x → x
+        let mut instrs = vec![
+            MirInstr::Const { dest: 0, value: 0, width: 8 },
+            MirInstr::Load { dest: 1, signal: 0 },
+            MirInstr::Binary {
+                op: MirBinOp::Add,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(xz_propagate(&mut instrs), "0 + x harus identity");
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 1 })),
+            "Store harus membaca rhs: {:?}", instrs);
+    }
+
+    #[test]
+    fn test_xz_propagate_sub_zero() {
+        // x - 0 → x
+        let mut instrs = vec![
+            MirInstr::Load { dest: 0, signal: 0 },
+            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Binary {
+                op: MirBinOp::Sub,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 8,
+            },
+            MirInstr::Store { signal: 1, src: 2 },
+        ];
+        assert!(xz_propagate(&mut instrs), "x - 0 harus identity");
+        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}", instrs);
     }
 }

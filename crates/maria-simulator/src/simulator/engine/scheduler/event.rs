@@ -841,7 +841,7 @@ impl SimulationEngine {
         let pending = std::mem::take(&mut self.nba_pending);
         for (lvalue, val) in pending {
             if !self.is_forced(&lvalue) {
-                let _ = self.write_lvalue(&lvalue, val);
+                let _ = self.write_lvalue(&lvalue, val, false);
             }
         }
     }

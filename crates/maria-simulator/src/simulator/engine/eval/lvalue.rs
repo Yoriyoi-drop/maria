@@ -47,6 +47,7 @@ impl SimulationEngine {
         &mut self,
         lvalue: &IrLValue,
         mut val: LogicVec,
+        is_blocking: bool,
     ) -> Result<(), SimError> {
         // Check for const violation
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
@@ -103,6 +104,27 @@ impl SimulationEngine {
                 }
                 // Track this write
                 self.signal_writers.insert(id, self.current_process_id);
+                // SIM-12: track write type (blocking = true)
+                // If same signal was written by non-blocking (false) in same delta → mixed race
+                if let Some(&prev_is_blocking) = self.signal_write_types.get(&id) {
+                    if prev_is_blocking != is_blocking {
+                        let sig_name = self
+                            .design
+                            .top
+                            .signals
+                            .get(id)
+                            .map(|s| s.name.as_str())
+                            .unwrap_or("<unknown>");
+                        self.emit_warning(
+                            maria_core::diagnostics::DiagCode::NbaWriteConflict,
+                            format!(
+                                "race condition: signal '{}' has mixed blocking/non-blocking writes in same delta cycle",
+                                sig_name
+                            ),
+                        );
+                    }
+                }
+                self.signal_write_types.insert(id, is_blocking);
             }
             // Track oscillation (write count)
             *self.signal_write_count.entry(id).or_insert(0) += 1;
@@ -474,7 +496,7 @@ impl SimulationEngine {
                         bits: bits[offset..offset + w].to_vec(),
                         width: w,
                     };
-                    self.write_lvalue(part, sub_val)?;
+                    self.write_lvalue(part, sub_val, is_blocking)?;
                 }
             }
             IrLValue::ObjectField { sig_id, field } => {
@@ -496,7 +518,7 @@ impl SimulationEngine {
                         format!("hierarchical signal '{}' not found for write", name),
                     ));
                 };
-                self.write_lvalue(&IrLValue::Signal(sig_id, 0), val)?;
+                self.write_lvalue(&IrLValue::Signal(sig_id, 0), val, is_blocking)?;
             }
             // Seleksi bit/index pada lvalue hierarkis: `sif.sd_out[i]`.
             // Lebar elemen ditentukan runtime dari SignalInfo: array unpacked

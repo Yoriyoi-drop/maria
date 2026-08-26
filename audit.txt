@@ -2,7 +2,7 @@
 ║            AUDIT BRUTAL — MARIA HDL SIMULATOR ECOSYSTEM                     ║
 ║            Principal HDL Compiler Engineer / EDA Architect Review            ║
 ║            Target: Commercial SoC Tape-Out Readiness                        ║
-║            Date: 2026-08-20 (updated)                                       ║
+║            Date: 2026-08-26 (updated — ROUND 85: COMP-08/09/12, SIM-12)   ║
 ║            Version: 0.3.0                                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2060 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2167 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -103,10 +103,10 @@ constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2032 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2167 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 77 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 81 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -129,7 +129,12 @@ ROUND 72, VERIF-05 uvm_phase jumping + bugfix hang/error RT8001 —
 ROUND 73, LANG-03 PSL boolean assertion — ROUND 74, LANG-04
 SVA temporal sequence `##N` — ROUND 75, PARSER-03 error suggestions "did you mean?" + ELAB-06 bounds stale
 re-verified + SIM-14 NBA write-in-progress + stale markers
-(PERF-14/WAV-12/VERIF-33/PARSER-02) — ROUND 75-76).
+(PERF-14/WAV-12/VERIF-33/PARSER-02) — ROUND 75-76),
+ROUND 85 COMP-08 sign extension elimination + COMP-09 X/Z constant
+propagation (MIR passes + 9 test) + COMP-12 case analysis
+parallel_case/full_case (mlint --case-analysis) + SIM-12 mixed
+blocking/non-blocking race detection (signal_write_types + 7 callers).
+2167 tests pass, 0 fail.
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -1070,8 +1075,17 @@ COMP-07: ✅ Bit-width analysis — FIXED (stale; CRIT-043 + width.rs)
          width, $bits/$size/$left/$right/$low/$high const-folded.
          Catatan: pass optimasi khusus berbasis bit-width (mis. dead-bit
          elimination) belum — dicatat sebagai lanjutan.
-COMP-08:[] Tidak ada sign extension elimination (Medium)
-COMP-09:[] Tidak ada X/Z propagation optimization (Medium)
+COMP-08: ✅ Sign extension elimination (ROUND 85) — MIR pass baru di
+         crates/maria-compiler/src/mir/opt.rs: sign_ext_eliminate — identitas
+         shift (Shr/Shl x 0 → lhs), shift >= width → Const 0 (logical).
+         5 unit test (shr_zero, shl_zero, shl_past_width, shr_past_width,
+         non_constant_no_fold). Pipeline opt tetap run-to-fixed-point.
+COMP-09: ✅ X/Z constant propagation (ROUND 85) — MIR pass baru di
+         crates/maria-compiler/src/mir/opt.rs: xz_propagate — AND with 0 → 0,
+         AND with all-ones → identity, OR/XOR with 0 → identity, MUL with 0 → 0,
+         MUL with 1 → identity, ADD/SUB with 0 → identity. 4 unit test
+         (and_zero, and_all_ones, or_zero, mul_zero, mul_one, add_zero,
+         sub_zero).
 COMP-10:[] Tidak ada gate-level optimization (High)
 COMP-11: ⚠️ IN PROGRESS (ROUND 105) — FSM extraction tahap 1:
          crates/maria-synth/src/fsm.rs (BARU) — deteksi & ekstraksi FSM
@@ -1083,7 +1097,12 @@ COMP-11: ⚠️ IN PROGRESS (ROUND 105) — FSM extraction tahap 1:
          selector tanpa NBA → bukan FSM). MASIH OPEN: minimisasi/
          re-encoding state, output Mealy/Moore, lintas-always FSM,
          wiring laporan ke CLI synth.
-COMP-12:[] Tidak ada case analysis for parallel_case/full_case (High)
+COMP-12: ✅ Case analysis parallel_case/full_case (ROUND 85) — mlint
+         new check --case-analysis: deteksi case/unique/priority tanpa default
+         (warning potensi latch atau nilai tak terdefinisi). LintArgs +
+         CLI flag --case-analysis + MlintArgs. find_case_analysis() walk
+         ASTStmt::Case/UniqueCase/PriorityCase → warning bila default=None
+         dan items non-empty.
 COMP-13:[] Tidak ada clock gating inference (Medium)
 COMP-14:[] Tidak ada power optimization (Medium)
 COMP-15:[] Tidak ada memory inference optimization (Medium)
@@ -1131,7 +1150,13 @@ SIM-11: ✅ X propagation mode — types.rs XPropagationMode (Optimistic /
            Pessimistic / XAnywhere) + value.rs set_xprop_mode/get_xprop_mode
            (BitAnd/BitOr/compare/eq dll menerapkan mode) + CLI --xprop
            (main.rs:1582) + env maria-env/verification/xprop.rs.
-SIM-12:[] No RTL locking for race detection (High)
+SIM-12: ✅ RTL locking race detection — mixed blocking/non-blocking
+         (ROUND 85) — signal_write_types: HashMap<SignalId, bool> tracking
+         blocking vs non-blocking writes per delta cycle. write_lvalue gets
+         is_blocking parameter (true=blocking, false=NBA). Mixed writes to
+         same signal in same delta → warning NbaWriteConflict. Clear per delta.
+         7 callers updated (block.rs x4, event.rs x1, cycle_based.rs x1,
+         lvalue.rs x2 recursive).
 SIM-13: ✅ Race condition detection (ROUND 57) — signal_writers
            (mod.rs) + Write-Write check di write_lvalue (lvalue.rs:67): dua
            proses berbeda menulis signal sama dalam satu delta → warning
@@ -3902,6 +3927,46 @@ Demo e2e CLI (/tmp/opencode/wav07/demo.sv — cnt += 8'h0F tiap posedge):
      pre-existing crate lain)
    - cargo test --workspace: 2126 passed, 0 failed
    - AGENTS.md baris mwave + tools.md bagian mwave di-update (subcommand get)
+
+═══ ROUND 85b — COMP-08/09/12 + SIM-12: MIR passes, mlint, race detection ═══
+
+COMP-08 (sign extension elimination, Medium) ditutup:
+   - crates/maria-compiler/src/mir/opt.rs: sign_ext_eliminate()
+     • Shr/Shl by 0 → identity (Nop + rewrite all reads → lhs)
+     • Shr/Shl by N >= width → Const 0 (shift melebihi lebar)
+     • ditambahkan ke pipeline fixed-point setelah strength_reduce
+   - 5 unit test: shr_zero, shl_zero, shl_past_width, shr_past_width,
+     non_constant_no_fold
+
+COMP-09 (X/Z constant propagation, Medium) ditutup:
+   - crates/maria-compiler/src/mir/opt.rs: xz_propagate()
+     • AND with 0 → 0 (kill), AND with all-ones → identity
+     • OR/XOR with 0 → identity (Nop + rewrite reads)
+     • MUL with 0 → 0, MUL with 1 → identity
+     • ADD/SUB with 0 → identity
+   - 7 unit test: and_zero, and_all_ones, or_zero, mul_zero, mul_one,
+     add_zero, sub_zero
+
+COMP-12 (case analysis parallel_case/full_case, High) ditutup:
+   - crates/maria-tools/src/lint.rs: find_case_analysis() + CLI flag
+     • --case-analysis flag di LintArgs + MlintArgs (src/cli.rs)
+     • find_case_analysis() walk AST: Stmt::Case/CaseX/CaseZ tanpa
+       default → warning "case tanpa 'default' → potensi latch"
+     • UniqueCase/PriorityCase tanpa default → warning khusus
+     • dipanggil dari lint_items() untuk semua always block
+
+SIM-12 (RTL locking race detection, High) ditutup:
+   - crates/maria-simulator/src/simulator/engine/mod.rs: signal_write_types
+     HashMap<SignalId, bool> (true=blocking, false=NBA)
+   - write_lvalue() parameter baru is_blocking: bool (7 callers updated)
+   - Deteksi mixed blocking/non-blocking write ke signal yang sama
+     dalam satu delta cycle → warning NbaWriteConflict
+   - Clear signal_write_types setiap delta baru
+
+📊 VERIFIKASI ROUND 85b:
+   - cargo build --workspace: 0 error
+   - cargo nextest run --workspace: 2167 passed, 0 failed (+12 test baru)
+   - audit.txt diupdate
 
 ═══ ROUND 86 — WAV-19: VCD background writer thread ═══
 

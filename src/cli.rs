@@ -121,6 +121,10 @@ pub struct MlintArgs {
     #[arg(long)]
     pub fsm: bool,
 
+    /// Check: case analysis (parallel_case/full_case + missing default)
+    #[arg(long)]
+    pub case_analysis: bool,
+
     /// Suppress output sukses
     #[arg(short = 'q', long)]
     pub quiet: bool,
@@ -905,6 +909,16 @@ pub struct Cli {
     /// Maximum unrolling bound for BMC (default: 20)
     #[arg(long = "formal-bound", default_value = "20")]
     pub formal_bound: u64,
+
+    /// Cycle-based simulation mode (SIM-20 tahap 1): eksekusi synchronous
+    /// murni tanpa event queue — semua comb dieval per cycle, semua FF
+    /// commit NBA sekali per edge.
+    #[arg(long = "cycle")]
+    pub cycle_mode: bool,
+
+    /// Periode clock (unit waktu desain) untuk --cycle (default 10).
+    #[arg(long = "cycle-period", default_value = "10")]
+    pub cycle_period: u64,
 
     /// Enable k-induction proof after BMC (FORMAL-03/04) — iterasi k=1..8;
     /// UNSAT di kedalaman k → invariant terbukti untuk SEMUA depth

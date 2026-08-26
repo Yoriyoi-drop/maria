@@ -1810,6 +1810,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     engine.use_dag_parallel = cli.parallel;
     engine.use_mir_jit = cli.jit_body;
     engine.use_timing_wheel = cli.use_timing_wheel;
+    // SIM-20: cycle-based mode (--cycle / --cycle-period)
+    engine.set_cycle_based(cli.cycle_mode);
+    engine.set_cycle_period(cli.cycle_period);
     engine.glitch_window = cli.glitch_window;
     if cli.glitch_window > 0 && !cli.quiet {
         println!(
@@ -2921,6 +2924,9 @@ fn run_fast(
     engine.use_packed_eval = cli.packed;
     engine.use_dag_parallel = cli.parallel;
     engine.use_cycle_fusion = cli.cycle_fusion;
+    // SIM-20: cycle-based mode (--cycle / --cycle-period)
+    engine.set_cycle_based(cli.cycle_mode);
+    engine.set_cycle_period(cli.cycle_period);
     engine.use_timing_wheel = cli.use_timing_wheel;
     engine.glitch_window = cli.glitch_window;
     if cli.glitch_window > 0 && !cli.quiet {
@@ -3404,6 +3410,7 @@ fn dispatch_lint(a: &crate::cli::MlintArgs) -> ! {
         latch: a.latch,
         loop_check: a.loop_check,
         fsm: a.fsm,
+        case_analysis: a.case_analysis,
         quiet: a.quiet,
     };
     exit_tool(maria_api::tools::lint::run(&args));

@@ -23,6 +23,7 @@ pub struct LintArgs<'a> {
     pub latch: bool,
     pub loop_check: bool,
     pub fsm: bool,
+    pub case_analysis: bool,
     pub quiet: bool,
 }
 
@@ -44,6 +45,7 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
     let do_latch = chk(args.latch);
     let do_loop = chk(args.loop_check);
     let do_fsm = chk(args.fsm);
+    let do_case_analysis = chk(args.case_analysis);
 
     let (design, _session) = open_project(args.targets, args.incdirs, args.defines, None)?;
 
@@ -56,6 +58,7 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
             do_latch,
             do_loop,
             do_fsm,
+            do_case_analysis,
             &mut findings,
         );
     }
@@ -71,6 +74,7 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
             do_latch,
             do_loop,
             do_fsm,
+            do_case_analysis,
             &mut findings,
         );
     }
@@ -114,6 +118,7 @@ fn lint_module(
     do_latch: bool,
     do_loop: bool,
     do_fsm: bool,
+    do_case_analysis: bool,
     out: &mut Vec<Finding>,
 ) {
     lint_items(
@@ -126,6 +131,7 @@ fn lint_module(
         do_latch,
         do_loop,
         do_fsm,
+        do_case_analysis,
         out,
     );
 }
@@ -140,6 +146,7 @@ fn lint_items(
     do_latch: bool,
     do_loop: bool,
     do_fsm: bool,
+    do_case_analysis: bool,
     out: &mut Vec<Finding>,
 ) {
     // ── Kumpulkan deklarasi sinyal (decls + decl items + ports) ──
@@ -289,6 +296,13 @@ fn lint_items(
                 continue;
             }
             find_fsm(scope, &block.stmts, out);
+        }
+    }
+
+    // COMP-12: Case analysis — deteksi case tanpa default + unique/priority overlap
+    if do_case_analysis {
+        for block in &always_blocks {
+            find_case_analysis(scope, &block.stmts, out);
         }
     }
 }
@@ -1062,6 +1076,82 @@ fn case_item_count(stmt: &Stmt) -> usize {
         | Stmt::Unique0Case { items, .. }
         | Stmt::CaseInside { items, .. } => items.len(),
         _ => 0,
+    }
+}
+
+/// COMP-12: Case analysis — deteksi case tanpa default + unique/priority overlap.
+///
+/// IEEE 1800-2017 §12.5.2: `unique case` tanpa default dan 0 match =
+/// warning (warna tak terdefinisi). `priority case` tanpa default =
+/// warning bila semua label konstanta dan tidak ada yang match.
+/// Selain itu, case tanpa default di blok kombinasional → potensi latch.
+fn find_case_analysis(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Case { items, default, .. }
+            | Stmt::CaseX { items, default, .. }
+            | Stmt::CaseZ { items, default, .. } => {
+                // Case biasa tanpa default di kombinasional → potensi latch
+                if default.is_none() && !items.is_empty() {
+                    out.push(Finding {
+                        module: scope.to_string(),
+                        check: "case",
+                        severity: "W",
+                        message: format!(
+                            "case tanpa 'default' ({} item) → potensi latch atau nilai tak terdefinisi",
+                            items.len()
+                        ),
+                    });
+                }
+            }
+            Stmt::UniqueCase { items, default, .. } => {
+                // unique case tanpa default → warning
+                if default.is_none() && !items.is_empty() {
+                    out.push(Finding {
+                        module: scope.to_string(),
+                        check: "case_unique",
+                        severity: "W",
+                        message: format!(
+                            "unique case tanpa 'default' ({} item) → bila tidak ada match, nilai tak terdefinisi",
+                            items.len()
+                        ),
+                    });
+                }
+            }
+            Stmt::PriorityCase { items, default, .. } => {
+                // priority case tanpa default → warning
+                if default.is_none() && !items.is_empty() {
+                    out.push(Finding {
+                        module: scope.to_string(),
+                        check: "case_priority",
+                        severity: "W",
+                        message: format!(
+                            "priority case tanpa 'default' ({} item) → bila tidak ada match, nilai tak terdefinisi",
+                            items.len()
+                        ),
+                    });
+                }
+            }
+            Stmt::Unique0Case { .. } => {
+                // unique0 case: tanpa default = normal (0 match → 0 value)
+            }
+            Stmt::Block { stmts }
+            | Stmt::NamedBlock { stmts, .. }
+            | Stmt::LoopForever { stmts } => {
+                find_case_analysis(scope, stmts, out);
+            }
+            Stmt::IfElse {
+                true_branch,
+                false_branch,
+                ..
+            } => {
+                find_case_analysis(scope, std::slice::from_ref(true_branch), out);
+                if let Some(fb) = false_branch {
+                    find_case_analysis(scope, std::slice::from_ref(fb), out);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

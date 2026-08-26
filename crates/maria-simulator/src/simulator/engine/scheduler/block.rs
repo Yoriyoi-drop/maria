@@ -181,7 +181,7 @@ impl SimulationEngine {
                                 return Ok(false);
                             }
                         }
-                        self.write_lvalue(lhs, val)?;
+                        self.write_lvalue(lhs, val, true)?;
                     }
                 }
                 IrStmt::NonBlockingAssign { lhs, rhs, delay } => {
@@ -227,7 +227,7 @@ impl SimulationEngine {
                 }
                 IrStmt::Force { lvalue, rhs } => {
                     let val = self.eval_assign_rhs(rhs, lvalue)?;
-                    self.write_lvalue(lvalue, val)?;
+                    self.write_lvalue(lvalue, val, true)?;
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
                         self.forced_signals.insert(id);
                     }
@@ -2240,7 +2240,7 @@ impl SimulationEngine {
                         // segera (konstruk ilegal di fungsi; fallback aman).
                         let _ = delay;
                         let val = self.eval_assign_rhs(rhs, lhs)?;
-                        self.write_lvalue(lhs, val)?;
+                        self.write_lvalue(lhs, val, true)?;
                     }
                 }
                 IrStmt::NonBlockingAssign { lhs, rhs, delay } => {
@@ -2252,7 +2252,7 @@ impl SimulationEngine {
                 }
                 IrStmt::Force { lvalue, rhs } => {
                     let val = self.eval_assign_rhs(rhs, lvalue)?;
-                    self.write_lvalue(lvalue, val)?;
+                    self.write_lvalue(lvalue, val, true)?;
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
                         self.forced_signals.insert(id);
                     }

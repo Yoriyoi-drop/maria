@@ -194,6 +194,8 @@ impl SimulationEngine {
             use_dag_parallel: false,
             clock_analysis: None,
             use_cycle_fusion: false,
+            cycle_based: false,
+            cycle_period: 10,
             mir_jit: maria_compiler::mir::MirJitCompiler::new(),
             use_mir_jit: false,
             diag_sink: maria_core::diagnostics::DiagSink::new(),
@@ -203,6 +205,7 @@ impl SimulationEngine {
             cur_src_line: std::cell::Cell::new(0),
             cur_src_col: std::cell::Cell::new(0),
             signal_writers: std::collections::HashMap::new(),
+            signal_write_types: std::collections::HashMap::new(),
             signal_write_count: std::collections::HashMap::new(),
             // Delta limit default 100_000 (bukan 20M) — siklus delta > 100k
             // pada SATU time step adalah tanda kombinational loop / osilasi;
@@ -483,6 +486,17 @@ impl SimulationEngine {
 
     pub fn set_use_cycle_fusion(&mut self, enabled: bool) {
         self.use_cycle_fusion = enabled;
+    }
+
+    /// SIM-20: aktifkan mode cycle-based (`--cycle`). Desain yang tidak
+    /// cocok otomatis fallback ke event-driven (pesan fallback dicetak).
+    pub fn set_cycle_based(&mut self, enabled: bool) {
+        self.cycle_based = enabled;
+    }
+
+    /// SIM-20: set periode clock mode cycle-based (unit waktu desain).
+    pub fn set_cycle_period(&mut self, period: u64) {
+        self.cycle_period = period.max(2);
     }
 
     pub fn set_use_mir_jit(&mut self, enabled: bool) {
@@ -896,7 +910,21 @@ impl SimulationEngine {
         let mut last_active_wall = std::time::Instant::now();
         let mut stall_warned = false;
 
-        while self.running && self.sim_limit.allows(self.state.time) && !self.is_cancelled() {
+        // ── SIM-20: cycle-based simulation mode (opt-in --cycle) ──
+        // Clock didrive internal scheduler tanpa iterasi delta; desain yang
+        // tidak cocok (multi-clock, timed wait) → Ok(false) → fallback
+        // event-driven di bawah. End-of-run cleanup (final blocks, reports,
+        // VPI/VHPI cleanup) TETAP jalan lewat tail run() yang sama.
+        let mut cycle_mode_done = false;
+        if self.cycle_based {
+            cycle_mode_done = crate::simulator::engine::cycle_based::run_cycle_based(self)?;
+        }
+
+        while !cycle_mode_done
+            && self.running
+            && self.sim_limit.allows(self.state.time)
+            && !self.is_cancelled()
+        {
             let step_start_events = self.sim_perf.counters.events_processed;
             let t = self.state.time as usize;
 
@@ -1431,6 +1459,7 @@ impl SimulationEngine {
 
                 // Race detection: reset writer tracking setiap delta baru
                 self.signal_writers.clear();
+                self.signal_write_types.clear();
 
                 // Sched-04: Refresh preponed snapshot every delta cycle for edge detection
                 let num_sigs = self.state.signals.len();

@@ -1,5 +1,6 @@
 pub mod core;
 pub mod coverage;
+pub mod cycle_based;
 pub mod debug;
 pub mod engine_utils;
 pub mod eval;
@@ -432,6 +433,12 @@ pub struct SimulationEngine {
     pub clock_analysis: Option<ClockDomainAnalysis>,
     /// Enable cycle-based simulation fusion
     pub use_cycle_fusion: bool,
+    /// SIM-20: cycle-based simulation mode (`--cycle`) — clock didrive
+    /// internal scheduler tanpa iterasi delta IEEE 1800 (subset desain,
+    /// lihat engine/cycle_based.rs).
+    pub cycle_based: bool,
+    /// SIM-20: periode clock (unit waktu desain) untuk mode cycle-based.
+    pub cycle_period: u64,
     /// MIR JIT compiler for compiled-code simulation path
     pub mir_jit: Option<maria_compiler::mir::MirJitCompiler>,
     /// Enable MIR JIT for combinational process evaluation
@@ -453,6 +460,8 @@ pub struct SimulationEngine {
     pub cur_src_col: std::cell::Cell<usize>,
     /// Race detection: tracks which process (ObjId) last wrote each signal in current delta
     pub signal_writers: std::collections::HashMap<SignalId, Option<ObjId>>,
+    /// SIM-12: tracks write type per signal per delta (true = blocking, false = non-blocking)
+    pub signal_write_types: std::collections::HashMap<SignalId, bool>,
     /// Race detection: write count per signal per time step (for oscillation detection)
     pub signal_write_count: std::collections::HashMap<SignalId, u32>,
     /// Max delta cycles per time step before abort (configurable for testing)
