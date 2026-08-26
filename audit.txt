@@ -1067,7 +1067,16 @@ COMP-07: ✅ Bit-width analysis — FIXED (stale; CRIT-043 + width.rs)
 COMP-08:[] Tidak ada sign extension elimination (Medium)
 COMP-09:[] Tidak ada X/Z propagation optimization (Medium)
 COMP-10:[] Tidak ada gate-level optimization (High)
-COMP-11:[] Tidak ada FSM extraction/minimization (High)
+COMP-11: ⚠️ IN PROGRESS (ROUND 105) — FSM extraction tahap 1:
+         crates/maria-synth/src/fsm.rs (BARU) — deteksi & ekstraksi FSM
+         dari proses Sequential: state register = selector `case` yang
+         juga ditulis NBA di proses yang sama; transisi dari label case
+         konstanta → konstanta NBA-write; default branch menambah keluar
+         utk state tanpa keluar. try_const_u64 utk evaluasi label.
+         Test 3 unit (3-state cycle lengkap, tanpa Sequential kosong,
+         selector tanpa NBA → bukan FSM). MASIH OPEN: minimisasi/
+         re-encoding state, output Mealy/Moore, lintas-always FSM,
+         wiring laporan ke CLI synth.
 COMP-12:[] Tidak ada case analysis for parallel_case/full_case (High)
 COMP-13:[] Tidak ada clock gating inference (Medium)
 COMP-14:[] Tidak ada power optimization (Medium)
@@ -4446,6 +4455,35 @@ tidak digabung; CSE tidak melintasi Label).
 📊 VERIFIKASI ROUND 104:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2151 passed, 0 failed (+3)
+
+═══ ROUND 105 — COMP-11 FSM extraction (tahap 1 dari rencana cicilan) ═══
+
+Kerja bertahap COMP-11 (High) — tahap 1 DETEKSI & EKSTRAKSI selesai;
+item tetap ⚠️ IN PROGRESS (minimisasi/encoding, Mealy/Moore output,
+lintas-always, wiring CLI synth = tahap 2+).
+
+✅ FSM EXTRACTION TAHAP 1 (crates/maria-synth/src/fsm.rs BARU):
+   - Deteksi state register: sinyal yang menjadi SELECTOR `case` DAN
+     ditulis NBA di proses Sequential yang sama (has_nba_write_to
+     menelusuri Block/NamedBlock/If/Case).
+   - Ekstraksi transisi: label case konstanta (try_const_u64 — Const/
+     Signed/FillLit + aritmetika Add/Sub/Mul/BitAnd/BitOr/BitXor) →
+     state saat ini; NBA-write konstanta pertama ke state reg dalam
+     body item → state berikutnya.
+   - Default branch: menambah transisi keluar untuk state yang belum
+     punya (konservatif, tanpa duplikat).
+   - Output terstruktur: FsmInfo { process_name, state_signal, width,
+     states sorted, transitions }, siap dikonsumsi report/synth CLI.
+
+Test (+3 unit inline fsm.rs): test_fsm_extraction_three_states (3
+state + 3 transisi membentuk cycle), tanpa proses Sequential kosong,
+selector tanpa NBA-write → bukan FSM.
+
+📊 VERIFIKASI ROUND 105:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2154 passed, 0 failed (+3)
+   - Catatan: satu run paralel sempat 4 fail (interferensi state global
+     antar crate saat concurrent) — rerun terisolasi & full suite hijau.
 
 ========================================
 END OF AUDIT REPORT

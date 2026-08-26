@@ -9,6 +9,7 @@
 //! Pipeline lengkap `IrDesign → Netlist` diekspos via `synthesize()`.
 
 pub mod emit;
+pub mod fsm;
 pub mod infer;
 pub mod netlist;
 pub mod opt;
