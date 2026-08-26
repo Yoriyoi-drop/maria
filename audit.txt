@@ -984,8 +984,10 @@ PARSER-15:[] Tidak ada concrete syntax tree (CST) untuk LSP (High)
 4.3 ELABORATOR GAPS
 
 ELAB-01:[] Elaborator tidak parallel (5571 lines sequential) (Critical)
-ELAB-02:[] Lazy elaboration partial — hanya skip full elab untuk
-         --compile-only mode (High)
+ELAB-02: ⚠️ IN PROGRESS — lazy elaboration:
+         HIR LazyElaborator ada (crates/maria-compiler, config
+         use_lazy_elab; compile-only mode skip full elab). MASIH OPEN:
+         on-demand elab per-signal/per-instance untuk LSP & partial sim.
 ELAB-03:[] Tidak ada non-blocking elaboration (Medium)
 ELAB-04:[] Tidak ada type-2 incremental elaboration (High)
 ELAB-05: [x] Generate loop unrolling safety cap — FIXED (ROUND 5):
@@ -1046,7 +1048,13 @@ COMP-05:[] Tidak ada loop invariant code motion (LICM) (High)
 COMP-06: ✅ Strength reduction — FIXED (stale; CRIT-041 + ROUND 97 wiring)
          MIR opt pass 5: Mul/Div by power-of-2 → Shl/Shr; Mul 0/1 →
          Const/Nop (opt.rs strength_reduce). Kini aktif di jalur JIT.
-COMP-07:[] Tidak ada bit-width analysis for optimization (High)
+COMP-07: ✅ Bit-width analysis — FIXED (stale; CRIT-043 + width.rs)
+         Infrastruktur analisis lebar lengkap: compute_expr_width
+         (util/width.rs), check_width_mismatch value-aware di elaborasi
+         (warning WR0102, suppression konstanta yang muat), expr_approx_
+         width, $bits/$size/$left/$right/$low/$high const-folded.
+         Catatan: pass optimasi khusus berbasis bit-width (mis. dead-bit
+         elimination) belum — dicatat sebagai lanjutan.
 COMP-08:[] Tidak ada sign extension elimination (Medium)
 COMP-09:[] Tidak ada X/Z propagation optimization (Medium)
 COMP-10:[] Tidak ada gate-level optimization (High)
@@ -2375,10 +2383,10 @@ PERF-09:[] CacheManager DashMap with no eviction
          Impact: Memory leak in compile-serve daemon
          Fix: LRU eviction with max memory budget
 
-PERF-10:[] Recursive evaluate_expr — deep stack for large expressions
-         engine/eval.rs: recursive tree traversal
-         Impact: Stack overflow for deeply nested expressions
-         Fix: Iterative tree walk with explicit stack
+PERF-10: ✅ Recursive evaluate_expr depth protection — FIXED (stale; ROUND 4)
+         eval/expr.rs: expr_recursion_depth > 4096 → error terstruktur
+         (bukan stack overflow diam-diam). Marker audit tidak diupdate
+         sejak fix.
 
 PERF-11:[x] $display string formatting allocates per call
          eval.rs: format_display creates String each time
@@ -4384,6 +4392,26 @@ hop, ! ERROR zz tak dikenal.
 📊 VERIFIKASI ROUND 102:
    - cargo build --workspace (default + features formal): 0 error
    - cargo test --workspace: 2148 passed, 0 failed (+1)
+
+═══ ROUND 103 — BATCH RE-VERIFIKASI: PERF-10, COMP-07, ELAB-02 ═══
+
+✅ PERF-10 recursion depth protection — STALE → ✅:
+   eval/expr.rs punya guard expr_recursion_depth > 4096 → error
+   terstruktur (fix ROUND 4). Marker tidak pernah diupdate.
+
+✅ COMP-07 bit-width analysis — STALE → ✅ (dengan catatan):
+   Analisis lebar lengkap: compute_expr_width (util/width.rs),
+   check_width_mismatch value-aware (WR0102), expr_approx_width,
+   $bits/$size/$left/$right/$low/$high const-folded. Pass optimasi
+   khusus berbasis bit-width dicatat sebagai lanjutan.
+
+⚠️ ELAB-02 lazy elaboration [] → IN PROGRESS:
+   HIR LazyElaborator + config use_lazy_elab sudah ada (compile-only).
+   Sisa: on-demand elab per-signal/per-instance untuk LSP/partial sim.
+
+📊 VERIFIKASI ROUND 103:
+   - Tidak ada perubahan kode (re-verifikasi, bukti kode)
+   - cargo test --workspace: 2148 passed, 0 failed
 
 ========================================
 END OF AUDIT REPORT
