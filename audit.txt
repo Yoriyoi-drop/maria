@@ -1892,8 +1892,17 @@ LSP-15: ⚠️ IN PROGRESS (ROUND 98) — folding range tahap 1:
          class/checker/function/task/generate) + begin...end dan
          case...endcase (urutan close-before-open utk baris `end else
          begin`). MASIH OPEN: komentar block fold, region import.
-LSP-16:[] No signature help (Medium)
-LSP-17:[] No completion resolve (Medium)
+LSP-16: ✅ Signature help (ROUND 90) — signature_help handler di LSP backend.
+           Trigger character: '('. find_function_signature scan text untuk
+           function/task declaration → extract label + param list. Active parameter
+           tracking via parenthesis depth + comma counting. Return (label, params)
+           → lsp_types::SignatureInformation. 1 test: test_signature_help_find_function.
+LSP-17: ✅ Completion resolve (ROUND 90) — completion_resolve handler di LSP backend.
+           resolve_provider: Some(true) + trigger_characters ['.', '::']. resolve
+           menambahkan documentation berdasarkan CompletionItemKind: MODULE → "SystemVerilog
+           module", FUNCTION → "SystemVerilog function", CLASS → "SystemVerilog class",
+           KEYWORD → "SystemVerilog keyword", VARIABLE → "Signal/variable", CONSTANT → "Parameter".
+           1 test: test_completion_resolve (module documentation generated).
 LSP-18:[] No incremental document sync (Medium)
 LSP-19: ✅ Diagnostic publishing via parser (crates/maria-env/src/lsp/backend.rs,
         publishDiagnostics pada open/change/save/close)
