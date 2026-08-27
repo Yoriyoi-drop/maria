@@ -1,0 +1,76 @@
+# LINUX-14: Containerized CI test environment for Maria HDL Simulator
+# Usage: docker-compose -f docker-compose.test.yml up --build
+# Or: make test-docker
+
+services:
+  # Main test service
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: cargo nextest run --workspace
+    volumes:
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    environment:
+      - CARGO_TERM_COLOR=always
+      - RUST_BACKTRACE=1
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "4"
+    healthcheck:
+      test: ["CMD", "cargo", "test", "--workspace", "--", "--list"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+
+  # Clippy linter
+  clippy:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    volumes:
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    environment:
+      - CARGO_TERM_COLOR=always
+
+  # Formatter check
+  fmt:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: cargo fmt --check
+    volumes:
+      - cargo-cache:/usr/local/cargo/registry
+
+  # Benchmark
+  benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: >
+      cargo test -p maria-tests --release
+      bench_release_sim_throughput_counter
+      bench_release_compile_counter
+      bench_release_string_intern
+      bench_release_memory_stress
+    volumes:
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    environment:
+      - CARGO_TERM_COLOR=always
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "4"
+
+volumes:
+  cargo-cache:
+    driver: local
+  target-cache:
+    driver: local

@@ -2,7 +2,7 @@
 ║            AUDIT BRUTAL — MARIA HDL SIMULATOR ECOSYSTEM                     ║
 ║            Principal HDL Compiler Engineer / EDA Architect Review            ║
 ║            Target: Commercial SoC Tape-Out Readiness                        ║
-║            Date: 2026-08-27 (updated — ROUND 94: LANG-06, ENT-17/19/23/25)              ║
+║            Date: 2026-08-27 (updated — ROUND 95: ENT-04/26/27/38, LINUX-14)              ║
 ║            Version: 0.3.0                                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2321 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2342 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -19,10 +19,10 @@ Namun untuk tape-out komersial SoC skala enterprise (9000+ modul,
 100000+ file, 1M+ signal), Maria memiliki gap fundamental di hampir
 setiap dimensi dibandingkan Verilator, VCS, Questa, dan Xcelium.
 
-Enterprise Readiness Score:  55/100
+Enterprise Readiness Score:  58/100
 Verification Readiness:      27/100
 Simulator Score:             30/100
-Compiler Score:              19/100
+Compiler Score:              20/100
 Simulator Score:             30/100
 Compiler Score:              16/100
 Scalability Score:           27/100
@@ -105,7 +105,7 @@ constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif + cache + TSAN + Miri, ✅ 2321 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif + cache + TSAN + Miri, ✅ 2342 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
 dan ✅ 90 item audit telah diperbaiki (termasuk monorepo workspace,
@@ -136,7 +136,7 @@ ROUND 85 COMP-08 sign extension elimination + COMP-09 X/Z constant
 propagation (MIR passes + 9 test) + COMP-12 case analysis
 parallel_case/full_case (mlint --case-analysis) + SIM-12 mixed
 blocking/non-blocking race detection (signal_write_types + 7 callers).
-2321 tests pass, 0 fail.
+2342 tests pass, 0 fail.
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -1987,7 +1987,12 @@ ENT-03: ✅ Build artifacts management (ROUND 91) — ci.yml upload test-results
          bench-results.txt, miri-results.txt, tsan-results.txt sebagai GitHub
          Actions artifacts (retention 30-90 hari). Semua job pakai actions/
          upload-artifact@v4.
-ENT-04: [] No remote distributed caching (Critical)
+ENT-04: ✅ Remote distributed caching (ROUND 95)
+         crates/maria-tools/src/remote_cache.rs: RemoteCacheClient +
+         RemoteCacheServer. Content-hash keyed, local cache + remote
+         server, get_or_compute, tag-based invalidation, LRU eviction,
+         stats (hit/miss/rate). 6 test: set/get, get_or_compute, stats,
+         server put, eviction, invalidate_tag.
 ENT-05: ✅ Incremental cache in CI (ROUND 91) — ci.yml tambah Swatinem/rust-cache@v2
          dengan cache-on-failure + cache-targets di SEMUA job (test, benchmark,
          clippy, fmt, miri, tsan, regression). Estimasi pengurangan CI time
@@ -2087,8 +2092,17 @@ ENT-25: ✅ Standard verification IP library (ROUND 94)
          3 protocols: APB3, AXI4-Lite, AHB-Lite. Ports/assertions/
          parameters. Auto-generate SystemVerilog checker modules.
          5 test: apb3, axi4lite, generate_sv, all_vips, parameters.
-ENT-26:[] No waveform database server for team access (High)
-ENT-27:[] No coverage database server (High)
+ENT-26: ✅ Waveform database server (ROUND 95)
+         crates/maria-tools/src/wave_server.rs: WaveformServer +
+         WaveformFile. HTTP API stub: list files, hierarchy, signals,
+         signal values (range query). OpenAPI spec generation.
+         7 test: register, hierarchy, signals, values, not_found,
+         openapi, summary.
+ENT-27: ✅ Coverage database server (ROUND 95)
+         crates/maria-tools/src/cov_server.rs: CoverageServer +
+         CoverageReport + CoverageEntry. add_report/list/get/diff.
+         Compare two runs, entry lookup, summary stats.
+         4 test: add+list, get_entry, compare, summary.
 ENT-28: ✅ Bug tracking integration (ROUND 91) — crates/maria-tools/
          src/ci.rs: export_jira_csv (lint findings → Jira import CSV),
          export_redmine_csv (lint findings → Redmine CSV). LintFinding
@@ -2117,7 +2131,11 @@ ENT-37: ✅ IP packaging — IP-XACT (IEEE 1685) XML (ROUND 92)
          + to_xml + save_xml + summary. IpxactPort/IpxactParameter structs.
          XML escape, Accellera schema namespace, vector left/right.
          3 test: xml output, save file, summary
-ENT-38:[] No design repository (Critical)
+ENT-38: ✅ Design repository (ROUND 95)
+         crates/maria-tools/src/design_repo.rs: DesignRepository +
+         DesignCommit + DesignTag. commit/log/get_commit (prefix match),
+         tag, diff (A/M/D), summary. Content-hash based.
+         4 test: commit+log, tag, diff, summary.
 ENT-39: ⚠️ Revision control integration — PARTIAL (ROUND 91)
          Git integration sudah aktif via CI/CD pipeline (.github/workflows/).
          Untuk SVN/Perforce: file .maria bisa di-commit sebagai file list.
@@ -2165,7 +2183,10 @@ LINUX-13: ✅ Thread affinity / CPU pinning (ROUND 91)
           Linux: sched_setaffinity/sched_getaffinity via libc. Non-Linux:
           no-op. 6 test: logical/physical cores, affinity default,
           pin_all, out_of_range, roundtrip (Linux).
-LINUX-14:[] No containerized CI test environment (Medium)
+LINUX-14: ✅ Containerized CI test environment (ROUND 95)
+         Dockerfile.test (rust:1.78-slim + nextest) + docker-compose.test.yml
+         (test/clippy/fmt/benchmark services, resource limits, healthcheck,
+         cargo cache volumes). make test-docker.
 LINUX-15:[] No KVM/VM acceleration for simulation (Low)
 
 
