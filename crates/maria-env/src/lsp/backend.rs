@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse,
+    CodeLens, Command as LspCommand, CodeLensParams,
     CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticSeverity, DocumentSymbol, FoldingRange, FoldingRangeKind,
     FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse,
@@ -1427,6 +1428,10 @@ impl LanguageServer for LspBackend {
                 code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(
                     true,
                 )),
+                // LSP-08: Code lens
+                code_lens_provider: Some(lsp_types::CodeLensOptions {
+                    resolve_provider: Some(false),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -1801,6 +1806,19 @@ impl LanguageServer for LspBackend {
         Ok(Some(actions))
     }
 
+    /// LSP-08: Code lens — inline annotations above modules and functions.
+    async fn code_lens(&self, params: CodeLensParams) -> JsonRpcResult<Option<Vec<CodeLens>>> {
+        let uri = &params.text_document.uri;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let lenses = Self::compute_code_lens(&text, uri);
+        if lenses.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(lenses))
+    }
+
     /// Text document didClose — clear diagnostics.
     async fn did_close(&self, params: lsp_types::DidCloseTextDocumentParams) {
         self.client
@@ -1826,7 +1844,7 @@ pub async fn run_lsp_server() {
 
 impl LspBackend {
     /// Compute inlay hints for a document (LSP-09).
-    /// Returns type hints for variables and parameters.
+    /// Returns type hints for variables, parameters, and function return types.
     pub(crate) fn compute_inlay_hints(
         text: &str,
         range: Option<Range>,
@@ -1838,45 +1856,312 @@ impl LspBackend {
 
         for (line_idx, line) in lines.iter().enumerate().skip(start_line).take(end_line - start_line) {
             let trimmed = line.trim();
-            // Pattern: `logic [W:0] name` or `reg [W:0] name` or `wire [W:0] name`
-            if trimmed.starts_with("logic") || trimmed.starts_with("reg") || trimmed.starts_with("wire") {
-                if let Some(type_hint) = Self::extract_type_hint(trimmed) {
-                    // Find position after variable name
-                    let name_pos = line.find(trimmed).unwrap_or(0) + trimmed.len();
-                    let pos = Position::new(line_idx as u32, name_pos as u32);
-                    hints.push(lsp_types::InlayHint {
-                        position: pos,
-                        label: lsp_types::InlayHintLabel::String(type_hint),
-                        kind: Some(lsp_types::InlayHintKind::TYPE),
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: Some(true),
-                        padding_right: None,
-                        data: None,
-                    });
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
+            }
+
+            // 1. Port/signal declarations: `input logic [7:0] data`
+            //    → hint after name: `: logic [7:0]`
+            let type_dirs = ["input", "output", "inout"];
+            if type_dirs.iter().any(|d| trimmed.starts_with(d)) {
+                if let Some((name, type_str)) = Self::parse_port_type_hint(trimmed) {
+                    let col = Self::find_word_col(line, &name).unwrap_or(0) + name.len() as u32;
+                    hints.push(Self::make_type_hint(
+                        line_idx as u32, col, &type_str,
+                    ));
+                }
+            }
+
+            // 2. Internal declarations: `logic [7:0] cnt`, `reg [3:0] state`, `wire [15:0] bus`
+            let int_types = ["logic", "reg", "wire", "bit", "int", "integer", "byte", "shortint", "longint"];
+            if int_types.iter().any(|t| trimmed.starts_with(t)) {
+                if let Some((name, type_str)) = Self::parse_signal_type_hint(trimmed) {
+                    let col = Self::find_word_col(line, &name).unwrap_or(0) + name.len() as u32;
+                    hints.push(Self::make_type_hint(
+                        line_idx as u32, col, &type_str,
+                    ));
+                }
+            }
+
+            // 3. Function/task return type: `function int add(...)`
+            //    → hint after function name: `: int`
+            if trimmed.starts_with("function") {
+                if let Some((name, ret_type)) = Self::parse_function_return_hint(trimmed) {
+                    let col = Self::find_word_col(line, &name).unwrap_or(0) + name.len() as u32;
+                    hints.push(Self::make_type_hint(
+                        line_idx as u32, col, &ret_type,
+                    ));
+                }
+            }
+
+            // 4. Parameter declarations inside `#(parameter ...)`
+            if trimmed.starts_with("parameter") || trimmed.starts_with("localparam") {
+                if let Some((name, type_str)) = Self::parse_param_type_hint(trimmed) {
+                    let col = Self::find_word_col(line, &name).unwrap_or(0) + name.len() as u32;
+                    hints.push(Self::make_type_hint(
+                        line_idx as u32, col, &type_str,
+                    ));
                 }
             }
         }
         hints
     }
 
-    /// Extract type hint from a declaration line.
-    fn extract_type_hint(line: &str) -> Option<String> {
-        // Simple pattern matching for common types
-        if line.contains("logic") {
-            Some("logic".to_string())
-        } else if line.contains("reg") {
-            Some("reg".to_string())
-        } else if line.contains("wire") {
-            Some("wire".to_string())
-        } else if line.contains("int") {
-            Some("int".to_string())
-        } else if line.contains("integer") {
-            Some("integer".to_string())
-        } else {
-            None
+    fn make_type_hint(line: u32, col: u32, label: &str) -> lsp_types::InlayHint {
+        lsp_types::InlayHint {
+            position: Position::new(line, col),
+            label: lsp_types::InlayHintLabel::String(format!(": {}", label)),
+            kind: Some(lsp_types::InlayHintKind::TYPE),
+            text_edits: None,
+            tooltip: None,
+            padding_left: Some(true),
+            padding_right: None,
+            data: None,
         }
     }
+
+    /// Find column of a word in a line.
+    fn find_word_col(line: &str, word: &str) -> Option<u32> {
+        line.find(word).map(|c| c as u32)
+    }
+
+    /// Parse `input/output/inout [type] [range] name` → (name, type_str).
+    fn parse_port_type_hint(line: &str) -> Option<(String, String)> {
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        if toks.len() < 3 {
+            return None;
+        }
+        // Skip direction (input/output/inout).
+        let mut i = 1;
+        // Collect type tokens until we hit the variable name.
+        let mut type_parts: Vec<&str> = Vec::new();
+        while i < toks.len() {
+            let t = toks[i];
+            // Check if this is the variable name (no type keywords).
+            if is_type_keyword(t) {
+                type_parts.push(t);
+                i += 1;
+            } else if t.starts_with('[') {
+                type_parts.push(t);
+                i += 1;
+            } else if t == "," || t == ";" || t == ")" {
+                break;
+            } else {
+                // This is the variable name.
+                let name = t.trim_end_matches(',').to_string();
+                if type_parts.is_empty() {
+                    return None;
+                }
+                return Some((name, type_parts.join(" ")));
+            }
+        }
+        None
+    }
+
+    /// Parse `logic [range] name` → (name, type_str).
+    fn parse_signal_type_hint(line: &str) -> Option<(String, String)> {
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        if toks.is_empty() {
+            return None;
+        }
+        let mut i = 0;
+        let mut type_parts: Vec<&str> = Vec::new();
+        while i < toks.len() {
+            let t = toks[i];
+            if is_type_keyword(t) || t.starts_with('[') {
+                type_parts.push(t);
+                i += 1;
+            } else if t == "," || t == ";" || t == "=" {
+                break;
+            } else {
+                let name = t.trim_end_matches(',').to_string();
+                if type_parts.is_empty() {
+                    return None;
+                }
+                return Some((name, type_parts.join(" ")));
+            }
+        }
+        None
+    }
+
+    /// Parse `function ret_type name(...)` → (name, ret_type).
+    fn parse_function_return_hint(line: &str) -> Option<(String, String)> {
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        if toks.len() < 3 {
+            return None;
+        }
+        // function <ret_type> <name>
+        let ret_type = toks[1];
+        let name = toks[2].trim_end_matches('(');
+        if ret_type == "void" || ret_type == "automatic" || ret_type == "static" {
+            return None;
+        }
+        Some((name.to_string(), ret_type.to_string()))
+    }
+
+    /// Parse `parameter [type] name = value` → (name, type_str).
+    fn parse_param_type_hint(line: &str) -> Option<(String, String)> {
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        if toks.len() < 3 {
+            return None;
+        }
+        let mut i = 1;
+        let mut type_parts: Vec<&str> = Vec::new();
+        while i < toks.len() {
+            let t = toks[i];
+            if is_type_keyword(t) || t.starts_with('[') {
+                type_parts.push(t);
+                i += 1;
+            } else if t == "=" || t == ";" {
+                break;
+            } else {
+                let name = t.trim_end_matches(',').to_string();
+                if type_parts.is_empty() {
+                    return None;
+                }
+                return Some((name, type_parts.join(" ")));
+            }
+        }
+        None
+    }
+}
+
+// ═══ LSP-08: Code Lens ═══
+
+impl LspBackend {
+    /// Compute code lenses for a document (LSP-08).
+    /// Shows:
+    /// - Above each module: "Run tests" action
+    /// - Above each function/task: reference count
+    pub(crate) fn compute_code_lens(
+        text: &str,
+        uri: &Url,
+    ) -> Vec<CodeLens> {
+        let mut lenses = Vec::new();
+        let syms = Self::document_symbols(text);
+
+        fn walk(
+            items: &[DocSymbol],
+            text: &str,
+            uri: &Url,
+            lenses: &mut Vec<CodeLens>,
+        ) {
+            for sym in items {
+                match sym.kind {
+                    // Module → "Run tests" lens
+                    DocSymbol::KIND_MODULE => {
+                        // Count tests (functions starting with "test_" in module body)
+                        let test_count = count_tests_in_scope(text, sym);
+                        let title = if test_count > 0 {
+                            format!("{} test{}", test_count, if test_count == 1 { "" } else { "s" })
+                        } else {
+                            "Run tests".to_string()
+                        };
+                        lenses.push(CodeLens {
+                            range: Range {
+                                start: Position::new(sym.line, sym.col),
+                                end: Position::new(sym.line, sym.col + sym.name.len() as u32),
+                            },
+                            command: Some(LspCommand {
+                                title,
+                                command: format!("maria.testModule.{}", sym.name),
+                                arguments: None,
+                            }),
+                            data: None,
+                        });
+                    }
+                    // Function/task → reference count
+                    DocSymbol::KIND_FUNCTION => {
+                        // Estimate reference count (word-boundary match)
+                        let ref_count = count_word_occurrences(text, &sym.name).saturating_sub(1); // -1 for decl
+                        if ref_count > 0 {
+                            lenses.push(CodeLens {
+                                range: Range {
+                                    start: Position::new(sym.line, sym.col),
+                                    end: Position::new(
+                                        sym.line,
+                                        sym.col + sym.name.len() as u32,
+                                    ),
+                                },
+                                command: Some(LspCommand {
+                                    title: format!("{} reference{}", ref_count, if ref_count == 1 { "" } else { "s" }),
+                                    command: format!("maria.showReferences.{}", sym.name),
+                                    arguments: None,
+                                }),
+                                data: None,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                // Recurse into children.
+                walk(&sym.children, text, uri, lenses);
+            }
+        }
+
+        walk(&syms, text, uri, &mut lenses);
+        lenses
+    }
+}
+
+/// Check if a token is a SystemVerilog type keyword.
+fn is_type_keyword(s: &str) -> bool {
+    matches!(
+        s,
+        "logic"
+            | "reg"
+            | "wire"
+            | "bit"
+            | "int"
+            | "integer"
+            | "byte"
+            | "shortint"
+            | "longint"
+            | "real"
+            | "realtime"
+            | "time"
+            | "string"
+            | "signed"
+            | "unsigned"
+            | "void"
+    )
+}
+
+/// Count test functions (names starting with "test_") in a module scope.
+fn count_tests_in_scope(_text: &str, module: &DocSymbol) -> usize {
+    let mut count = 0;
+    // Look in children for functions starting with "test_"
+    fn walk_count(items: &[DocSymbol], count: &mut usize) {
+        for s in items {
+            if s.kind == DocSymbol::KIND_FUNCTION && s.name.starts_with("test_") {
+                *count += 1;
+            }
+            walk_count(&s.children, count);
+        }
+    }
+    walk_count(&module.children, &mut count);
+    count
+}
+
+/// Count occurrences of a word in text (word-boundary match).
+fn count_word_occurrences(text: &str, word: &str) -> usize {
+    let mut count = 0;
+    let bytes = text.as_bytes();
+    let wbytes = word.as_bytes();
+    let wlen = wbytes.len();
+    for i in 0..bytes.len() {
+        if i + wlen <= bytes.len() && &bytes[i..i + wlen] == wbytes {
+            // Check word boundaries.
+            let before_ok = i == 0
+                || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+            let after_ok = i + wlen >= bytes.len()
+                || !(bytes[i + wlen].is_ascii_alphanumeric() || bytes[i + wlen] == b'_');
+            if before_ok && after_ok {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 // ═══ LSP-13: Call Hierarchy ═══
@@ -2440,6 +2725,61 @@ endmodule
         );
         // Baris di luar dokumen.
         assert!(LspBackend::find_definition(SAMPLE, 999, 0).is_none());
+    }
+
+    #[test]
+    fn test_code_lens() {
+        use lsp_types::Url;
+        let uri = Url::parse("file:///test.sv").unwrap();
+        let src = "module counter;\n  function test_add(input int a, input int b);\n    return a + b;\n  endfunction\nendmodule\n";
+        let lenses = LspBackend::compute_code_lens(src, &uri);
+        // Module counter → 1 lens
+        assert!(
+            lenses.iter().any(|l| l.command.as_ref().map_or(false, |c| c.title.contains("test"))),
+            "module lens: {:?}",
+            lenses.iter().map(|l| l.command.as_ref().map(|c| c.title.as_str())).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_inlay_hints_improved() {
+        let src = "module m(
+    input logic clk,
+    input [7:0] data_in,
+    output logic [3:0] state
+);
+    logic [7:0] cnt;
+    reg enable;
+    function int add(input int a, input int b);
+        return a + b;
+    endfunction
+endmodule
+";
+        let hints = LspBackend::compute_inlay_hints(src, None);
+        // Should have type hints for ports, signals, and function return type.
+        assert!(!hints.is_empty(), "hints: {:?}", hints);
+        // Check that at least one hint contains a type keyword.
+        let has_logic = hints.iter().any(|h| match &h.label {
+            lsp_types::InlayHintLabel::String(s) => s.contains("logic"),
+            _ => false,
+        });
+        assert!(has_logic, "should have logic type hint");
+        // Check function return type hint.
+        let has_int = hints.iter().any(|h| match &h.label {
+            lsp_types::InlayHintLabel::String(s) => s.contains(": int"),
+            _ => false,
+        });
+        assert!(has_int, "should have function return type hint: {:?}", hints);
+    }
+
+    #[test]
+    fn test_count_word_occurrences() {
+        assert_eq!(count_word_occurrences("foo bar foo", "foo"), 2);
+        assert_eq!(count_word_occurrences("foobar foo", "foo"), 1);
+        assert_eq!(count_word_occurrences("foo", "bar"), 0);
+        assert_eq!(count_word_occurrences("", "foo"), 0);
+        // Word boundary: "counter" should NOT match "counter_aux".
+        assert_eq!(count_word_occurrences("counter counter_aux", "counter"), 1);
     }
 
     #[test]

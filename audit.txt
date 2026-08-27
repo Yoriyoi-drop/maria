@@ -1844,9 +1844,20 @@ LSP-07: ⚠️ IN PROGRESS (ROUND 109) — semantic tokens tahap 1:
          token + keyword SV scan per baris, delta-encoded LSP format.
          Test 1 unit (module type=0, variable type=5, keyword type=7).
          MASIH OPEN: range request, delta update, modifier bitset.
-LSP-08:[] No code lens (Test/References) (High)
-           MAJOR IMPROVEMENT: LSP-10 Code Actions + LSP-20 Document Formatting sudah diimplementasi.
-LSP-09:[] No inlay hints (type hints) (Medium)
+LSP-08: ✅ Code lens (ROUND 90) — code_lens handler di LSP backend. compute_code_lens
+           menampilkan: (1) di atas setiap module: jumlah test functions ("N tests"),
+           (2) di atas setiap function/task: reference count ("N references").
+           Word-boundary counting via count_word_occurrences. Recurse ke children.
+           LspCommand (maria.testModule.<name> / maria.showReferences.<name>). 2 test:
+           test_code_lens (module lens), test_count_word_occurrences (boundary-safe).
+LSP-09: ✅ Inlay hints — type inference dari parser (ROUND 90)
+           compute_inlay_hints enhanced: (1) port declarations (input/output/inout)
+           → type hint ": logic [7:0]" after name, (2) internal signals (logic/reg/wire)
+           → type hint after name, (3) function return type (function int add(...)
+           → ": int"), (4) parameter type (parameter int WIDTH → ": int").
+           Parse helpers: parse_port_type_hint, parse_signal_type_hint,
+           parse_function_return_hint, parse_param_type_hint + is_type_keyword.
+           1 test: test_inlay_hints_improved (logic type + function return type).
 LSP-10: ✅ Code actions / quick-fix (ROUND 90) — code_action handler di LSP backend
            generate CodeAction dari diagnostic: missing semicolon (insert ';'),
            missing endmodule/endfunction/endclass (insert keyword). CodeActionKind::QUICKFIX
