@@ -5,8 +5,10 @@
 //! simulator) agar tidak ada duplikasi logika antara CLI dan GUI.
 
 pub mod bench;
+pub mod batch;
 pub mod check;
 pub mod ci;
+pub mod collab;
 pub mod compile_partition;
 pub mod cov;
 pub mod crypto;
@@ -14,10 +16,12 @@ pub mod elab;
 pub mod license;
 pub mod fmt;
 pub mod gen;
+pub mod ieee_coverage;
 pub mod inspect;
 pub mod ipxact;
 pub mod lint;
 pub mod memcheck;
+pub mod migrate;
 pub mod plugin_market;
 pub mod prof;
 pub mod project;
@@ -25,6 +29,7 @@ pub mod requirements;
 pub mod sim;
 pub mod synth;
 pub mod testdb;
+pub mod vip_lib;
 pub mod wave;
 
 use std::path::{Path, PathBuf};
