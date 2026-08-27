@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2250 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2256 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -19,8 +19,8 @@ Namun untuk tape-out komersial SoC skala enterprise (9000+ modul,
 100000+ file, 1M+ signal), Maria memiliki gap fundamental di hampir
 setiap dimensi dibandingkan Verilator, VCS, Questa, dan Xcelium.
 
-Enterprise Readiness Score:  42/100
-Verification Readiness:      26/100
+Enterprise Readiness Score:  45/100
+Verification Readiness:      27/100
 Simulator Score:             30/100
 Compiler Score:              17/100
 Simulator Score:             30/100
@@ -2042,7 +2042,11 @@ ENT-22: ✅ Version compatibility checking (ROUND 90) — `mcheck --sv-version`.
            dengan occurrence count. CLI: `mcheck *.sv --sv-version`. Output: table
            features with IEEE version + support status.
 ENT-23:[] No design migration assistance (High)
-ENT-24:[] No AXI/AHB/APB protocol verification IP (High)
+ENT-24: ⚠️ AXI/AHB/APB protocol — PARTIAL (ROUND 91)
+         Sisi ANALISIS sudah ada (WAV-16 mwave decode APB/AXI4-Lite/
+         AHB dari VCD). Yang belum: checker runtime VIP (assertion
+         library yang di-drive saat simulasi, bukan post-sim decode).
+         Status: decode available, runtime checker masih open.
 ENT-25:[] No standard verification IP library (Critical)
 ENT-26:[] No waveform database server for team access (High)
 ENT-27:[] No coverage database server (High)
@@ -2050,7 +2054,11 @@ ENT-28: ✅ Bug tracking integration (ROUND 91) — crates/maria-tools/
          src/ci.rs: export_jira_csv (lint findings → Jira import CSV),
          export_redmine_csv (lint findings → Redmine CSV). LintFinding
          struct dengan module/check/severity/message/file/line.
-ENT-29:[] No integration with requirements management (Medium)
+ENT-29: ✅ Requirements management integration (ROUND 91) — crates/
+         maria-tools/src/requirements.rs: RequirementsReport (generate
+         dari mapping + test results), to_csv/to_json/save_csv/summary.
+         load_mappings dari CSV. RequirementMapping struct. 3 test:
+         report, csv, summary.
 ENT-30: [x] IEEE 1801 (UPF) power intent support — FIXED (ROUND 23, CRIT-012)
          crates/maria-simulator/src/upf.rs (~1074 LOC): PowerIntent,
          PowerDomain, SupplyNet, PowerState. X-propagation saat domain
@@ -2089,7 +2097,11 @@ LINUX-09: ✅ Flamegraph generation built-in (ROUND 91) — crates/maria-
          save_folded/save_with_header/top_stacks. Kompatibel flamegraph.pl
          + inferno. 7 test: basic, inactive, top_stacks, save, header,
          reset, demo.
-LINUX-10:[] No valgrind/heaptrack integration built-in (Medium)
+LINUX-10: ✅ Valgrind/heaptrack integration (ROUND 91) — crates/
+          maria-tools/src/memcheck.rs: run_valgrind (parse XML output),
+          run_heaptrack, valgrind_available, heaptrack_available.
+          MemcheckResult struct (definitely/indirectly/possibly lost,
+          still_reachable, errors). 3 test: xml parse, text parse, no-leaks.
 LINUX-11: ✅ Cgroup-aware resource limits (ROUND 91) — crates/maria-
           env/src/env/runtime/cgroup.rs: CgroupLimits detect cgroup v1/v2
           (memory.max/cpu.max). memory_limit_mb/cpu_cores/summary.
