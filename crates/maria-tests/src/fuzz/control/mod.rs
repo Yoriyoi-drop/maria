@@ -2,3 +2,5 @@
 mod loop_fuzz;
 #[cfg(test)]
 mod case_fuzz;
+#[cfg(test)]
+mod always_ff_fuzz;

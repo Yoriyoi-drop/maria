@@ -17346,10 +17346,11 @@ module tb;
     reg [15:0] a, b, c;
     initial begin
         a = 16'hABCD;
-        // {>> N {a}} = full bit-reversal for any N dividing width
-        // 0xABCD = 1010_1011_1100_1101
-        // Bit-reversed: 1011_0011_1101_0101 = 0xB3D5
+        // {>> 8 {a}}: reverse 8-bit slice order => byte swap
+        // 0xABCD -> [0xAB, 0xCD] reversed => [0xCD, 0xAB] = 0xCDAB
         b = {>> 8 {a}};
+        // {>> 1 {a}}: reverse 1-bit slice order => full bit-reversal
+        // 0xABCD = 1010_1011_1100_1101 -> 1011_0011_1101_0101 = 0xB3D5
         c = {>> 1 {a}};
         #1 $finish;
     end
@@ -17366,8 +17367,8 @@ endmodule
         .find(|(n, _)| n == "c")
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
-    assert_eq!(b_val, 0xB3D5, "stream >>8 16hABCD = 0xB3D5");
-    assert_eq!(c_val, 0xB3D5, "stream >>1 16hABCD = 0xB3D5");
+    assert_eq!(b_val, 0xCDAB, "stream >>8 16hABCD = 0xCDAB (byte swap)");
+    assert_eq!(c_val, 0xB3D5, "stream >>1 16hABCD = 0xB3D5 (bit reversal)");
 }
 
 #[test]

@@ -14,3 +14,5 @@ mod compare_chain_fuzz;
 mod complex_expr_fuzz;
 #[cfg(test)]
 mod generate_fuzz;
+#[cfg(test)]
+mod streaming_fuzz;

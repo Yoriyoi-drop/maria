@@ -2172,9 +2172,10 @@ impl SimulationEngine {
                 }
                 let mut result = Vec::new();
                 if op == ">>" {
-                    // reverse bits within each slice, then reverse slice order
+                    // Right streaming: reverse slice order only (same as <<).
+                    // Direction only matters for padding on non-multiple widths.
                     for chunk in all_bits.chunks(slen).rev() {
-                        result.extend(chunk.iter().rev());
+                        result.extend(chunk.iter());
                     }
                 } else {
                     // reverse slice order only
