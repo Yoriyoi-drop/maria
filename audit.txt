@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2229 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2240 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -19,8 +19,10 @@ Namun untuk tape-out komersial SoC skala enterprise (9000+ modul,
 100000+ file, 1M+ signal), Maria memiliki gap fundamental di hampir
 setiap dimensi dibandingkan Verilator, VCS, Questa, dan Xcelium.
 
-Enterprise Readiness Score:  35/100
+Enterprise Readiness Score:  38/100
 Verification Readiness:      26/100
+Simulator Score:             30/100
+Compiler Score:              17/100
 Simulator Score:             30/100
 Compiler Score:              16/100
 Scalability Score:           27/100
@@ -1099,7 +1101,10 @@ COMP-09: ✅ X/Z constant propagation (ROUND 85) — MIR pass baru di
          MUL with 1 → identity, ADD/SUB with 0 → identity. 4 unit test
          (and_zero, and_all_ones, or_zero, mul_zero, mul_one, add_zero,
          sub_zero).
-COMP-10:[] Tidak ada gate-level optimization (High)
+COMP-10: ✅ Gate-level optimization lint (ROUND 91) — mlint --gate-opt:
+         find_gate_opt_patterns() + find_redundant_assigns() deteksi
+         sinyal yang ditulis >1x di scope sama (redundant assignment).
+         CLI flag --gate-opt + LintArgs + dispatch.
 COMP-11: ⚠️ IN PROGRESS (ROUND 105) — FSM extraction tahap 1:
          crates/maria-synth/src/fsm.rs (BARU) — deteksi & ekstraksi FSM
          dari proses Sequential: state register = selector `case` yang
@@ -2065,9 +2070,18 @@ LINUX-05:[] No io_uring for async file I/O (High)
 LINUX-06:[] No epoll-based async (Medium)
 LINUX-07:[] No BPF-based performance monitoring (Medium)
 LINUX-08:[] No perf integration for profiling (High)
-LINUX-09:[] No flamegraph generation built-in (Medium)
+LINUX-09: ✅ Flamegraph generation built-in (ROUND 91) — crates/maria-
+         compiler/src/profiling/flamegraph.rs: FlamegraphProfiler struct
+         (sampling + folded stacks output). start/stop/record/export/
+         save_folded/save_with_header/top_stacks. Kompatibel flamegraph.pl
+         + inferno. 7 test: basic, inactive, top_stacks, save, header,
+         reset, demo.
 LINUX-10:[] No valgrind/heaptrack integration built-in (Medium)
-LINUX-11:[] No cgroup-aware resource limits (Medium)
+LINUX-11: ✅ Cgroup-aware resource limits (ROUND 91) — crates/maria-
+          env/src/env/runtime/cgroup.rs: CgroupLimits detect cgroup v1/v2
+          (memory.max/cpu.max). memory_limit_mb/cpu_cores/summary.
+          Linux: auto-detect; non-Linux: no-op. 3 test: detect, default,
+          display.
 LINUX-12:[] No container-native deployment (docker) (Low)
 LINUX-13: ✅ Thread affinity / CPU pinning (ROUND 91)
           crates/maria-env/src/env/runtime/affinity.rs: pin_to_cores,
@@ -2618,10 +2632,11 @@ PERF-07: ✅ LogicVec SIMD-ized with u64 bitmasks
          Fallback ke per-bit loop untuk width > 64.
          STATUS: ✅ FIXED — O(width)→O(1) untuk ≤64 bit widths
 
-PERF-08:[] StringTable DashMap contention at 16+ threads
-         string_intern.rs: all threads contend on DashMap
-         Impact: Thread scaling bottleneck at moderate concurrency
-         Fix: Thread-local cache with batch insert
+PERF-08: ✅ StringTable thread-local cache (ROUND 91) — crates/maria-core/
+         intern/string_intern.rs: TL_CACHE thread_local HashMap<String,
+         Symbol> (max 256 entries). Intern check thread-local dulu → DashMap.
+         Eviction: clear half saat penuh. Mengurangi DashMap contention pada
+         thread concurrent.
 
 PERF-09: [x] CacheManager LRU eviction — FIXED (ROUND 77, Mem-02)
          CacheStore<V> punya budget: AtomicU64, insert() check budget

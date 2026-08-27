@@ -1,8 +1,19 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
 use dashmap::{DashMap, Entry};
+
+// PERF-08: Thread-local cache untuk mengurangi DashMap contention.
+// Setiap thread menyimpan HashMap<String, Symbol> kecil (max 256 entries)
+// yang di-cache dari hasil intern sebelumnya.
+const TL_CACHE_MAX: usize = 256;
+
+thread_local! {
+    static TL_CACHE: RefCell<HashMap<String, Symbol>> = RefCell::new(HashMap::with_capacity(TL_CACHE_MAX));
+}
 
 // ─── Symbol ───
 
@@ -364,28 +375,46 @@ impl StringTable {
     /// eliminating the O(n²) bottleneck from the old linear-scan approach.
     /// Fast path (cache hit) avoids allocation by using `get()` first.
     fn intern(&self, s: &str) -> Symbol {
+        // PERF-08: Thread-local cache hit (zero DashMap contention)
+        let result = TL_CACHE.with(|cache| {
+            cache.borrow().get(s).copied()
+        });
+        if let Some(sym) = result {
+            return sym;
+        }
+
         // Fast path: no allocation on cache hit (common case — keywords interned thousands of times)
-        if let Some(sym) = self.lookup.get(s) {
-            return Symbol(*sym);
-        }
-        // Slow path: allocate and insert atomically via entry() API
-        let owned = s.to_string();
-        match self.lookup.entry(owned) {
-            Entry::Occupied(e) => Symbol(*e.get()),
-            Entry::Vacant(e) => {
-                // Simpan Box<str> di table (bukan `Box::leak`) — sehingga
-                // reset_string_table() dapat benar-benar membebaskan memori.
-                // Safety: reference `'static` dibuat via transmute; memori valid
-                // selama table hidup. Kontrak sama dengan implementasi lama
-                // (Box::leak): jangan gunakan Symbol setelah reset_string_table.
-                let boxed: Box<str> = Box::from(s);
-                let mut strings = self.strings.write();
-                let id = strings.len() as u32;
-                strings.push(boxed);
-                e.insert(id);
-                Symbol(id)
+        let sym = if let Some(sym) = self.lookup.get(s) {
+            Symbol(*sym)
+        } else {
+            // Slow path: allocate and insert atomically via entry() API
+            let owned = s.to_string();
+            match self.lookup.entry(owned) {
+                Entry::Occupied(e) => Symbol(*e.get()),
+                Entry::Vacant(e) => {
+                    let boxed: Box<str> = Box::from(s);
+                    let mut strings = self.strings.write();
+                    let id = strings.len() as u32;
+                    strings.push(boxed);
+                    e.insert(id);
+                    Symbol(id)
+                }
             }
-        }
+        };
+
+        // PERF-08: Update thread-local cache
+        TL_CACHE.with(|cache| {
+            let mut c = cache.borrow_mut();
+            if c.len() >= TL_CACHE_MAX {
+                let keys: Vec<String> = c.keys().take(TL_CACHE_MAX / 2).cloned().collect();
+                for k in keys {
+                    c.remove(&k);
+                }
+            }
+            c.insert(s.to_string(), sym);
+        });
+
+        sym
     }
 
     /// Retrieve a string by its u32 ID — O(1).

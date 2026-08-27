@@ -2005,6 +2005,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "tempfile",
  "walkdir",
  "xxhash-rust",
 ]

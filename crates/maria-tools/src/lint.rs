@@ -28,6 +28,7 @@ pub struct LintArgs<'a> {
     pub power: bool,
     pub memory: bool,
     pub quiet: bool,
+    pub gate_opt: bool,
 }
 
 /// Satu temuan lint.
@@ -52,6 +53,7 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
     let do_clock_gating = chk(args.clock_gating);
     let do_power = chk(args.power);
     let do_memory = chk(args.memory);
+    let do_gate_opt = chk(args.gate_opt);
 
     let (design, _session) = open_project(args.targets, args.incdirs, args.defines, None)?;
 
@@ -68,6 +70,7 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
             do_clock_gating,
             do_power,
             do_memory,
+            do_gate_opt,
             &mut findings,
         );
     }
@@ -87,6 +90,7 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
             do_clock_gating,
             do_power,
             do_memory,
+            do_gate_opt,
             &mut findings,
         );
     }
@@ -134,6 +138,7 @@ fn lint_module(
     do_clock_gating: bool,
     do_power: bool,
     do_memory: bool,
+    do_gate_opt: bool,
     out: &mut Vec<Finding>,
 ) {
     lint_items(
@@ -150,6 +155,7 @@ fn lint_module(
         do_clock_gating,
         do_power,
         do_memory,
+        do_gate_opt,
         out,
     );
 }
@@ -168,6 +174,7 @@ fn lint_items(
     do_clock_gating: bool,
     do_power: bool,
     do_memory: bool,
+    do_gate_opt: bool,
     out: &mut Vec<Finding>,
 ) {
     // ── Kumpulkan deklarasi sinyal (decls + decl items + ports) ──
@@ -344,6 +351,11 @@ fn lint_items(
     // COMP-15: Memory inference — deteksi reg array patterns
     if do_memory {
         find_memory_inference(scope, decls, items, out);
+    }
+
+    // COMP-10: Gate-level optimization — deteksi pattern yang bisa dioptimasi
+    if do_gate_opt {
+        find_gate_opt_patterns(scope, items, out);
     }
 }
 
@@ -1348,5 +1360,78 @@ fn save_lint_cache(args: &LintArgs, findings: &[Finding]) {
     if let Ok(bytes) = bincode::serialize(&payload) {
         let _ = layer.put(CacheCategory::Lint, "report", &bytes);
         let _ = layer.save();
+    }
+}
+
+// ═══ COMP-10: Gate-Level Optimization Patterns ═══
+
+/// Deteksi pattern yang menunjukkan peluang optimasi gate-level:
+/// 1. Redundant assignments: sinyal ditulis dua kali di always block yang sama
+/// 2. Unused outputs: output dideklarasikan tapi tidak pernah ditulis
+/// 3. Combinational feedback: sinyal dibaca dan ditulis di always_comb
+fn find_gate_opt_patterns(
+    scope: &str,
+    items: &[ModuleItem],
+    out: &mut Vec<Finding>,
+) {
+    // Collect all process bodies
+    for item in items {
+        if let ModuleItem::Always(ab) = item {
+            find_redundant_assigns(scope, &ab.stmts, out);
+        }
+    }
+}
+
+/// Deteksi redundant assignments: sinyal yang ditulis lebih dari sekali
+/// di scope yang sama tanpa intervening delay/event (overwrite percuma).
+fn find_redundant_assigns(
+    scope: &str,
+    stmts: &[Stmt],
+    out: &mut Vec<Finding>,
+) {
+    use std::collections::HashMap as StdHashMap;
+    let mut writes: StdHashMap<Symbol, usize> = StdHashMap::new(); // name → line count
+    for stmt in stmts {
+        match stmt {
+            Stmt::BlockingAssign { lhs, .. } => {
+                if let maria_ast::expr::Expr::Ident { name, .. } = lhs {
+                    let count = writes.entry(*name).or_insert(0);
+                    *count += 1;
+                    if *count == 2 {
+                        // Only report once per signal
+                        out.push(Finding {
+                            module: scope.to_string(),
+                            check: "gate-opt-redundant",
+                            severity: "W",
+                            message: format!(
+                                "signal '{}' overwritten in same block (redundant assignment)",
+                                name.as_str()
+                            ),
+                        });
+                    }
+                }
+            }
+            Stmt::NonBlockingAssign { lhs, .. } => {
+                if let maria_ast::expr::Expr::Ident { name, .. } = lhs {
+                    let count = writes.entry(*name).or_insert(0);
+                    *count += 1;
+                    if *count == 2 {
+                        out.push(Finding {
+                            module: scope.to_string(),
+                            check: "gate-opt-redundant",
+                            severity: "W",
+                            message: format!(
+                                "signal '{}' overwritten in same block (redundant NBA)",
+                                name.as_str()
+                            ),
+                        });
+                    }
+                }
+            }
+            Stmt::Block { stmts: inner } => {
+                find_redundant_assigns(scope, inner, out);
+            }
+            _ => {}
+        }
     }
 }

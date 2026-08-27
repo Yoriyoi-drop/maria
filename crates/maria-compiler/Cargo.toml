@@ -34,3 +34,6 @@ cranelift-module = { version = "0.110", optional = true }
 
 [features]
 jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module"]
+
+[dev-dependencies]
+tempfile = "3"

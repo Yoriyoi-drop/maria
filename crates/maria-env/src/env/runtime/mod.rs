@@ -8,6 +8,7 @@ mod runtime;
 mod scheduler;
 mod threadpool;
 pub mod affinity;
+pub mod cgroup;
 
 pub use cpu::CpuInfo;
 pub use memory::MemoryInfo;

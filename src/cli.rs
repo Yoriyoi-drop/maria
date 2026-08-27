@@ -137,6 +137,10 @@ pub struct MlintArgs {
     #[arg(long)]
     pub memory: bool,
 
+    /// Check: gate-level optimization (redundant assignment detection)
+    #[arg(long)]
+    pub gate_opt: bool,
+
     /// Suppress output sukses
     #[arg(short = 'q', long)]
     pub quiet: bool,

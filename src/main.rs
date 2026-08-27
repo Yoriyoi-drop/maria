@@ -3432,6 +3432,7 @@ fn dispatch_lint(a: &crate::cli::MlintArgs) -> ! {
         clock_gating: a.clock_gating,
         power: a.power,
         memory: a.memory,
+        gate_opt: a.gate_opt,
         quiet: a.quiet,
     };
     exit_tool(maria_api::tools::lint::run(&args));
