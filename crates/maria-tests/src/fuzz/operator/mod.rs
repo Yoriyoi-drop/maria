@@ -12,3 +12,5 @@ mod inside_fuzz;
 mod compare_chain_fuzz;
 #[cfg(test)]
 mod complex_expr_fuzz;
+#[cfg(test)]
+mod generate_fuzz;

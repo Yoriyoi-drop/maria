@@ -10,3 +10,7 @@ mod force_release_fuzz;
 mod multi_dim_partsel_fuzz;
 #[cfg(test)]
 mod type_cast_fuzz;
+#[cfg(test)]
+mod hierarchical_fuzz;
+#[cfg(test)]
+mod constraint_fuzz;
