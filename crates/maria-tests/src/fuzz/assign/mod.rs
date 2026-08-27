@@ -6,3 +6,5 @@ mod packed_array_fuzz;
 mod fill_literal_fuzz;
 #[cfg(test)]
 mod packed_write_fuzz;
+#[cfg(test)]
+mod cont_partsel_fuzz;

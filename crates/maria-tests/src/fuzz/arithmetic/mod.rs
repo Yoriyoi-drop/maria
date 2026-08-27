@@ -12,3 +12,7 @@ mod system_func_fuzz;
 mod signed_overflow_fuzz;
 #[cfg(test)]
 mod divmod_fuzz;
+#[cfg(test)]
+mod signed_divmod_fuzz;
+#[cfg(test)]
+mod nested_clog2_fuzz;
