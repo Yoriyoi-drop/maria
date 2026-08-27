@@ -1506,6 +1506,12 @@ impl Elaborator {
         // Flatten instances: merge child module processes into the top module
         let hier_signal_map = self.flatten_instances(&mut top)?;
 
+        // Post-flatten sensitivity fixup: inject HierRef signals into
+        // combinational process sensitivity lists. `collect_sensitivity` (AST-level)
+        // can't resolve hierarchical names like `uut.x` that only exist in
+        // `hier_signal_map` after flatten.
+        fix_hier_sensitivity(&mut top.processes, &hier_signal_map);
+
         // Merge specialized parameterized classes into design classes before elaboration
         {
             let mut specialized = self.specialized_classes.borrow_mut();

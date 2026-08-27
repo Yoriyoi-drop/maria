@@ -31,7 +31,6 @@ fn run_sim(src: String) -> Option<u64> {
 }
 
 #[test]
-#[ignore] // KNOWN BUG: hierarchical read dalam continuous assign selalu 0 — perlu fix di engine
 fn hier_direct_ref_matches() {
     // Direct hierarchical reference: top.uut.sig
     let mut mismatch = Vec::new();
@@ -84,7 +83,6 @@ fn hier_direct_ref_matches() {
 }
 
 #[test]
-#[ignore] // KNOWN BUG: hierarchical read dalam assign — dua level lebih kompleks
 fn hier_two_level_ref_matches() {
     // Two-level: top.u1.u2.sig
     let mut mismatch = Vec::new();
@@ -140,7 +138,6 @@ fn hier_two_level_ref_matches() {
 }
 
 #[test]
-#[ignore] // KNOWN BUG: hierarchical read dalam assign — read-after-write cross-module
 fn hier_read_after_write_matches() {
     // Write in submodule initial, read in top assign.
     // Tests event ordering across module boundaries.

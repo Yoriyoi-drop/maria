@@ -361,7 +361,13 @@ pub fn collect_implicit_net_idents(
             collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out);
         }
         Expr::MemberAccess { obj, .. } => {
-            collect_implicit_net_idents(obj, signal_map, param_vals, pkg_ctx, out)
+            // JANGAN rekursif ke obj: `uut.x` → `uut` adalah nama instance,
+            // bukan signal standalone. Tanpa guard ini, `uut` dijadikan implicit
+            // net 1-bit oleh Verilog-2001 semantic → elaborator salah treat
+            // sebagai signal (bukan instance) → HierRef tidak di-emisi.
+            // Untuk struct field access (`my_struct.field`), `my_struct` sudah
+            // ada di signal_map sebagai signal yang dideklarasikan secara eksplisit.
+            let _ = obj;
         }
         Expr::MethodCall { obj, args, .. } => {
             collect_implicit_net_idents(obj, signal_map, param_vals, pkg_ctx, out);

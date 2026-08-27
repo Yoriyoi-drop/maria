@@ -46,3 +46,6 @@ pub use type_subst::*;
 
 pub mod opt_stats;
 pub use opt_stats::*;
+
+pub mod hier_sensitivity;
+pub use hier_sensitivity::*;

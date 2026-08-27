@@ -1112,6 +1112,12 @@ impl Elaborator {
                             field: *field,
                         })
                     }
+                    Ok(IrExpr::HierRef(base_name)) => {
+                        // Nested hier: inner already returned HierRef("u1.u"),
+                        // combine with field → HierRef("u1.u.v").
+                        let combined = format!("{}.{}", base_name.as_str(), field.as_str());
+                        Ok(IrExpr::HierRef(Symbol::intern(&combined)))
+                    }
                     Ok(ir_obj) => Ok(IrExpr::MemberAccess {
                         obj: Box::new(ir_obj),
                         field: *field,
