@@ -6,3 +6,5 @@ mod case_fuzz;
 mod always_ff_fuzz;
 #[cfg(test)]
 mod event_sensitivity_fuzz;
+#[cfg(test)]
+mod priority_fuzz;

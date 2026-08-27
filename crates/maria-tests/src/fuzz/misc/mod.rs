@@ -16,3 +16,5 @@ mod hierarchical_fuzz;
 mod constraint_fuzz;
 #[cfg(test)]
 mod display_format_fuzz;
+#[cfg(test)]
+mod param_override_fuzz;

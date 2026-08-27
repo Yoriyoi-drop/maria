@@ -16,3 +16,5 @@ mod complex_expr_fuzz;
 mod generate_fuzz;
 #[cfg(test)]
 mod streaming_fuzz;
+#[cfg(test)]
+mod inside_range_fuzz;
