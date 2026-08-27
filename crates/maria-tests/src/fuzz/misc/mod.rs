@@ -14,3 +14,5 @@ mod type_cast_fuzz;
 mod hierarchical_fuzz;
 #[cfg(test)]
 mod constraint_fuzz;
+#[cfg(test)]
+mod display_format_fuzz;

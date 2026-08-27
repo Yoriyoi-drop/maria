@@ -8,3 +8,5 @@ mod power_fuzz;
 mod mixed_sign_fuzz;
 #[cfg(test)]
 mod system_func_fuzz;
+#[cfg(test)]
+mod signed_overflow_fuzz;

@@ -4,3 +4,5 @@ mod loop_fuzz;
 mod case_fuzz;
 #[cfg(test)]
 mod always_ff_fuzz;
+#[cfg(test)]
+mod event_sensitivity_fuzz;
