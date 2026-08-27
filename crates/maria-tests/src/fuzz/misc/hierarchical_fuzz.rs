@@ -31,7 +31,7 @@ fn run_sim(src: String) -> Option<u64> {
 }
 
 #[test]
-#[ignore] // KNOWN: Maria hang saat evaluate hierarchical ref di assign — perlu fix di elaborator
+#[ignore] // KNOWN BUG: hierarchical read dalam continuous assign selalu 0 — perlu fix di engine
 fn hier_direct_ref_matches() {
     // Direct hierarchical reference: top.uut.sig
     let mut mismatch = Vec::new();
@@ -56,6 +56,7 @@ fn hier_direct_ref_matches() {
              \x20   initial begin\n\
              \x20       uut.x = {val};\n\
              \x20       #10;\n\
+             \x20       $finish;\n\
              \x20   end\n\
              \x20   assign y = uut.x;\n\
              endmodule\n",
@@ -83,7 +84,7 @@ fn hier_direct_ref_matches() {
 }
 
 #[test]
-#[ignore] // KNOWN: Maria hang saat evaluate hierarchical ref — dua level lebih kompleks
+#[ignore] // KNOWN BUG: hierarchical read dalam assign — dua level lebih kompleks
 fn hier_two_level_ref_matches() {
     // Two-level: top.u1.u2.sig
     let mut mismatch = Vec::new();
@@ -111,6 +112,7 @@ fn hier_two_level_ref_matches() {
              \x20   initial begin\n\
              \x20       u1.u.v = {val};\n\
              \x20       #10;\n\
+             \x20       $finish;\n\
              \x20   end\n\
              \x20   assign y = u1.u.v;\n\
              endmodule\n",
@@ -138,7 +140,7 @@ fn hier_two_level_ref_matches() {
 }
 
 #[test]
-#[ignore] // KNOWN: Maria hang saat evaluate hierarchical ref — read-after-write cross-module
+#[ignore] // KNOWN BUG: hierarchical read dalam assign — read-after-write cross-module
 fn hier_read_after_write_matches() {
     // Write in submodule initial, read in top assign.
     // Tests event ordering across module boundaries.
@@ -163,6 +165,8 @@ fn hier_read_after_write_matches() {
              \x20   initial begin\n\
              \x20       x = {v1};\n\
              \x20       x = {v2};\n\
+             \x20       #10;\n\
+             \x20       $finish;\n\
              \x20   end\n\
              endmodule\n\
              module top;\n\
