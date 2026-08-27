@@ -6,3 +6,5 @@ mod scheduler;
 mod preproc;
 #[cfg(test)]
 mod concurrency_diff;
+#[cfg(test)]
+mod ifdef_fuzz;

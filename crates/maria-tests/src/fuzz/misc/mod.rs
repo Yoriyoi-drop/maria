@@ -18,3 +18,5 @@ mod constraint_fuzz;
 mod display_format_fuzz;
 #[cfg(test)]
 mod param_override_fuzz;
+#[cfg(test)]
+mod port_conn_fuzz;

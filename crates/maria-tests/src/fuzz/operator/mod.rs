@@ -18,3 +18,5 @@ mod generate_fuzz;
 mod streaming_fuzz;
 #[cfg(test)]
 mod inside_range_fuzz;
+#[cfg(test)]
+mod cast_fuzz;
