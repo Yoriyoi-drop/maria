@@ -15,7 +15,7 @@
 //! `x`; bit dalam range diambil dari nilai variabel. Emas membandingkan
 //! PER BIT (LogicVal), bukan numerik, sehingga posisi X tepat terverifikasi.
 
-use super::gen::{generate, lit_sv, mask_of};
+use crate::fuzz::gen::{generate, lit_sv, mask_of};
 use maria_core::{LogicVal, LogicVec};
 
 /// Jenis pola select pada satu testcase.
@@ -73,7 +73,7 @@ fn select_sv(kind: SelKind, base_const: u32, ws: u32, oob_hi: u32, oob_lo: u32) 
 }
 
 /// Nilai base efektif untuk pola dyn (nilai b sudah ter-mask ke wb).
-fn dyn_base(input: &super::gen::GenInput) -> u64 {
+fn dyn_base(input: &crate::fuzz::gen::GenInput) -> u64 {
     input.b
 }
 
@@ -117,7 +117,7 @@ fn plan_case(seed: u64, w: u32, rng: &mut fastrand::Rng) -> CasePlan {
     }
 }
 
-fn source(input: &super::gen::GenInput, plan: &CasePlan) -> String {
+fn source(input: &crate::fuzz::gen::GenInput, plan: &CasePlan) -> String {
     let w = input.w;
     let expr_sv = select_sv(plan.kind, plan.base_const, plan.ws, plan.oob_hi, plan.oob_lo);
     let yw = match plan.kind {
@@ -149,7 +149,7 @@ fn source(input: &super::gen::GenInput, plan: &CasePlan) -> String {
 
 /// Emas per-bit: LogicVal sepanjang lebar hasil.
 fn golden_bits(
-    input: &super::gen::GenInput,
+    input: &crate::fuzz::gen::GenInput,
     plan: &CasePlan,
 ) -> (Vec<LogicVal>, u32) {
     let w = input.w as u128;

@@ -17,7 +17,7 @@
 //! Kasus tanpa nilai terdefinisi (div/mod nol, overflow INT_MIN/-1)
 //! ditandai `has_x` → skip compare numerik, invariant panic tetap jalan.
 
-use super::gen::{generate, lit_sv, mask_of};
+use crate::fuzz::gen::{generate, lit_sv, mask_of};
 
 /// Lebar yang dipakai (boundary 15/16/17/31/32).
 ///

@@ -8,7 +8,7 @@
 //! (SIGSEGV saat test paralel). Test ini regression guard untuk kelas bug
 //! yang sama di seluruh pipeline.
 
-use super::gen::generate;
+use crate::fuzz::gen::generate;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

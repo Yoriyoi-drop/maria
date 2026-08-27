@@ -10,7 +10,7 @@
 //! - Skip `continue` (hitung nol × konstanta)
 //! - Loop bersarang (perkalian via penjumlahan berulang)
 
-use super::gen::{lit_sv, mask_of, WIDTH_CHOICES};
+use crate::fuzz::gen::{lit_sv, mask_of, WIDTH_CHOICES};
 
 /// Simulasi + baca reg `r` (None = error/sinyal hilang). Thread stack besar.
 fn sim_r(src: &str) -> Option<u64> {

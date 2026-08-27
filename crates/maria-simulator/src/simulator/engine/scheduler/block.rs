@@ -226,6 +226,20 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::Force { lvalue, rhs } => {
+                    // LRM §10.6.2: wire kembali ke driver saat release;
+                    // reg TETAP di nilai forced. Simpan hanya untuk wire.
+                    if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+                        if !self.forced_signals.contains(&id) {
+                            let is_wire = self.design.top.signals.get(id)
+                                .map(|s| matches!(s.kind, maria_ir::SignalKind::Wire | maria_ir::SignalKind::Logic))
+                                .unwrap_or(false);
+                            if is_wire {
+                                if let Some(sig) = self.state.signals.get(id) {
+                                    self.pre_force_values.insert(id, sig.clone());
+                                }
+                            }
+                        }
+                    }
                     let val = self.eval_assign_rhs(rhs, lvalue)?;
                     self.write_lvalue(lvalue, val, true)?;
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
@@ -317,11 +331,23 @@ impl SimulationEngine {
                 IrStmt::Release { lvalue } => {
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
                         self.forced_signals.remove(&id);
+                        // LRM §10.6.2: wire kembali ke driver asli setelah
+                        // release — restore nilai yang tersimpan saat force.
+                        if let Some(saved) = self.pre_force_values.remove(&id) {
+                            if let Some(sig) = self.state.signals.get_mut(id) {
+                                *sig = saved;
+                            }
+                        }
                     }
                 }
                 IrStmt::Deassign { lvalue } => {
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
                         self.forced_signals.remove(&id);
+                        if let Some(saved) = self.pre_force_values.remove(&id) {
+                            if let Some(sig) = self.state.signals.get_mut(id) {
+                                *sig = saved;
+                            }
+                        }
                     }
                 }
                 IrStmt::Wait { cond, body } => {
@@ -2251,6 +2277,19 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::Force { lvalue, rhs } => {
+                    // LRM §10.6.2: wire → restore; reg → keep forced.
+                    if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+                        if !self.forced_signals.contains(&id) {
+                            let is_wire = self.design.top.signals.get(id)
+                                .map(|s| matches!(s.kind, maria_ir::SignalKind::Wire | maria_ir::SignalKind::Logic))
+                                .unwrap_or(false);
+                            if is_wire {
+                                if let Some(sig) = self.state.signals.get(id) {
+                                    self.pre_force_values.insert(id, sig.clone());
+                                }
+                            }
+                        }
+                    }
                     let val = self.eval_assign_rhs(rhs, lvalue)?;
                     self.write_lvalue(lvalue, val, true)?;
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
@@ -2791,11 +2830,23 @@ impl SimulationEngine {
                 IrStmt::Release { lvalue } => {
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
                         self.forced_signals.remove(&id);
+                        // LRM §10.6.2: wire kembali ke driver asli setelah
+                        // release — restore nilai yang tersimpan saat force.
+                        if let Some(saved) = self.pre_force_values.remove(&id) {
+                            if let Some(sig) = self.state.signals.get_mut(id) {
+                                *sig = saved;
+                            }
+                        }
                     }
                 }
                 IrStmt::Deassign { lvalue } => {
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
                         self.forced_signals.remove(&id);
+                        if let Some(saved) = self.pre_force_values.remove(&id) {
+                            if let Some(sig) = self.state.signals.get_mut(id) {
+                                *sig = saved;
+                            }
+                        }
                     }
                 }
                 IrStmt::Fork {

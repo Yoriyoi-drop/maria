@@ -16,7 +16,7 @@
 //! Selector memakai generator ekspresi yang sama (`gen_node`) sehingga
 //! jalur evaluasi bersarang ikut terlatih di posisi baru (operand case).
 
-use super::gen::{generate, mask_of};
+use crate::fuzz::gen::{generate, mask_of};
 
 /// Jenis case yang diuji.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -90,12 +90,12 @@ fn source(expr_sv: &str, w: u32, yw: u32, kind: CaseKind, items: &[CaseItem], av
         body.push_str(&format!(
             "            {}: y = {};\n",
             item_sv(it, w),
-            super::gen::lit_sv((i + 1) as u64, yw)
+            crate::fuzz::gen::lit_sv((i + 1) as u64, yw)
         ));
     }
     body.push_str(&format!(
         "            default: y = {};\n",
-        super::gen::lit_sv(0, yw)
+        crate::fuzz::gen::lit_sv(0, yw)
     ));
     body.push_str("        endcase\n");
     body.push_str("    end\n");
@@ -159,7 +159,7 @@ fn case_statement_priority_and_wildcards_match_golden() {
         };
         let n_items = rng.usize(2..=4);
         let mut items = Vec::with_capacity(n_items);
-        let wmask = super::gen::mask_of(input.w);
+        let wmask = crate::fuzz::gen::mask_of(input.w);
         for _ in 0..n_items {
             // Nilai item di-mask ke lebar w — literal hanya merender w bit,
             // jadi bit di atasnya tak boleh ikut dibandingkan model emas.
@@ -202,8 +202,8 @@ fn case_statement_priority_and_wildcards_match_golden() {
             yw,
             kind,
             &items,
-            &super::gen::lit_sv(input.a, input.w),
-            &super::gen::lit_sv(input.b, input.wb),
+            &crate::fuzz::gen::lit_sv(input.a, input.w),
+            &crate::fuzz::gen::lit_sv(input.b, input.wb),
         );
         let actual = std::thread::Builder::new()
             .name("case-fuzz-sim".to_string())
@@ -271,8 +271,8 @@ fn case_plain_equivalent_to_if_else_chain() {
             })
             .collect();
         let expr_sv = input.expr.to_sv(input.w);
-        let aval = super::gen::lit_sv(input.a, input.w);
-        let bval = super::gen::lit_sv(input.b, input.w);
+        let aval = crate::fuzz::gen::lit_sv(input.a, input.w);
+        let bval = crate::fuzz::gen::lit_sv(input.b, input.w);
         let sel = input.expr.eval(input.w, input.a, input.b) & mask_of(input.w);
         let expected = items
             .iter()
@@ -285,12 +285,12 @@ fn case_plain_equivalent_to_if_else_chain() {
             case_body.push_str(&format!(
                 "            {}: y = {};\n",
                 item_sv(it, input.w),
-                super::gen::lit_sv((i + 1) as u64, yw)
+                crate::fuzz::gen::lit_sv((i + 1) as u64, yw)
             ));
         }
         case_body.push_str(&format!(
             "            default: y = {};\n        endcase\n",
-            super::gen::lit_sv(0, yw)
+            crate::fuzz::gen::lit_sv(0, yw)
         ));
 
         let mut if_body = String::new();
@@ -304,12 +304,12 @@ fn case_plain_equivalent_to_if_else_chain() {
                 head,
                 expr_sv,
                 item_sv(it, input.w),
-                super::gen::lit_sv((i + 1) as u64, yw)
+                crate::fuzz::gen::lit_sv((i + 1) as u64, yw)
             ));
         }
         if_body.push_str(&format!(
             "        end else begin\n            y = {};\n        end\n",
-            super::gen::lit_sv(0, yw)
+            crate::fuzz::gen::lit_sv(0, yw)
         ));
 
         for variant in [case_body, if_body] {

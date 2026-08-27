@@ -89,8 +89,52 @@ pub fn try_fold_const_at_width(
     if contains_ctx_sensitive_unary(expr) {
         return None;
     }
+    // Rantai shift (Shl/Shr/Sshl/Sshr) TIDAK boleh di-fold: const_eval
+    // menghitung pada i64 penuh TANPA masking intermediate ke lebar bit.
+    // `(4'sh4 << 1) >>> 4'hd` → i64: 8>>13=0, tapi 4-bit: 4'b1000 >>> 13
+    // → sign-fill → 4'b1111=0xf (shift_chain_fuzz). Biarkan engine yang
+    // menangani width masking per-step.
+    if contains_shift_op(expr) {
+        return None;
+    }
     let masked = (val as u64) & if ctx >= 64 { u64::MAX } else { (1u64 << ctx) - 1 };
-    Some(IrExpr::Const(LogicVec::from_u64(masked, ctx)))
+    // Preserve signedness: ekspresi signed menghasilkan IrExpr::Signed
+    // (bukan Const) agar engine tahu `>>>` = arithmetic (sign-fill).
+    // Tanpa ini `((4'sh4 << 1) >>> 4'hd)` salah jadi 0 padahal 0xf
+    // (shift_chain_fuzz — is_signed_expr(Const) = false).
+    let lv = LogicVec::from_u64(masked, ctx);
+    Some(if expr_is_signed(expr) {
+        IrExpr::Signed(Box::new(IrExpr::Const(lv)))
+    } else {
+        IrExpr::Const(lv)
+    })
+}
+
+/// Cek apakah AST expression bernilai signed (LRM §6.11 / §11.8.2).
+fn expr_is_signed(e: &Expr) -> bool {
+    match e {
+        Expr::Value(Value::Decimal(_)) => true,
+        Expr::Value(Value::Binary { is_signed, .. })
+        | Expr::Value(Value::Hex { is_signed, .. })
+        | Expr::Value(Value::Octal { is_signed, .. }) => *is_signed,
+        Expr::Paren(inner) => expr_is_signed(inner),
+        Expr::UnaryOp { op, expr: inner } => match op {
+            UnaryOp::Not | UnaryOp::ReductionAnd | UnaryOp::ReductionNand
+            | UnaryOp::ReductionOr | UnaryOp::ReductionNor
+            | UnaryOp::ReductionXor | UnaryOp::ReductionXnor => false,
+            _ => expr_is_signed(inner),
+        },
+        Expr::BinaryOp { op, lhs, rhs } => match op {
+            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr => {
+                expr_is_signed(lhs)
+            }
+            BinaryOp::Eq | BinaryOp::Neq | BinaryOp::Lt | BinaryOp::Le
+            | BinaryOp::Gt | BinaryOp::Ge | BinaryOp::LogicalAnd
+            | BinaryOp::LogicalOr => false,
+            _ => expr_is_signed(lhs) && expr_is_signed(rhs),
+        },
+        _ => false,
+    }
 }
 
 /// Deteksi pemanggilan system function (`$bits`, `$size`, …) di subtree —
@@ -183,7 +227,40 @@ fn contains_wide_literal(e: &Expr) -> bool {
     }
 }
 
-fn contains_ctx_sensitive_unary(e: &Expr) -> bool {    match e {
+/// Deteksi ekspresi yang mengandung operator shift (<<, >>, <<<, >>>).
+/// Shift harus dievaluasi di engine dengan width masking per-step, bukan
+/// di const_eval i64 penuh (ditemukan shift_chain_fuzz: rantai shift
+/// menghasilkan 0 alih-alih all-ones karena intermediate tidak di-mask).
+fn contains_shift_op(e: &Expr) -> bool {
+    match e {
+        Expr::BinaryOp {
+            op: BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr,
+            ..
+        } => true,
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            contains_shift_op(lhs) || contains_shift_op(rhs)
+        }
+        Expr::Paren(inner) => contains_shift_op(inner),
+        Expr::UnaryOp { expr: inner, .. } => contains_shift_op(inner),
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            contains_shift_op(cond)
+                || contains_shift_op(true_expr)
+                || contains_shift_op(false_expr)
+        }
+        Expr::Concat(elems) => elems.iter().any(contains_shift_op),
+        Expr::Replicate { count, expr: inner } => {
+            contains_shift_op(count) || contains_shift_op(inner)
+        }
+        _ => false,
+    }
+}
+
+fn contains_ctx_sensitive_unary(e: &Expr) -> bool {
+    match e {
         Expr::UnaryOp { op: UnaryOp::BitNot | UnaryOp::Minus, .. } => true,
         // Reduction & `!` juga context-sensitive pada lebar OPERAN: hasil
         // bergantung lebar self-determined operan yang mungkin tak-diketahui
@@ -362,6 +439,13 @@ pub fn try_fold_const(
     // i64 → bit tinggi terpotong diam-diam (wide_fuzz seed=11). Jalur
     // runtime u128 yang benar.
     if contains_wide_literal(expr) {
+        return Ok(None);
+    }
+    // Rantai shift TIDAK boleh di-fold: const_eval menghitung pada i64
+    // penuh TANPA masking intermediate ke lebar bit. `(4'sh4 << 1) >>>
+    // 4'hd` → i64: 8>>13=0, tapi 4-bit: 4'b1000 >>> 13 → sign-fill
+    // → 4'b1111=0xf (shift_chain_fuzz).
+    if contains_shift_op(expr) {
         return Ok(None);
     }
     // Replikasi `{N{e}}`: konversi i64 kehilangan LEBAR POLA operan

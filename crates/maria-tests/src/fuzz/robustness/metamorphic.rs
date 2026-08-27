@@ -10,7 +10,7 @@
 //! 3. Kurung redundan di sekeliling RHS
 //! 4. Literal ekuivalen: 8'd5 ↔ 8'b101 ↔ 8'h5A ↔ 8'o132
 
-use super::gen::generate;
+use crate::fuzz::gen::generate;
 
 /// Simulasi lalu ambil nilai sinyal `name` (None = sim error/sinyal hilang).
 /// Dijalankan di thread stack besar: engine rekursif dalam dan ekspresi

@@ -13,7 +13,7 @@
 //! kanan pada lebar >64 mempengaruhi bit rendah dari bit tinggi yang tak
 //! termodelkan).
 
-use super::gen::{generate, lit_sv};
+use crate::fuzz::gen::{generate, lit_sv};
 
 /// Jumlah siklus clock per testcase.
 const CYCLES: usize = 6;
@@ -100,7 +100,7 @@ fn sequential_nba_feedback_matches_golden() {
         }
         // Stimulus a per siklus — deterministik dari seed turunan.
         let mut rng = fastrand::Rng::with_seed(seed ^ 0x5EED_5EED);
-        let mask = super::gen::mask_of(input.w);
+        let mask = crate::fuzz::gen::mask_of(input.w);
         let avecs: Vec<u64> = (0..CYCLES)
             .map(|i| {
                 if i == 0 {

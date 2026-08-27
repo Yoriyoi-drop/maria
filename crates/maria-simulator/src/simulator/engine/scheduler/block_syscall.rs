@@ -926,6 +926,17 @@ impl SimulationEngine {
                 // (dicek di write_lvalue via forced_signals).
                 if let (Some(sig_arg), Some(val_arg)) = (ir_args.first(), ir_args.get(1)) {
                     if let IrExpr::Signal(id, _) = sig_arg {
+                        // Simpan nilai SEBELUM $assign (hanya untuk wire)
+                        if !self.forced_signals.contains(id) {
+                            let is_wire = self.design.top.signals.get(*id)
+                                .map(|s| matches!(s.kind, maria_ir::SignalKind::Wire | maria_ir::SignalKind::Logic))
+                                .unwrap_or(false);
+                            if is_wire {
+                                if let Some(sig) = self.state.signals.get(*id) {
+                                    self.pre_force_values.insert(*id, sig.clone());
+                                }
+                            }
+                        }
                         let val = self.evaluate_expr(val_arg)?;
                         self.state.write_signal(*id, val);
                         self.forced_signals.insert(*id);
@@ -937,6 +948,12 @@ impl SimulationEngine {
                 if let Some(sig_arg) = ir_args.first() {
                     if let IrExpr::Signal(id, _) = sig_arg {
                         self.forced_signals.remove(id);
+                        // Restore nilai asli setelah $deassign
+                        if let Some(saved) = self.pre_force_values.remove(id) {
+                            if let Some(sig) = self.state.signals.get_mut(*id) {
+                                *sig = saved;
+                            }
+                        }
                     }
                 }
                 Ok(true)

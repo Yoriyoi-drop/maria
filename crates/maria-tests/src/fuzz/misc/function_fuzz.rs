@@ -14,7 +14,7 @@
 //! Emas: `Expr::eval(w, a, b)` yang sama dengan guided_fuzz — kalau fungsi
 //! adalah pintu transparan, keduanya wajib identik.
 
-use super::gen::{generate, lit_sv, mask_of};
+use crate::fuzz::gen::{generate, lit_sv, mask_of};
 
 /// Rename identifier utuh pada source (a→x, b→z). Batas ident diperiksa
 /// agar sufiks literal (`8'b101`) dan nama lain tak tersentuh.
@@ -46,8 +46,8 @@ fn rename_vars(sv: &str, pairs: &[(&str, &str)]) -> String {
 /// terhadap lebar konteks `w`, BUKAN lebar deklarasi `wb` — select di luar
 /// `wb` (X asli menurut §11.5.1) tak tertandai has_x sehingga compare-nya
 /// tak bermakna. Kasus seperti itu di-skip (konsisten dgn kontrak oracle).
-fn golden_blind_spot(expr: &super::expr::Expr, wb: u32) -> bool {
-    use super::expr::Expr;
+fn golden_blind_spot(expr: &crate::fuzz::expr::Expr, wb: u32) -> bool {
+    use crate::fuzz::expr::Expr;
     match expr {
         Expr::BitSel('b', i) => *i >= wb,
         Expr::PartSel('b', hi, _) => *hi >= wb,

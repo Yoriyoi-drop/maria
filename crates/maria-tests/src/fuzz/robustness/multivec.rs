@@ -10,7 +10,7 @@
 //! di-capture ke reg `m<i>`; nilai akhir semua `m<i>` dibandingkan dengan
 //! model emas `Expr::eval` untuk vektor tersebut.
 
-use super::gen::{generate, lit_sv, mask_of, GenInput};
+use crate::fuzz::gen::{generate, lit_sv, mask_of, GenInput};
 
 /// Jumlah langkah stimulasi (vektor pertama = input.a/b generator, sisanya
 /// acak dari seed turunan).

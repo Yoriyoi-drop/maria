@@ -9,7 +9,7 @@
 //!
 //! Ketidakcocokan = bug sensitivitas/scheduling/penanganan reg-vs-net.
 
-use super::gen::generate;
+use crate::fuzz::gen::generate;
 
 /// Nilai sinyal terakhir dari simulasi (None = error/sinyal hilang).
 /// Thread stack besar — engine rekursif dalam (ekspresi depth 5).
@@ -89,8 +89,8 @@ fn structural_equiv_assign_always_blocking_nonblocking() {
             continue;
         }
         let expr_sv = input.expr.to_sv(input.w);
-        let aval = super::gen::lit_sv(input.a, input.w);
-        let bval = super::gen::lit_sv(input.b, input.wb);
+        let aval = crate::fuzz::gen::lit_sv(input.a, input.w);
+        let bval = crate::fuzz::gen::lit_sv(input.b, input.wb);
         let vals: Vec<Option<u64>> = (0..3)
             .map(|k| sim_signal(&variant_source(&expr_sv, input.w, &aval, &bval, k), "y"))
             .collect();

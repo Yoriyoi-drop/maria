@@ -174,6 +174,9 @@ pub struct SimulationEngine {
     pub control_flow: Option<FlowControl>,
     pub expr_recursion_depth: usize,
     pub forced_signals: HashSet<SignalId>,
+    /// Simpan nilai sinyal SEBELUM force — dikembalikan saat release
+    /// (LRM §10.6.2: wire kembali ke driver setelah release).
+    pub pre_force_values: HashMap<SignalId, LogicVec>,
     pub signal_snapshot: Option<Vec<LogicVec>>,
     /// Snapshot Preponed (pre-NBA) di awal time step. TIDAK di-refresh per
     /// delta — dipakai oleh evaluate_sequence_attempts untuk posedge detection.

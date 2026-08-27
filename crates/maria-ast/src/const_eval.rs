@@ -169,7 +169,17 @@ fn const_cmp(
     let ord = if is_signed_expr(lhs) && is_signed_expr(rhs) {
         l.cmp(&r)
     } else {
-        (l as u64).cmp(&(r as u64))
+        // Unsigned: mask ke lebar self-determined literal agar
+        // sign-extended i64 tidak merusak perbandingan
+        // (16'shdddb <= 16'hffff harus 1, bukan 0 — ditemukan
+        // mixed_sign_fuzz seed=87). LRM §11.8.2: operan
+        // di-extend sesuai signedness masing-masing SEBELUM
+        // dibandingkan.
+        let lw = sized_width(lhs).unwrap_or(64).min(64);
+        let rw = sized_width(rhs).unwrap_or(64).min(64);
+        let lm = if lw >= 64 { u64::MAX } else { (1u64 << lw) - 1 };
+        let rm = if rw >= 64 { u64::MAX } else { (1u64 << rw) - 1 };
+        ((l as u64) & lm).cmp(&((r as u64) & rm))
     };
     if op(ord) {
         1
@@ -238,6 +248,12 @@ pub fn sized_width(e: &Expr) -> Option<u64> {
             .iter()
             .map(sized_width)
             .try_fold(0u64, |acc, w| w.map(|w| acc + w)),
+        // Shift: hasil selebar LHS (LRM §11.8.1) — tanpa ini Sshr
+        // const_fold tidak tahu lebar intermediate (shift_chain_fuzz).
+        Expr::BinaryOp { op, lhs, .. } if matches!(
+            op,
+            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr
+        ) => sized_width(lhs),
         _ => None,
     }
 }
@@ -367,8 +383,9 @@ pub fn const_eval_with_params(
             let ow = sized_width(lhs)
                 .max(sized_width(rhs))
                 .unwrap_or(64)
-                .clamp(1, 63) as u32;
-            let m: u64 = (1u64 << ow) - 1;
+                .clamp(1, 64) as u32;
+            // Mask mod 2^ow — ow=64 → m=MAX (1u64 << 64 overflows).
+            let m: u64 = if ow >= 64 { u64::MAX } else { (1u64 << ow) - 1 };
             let mut b = (base as u64) & m;
             let mut acc: u64 = 1 & m;
             let mut e = exp as u64;
@@ -519,7 +536,12 @@ pub fn const_eval_with_params(
             if r >= 64 || r < 0 {
                 Ok(0)
             } else {
-                Ok(l << r)
+                // Mask ke lebar LHS (LRM §11.8.1: hasil shift =
+                // lebar operan kiri) — tanpa ini rantai shift salah:
+                // `(4'hb << 4'h8) >> 4'h9` = 5 padahal 0 (shift_chain_fuzz).
+                let ow = sized_width(lhs).unwrap_or(64).min(64) as u32;
+                let m: u64 = if ow >= 64 { u64::MAX } else { (1u64 << ow) - 1 };
+                Ok(((l << r) as u64 & m) as i64)
             }
         }
         Expr::BinaryOp {
@@ -532,7 +554,9 @@ pub fn const_eval_with_params(
             if r >= 64 || r < 0 {
                 Ok(0)
             } else {
-                Ok(l >> r)
+                let ow = sized_width(lhs).unwrap_or(64).min(64) as u32;
+                let m: u64 = if ow >= 64 { u64::MAX } else { (1u64 << ow) - 1 };
+                Ok(((l >> r) as u64 & m) as i64)
             }
         }
         Expr::BinaryOp {
@@ -545,7 +569,9 @@ pub fn const_eval_with_params(
             if r >= 64 || r < 0 {
                 Ok(0)
             } else {
-                Ok(l << r)
+                let ow = sized_width(lhs).unwrap_or(64).min(64) as u32;
+                let m: u64 = if ow >= 64 { u64::MAX } else { (1u64 << ow) - 1 };
+                Ok(((l << r) as u64 & m) as i64)
             }
         }
         Expr::BinaryOp {
@@ -555,10 +581,26 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            if r >= 64 || r < 0 {
+            // Mask ke lebar LHS untuk sign-bit check — i64 tidak
+            // tahu lebar SV (ditemukan shift_chain_fuzz seed=5:
+            // `4'sh8 >>> 13` harus 0xF padahal l=8 positif di i64).
+            let ow = sized_width(lhs).unwrap_or(64).min(64) as u32;
+            let m: u64 = if ow >= 64 { u64::MAX } else { (1u64 << ow) - 1 };
+            let masked = (l as u64) & m;
+            let sign_set = ow > 0 && (masked >> (ow - 1)) & 1 == 1;
+            if r >= ow as i64 {
+                // Shift >= width: sign-fill (LRM §11.4.10).
+                Ok(if sign_set { -1 } else { 0 })
+            } else if r < 0 {
                 Ok(0)
             } else {
-                Ok(l >> r)
+                // Arithmetic shift right: sign-fill高位.
+                if sign_set {
+                    let fill = if ow >= 64 { !0u64 } else { !0u64 << (ow - r as u32) };
+                    Ok(((masked >> r as u32) | fill) as i64)
+                } else {
+                    Ok((masked >> r as u32) as i64)
+                }
             }
         }
         Expr::BinaryOp {

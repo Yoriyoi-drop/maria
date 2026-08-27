@@ -66,6 +66,7 @@ impl SimulationEngine {
             control_flow: None,
             expr_recursion_depth: 0,
             forced_signals: HashSet::new(),
+            pre_force_values: HashMap::new(),
             signal_snapshot: None,
             preponed_snapshot: None,
             signal_seq_history: VecDeque::new(),
