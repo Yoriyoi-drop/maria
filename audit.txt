@@ -1919,9 +1919,18 @@ LSP-20: ✅ Document formatting (ROUND 90) — textDocument/formatting handler d
            (token presence), test_format_source_indent_dedent (module body indented,
            endmodule dedented), test_format_source_empty.
 LSP-21:[] No code lens for test run (Medium)
-LSP-22:[] No color provider (Low)
+LSP-22: ✅ Color provider (ROUND 90) — document_color + color_presentation handlers.
+           compute_document_colors: scan text untuk #RRGGBB patterns (skip komentar).
+           ColorInformation dengan range + Color{r,g,b,a} (f32). color_presentation:
+           konversi Color → hex string "#RRGGBB" + TextEdit. 2 test: test_document_colors
+           (#FF0000 detected), test_document_colors_no_match.
 LSP-23:[] No linked editing range (Low)
-LSP-24:[] No selection range (Low)
+LSP-24: ✅ Selection range (ROUND 90) — smart selection (word → line → scope).
+           compute_selection_range: (1) innermost = word at cursor (ident boundary),
+           (2) middle = entire line, (3) outermost = enclosing scope (module/class/function
+           via backward scan + matching end keyword). Nested SelectionRange chain.
+           find_enclosing_scope: backward scan depth tracking + forward scan for matching end.
+           1 test: test_selection_range (3-level nesting verified).
 LSP-25:[] Tauri GUI uses Monaco — hanya text editor, no
         language intelligence (High)
 

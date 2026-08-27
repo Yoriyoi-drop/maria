@@ -13,6 +13,7 @@ use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse,
     CodeLens, Command as LspCommand, CodeLensParams,
+    ColorInformation, ColorPresentation, ColorPresentationParams,
     CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticSeverity, DocumentSymbol, FoldingRange, FoldingRangeKind,
     FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse,
@@ -20,7 +21,8 @@ use lsp_types::{
     MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
     SemanticToken, SemanticTokens, SemanticTokensLegend, SemanticTokensOptions,
     SemanticTokensParams, SemanticTokensResult, ServerCapabilities, ServerInfo,
-    SymbolInformation, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    SelectionRange, SelectionRangeParams, SymbolInformation, SymbolKind,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     WorkspaceEdit, WorkspaceSymbolParams,
 };
 use maria_parser::lexer::Lexer;
@@ -1438,6 +1440,12 @@ impl LanguageServer for LspBackend {
                     retrigger_characters: Some(vec![",".to_string()]),
                     work_done_progress_options: Default::default(),
                 }),
+                // LSP-22: Color provider
+                color_provider: Some(lsp_types::ColorProviderCapability::Simple(true)),
+                // LSP-24: Selection range
+                selection_range_provider: Some(lsp_types::SelectionRangeProviderCapability::Simple(
+                    true,
+                )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -1964,6 +1972,57 @@ impl LanguageServer for LspBackend {
         Ok(Some(lenses))
     }
 
+    /// LSP-24: Selection range — smart selection (word → statement → scope).
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> JsonRpcResult<Option<Vec<SelectionRange>>> {
+        let uri = &params.text_document.uri;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let mut result = Vec::new();
+        for pos in &params.positions {
+            let range = compute_selection_range(&text, pos.line, pos.character);
+            result.push(range);
+        }
+        if result.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(result))
+    }
+
+    /// LSP-22: Color provider — detect hex color literals (#RRGGBB).
+    async fn document_color(
+        &self,
+        params: lsp_types::DocumentColorParams,
+    ) -> JsonRpcResult<Vec<ColorInformation>> {
+        let uri = &params.text_document.uri;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(Vec::new());
+        };
+        Ok(compute_document_colors(&text))
+    }
+
+    /// LSP-22: Color presentation — convert color to hex string.
+    async fn color_presentation(
+        &self,
+        params: ColorPresentationParams,
+    ) -> JsonRpcResult<Vec<ColorPresentation>> {
+        let r = (params.color.red * 255.0) as u8;
+        let g = (params.color.green * 255.0) as u8;
+        let b = (params.color.blue * 255.0) as u8;
+        let label = format!("#{:02X}{:02X}{:02X}", r, g, b);
+        Ok(vec![ColorPresentation {
+            label: label.clone(),
+            text_edit: Some(lsp_types::TextEdit {
+                range: params.range,
+                new_text: label,
+            }),
+            additional_text_edits: None,
+        }])
+    }
+
     /// Text document didClose — clear diagnostics.
     async fn did_close(&self, params: lsp_types::DidCloseTextDocumentParams) {
         self.client
@@ -2004,6 +2063,158 @@ fn position_to_offset(lines: &[&str], pos: Position) -> usize {
         offset += line.len() + 1;
     }
     offset
+}
+
+/// LSP-24: Compute selection range — nested ranges from word → line → scope.
+fn compute_selection_range(text: &str, line: u32, character: u32) -> SelectionRange {
+    let lines: Vec<&str> = text.lines().collect();
+    let line_idx = line as usize;
+
+    // Innermost: the word at cursor.
+    let word_range = if let Some(line_text) = lines.get(line_idx) {
+        let bytes = line_text.as_bytes();
+        let ch = character as usize;
+        let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        let mut start = ch.min(bytes.len());
+        while start > 0 && is_ident(bytes[start - 1]) {
+            start -= 1;
+        }
+        let mut end = ch.min(bytes.len());
+        while end < bytes.len() && is_ident(bytes[end]) {
+            end += 1;
+        }
+        if start < end {
+            Range::new(
+                Position::new(line, start as u32),
+                Position::new(line, end as u32),
+            )
+        } else {
+            Range::new(Position::new(line, character), Position::new(line, character + 1))
+        }
+    } else {
+        Range::new(Position::new(line, character), Position::new(line, character + 1))
+    };
+
+    // Middle: the entire line.
+    let line_range = Range::new(
+        Position::new(line, 0),
+        Position::new(
+            line,
+            lines.get(line_idx).map(|l| l.len() as u32).unwrap_or(0),
+        ),
+    );
+
+    // Outermost: enclosing scope (module/class/function/end → start).
+    let scope_range = find_enclosing_scope(&lines, line_idx)
+        .unwrap_or(Range::new(
+            Position::new(0, 0),
+            Position::new(lines.len() as u32, 0),
+        ));
+
+    // Build nested chain: word → line → scope.
+    SelectionRange {
+        range: scope_range,
+        parent: Some(Box::new(SelectionRange {
+            range: line_range,
+            parent: Some(Box::new(SelectionRange {
+                range: word_range,
+                parent: None,
+            })),
+        })),
+    }
+}
+
+/// Find the enclosing scope range for a given line.
+fn find_enclosing_scope(lines: &[&str], target_line: usize) -> Option<Range> {
+    const OPEN_KW: &[&str] = &[
+        "module", "macromodule", "interface", "package", "class",
+        "checker", "function", "task", "program",
+    ];
+    const CLOSE_KW: &[&str] = &[
+        "endmodule", "endinterface", "endpackage", "endclass",
+        "endchecker", "endfunction", "endtask", "endprogram",
+    ];
+
+    // Walk backward from target line to find opening keyword.
+    let mut depth = 0i32;
+    for i in (0..=target_line).rev() {
+        let trimmed = lines[i].trim();
+        let first = trimmed.split_whitespace().next().unwrap_or("");
+        if CLOSE_KW.contains(&first) {
+            depth += 1;
+        } else if OPEN_KW.contains(&first) {
+            if depth == 0 {
+                // Found the opening keyword. Now find the matching end.
+                let mut end_depth = 0i32;
+                for j in i..lines.len() {
+                    let t = lines[j].trim();
+                    let f = t.split_whitespace().next().unwrap_or("");
+                    if OPEN_KW.contains(&f) {
+                        end_depth += 1;
+                    } else if CLOSE_KW.contains(&f) {
+                        end_depth -= 1;
+                        if end_depth == 0 {
+                            return Some(Range::new(
+                                Position::new(i as u32, 0),
+                                Position::new(
+                                    j as u32,
+                                    lines[j].len() as u32,
+                                ),
+                            ));
+                        }
+                    }
+                }
+                // Unclosed scope.
+                return Some(Range::new(
+                    Position::new(i as u32, 0),
+                    Position::new(lines.len() as u32, 0),
+                ));
+            } else {
+                depth -= 1;
+            }
+        }
+    }
+    None
+}
+
+/// LSP-22: Compute document colors from hex color literals.
+fn compute_document_colors(text: &str) -> Vec<ColorInformation> {
+    let mut colors = Vec::new();
+    for (line_idx, line) in text.lines().enumerate() {
+        // Skip comments.
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        // Find #RRGGBB patterns.
+        for (i, _) in line.match_indices('#') {
+            if i + 7 <= line.len() {
+                let hex = &line[i + 1..i + 7];
+                if let (Ok(r), Ok(g), Ok(b)) = (
+                    u8::from_str_radix(&hex[0..2], 16),
+                    u8::from_str_radix(&hex[2..4], 16),
+                    u8::from_str_radix(&hex[4..6], 16),
+                ) {
+                    // Verify all chars are hex digits.
+                    if hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                        colors.push(ColorInformation {
+                            range: Range::new(
+                                Position::new(line_idx as u32, i as u32),
+                                Position::new(line_idx as u32, (i + 7) as u32),
+                            ),
+                            color: lsp_types::Color {
+                                red: r as f32 / 255.0,
+                                green: g as f32 / 255.0,
+                                blue: b as f32 / 255.0,
+                                alpha: 1.0,
+                            },
+                        });
+                    }
+                }
+            }
+        }
+    }
+    colors
 }
 
 /// Run the LSP server with stdio transport.
@@ -2928,6 +3139,34 @@ endmodule
         );
         // Baris di luar dokumen.
         assert!(LspBackend::find_definition(SAMPLE, 999, 0).is_none());
+    }
+
+    #[test]
+    fn test_selection_range() {
+        let src = "module m;\n  logic a;\nendmodule\n";
+        let range = compute_selection_range(src, 1, 5);
+        // Should have nested ranges: word → line → scope.
+        assert!(range.parent.is_some(), "should have parent: {:?}", range);
+        let parent = range.parent.as_ref().unwrap();
+        assert!(parent.parent.is_some(), "should have grandparent: {:?}", parent);
+        // Word range should be non-empty.
+        let word = &parent.parent.as_ref().unwrap().range;
+        assert!(word.start.line == 1, "word line: {:?}", word);
+    }
+
+    #[test]
+    fn test_document_colors() {
+        let src = "module m;\n  parameter COLOR = #FF0000;\nendmodule\n";
+        let colors = compute_document_colors(src);
+        assert_eq!(colors.len(), 1, "one color: {:?}", colors);
+        assert!(colors[0].range.start.line == 1, "color on line 1");
+    }
+
+    #[test]
+    fn test_document_colors_no_match() {
+        let src = "module m;\n  parameter x = 1;\nendmodule\n";
+        let colors = compute_document_colors(src);
+        assert!(colors.is_empty(), "no colors: {:?}", colors);
     }
 
     #[test]
