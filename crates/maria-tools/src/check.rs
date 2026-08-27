@@ -21,6 +21,8 @@ pub struct CheckArgs<'a> {
     pub timescale: bool,
     /// PARSER-13: bandingkan AST target pertama dgn file ini (structural diff).
     pub ast_diff: Option<&'a str>,
+    /// ENT-22: Check SV version compatibility.
+    pub sv_version: bool,
 }
 
 /// Jalankan mcheck.
@@ -31,6 +33,10 @@ pub fn run(args: &CheckArgs) -> Result<(), SimError> {
     // PARSER-13: AST differential — mode khusus, tidak jalan bareng check lain.
     if let Some(other) = args.ast_diff {
         return run_ast_diff(args.targets, other);
+    }
+    // ENT-22: Version compatibility check.
+    if args.sv_version {
+        return run_sv_version_check(args.targets);
     }
 
     let mut problems = 0usize;
@@ -567,4 +573,149 @@ mod tests {
             diffs
         );
     }
+}
+
+// ═══ ENT-22: SV Version Compatibility Check ═══
+
+/// Scan source files for SV feature usage patterns.
+/// Returns list of (feature_name, is_supported, locations).
+fn run_sv_version_check(targets: &[String]) -> Result<(), SimError> {
+    use std::collections::HashMap;
+
+    let files = crate::collect_targets(targets)?;
+    if files.is_empty() {
+        eprintln!("No files found.");
+        return Ok(());
+    }
+
+    // Feature patterns: (feature_name, regex-like keyword, sv_version, supported).
+    let features: Vec<(&str, &str, &str, bool)> = vec![
+        ("always_ff", "always_ff", "1800-2012", true),
+        ("always_comb", "always_comb", "1800-2012", true),
+        ("always_latch", "always_latch", "1800-2012", true),
+        ("logic", "logic", "1800-2005", true),
+        ("bit", "bit ", "1800-2005", true),
+        ("byte", "byte ", "1800-2005", true),
+        ("shortint", "shortint", "1800-2005", true),
+        ("longint", "longint", "1800-2005", true),
+        ("int", "int ", "1800-2005", true),
+        ("string", "string ", "1800-2005", true),
+        ("class", "class ", "1800-2005", true),
+        ("constraint", "constraint ", "1800-2005", true),
+        ("rand", "rand ", "1800-2005", true),
+        ("randc", "randc ", "1800-2005", true),
+        ("covergroup", "covergroup", "1800-2005", true),
+        ("coverpoint", "coverpoint", "1800-2005", true),
+        ("cross", "cross ", "1800-2005", true),
+        ("import", "import ", "1800-2005", true),
+        ("export", "export ", "1800-2005", true),
+        ("package", "package ", "1800-2005", true),
+        ("interface", "interface ", "1800-2001", true),
+        ("modport", "modport ", "1800-2005", true),
+        ("clocking", "clocking ", "1800-2005", true),
+        ("typedef", "typedef ", "1800-2005", true),
+        ("enum", "enum ", "1800-2005", true),
+        ("struct", "struct ", "1800-2005", true),
+        ("union", "union ", "1800-2005", true),
+        ("virtual", "virtual ", "1800-2005", true),
+        ("extends", "extends ", "1800-2005", true),
+        ("forever", "forever ", "1800-2001", true),
+        ("foreach", "foreach", "1800-2005", true),
+        ("do-while", "do ", "1800-2001", true),
+        ("return", "return ", "1800-2001", true),
+        ("break", "break;", "1800-2005", true),
+        ("continue", "continue;", "1800-2005", true),
+        ("fork-join_any", "join_any", "1800-2005", true),
+        ("fork-join_none", "join_none", "1800-2005", true),
+        ("unique-case", "unique case", "1800-2009", true),
+        ("priority-case", "priority case", "1800-2009", true),
+        ("inside", "inside", "1800-2009", true),
+        ("$clog2", "$clog2", "1800-2005", true),
+        ("$bits", "$bits", "1800-2009", true),
+        ("$countones", "$countones", "1800-2005", true),
+        ("$onehot", "$onehot", "1800-2009", true),
+        ("$readmemh", "$readmemh", "1364-2001", true),
+        ("$readmemb", "$readmemb", "1364-2001", true),
+        ("$urandom", "$urandom", "1800-2009", true),
+        ("DPI-C", "DPI-C", "1800-2009", true),
+        ("assert", "assert ", "1800-2005", true),
+        ("assume", "assume ", "1800-2009", true),
+        ("cover property", "cover property", "1800-2009", true),
+        // Features NOT supported by Maria
+        ("checker", "checker ", "1800-2009", false),
+        ("property", "property ", "1800-2009", false),
+        ("sequence", "sequence ", "1800-2009", false),
+        ("let", "let ", "1800-2009", false),
+        ("nettype", "nettype ", "1800-2009", false),
+        ("alias", "alias ", "1800-2009", false),
+    ];
+
+    let mut feature_counts: HashMap<String, (usize, bool, &str)> = HashMap::new();
+    let mut file_count = 0usize;
+
+    for file in &files {
+        let path = std::path::Path::new(file);
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Warning: cannot read {}: {}", path.display(), e);
+                continue;
+            }
+        };
+        file_count += 1;
+
+        // Skip comments (simple line-based).
+        let lines: Vec<&str> = content
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect();
+        let cleaned: String = lines.join("\n");
+
+        for (name, pattern, version, supported) in &features {
+            if cleaned.contains(pattern) {
+                let entry = feature_counts
+                    .entry(name.to_string())
+                    .or_insert((0, *supported, version));
+                entry.0 += 1;
+            }
+        }
+    }
+
+    // Report.
+    println!("═══ ENT-22: SV Version Compatibility Report ═══");
+    println!("Files scanned: {}", file_count);
+    println!();
+
+    let mut supported: Vec<_> = Vec::new();
+    let mut unsupported: Vec<_> = Vec::new();
+    for (name, (count, is_supported, version)) in &feature_counts {
+        if *is_supported {
+            supported.push((name, count, version));
+        } else {
+            unsupported.push((name, count, version));
+        }
+    }
+    supported.sort_by(|a, b| b.1.cmp(a.1));
+    unsupported.sort_by(|a, b| b.1.cmp(a.1));
+
+    if !supported.is_empty() {
+        println!("✅ Supported features used:");
+        for (name, count, version) in &supported {
+            println!("  {:<25} {:>4} occurrences  (IEEE {})", name, count, version);
+        }
+        println!();
+    }
+
+    if !unsupported.is_empty() {
+        println!("⚠️  Features NOT fully supported by Maria:");
+        for (name, count, version) in &unsupported {
+            println!("  {:<25} {:>4} occurrences  (IEEE {})", name, count, version);
+        }
+        println!();
+        println!("Note: These features may parse but have limited runtime support.");
+    } else {
+        println!("✅ All detected features are supported by Maria.");
+    }
+
+    Ok(())
 }

@@ -520,6 +520,11 @@ pub struct McheckArgs {
     /// diff utk regression) — `mcheck a.sv --ast-diff b.sv`.
     #[arg(long = "ast-diff")]
     pub ast_diff: Option<String>,
+
+    /// ENT-22: Check version compatibility — detect SV features used
+    /// vs supported by Maria. Reports feature usage and support status.
+    #[arg(long = "sv-version")]
+    pub sv_version: bool,
 }
 
 /// mbench — Benchmark Tool.

@@ -3587,6 +3587,7 @@ fn dispatch_check(a: &crate::cli::McheckArgs) -> ! {
         cycles: a.cycles,
         timescale: a.timescale,
         ast_diff: a.ast_diff.as_deref(),
+        sv_version: a.sv_version,
     };
     exit_tool(maria_api::tools::check::run(&args));
 }

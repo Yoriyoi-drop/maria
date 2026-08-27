@@ -1976,7 +1976,13 @@ ENT-19:[] No job scheduling / batch simulation (High)
 ENT-20:[] No resource management (memory/CPU quotas) (Medium)
 ENT-21:[] No integration with CI/CD common tools (Jenkins,
         GitLab CI) (Critical)
-ENT-22:[] No version compatibility checking untuk SV files (Medium)
+ENT-22: ✅ Version compatibility checking (ROUND 90) — `mcheck --sv-version`.
+           crates/maria-tools/src/check.rs: run_sv_version_check scan files untuk
+           50+ SV feature patterns (always_ff/logic/class/constraint/covergroup/DPI-C/
+           assert/assume/cover property dll). Feature matrix: feature → (sv_version,
+           supported_by_maria). Report: supported features + unsupported features
+           dengan occurrence count. CLI: `mcheck *.sv --sv-version`. Output: table
+           features with IEEE version + support status.
 ENT-23:[] No design migration assistance (High)
 ENT-24:[] No AXI/AHB/APB protocol verification IP (High)
 ENT-25:[] No standard verification IP library (Critical)
