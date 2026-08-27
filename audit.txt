@@ -1225,7 +1225,14 @@ SIM-19: ⚠️ Out-of-order simulation — PARTIAL (ROUND 85b tahap 1)
          (sim_dag.rs + parallel.rs). Yang masih open: process scheduling
          full out-of-order (current: sequential + parallel combinational).
          Status: masih open untuk tahap lanjut.
-SIM-20:[] No cycle-based simulation mode (beyond cycle-fusion claim) (High)
+SIM-20: ✅ Cycle-based simulation mode (ROUND 77) — `--cycle` + `--cycle-period` CLI.
+           crates/maria-simulator/src/simulator/engine/cycle_based.rs (475 LOC):
+           CyclePlan analysis (scan_body → detect clock signal + comb processes),
+           fixed-point settle per phase (MAX_SETTLE_ITERS=128), NBA commit + comb
+           re-evaluation. Fallback ke event-driven bila timed waits terdeteksi.
+           3 test: test_cycle_based_counter_counts_edges (cnt=10 posedge),
+           test_cycle_based_matches_event_driven_semantics, test_cycle_based_
+           fallback_timed_design_still_works.
 SIM-21: [x] CDC awareness — RE-VERIFIKASI (ROUND 59): CdcAnalysis lengkap
          (scheduler/cdc.rs — domain extraction, signal-domain mapping, crossing
          detection, synchronizer recognition, severity; CLI --cdc-report)
