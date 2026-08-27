@@ -15,6 +15,7 @@ pub mod lint;
 pub mod prof;
 pub mod sim;
 pub mod synth;
+pub mod testdb;
 pub mod wave;
 
 use std::path::{Path, PathBuf};

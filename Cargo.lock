@@ -2050,6 +2050,7 @@ dependencies = [
 name = "maria-env"
 version = "0.3.0"
 dependencies = [
+ "libc",
  "lsp-types",
  "maria-ast",
  "maria-compiler",
@@ -2220,7 +2221,9 @@ dependencies = [
  "maria-synth",
  "maria-tech",
  "maria-timing",
+ "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

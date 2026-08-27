@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2209 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2221 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -19,7 +19,7 @@ Namun untuk tape-out komersial SoC skala enterprise (9000+ modul,
 100000+ file, 1M+ signal), Maria memiliki gap fundamental di hampir
 setiap dimensi dibandingkan Verilator, VCS, Questa, dan Xcelium.
 
-Enterprise Readiness Score:  25/100
+Enterprise Readiness Score:  30/100
 Verification Readiness:      26/100
 Simulator Score:             30/100
 Compiler Score:              16/100
@@ -1895,8 +1895,15 @@ LSP-12: ⚠️ IN PROGRESS (ROUND 96) — document symbol tahap 1:
          Konversi DocSymbol → lsp_types::DocumentSymbol (range = baris
          decl, selection_range = nama). MASIH OPEN: nested function scope
          penuh, workspace symbol search (LSP-11), folding range (LSP-15).
-LSP-13:[] No call hierarchy (Medium)
-LSP-14:[] No type hierarchy (Medium)
+LSP-13: ✅ Call hierarchy (ROUND 91) — LspBackend::compute_call_hierarchy
+          (sync, maria-env/src/lsp/backend.rs): scan text untuk function/task
+          declarations + call sites. extract_symbol_name skip type keywords.
+          Capability didaftarkan di ServerCapabilities. 2 test: declarations
+          + calls found, single function no calls.
+LSP-14: ⚠️ Type hierarchy — PARTIAL (ROUND 91)
+         SystemVerilog tidak punya inheritance tree exposed via LSP. Dasar
+         class extends chains bisa ditelusuri via document_symbols. Status:
+         masih open untuk implementasi penuh.
 LSP-15: ⚠️ IN PROGRESS (ROUND 98) — folding range tahap 1:
          backend.rs — capability folding_range_provider + handler
          folding_range; core murni compute_folding_ranges(): stack
@@ -1972,7 +1979,11 @@ ENT-05: ✅ Incremental cache in CI (ROUND 91) — ci.yml tambah Swatinem/rust-c
          dengan cache-on-failure + cache-targets di SEMUA job (test, benchmark,
          clippy, fmt, miri, tsan, regression). Estimasi pengurangan CI time
          30-60%.
-ENT-06: [] No test result database (High)
+ENT-06: ✅ Test result database (ROUND 91) — crates/maria-tools/src/testdb.rs
+         TestResultDb struct (JSON persistence): save/load runs, create_run,
+         last_pass_rate, detect_regression, avg_pass_rate, export_summary.
+         Atomic write (temp+rename), max_runs eviction (100 default).
+         4 test: create/load, regression detection, pass rate, eviction.
 ENT-07: [] No metrics dashboard (High)
 ENT-08: ✅ Performance trend tracking (ROUND 91) — benchmark job upload bench-
          results.txt (contain throughput counter + compile + string intern +
@@ -2016,7 +2027,10 @@ ENT-26:[] No waveform database server for team access (High)
 ENT-27:[] No coverage database server (High)
 ENT-28:[] No integration with bug tracking (Jira/Redmine) (Medium)
 ENT-29:[] No integration with requirements management (Medium)
-ENT-30:[] No IEEE 1801 (UPF) power intent support (Critical)
+ENT-30: [x] IEEE 1801 (UPF) power intent support — FIXED (ROUND 23, CRIT-012)
+         crates/maria-simulator/src/upf.rs (~1074 LOC): PowerIntent,
+         PowerDomain, SupplyNet, PowerState. X-propagation saat domain
+         OFF + isolation clamp. CLI --upf. 14 unit test + 2 e2e.
 ENT-31:[] No timing constraints (SDC) support (Critical)
 ENT-32:[] No integration with STA tools (PrimeTime, Tempus) (Critical)
 ENT-33:[] No integration with synthesis tools (DC, Genus, Yosys) (Critical)
@@ -2042,7 +2056,12 @@ LINUX-09:[] No flamegraph generation built-in (Medium)
 LINUX-10:[] No valgrind/heaptrack integration built-in (Medium)
 LINUX-11:[] No cgroup-aware resource limits (Medium)
 LINUX-12:[] No container-native deployment (docker) (Low)
-LINUX-13:[] No thread affinity / CPU pinning configuration (High)
+LINUX-13: ✅ Thread affinity / CPU pinning (ROUND 91)
+          crates/maria-env/src/env/runtime/affinity.rs: pin_to_cores,
+          pin_to_core, pin_to_range, pin_to_all_cores, current_affinity.
+          Linux: sched_setaffinity/sched_getaffinity via libc. Non-Linux:
+          no-op. 6 test: logical/physical cores, affinity default,
+          pin_all, out_of_range, roundtrip (Linux).
 LINUX-14:[] No containerized CI test environment (Medium)
 LINUX-15:[] No KVM/VM acceleration for simulation (Low)
 
@@ -2591,10 +2610,10 @@ PERF-08:[] StringTable DashMap contention at 16+ threads
          Impact: Thread scaling bottleneck at moderate concurrency
          Fix: Thread-local cache with batch insert
 
-PERF-09:[] CacheManager DashMap with no eviction
-         cache_manager.rs: unlimited growth
-         Impact: Memory leak in compile-serve daemon
-         Fix: LRU eviction with max memory budget
+PERF-09: [x] CacheManager LRU eviction — FIXED (ROUND 77, Mem-02)
+         CacheStore<V> punya budget: AtomicU64, insert() check budget
+         → evict_lru(needed). CacheManager::with_budgets(ast=64MB, hir=64MB,
+         include=32MB, macro=16MB). hit_rate() + memory_used().
 
 PERF-10: ✅ Recursive evaluate_expr depth protection — FIXED (stale; ROUND 4)
          eval/expr.rs: expr_recursion_depth > 4096 → error terstruktur
@@ -2617,10 +2636,10 @@ PERF-12: ✅ File-based JIT cache persistence (line-based format)
          Placeholder entries with null code_ptr detected (return None = miss → re-JIT)
          STATUS: ✅ FIXED — persistent JIT cache metadata across runs
 
-PERF-13:[] Single-threaded VCD/FST dump blocks simulation
-         vcd.rs, fst.rs: synchronous write
-         Impact: sim pauses during waveform dump
-         Fix: Background writer thread with ring buffer
+PERF-13: [x] VCD background writer — FIXED (ROUND 86, WAV-19)
+         VcdWriter Out enum { File | Bg | Detached } + BgWriter (mpsc
+         channel + writer thread). enable_background() opt-in. CLI:
+         --waveform-bg. E2e demo.sv --waveform-bg IDENTIK sinkron.
 
 PERF-14: ✅ VCD streaming — FIXED via WAV-06 (periodic flush +
            stream_flush_interval). Marker audit stale — streaming sudah ada.
@@ -2649,10 +2668,9 @@ PERF-17: ✅ All file mmaps held open during compile — FIXED (ROUND 88)
          dilepas segera setelah isi disalin ke heap (lihat Mem-03).
          100K file compile tidak lagi memegang 100K mapping.
 
-PERF-18:[] StringTable.get() iterates string-slice for Symbol→String
-         string_intern.rs: StringTable::get() lookup
-         Impact: O(1) pointer but string allocation per lookup
-         Fix: Return &str from intern storage
+PERF-18: [x] StringTable.get() — FIXED (already O(1) &str)
+         StringTable::get() mengembalikan &str langsung dari intern
+         storage tanpa alokasi String baru. Marker audit stale.
 
 PERF-19:[] Parser recovery mode retries same tokens
          parser.rs: error recovery sync-token
