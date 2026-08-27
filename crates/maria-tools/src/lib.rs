@@ -6,6 +6,7 @@
 
 pub mod bench;
 pub mod check;
+pub mod ci;
 pub mod cov;
 pub mod elab;
 pub mod fmt;
@@ -13,6 +14,7 @@ pub mod gen;
 pub mod inspect;
 pub mod lint;
 pub mod prof;
+pub mod project;
 pub mod sim;
 pub mod synth;
 pub mod testdb;

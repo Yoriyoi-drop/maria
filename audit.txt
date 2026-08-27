@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2240 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2250 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -19,7 +19,7 @@ Namun untuk tape-out komersial SoC skala enterprise (9000+ modul,
 100000+ file, 1M+ signal), Maria memiliki gap fundamental di hampir
 setiap dimensi dibandingkan Verilator, VCS, Questa, dan Xcelium.
 
-Enterprise Readiness Score:  38/100
+Enterprise Readiness Score:  42/100
 Verification Readiness:      26/100
 Simulator Score:             30/100
 Compiler Score:              17/100
@@ -2029,8 +2029,11 @@ ENT-20: ✅ Resource management (ROUND 91) — MariaConfig.simulation
          extended: memory_limit_mb, cpu_threads, timeout_seconds. Helper
          methods: max_threads(), memory_limit_mb(), sim_timeout().
          TOML config: [simulation] memory_limit_mb=2048 cpu_threads=4.
-ENT-21:[] No integration with CI/CD common tools (Jenkins,
-        GitLab CI) (Critical)
+ENT-21: ✅ CI/CD integration (ROUND 91) — crates/maria-tools/src/ci.rs
+         JUnit XML export (test results untuk Jenkins/GitLab/GitHub),
+         SARIF export (GitHub Code Scanning), CoverageSummary badge URL,
+         BenchmarkDiff (perbandingan perf CI). 4 test: junit xml, save,
+         sarif, coverage badge.
 ENT-22: ✅ Version compatibility checking (ROUND 90) — `mcheck --sv-version`.
            crates/maria-tools/src/check.rs: run_sv_version_check scan files untuk
            50+ SV feature patterns (always_ff/logic/class/constraint/covergroup/DPI-C/
@@ -2043,7 +2046,10 @@ ENT-24:[] No AXI/AHB/APB protocol verification IP (High)
 ENT-25:[] No standard verification IP library (Critical)
 ENT-26:[] No waveform database server for team access (High)
 ENT-27:[] No coverage database server (High)
-ENT-28:[] No integration with bug tracking (Jira/Redmine) (Medium)
+ENT-28: ✅ Bug tracking integration (ROUND 91) — crates/maria-tools/
+         src/ci.rs: export_jira_csv (lint findings → Jira import CSV),
+         export_redmine_csv (lint findings → Redmine CSV). LintFinding
+         struct dengan module/check/severity/message/file/line.
 ENT-29:[] No integration with requirements management (Medium)
 ENT-30: [x] IEEE 1801 (UPF) power intent support — FIXED (ROUND 23, CRIT-012)
          crates/maria-simulator/src/upf.rs (~1074 LOC): PowerIntent,
@@ -2054,10 +2060,17 @@ ENT-32:[] No integration with STA tools (PrimeTime, Tempus) (Critical)
 ENT-33:[] No integration with synthesis tools (DC, Genus, Yosys) (Critical)
 ENT-34:[] No integration with P&R tools (ICC2, Innovus) (Critical)
 ENT-35:[] No integration with DFT tools (Tessent, DFTMAX) (Critical)
-ENT-36:[] No multi-project management (Medium)
+ENT-36: ✅ Multi-project management (ROUND 91) — crates/maria-tools/
+         src/project.rs: WorkspaceConfig (TOML) dengan ProjectEntry
+         (name/path/top/depends/incdirs/defines). Topological sort untuk
+         dependency order. save/load/add/remove/discover_projects. 4 test:
+         create, save/load, topo sort, cycle detection.
 ENT-37:[] No IP packaging (IP-XACT) (High)
 ENT-38:[] No design repository (Critical)
-ENT-39:[] No revision control integration beyond git (Low)
+ENT-39: ⚠️ Revision control integration — PARTIAL (ROUND 91)
+         Git integration sudah aktif via CI/CD pipeline (.github/workflows/).
+         Untuk SVN/Perforce: file .maria bisa di-commit sebagai file list.
+         Status: git-native, non-git memakai filelist manual.
 ENT-40:[] No plugin/extension marketplace (High)
 
 4.11 PLATFORM GAPS (Linux / OS)
