@@ -2019,6 +2019,8 @@ dependencies = [
  "num_cpus",
  "parking_lot",
  "serde",
+ "serde_json",
+ "tempfile",
  "toml",
  "xxhash-rust",
 ]

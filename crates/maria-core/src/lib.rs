@@ -7,6 +7,7 @@
 
 pub mod animasi;
 pub mod arena;
+pub mod audit;
 pub mod checksum;
 pub mod config;
 pub mod diagnostics;

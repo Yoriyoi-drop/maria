@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2221 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2229 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -19,7 +19,7 @@ Namun untuk tape-out komersial SoC skala enterprise (9000+ modul,
 100000+ file, 1M+ signal), Maria memiliki gap fundamental di hampir
 setiap dimensi dibandingkan Verilator, VCS, Questa, dan Xcelium.
 
-Enterprise Readiness Score:  30/100
+Enterprise Readiness Score:  35/100
 Verification Readiness:      26/100
 Simulator Score:             30/100
 Compiler Score:              16/100
@@ -1984,7 +1984,12 @@ ENT-06: ✅ Test result database (ROUND 91) — crates/maria-tools/src/testdb.rs
          last_pass_rate, detect_regression, avg_pass_rate, export_summary.
          Atomic write (temp+rename), max_runs eviction (100 default).
          4 test: create/load, regression detection, pass rate, eviction.
-ENT-07: [] No metrics dashboard (High)
+ENT-07: ✅ Metrics dashboard (ROUND 91) — crates/maria-compiler/src/
+         profiling/dashboard.rs: CompileMetrics (files/modules/parse/
+         elab/optimize/cache hit rate/errors/warnings) + CoverageMetrics
+         (line/toggle/branch/fsm percent) + MetricsReport (JSON export
+         via to_json). Display impl untuk semua metrik. 5 test: compile
+         metrics, coverage percent, JSON export, dashboard display.
 ENT-08: ✅ Performance trend tracking (ROUND 91) — benchmark job upload bench-
          results.txt (contain throughput counter + compile + string intern +
          memory stress metrics) dengan retention 90 hari. File berisi timestamp
@@ -2001,7 +2006,12 @@ ENT-11:[] No license management (High)
 ENT-12:[] No IP encryption/decryption (Critical)
 ENT-13:[] No RTL secure vault (Medium)
 ENT-14:[] No user authentication (Medium)
-ENT-15:[] No audit trail (Medium)
+ENT-15: ✅ Audit trail (ROUND 91) — crates/maria-core/src/audit.rs
+         AuditEntry struct (timestamp/level/category/message/details).
+         AuditLog: thread-safe collector + flush ke JSON lines file.
+         Convenience: info/warn/error/critical + log_compile/log_simulation/
+         log_formal. Eviction (max_entries). 5 test: info, levels, compile,
+         eviction, load empty.
 ENT-16: ✅ Project-level configuration — FIXED (stale; file .maria)
          File project `.maria` didukung penuh: daftar file .sv per baris
          (# komentar), dibaca via --filelist/-f, bagian [foreign] TOML-like
@@ -2010,7 +2020,10 @@ ENT-16: ✅ Project-level configuration — FIXED (stale; file .maria)
 ENT-17:[] No team collaboration features (High)
 ENT-18:[] No parallel multi-user simulation server (Critical)
 ENT-19:[] No job scheduling / batch simulation (High)
-ENT-20:[] No resource management (memory/CPU quotas) (Medium)
+ENT-20: ✅ Resource management (ROUND 91) — MariaConfig.simulation
+         extended: memory_limit_mb, cpu_threads, timeout_seconds. Helper
+         methods: max_threads(), memory_limit_mb(), sim_timeout().
+         TOML config: [simulation] memory_limit_mb=2048 cpu_threads=4.
 ENT-21:[] No integration with CI/CD common tools (Jenkins,
         GitLab CI) (Critical)
 ENT-22: ✅ Version compatibility checking (ROUND 90) — `mcheck --sv-version`.

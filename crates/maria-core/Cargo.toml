@@ -11,5 +11,9 @@ fxhash = "0.2"
 num_cpus = "1"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[dev-dependencies]
+tempfile = "3"

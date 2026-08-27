@@ -88,6 +88,13 @@ pub struct SimulationConfig {
     pub watchdog_idle_seconds: Option<u64>,
     pub progress_every_ticks: Option<u64>,
     pub max_delta_per_step: Option<u64>,
+    // ENT-20: Resource management
+    /// Batas memori maksimum (MB). None = unlimited.
+    pub memory_limit_mb: Option<u64>,
+    /// Batas jumlah thread CPU. None = gunakan compiler.jobs.
+    pub cpu_threads: Option<usize>,
+    /// Timeout simulasi (detik). None = unlimited.
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -171,5 +178,35 @@ impl MariaConfig {
             return Self::load("configs/compiler.toml");
         }
         Ok(MariaConfig::default())
+    }
+
+    // ENT-20: Resource management helpers
+
+    /// Jumlah thread yang diizinkan (dari compiler.jobs atau simulation.cpu_threads).
+    pub fn max_threads(&self) -> usize {
+        self.simulation
+            .cpu_threads
+            .or(self.compiler.jobs)
+            .unwrap_or_else(num_cpus::get)
+    }
+
+    /// Batas memori dalam MB (None = unlimited).
+    pub fn memory_limit_mb(&self) -> Option<u64> {
+        self.simulation.memory_limit_mb
+    }
+
+    /// Timeout simulasi dalam detik (None = unlimited).
+    pub fn sim_timeout(&self) -> Option<u64> {
+        self.simulation.timeout_seconds
+    }
+
+    /// Apakah incremental compilation aktif.
+    pub fn incremental(&self) -> bool {
+        self.compiler.incremental.unwrap_or(true)
+    }
+
+    /// Level optimisasi (0..=3).
+    pub fn opt_level(&self) -> u8 {
+        self.compiler.opt_level.unwrap_or(1)
     }
 }
