@@ -142,6 +142,8 @@ pub struct SimulationEngine {
     /// Waktu absolut yang direpresentasikan oleh `events[0]`.
     pub events_base: usize,
     pub nba_pending: Vec<(IrLValue, LogicVec)>,
+    /// PERF-15: Bucket NBA writes by signal ID for O(1) conflict detection.
+    pub nba_signal_map: HashMap<SignalId, usize>,
     /// SIM-18: auto-checkpoint untuk crash recovery — (path, interval cycle).
     /// Checkpoint disimpan otomatis tiap `interval` cycle (dan di akhir run)
     /// sehingga run yang crash/terhenti bisa di-resume dari titik terakhir.

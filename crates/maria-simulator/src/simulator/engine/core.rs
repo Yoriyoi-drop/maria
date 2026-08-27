@@ -43,6 +43,7 @@ impl SimulationEngine {
             events: Vec::new(),
             events_base: 0,
             nba_pending: Vec::new(),
+            nba_signal_map: HashMap::new(),
             auto_checkpoint: None,
             vcd: None,
             fst: None,

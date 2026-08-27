@@ -1903,7 +1903,13 @@ LSP-17: ✅ Completion resolve (ROUND 90) — completion_resolve handler di LSP 
            module", FUNCTION → "SystemVerilog function", CLASS → "SystemVerilog class",
            KEYWORD → "SystemVerilog keyword", VARIABLE → "Signal/variable", CONSTANT → "Parameter".
            1 test: test_completion_resolve (module documentation generated).
-LSP-18:[] No incremental document sync (Medium)
+LSP-18: ✅ Incremental document sync (ROUND 90) — TextDocumentSyncKind::INCREMENTAL
+           did_change handler: apply_text_change + position_to_offset. Setiap change
+           punya range (start/end position) → byte offset conversion → replace_range.
+           Incremental mode: client hanya mengirim bagian yang berubah (bukan full text),
+           mengurangi network overhead untuk dokumen besar. Fallback ke full replacement
+           bila change tanpa range. 2 test: test_incremental_text_change (insert/replace/
+           delete), test_position_to_offset (multi-line offset calculation).
 LSP-19: ✅ Diagnostic publishing via parser (crates/maria-env/src/lsp/backend.rs,
         publishDiagnostics pada open/change/save/close)
 LSP-20: ✅ Document formatting (ROUND 90) — textDocument/formatting handler di LSP
@@ -2570,10 +2576,12 @@ PERF-14: ✅ VCD streaming — FIXED via WAV-06 (periodic flush +
          Impact: Large memory for signal history before dump
          Fix: Stream VCD to disk continuously
 
-PERF-15:[] NBA commit checks all pending entries
-         scheduler.rs: commit_nba iterates all NBA pending
-         Impact: O(NBA) per delta — many NBA causes slowdown
-         Fix: Bucket NBA by target signal, incremental commit
+PERF-15: ✅ NBA commit — O(1) conflict detection via signal map (ROUND 90)
+           crates/maria-simulator/src/simulator/engine/scheduler/event.rs: nba_signal_map
+           HashMap<SignalId, usize> tracks which signals have pending NBA writes.
+           push_nba_pending: O(1) conflict detection (HashMap::contains_key replaces
+           linear scan of nba_pending). commit_nba: clear map after drain.
+           Dampak: conflict detection naik dari O(N) ke O(1) per push.
 
 PERF-16: ✅ Covergroup sampling — constant-bin hash lookup (ROUND 90)
            crates/maria-simulator/src/simulator/engine/coverage.rs: build_const_bin_map

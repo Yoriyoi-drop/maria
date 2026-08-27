@@ -1,7 +1,7 @@
 //! LSP Backend — tower-lsp LanguageServer implementation for SystemVerilog.
 //!
 //! Provides:
-//! - TextDocumentSyncKind::FULL for open/change/close
+//! - TextDocumentSyncKind::INCREMENTAL for open/change/close (LSP-18)
 //! - publishDiagnostics via the existing parser
 //! - go-to-definition (LSP-03 tahap 1): module/interface/package/class/
 //!   function/task/parameter + port/signal declaration di file yang sama
@@ -1376,7 +1376,7 @@ impl LanguageServer for LspBackend {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
+                    TextDocumentSyncKind::INCREMENTAL,
                 )),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
@@ -1470,21 +1470,37 @@ impl LanguageServer for LspBackend {
     }
 
     /// Text document didChange — re-parse and emit diagnostics.
+    /// LSP-18: Incremental document sync — apply range-based text changes.
     async fn did_change(&self, params: lsp_types::DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
-        if let Some(change) = params.content_changes.into_iter().last() {
-            if let Ok(mut map) = self.documents.lock() {
-                map.insert(uri.to_string(), change.text.clone());
+        // Apply all incremental changes in order.
+        if let Ok(mut map) = self.documents.lock() {
+            let text = map.entry(uri.to_string()).or_default();
+            for change in params.content_changes {
+                if let Some(range) = change.range {
+                    // Incremental: apply range-based edit.
+                    apply_text_change(text, range, &change.text);
+                } else {
+                    // Fallback: full document replacement.
+                    *text = change.text;
+                }
             }
-            let diagnostics = Self::parse_diagnostics(&change.text);
-            self.client
-                .send_notification::<PublishDiagnostics>(PublishDiagnosticsParams {
-                    uri,
-                    diagnostics,
-                    version: Some(params.text_document.version),
-                })
-                .await;
         }
+        // Re-parse with the updated document.
+        let source = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|m| m.get(uri.as_str()).cloned())
+            .unwrap_or_default();
+        let diagnostics = Self::parse_diagnostics(&source);
+        self.client
+            .send_notification::<PublishDiagnostics>(PublishDiagnosticsParams {
+                uri,
+                diagnostics,
+                version: Some(params.text_document.version),
+            })
+            .await;
     }
 
     /// Text document didSave — re-parse and emit diagnostics.
@@ -1958,6 +1974,36 @@ impl LanguageServer for LspBackend {
             })
             .await;
     }
+}
+
+/// Apply an incremental text change to a document string (LSP-18).
+fn apply_text_change(text: &mut String, range: Range, new_text: &str) {
+    let lines: Vec<&str> = text.lines().collect();
+
+    // Convert (line, character) to byte offset.
+    let start_offset = position_to_offset(&lines, range.start);
+    let end_offset = position_to_offset(&lines, range.end);
+
+    // Replace the byte range.
+    if start_offset <= end_offset && end_offset <= text.len() {
+        text.replace_range(start_offset..end_offset, new_text);
+    }
+}
+
+/// Convert a Position (line, character) to a byte offset in the text.
+fn position_to_offset(lines: &[&str], pos: Position) -> usize {
+    let mut offset = 0;
+    for (i, line) in lines.iter().enumerate() {
+        if i == pos.line as usize {
+            // Character is byte offset within this line.
+            let char_offset = pos.character as usize;
+            let safe_offset = char_offset.min(line.len());
+            return offset + safe_offset;
+        }
+        // +1 for the newline character (not present in .lines() output).
+        offset += line.len() + 1;
+    }
+    offset
 }
 
 /// Run the LSP server with stdio transport.
@@ -2882,6 +2928,45 @@ endmodule
         );
         // Baris di luar dokumen.
         assert!(LspBackend::find_definition(SAMPLE, 999, 0).is_none());
+    }
+
+    #[test]
+    fn test_incremental_text_change() {
+        // Insert: add "abc" at position (0, 5) in "0123456789"
+        let mut text = "0123456789".to_string();
+        apply_text_change(
+            &mut text,
+            Range::new(Position::new(0, 5), Position::new(0, 5)),
+            "abc",
+        );
+        assert_eq!(text, "01234abc56789");
+
+        // Replace: replace range (0,2)..(0,5) with "X"
+        let mut text2 = "0123456789".to_string();
+        apply_text_change(
+            &mut text2,
+            Range::new(Position::new(0, 2), Position::new(0, 5)),
+            "X",
+        );
+        assert_eq!(text2, "01X56789");
+
+        // Delete: replace range with empty
+        let mut text3 = "0123456789".to_string();
+        apply_text_change(
+            &mut text3,
+            Range::new(Position::new(0, 0), Position::new(0, 5)),
+            "",
+        );
+        assert_eq!(text3, "56789");
+    }
+
+    #[test]
+    fn test_position_to_offset() {
+        let lines = vec!["hello", "world"];
+        assert_eq!(position_to_offset(&lines, Position::new(0, 0)), 0);
+        assert_eq!(position_to_offset(&lines, Position::new(0, 5)), 5);
+        assert_eq!(position_to_offset(&lines, Position::new(1, 0)), 6);
+        assert_eq!(position_to_offset(&lines, Position::new(1, 3)), 9);
     }
 
     #[test]

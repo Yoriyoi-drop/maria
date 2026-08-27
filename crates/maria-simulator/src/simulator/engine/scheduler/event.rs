@@ -839,6 +839,7 @@ impl SimulationEngine {
 
     pub(crate) fn commit_nba(&mut self) {
         let pending = std::mem::take(&mut self.nba_pending);
+        self.nba_signal_map.clear();
         for (lvalue, val) in pending {
             if !self.is_forced(&lvalue) {
                 let _ = self.write_lvalue(&lvalue, val, false);
@@ -847,24 +848,21 @@ impl SimulationEngine {
     }
 
     /// SIM-14: Push NBA write ke pending list dengan deteksi write conflict.
+    /// PERF-15: O(1) conflict detection via nba_signal_map.
     /// Jika signal yang sama sudah punya NBA pending → warning RT1006.
     pub(crate) fn push_nba_pending(&mut self, lvalue: IrLValue, val: LogicVec) {
         if let Some(new_id) = self.signal_id_from_lvalue(&lvalue) {
-            for (existing_lvalue, _) in &self.nba_pending {
-                if let Some(existing_id) = self.signal_id_from_lvalue(existing_lvalue) {
-                    if existing_id == new_id {
-                        self.emit_warning(
-                            maria_core::diagnostics::DiagCode::NbaWriteConflict,
-                            format!(
-                                "NBA write conflict on signal id={} at time {}: \
-                                 multiple non-blocking assignments to the same signal in one delta cycle",
-                                new_id, self.state.time
-                            ),
-                        );
-                        break;
-                    }
-                }
+            if self.nba_signal_map.contains_key(&new_id) {
+                self.emit_warning(
+                    maria_core::diagnostics::DiagCode::NbaWriteConflict,
+                    format!(
+                        "NBA write conflict on signal id={} at time {}: \
+                         multiple non-blocking assignments to the same signal in one delta cycle",
+                        new_id, self.state.time
+                    ),
+                );
             }
+            self.nba_signal_map.insert(new_id, self.nba_pending.len());
         }
         self.nba_pending.push((lvalue, val));
     }
