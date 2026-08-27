@@ -2527,7 +2527,7 @@ impl LspBackend {
                             data: None,
                         });
                     }
-                    // Function/task → reference count
+                    // Function/task → reference count + test run lens (LSP-21)
                     DocSymbol::KIND_FUNCTION => {
                         // Estimate reference count (word-boundary match)
                         let ref_count = count_word_occurrences(text, &sym.name).saturating_sub(1); // -1 for decl
@@ -2543,6 +2543,24 @@ impl LspBackend {
                                 command: Some(LspCommand {
                                     title: format!("{} reference{}", ref_count, if ref_count == 1 { "" } else { "s" }),
                                     command: format!("maria.showReferences.{}", sym.name),
+                                    arguments: None,
+                                }),
+                                data: None,
+                            });
+                        }
+                        // LSP-21: "Run test" lens for test functions (name starts with "test_")
+                        if sym.name.starts_with("test_") {
+                            lenses.push(CodeLens {
+                                range: Range {
+                                    start: Position::new(sym.line, sym.col),
+                                    end: Position::new(
+                                        sym.line,
+                                        sym.col + sym.name.len() as u32,
+                                    ),
+                                },
+                                command: Some(LspCommand {
+                                    title: "▶ Run test".to_string(),
+                                    command: format!("maria.runTest.{}", sym.name),
                                     arguments: None,
                                 }),
                                 data: None,
@@ -3362,6 +3380,32 @@ endmodule
         assert_eq!(count_word_occurrences("", "foo"), 0);
         // Word boundary: "counter" should NOT match "counter_aux".
         assert_eq!(count_word_occurrences("counter counter_aux", "counter"), 1);
+    }
+
+    // LSP-21: test run code lens for individual test functions
+    #[test]
+    fn test_code_lens_test_run() {
+        use lsp_types::Url;
+        let uri = Url::parse("file:///test.sv").unwrap();
+        let src = "module counter;\n  function test_add(input int a, input int b);\n    return a + b;\n  endfunction\n  function not_a_test(input int x);\n    return x;\n  endfunction\nendmodule\n";
+        let lenses = LspBackend::compute_code_lens(src, &uri);
+        // Module counter -> test count lens
+        assert!(
+            lenses.iter().any(|l| l.command.as_ref().map_or(false, |c| c.title.contains("test"))),
+            "module lens: {:?}",
+            lenses.iter().map(|l| l.command.as_ref().map(|c| c.title.as_str())).collect::<Vec<_>>()
+        );
+        // test_add -> 'Run test' lens (LSP-21)
+        assert!(
+            lenses.iter().any(|l| l.command.as_ref().map_or(false, |c| c.command.contains("runTest") && c.command.contains("test_add"))),
+            "test_add should have runTest lens: {:?}",
+            lenses.iter().map(|l| l.command.as_ref().map(|c| (&c.title, &c.command))).collect::<Vec<_>>()
+        );
+        // not_a_test -> NO runTest lens
+        assert!(
+            !lenses.iter().any(|l| l.command.as_ref().map_or(false, |c| c.command.contains("not_a_test"))),
+            "not_a_test should NOT have runTest lens"
+        );
     }
 
     #[test]

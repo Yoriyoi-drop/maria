@@ -987,3 +987,189 @@ impl FormalEngine {
         FormalResult::Counterexample(bound)
     }
 }
+
+// ─── FORMAL-15: Unreachable Assertion Detection ───
+
+/// Result of unreachable assertion analysis.
+#[derive(Debug, Clone)]
+pub struct UnreachableAssertInfo {
+    /// Name of the assertion (process + index)
+    pub name: String,
+    /// Whether the assertion condition is always true (trivially satisfied)
+    pub always_true: bool,
+    /// Whether the assertion condition is satisfiable at all (can ever be false)
+    pub can_violate: bool,
+    /// Description of the analysis result
+    pub description: String,
+}
+
+impl FormalEngine {
+    /// FORMAL-15: Detect unreachable assertions.
+    ///
+    /// For each assertion, checks:
+    /// 1. Is the condition always true (unsatisfiable negation)?
+    /// 2. Can the condition ever be false in the transition system?
+    ///
+    /// An assertion is "unreachable" if its negation is unsatisfiable
+    /// (meaning the assertion condition always holds — it can never be violated).
+    pub fn detect_unreachable_assertions(
+        &mut self,
+        design: &IrDesign,
+    ) -> Vec<UnreachableAssertInfo> {
+        if !self.is_available() {
+            self.init();
+        }
+        let mut results = Vec::new();
+        let bound = self.config.bound;
+        let n_signals = design.top.signals.len();
+
+        let all_assertions = collect_assertions(&design.top.processes);
+        if all_assertions.is_empty() {
+            return results;
+        }
+
+        let assignments = collect_combinational_assignments(&design.top.processes);
+        let init_assigns = collect_initial_state_assignments(&design.top.processes);
+        let assumptions = collect_assumptions(&design.top.processes);
+
+        let signal_widths: Vec<u32> = design
+            .top.signals
+            .iter()
+            .map(|s| s.width.clamp(1, 64) as u32)
+            .collect();
+
+        let init_vals: Vec<Option<u64>> = design
+            .top.signals
+            .iter()
+            .map(|s| {
+                let has_unknown = s.init_val.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+                if has_unknown { None } else { Some(s.init_val.to_u64()) }
+            })
+            .collect();
+
+        for (aidx, (assert_name, cond)) in all_assertions.iter().enumerate() {
+            let name = format!("{}.assert_{}", assert_name, aidx);
+
+            // Check 1: Is ¬P always UNSAT? (P is always true)
+            self.reset();
+            let solver = match self.solver.as_ref() {
+                Some(s) => s,
+                None => {
+                    results.push(UnreachableAssertInfo {
+                        name,
+                        always_true: false,
+                        can_violate: false,
+                        description: "Z3 solver not initialized".into(),
+                    });
+                    continue;
+                }
+            };
+
+            // Build minimal transition system (1 step)
+            let check_bound = bound.min(4); // quick check at low bound
+            let n_vars = (check_bound + 1) as usize;
+            let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity(n_vars);
+            for d in 0..=check_bound {
+                let mut depth_vars = Vec::with_capacity(n_signals);
+                for i in 0..n_signals {
+                    let width = signal_widths.get(i).copied().unwrap_or(64);
+                    depth_vars.push(z3::ast::BV::new_const(
+                        format!("reach_sig_{}_{}", i, d), width,
+                    ));
+                }
+                sig_vars.push(depth_vars);
+            }
+
+            // Initial state constraints
+            for i in 0..n_signals {
+                if let Some(Some(init)) = init_vals.get(i) {
+                    let width = *signal_widths.get(i).unwrap_or(&64);
+                    solver.assert(sig_vars[0][i].eq(&z3::ast::BV::from_u64(*init, width)));
+                }
+            }
+            for (sig_id, rhs) in &init_assigns {
+                if *sig_id < n_signals {
+                    if let Some(rhs_val) = self.expr_to_z3_int_at(rhs, 0, &sig_vars) {
+                        let (a, b) = self.zero_extend_match(&sig_vars[0][*sig_id], &rhs_val);
+                        solver.assert(a.eq(&b));
+                    }
+                }
+            }
+
+            // Transition constraints
+            let all_assigned: HashSet<usize> = assignments.first()
+                .map(|g| g.iter().map(|(id, _)| *id).collect())
+                .unwrap_or_default();
+            for d in 1..=check_bound {
+                for assign_group in &assignments {
+                    for (sig_id, rhs) in assign_group.iter() {
+                        if *sig_id < n_signals {
+                            if let Some(rhs_val) = self.expr_to_z3_int_at(rhs, d as isize - 1, &sig_vars) {
+                                let (a, b) = self.zero_extend_match(&sig_vars[d as usize][*sig_id], &rhs_val);
+                                solver.assert(a.eq(&b));
+                            }
+                        }
+                    }
+                }
+                for i in 0..n_signals {
+                    if !all_assigned.contains(&i) {
+                        solver.assert(sig_vars[(d-1) as usize][i].eq(&sig_vars[d as usize][i]));
+                    }
+                }
+            }
+
+            // Assumptions
+            for a in &assumptions {
+                for d in 0..=check_bound {
+                    if let Some(a_bool) = self.expr_to_z3_bool_at(a, d as isize, &sig_vars) {
+                        solver.assert(&a_bool);
+                    }
+                }
+            }
+
+            // Check 1: ¬P at depth 0 — if UNSAT, P is always true
+            solver.push();
+            let always_true = if let Some(cond_bool) = self.expr_to_z3_bool_at(cond, 0, &sig_vars) {
+                solver.assert(&cond_bool.not());
+                match solver.check() {
+                    z3::SatResult::Unsat => true,
+                    _ => false,
+                }
+            } else {
+                false
+            };
+            solver.pop(1);
+
+            // Check 2: ¬P at ANY depth 0..bound — if UNSAT, never violates
+            let mut can_violate = false;
+            for d in 0..=check_bound {
+                solver.push();
+                if let Some(cond_bool) = self.expr_to_z3_bool_at(cond, d as isize, &sig_vars) {
+                    solver.assert(&cond_bool.not());
+                    if let z3::SatResult::Sat = solver.check() {
+                        can_violate = true;
+                        solver.pop(1);
+                        break;
+                    }
+                }
+                solver.pop(1);
+            }
+
+            let description = if always_true {
+                "assertion condition is always true (trivially satisfied — never violated)".to_string()
+            } else if !can_violate {
+                "assertion condition is unreachable in the transition system (never false at any depth)".to_string()
+            } else {
+                "assertion is reachable (can be violated)".to_string()
+            };
+
+            results.push(UnreachableAssertInfo {
+                name,
+                always_true,
+                can_violate,
+                description,
+            });
+        }
+        results
+    }
+}

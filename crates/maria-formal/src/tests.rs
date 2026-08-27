@@ -1202,4 +1202,151 @@ mod tests {
             results[0].1
         );
     }
+
+    // ── FORMAL-15: Unreachable Assertion Detection Tests ──
+
+    #[test]
+    fn test_unreachable_assertion_always_true() {
+        // assert(1) is trivially always true — unreachable
+        let cond_true = IrExpr::Const(LogicVec::from_u64(1, 1));
+        let assert_stmt = IrStmt::Assert {
+            cond: cond_true,
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+            line: 0,
+            col: 0,
+        };
+
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![],
+                inputs: vec![],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![Process::Combinational {
+                    name: Symbol::from("always_comb"),
+                    sensitivity: vec![],
+                    body: vec![assert_stmt],
+                }],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            source_file: None,
+            source_lines: None,
+            module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
+        };
+
+        let mut engine = test_engine();
+        let results = engine.detect_unreachable_assertions(&design);
+        assert_eq!(results.len(), 1, "Should detect 1 unreachable assertion");
+        assert!(results[0].always_true, "assert(1) should be always true");
+        assert!(!results[0].can_violate, "assert(1) should never violate");
+    }
+
+    #[test]
+    fn test_unreachable_assertion_reachable() {
+        // assert(signal[0]) — signal is unconstrained, can be 0 or 1
+        // So ¬P is SAT → assertion is reachable (can violate)
+        let assert_cond = IrExpr::Signal(0, 0);
+        let assert_stmt = IrStmt::Assert {
+            cond: assert_cond,
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+            line: 0,
+            col: 0,
+        };
+
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![SignalInfo {
+                    name: Symbol::from("sig"),
+                    width: 1,
+                    ..Default::default()
+                }],
+                inputs: vec![0],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![Process::Combinational {
+                    name: Symbol::from("always_comb"),
+                    sensitivity: vec![],
+                    body: vec![assert_stmt],
+                }],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            source_file: None,
+            source_lines: None,
+            module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
+        };
+
+        let mut engine = test_engine();
+        let results = engine.detect_unreachable_assertions(&design);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].always_true, "unconstrained signal should not be always true");
+        assert!(results[0].can_violate, "unconstrained signal should be reachable");
+    }
+
+    #[test]
+    fn test_unreachable_assertion_no_assertions() {
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![],
+                inputs: vec![],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            source_file: None,
+            source_lines: None,
+            module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
+        };
+
+        let mut engine = test_engine();
+        let results = engine.detect_unreachable_assertions(&design);
+        assert!(results.is_empty(), "No assertions → no unreachable results");
+    }
 }
