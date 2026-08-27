@@ -10,3 +10,5 @@ mod mixed_sign_fuzz;
 mod system_func_fuzz;
 #[cfg(test)]
 mod signed_overflow_fuzz;
+#[cfg(test)]
+mod divmod_fuzz;
