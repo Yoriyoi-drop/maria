@@ -17,7 +17,11 @@ maria-simulator = { path = "../maria-simulator" }
 num_cpus = "1"
 toml = "0.8"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 rayon = "1"
+
+[dev-dependencies]
+tempfile = "3"
 
 # LINUX-13: thread affinity (hanya Linux)
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -12,6 +12,7 @@ pub mod elab;
 pub mod fmt;
 pub mod gen;
 pub mod inspect;
+pub mod ipxact;
 pub mod lint;
 pub mod memcheck;
 pub mod prof;

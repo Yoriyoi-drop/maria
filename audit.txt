@@ -2,7 +2,7 @@
 ║            AUDIT BRUTAL — MARIA HDL SIMULATOR ECOSYSTEM                     ║
 ║            Principal HDL Compiler Engineer / EDA Architect Review            ║
 ║            Target: Commercial SoC Tape-Out Readiness                        ║
-║            Date: 2026-08-27 (updated — ROUND 91: ENT-02/03/05/08/09/10, LSP-21, FORMAL-15)              ║
+║            Date: 2026-08-27 (updated — ROUND 92: ENT-14/37, LINUX-12)              ║
 ║            Version: 0.3.0                                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2256 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2262 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -19,7 +19,7 @@ Namun untuk tape-out komersial SoC skala enterprise (9000+ modul,
 100000+ file, 1M+ signal), Maria memiliki gap fundamental di hampir
 setiap dimensi dibandingkan Verilator, VCS, Questa, dan Xcelium.
 
-Enterprise Readiness Score:  45/100
+Enterprise Readiness Score:  48/100
 Verification Readiness:      27/100
 Simulator Score:             30/100
 Compiler Score:              17/100
@@ -105,7 +105,7 @@ constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif + cache + TSAN + Miri, ✅ 2209 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif + cache + TSAN + Miri, ✅ 2262 tests pass 0 fail (3 fuzz flaky),
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
 dan ✅ 90 item audit telah diperbaiki (termasuk monorepo workspace,
@@ -136,7 +136,7 @@ ROUND 85 COMP-08 sign extension elimination + COMP-09 X/Z constant
 propagation (MIR passes + 9 test) + COMP-12 case analysis
 parallel_case/full_case (mlint --case-analysis) + SIM-12 mixed
 blocking/non-blocking race detection (signal_write_types + 7 callers).
-2209 tests pass, 0 fail.
+2262 tests pass, 0 fail (3 fuzz flaky).
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -2010,7 +2010,12 @@ ENT-10: ✅ Thread sanitizer testing (ROUND 91) — ci.yml tambah tsan job:
 ENT-11:[] No license management (High)
 ENT-12:[] No IP encryption/decryption (Critical)
 ENT-13:[] No RTL secure vault (Medium)
-ENT-14:[] No user authentication (Medium)
+ENT-14: ✅ User authentication — API key-based LSP auth (ROUND 92)
+         crates/maria-env/src/lsp/auth.rs: AuthStore (Mutex<HashMap<String,ApiKey>>)
+         + ApiKey struct (key/owner/scopes/timestamps). Load dari env
+         MARIA_LSP_API_KEY + file .maria/auth.json. validate/has_scope/
+         revoke/generate_key/save. Auth disabled by default (backward compat).
+         5 test: disabled, env key, scopes, revoke, generate
 ENT-15: ✅ Audit trail (ROUND 91) — crates/maria-core/src/audit.rs
          AuditEntry struct (timestamp/level/category/message/details).
          AuditLog: thread-safe collector + flush ke JSON lines file.
@@ -2073,7 +2078,11 @@ ENT-36: ✅ Multi-project management (ROUND 91) — crates/maria-tools/
          (name/path/top/depends/incdirs/defines). Topological sort untuk
          dependency order. save/load/add/remove/discover_projects. 4 test:
          create, save/load, topo sort, cycle detection.
-ENT-37:[] No IP packaging (IP-XACT) (High)
+ENT-37: ✅ IP packaging — IP-XACT (IEEE 1685) XML (ROUND 92)
+         crates/maria-tools/src/ipxact.rs: IpxactComponent from_module
+         + to_xml + save_xml + summary. IpxactPort/IpxactParameter structs.
+         XML escape, Accellera schema namespace, vector left/right.
+         3 test: xml output, save file, summary
 ENT-38:[] No design repository (Critical)
 ENT-39: ⚠️ Revision control integration — PARTIAL (ROUND 91)
          Git integration sudah aktif via CI/CD pipeline (.github/workflows/).
@@ -2107,7 +2116,10 @@ LINUX-11: ✅ Cgroup-aware resource limits (ROUND 91) — crates/maria-
           (memory.max/cpu.max). memory_limit_mb/cpu_cores/summary.
           Linux: auto-detect; non-Linux: no-op. 3 test: detect, default,
           display.
-LINUX-12:[] No container-native deployment (docker) (Low)
+LINUX-12: ✅ Container-native deployment (ROUND 92)
+         Dockerfile: multi-stage build (rust:1.78-slim builder → debian:bookworm-slim
+         runtime). Non-root user maria, UVM macros copied, OCI labels.
+         cargo build --release --bin maria.
 LINUX-13: ✅ Thread affinity / CPU pinning (ROUND 91)
           crates/maria-env/src/env/runtime/affinity.rs: pin_to_cores,
           pin_to_core, pin_to_range, pin_to_all_cores, current_affinity.

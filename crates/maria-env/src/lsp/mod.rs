@@ -18,6 +18,7 @@
 //! ```
 
 mod backend;
+pub mod auth;
 
 pub use backend::run_lsp_server;
 pub use backend::LspBackend;
