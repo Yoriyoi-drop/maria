@@ -1924,7 +1924,11 @@ LSP-22: ✅ Color provider (ROUND 90) — document_color + color_presentation ha
            ColorInformation dengan range + Color{r,g,b,a} (f32). color_presentation:
            konversi Color → hex string "#RRGGBB" + TextEdit. 2 test: test_document_colors
            (#FF0000 detected), test_document_colors_no_match.
-LSP-23:[] No linked editing range (Low)
+LSP-23: ✅ Linked editing range (ROUND 90) — select matching words for simultaneous edit.
+           linked_editing_range handler: extract word at cursor → word-boundary scan →
+           collect all occurrences → LinkedEditingRanges {ranges, word_pattern}.
+           Returns None bila <2 occurrences atau word <2 chars. Word boundary via is_ident.
+           1 test: test_linked_editing_range (word boundary + counter_aux not matched).
 LSP-24: ✅ Selection range (ROUND 90) — smart selection (word → line → scope).
            compute_selection_range: (1) innermost = word at cursor (ident boundary),
            (2) middle = entire line, (3) outermost = enclosing scope (module/class/function

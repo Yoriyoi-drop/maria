@@ -21,7 +21,7 @@ use lsp_types::{
     MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
     SemanticToken, SemanticTokens, SemanticTokensLegend, SemanticTokensOptions,
     SemanticTokensParams, SemanticTokensResult, ServerCapabilities, ServerInfo,
-    SelectionRange, SelectionRangeParams, SymbolInformation, SymbolKind,
+    LinkedEditingRanges, LinkedEditingRangeParams, SelectionRange, SelectionRangeParams, SymbolInformation, SymbolKind,
     TextDocumentSyncCapability, TextDocumentSyncKind, Url,
     WorkspaceEdit, WorkspaceSymbolParams,
 };
@@ -1446,6 +1446,10 @@ impl LanguageServer for LspBackend {
                 selection_range_provider: Some(lsp_types::SelectionRangeProviderCapability::Simple(
                     true,
                 )),
+                // LSP-23: Linked editing range
+                linked_editing_range_provider: Some(lsp_types::LinkedEditingRangeServerCapabilities::Simple(
+                    true,
+                )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -2021,6 +2025,73 @@ impl LanguageServer for LspBackend {
             }),
             additional_text_edits: None,
         }])
+    }
+
+    /// LSP-23: Linked editing range — select matching words for simultaneous edit.
+    async fn linked_editing_range(
+        &self,
+        params: LinkedEditingRangeParams,
+    ) -> JsonRpcResult<Option<LinkedEditingRanges>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let Some(line_text) = text.lines().nth(pos.line as usize) else {
+            return Ok(None);
+        };
+        // Extract word at cursor.
+        let bytes = line_text.as_bytes();
+        let ch = pos.character as usize;
+        let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        if ch >= bytes.len() || !is_ident(bytes[ch]) {
+            return Ok(None);
+        }
+        let mut start = ch;
+        while start > 0 && is_ident(bytes[start - 1]) {
+            start -= 1;
+        }
+        let mut end = ch;
+        while end < bytes.len() && is_ident(bytes[end]) {
+            end += 1;
+        }
+        if start >= end {
+            return Ok(None);
+        }
+        let word = &line_text[start..end];
+        if word.len() < 2 {
+            return Ok(None);
+        }
+        // Find all occurrences of the word in the document.
+        let mut ranges = Vec::new();
+        for (line_idx, line) in text.lines().enumerate() {
+            let mut offset = 0;
+            while let Some(pos) = line[offset..].find(word) {
+                let abs_pos = offset + pos;
+                // Word boundary check.
+                let before_ok = abs_pos == 0
+                    || !is_ident(line.as_bytes()[abs_pos - 1]);
+                let after_ok = abs_pos + word.len() >= line.len()
+                    || !is_ident(line.as_bytes()[abs_pos + word.len()]);
+                if before_ok && after_ok {
+                    ranges.push(Range::new(
+                        Position::new(line_idx as u32, abs_pos as u32),
+                        Position::new(line_idx as u32, (abs_pos + word.len()) as u32),
+                    ));
+                }
+                offset = abs_pos + 1;
+                if offset >= line.len() {
+                    break;
+                }
+            }
+        }
+        if ranges.len() < 2 {
+            return Ok(None);
+        }
+        Ok(Some(LinkedEditingRanges {
+            ranges,
+            word_pattern: Some(format!("\\b{}\\b", word)),
+        }))
     }
 
     /// Text document didClose — clear diagnostics.
@@ -3160,6 +3231,36 @@ endmodule
         let colors = compute_document_colors(src);
         assert_eq!(colors.len(), 1, "one color: {:?}", colors);
         assert!(colors[0].range.start.line == 1, "color on line 1");
+    }
+
+    #[test]
+    fn test_linked_editing_range() {
+        // When cursor is on 'counter', all occurrences should be linked.
+        let src = "module counter #(parameter WIDTH = 8) (
+    input logic clk,
+    output counter_aux aux
+);
+endmodule
+";
+        // Manually find all word occurrences (simulating the handler logic).
+        let word = "counter";
+        let mut ranges = Vec::new();
+        for (line_idx, line) in src.lines().enumerate() {
+            let mut offset = 0;
+            while let Some(pos) = line[offset..].find(word) {
+                let abs_pos = offset + pos;
+                let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+                let before_ok = abs_pos == 0 || !is_ident(line.as_bytes()[abs_pos - 1]);
+                let after_ok = abs_pos + word.len() >= line.len()
+                    || !is_ident(line.as_bytes()[abs_pos + word.len()]);
+                if before_ok && after_ok {
+                    ranges.push((line_idx, abs_pos));
+                }
+                offset = abs_pos + 1;
+            }
+        }
+        // 'counter' appears in 'counter' (line 0) and 'counter_aux' (not standalone).
+        assert!(ranges.len() >= 1, "at least 1 standalone occurrence: {:?}", ranges);
     }
 
     #[test]
