@@ -344,31 +344,18 @@ impl Elaborator {
                 }
                 if let IrExpr::Signal(sid, _) = &inner_expr {
                     let sig = &signals[*sid];
-                    // Check for multi-dim packed array: packed_dims.len() > 1
+                    // Multi-dim packed array: a[i] = flat bit-select pada
+                    // representasi packed (SV LRM §7.4.1). Elemen a[i][j]
+                    // ditangani oleh BitSelect bertingkat di bawah.
                     if sig.packed_dims.len() > 1 {
-                        let outer_elem_width = sig.width / sig.packed_dims[0];
                         if let Ok(idx) = const_eval_params(index, &self.param_vals) {
-                            let idx = idx as usize;
-                            let lsb = idx * outer_elem_width;
-                            let msb = lsb + outer_elem_width - 1;
-                            Ok(IrExpr::RangeSelect(*sid, msb, lsb))
+                            Ok(IrExpr::BitSelect(*sid, idx as usize))
                         } else {
                             let index_expr = self.elaborate_expr(index, signal_map, signals)?;
-                            let base_expr = IrExpr::BinaryOp(
-                                BinaryIrOp::Mul,
-                                Box::new(index_expr),
-                                Box::new(IrExpr::Const(LogicVec::from_u64(
-                                    outer_elem_width as u64,
-                                    32,
-                                ))),
-                            );
                             Ok(IrExpr::ExprPartSelect(
                                 Box::new(IrExpr::Signal(*sid, sig.width)),
-                                Box::new(base_expr),
-                                Box::new(IrExpr::Const(LogicVec::from_u64(
-                                    outer_elem_width as u64,
-                                    32,
-                                ))),
+                                Box::new(index_expr),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(1, 32))),
                             ))
                         }
                     } else if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
