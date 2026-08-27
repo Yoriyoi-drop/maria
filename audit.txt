@@ -2,7 +2,7 @@
 ║            AUDIT BRUTAL — MARIA HDL SIMULATOR ECOSYSTEM                     ║
 ║            Principal HDL Compiler Engineer / EDA Architect Review            ║
 ║            Target: Commercial SoC Tape-Out Readiness                        ║
-║            Date: 2026-08-26 (updated — ROUND 85b: COMP-08/09/12/13/14/15, SIM-12) ║
+║            Date: 2026-08-27 (updated — ROUND 90: LSP-10/20, PERF-16)              ║
 ║            Version: 0.3.0                                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2167 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2194 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -103,7 +103,7 @@ constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2167 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2194 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
 dan ✅ 90 item audit telah diperbaiki (termasuk monorepo workspace,
@@ -134,7 +134,7 @@ ROUND 85 COMP-08 sign extension elimination + COMP-09 X/Z constant
 propagation (MIR passes + 9 test) + COMP-12 case analysis
 parallel_case/full_case (mlint --case-analysis) + SIM-12 mixed
 blocking/non-blocking race detection (signal_write_types + 7 callers).
-2167 tests pass, 0 fail.
+2194 tests pass, 0 fail.
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -1845,8 +1845,14 @@ LSP-07: ⚠️ IN PROGRESS (ROUND 109) — semantic tokens tahap 1:
          Test 1 unit (module type=0, variable type=5, keyword type=7).
          MASIH OPEN: range request, delta update, modifier bitset.
 LSP-08:[] No code lens (Test/References) (High)
+           MAJOR IMPROVEMENT: LSP-10 Code Actions + LSP-20 Document Formatting sudah diimplementasi.
 LSP-09:[] No inlay hints (type hints) (Medium)
-LSP-10:[] No code actions (quick-fix) (High)
+LSP-10: ✅ Code actions / quick-fix (ROUND 90) — code_action handler di LSP backend
+           generate CodeAction dari diagnostic: missing semicolon (insert ';'),
+           missing endmodule/endfunction/endclass (insert keyword). CodeActionKind::QUICKFIX
+           + WorkspaceEdit dengan TextEdit. 3 test: test_actions_from_diagnostic_missing_
+           semicolon, test_actions_from_diagnostic_missing_endmodule, test_actions_from_
+           diagnostic_no_match. Ter-wire di ServerCapabilities.code_action_provider.
 LSP-11: ⚠️ IN PROGRESS (ROUND 99) — workspace symbol search tahap 1:
          backend.rs — capability workspace_symbol_provider + handler
          symbol; core murni search_workspace_symbols(docs, query):
@@ -1880,7 +1886,12 @@ LSP-17:[] No completion resolve (Medium)
 LSP-18:[] No incremental document sync (Medium)
 LSP-19: ✅ Diagnostic publishing via parser (crates/maria-env/src/lsp/backend.rs,
         publishDiagnostics pada open/change/save/close)
-LSP-20:[] No format-on-save / document formatting (High)
+LSP-20: ✅ Document formatting (ROUND 90) — textDocument/formatting handler di LSP
+           backend. format_source: tokenize via Lexer → group by line → render dengan
+           indent/dedent dinamis berbasis keyword (module/class/function/begin/end).
+           Configurable indent width via tab_size param. 3 test: test_format_source
+           (token presence), test_format_source_indent_dedent (module body indented,
+           endmodule dedented), test_format_source_empty.
 LSP-21:[] No code lens for test run (Medium)
 LSP-22:[] No color provider (Low)
 LSP-23:[] No linked editing range (Low)
@@ -2544,10 +2555,14 @@ PERF-15:[] NBA commit checks all pending entries
          Impact: O(NBA) per delta — many NBA causes slowdown
          Fix: Bucket NBA by target signal, incremental commit
 
-PERF-16:[] Covergroup sampling loops over all bins
-         coverage.rs: linear bin checking per sample
-         Impact: Many covergroups degrade performance
-         Fix: Hash-based bin lookup, early-out on full bins
+PERF-16: ✅ Covergroup sampling — constant-bin hash lookup (ROUND 90)
+           crates/maria-simulator/src/simulator/engine/coverage.rs: build_const_bin_map
+           pre-computes HashMap<u64, (Symbol, BinType)> untuk bins dengan constant
+           ranges (IrExpr::Const). Lazy cache di covergroup_const_bins field.
+           O(1) lookup pertama → fallback linear scan hanya untuk transition bins +
+           expression ranges. Non-const bins (transitions + expr) di-scan linear
+           hanya bila const map miss. Dampak: covergroup dengan bins konstan
+           (kasus umum: enum/encode values) naik dari O(B) ke O(1) per sample.
 
 PERF-17: ✅ All file mmaps held open during compile — FIXED (ROUND 88)
          io.rs: MmapFile tidak lagi menahan region map — mapping

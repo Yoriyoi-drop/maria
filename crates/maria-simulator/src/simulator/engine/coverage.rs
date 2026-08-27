@@ -16,6 +16,53 @@ use super::SeqCovStats;
 /// pertumbuhan tak terbatas untuk coverpoint lebar dengan nilai acak.
 pub(crate) const MAX_DEFAULT_BINS: usize = 4096;
 
+/// PERF-16: Pre-compute a constant-bin lookup map for fast O(1) bin matching.
+/// Returns (const_map, has_non_const) — const_map maps value → (bin_name, bin_type),
+/// has_non_const indicates if any bin has non-constant ranges (needs linear scan).
+fn build_const_bin_map(
+    bins: &[IrBin],
+) -> (HashMap<u64, (Symbol, maria_ast::types::BinType)>, bool) {
+    let mut const_map: HashMap<u64, (Symbol, maria_ast::types::BinType)> = HashMap::new();
+    let mut has_non_const = false;
+
+    for bin in bins {
+        // Skip transition bins — they need prev value, can't be pre-computed.
+        if !bin.transitions.is_empty() {
+            has_non_const = true;
+            continue;
+        }
+        // Check if ALL ranges are constant (IrExpr::Const).
+        let all_const = bin.ranges.iter().all(|rng| {
+            matches!(rng.low, IrExpr::Const(_))
+                && rng
+                    .high
+                    .as_ref()
+                    .map_or(true, |h| matches!(h, IrExpr::Const(_)))
+        });
+        if all_const && !bin.ranges.is_empty() {
+            for rng in &bin.ranges {
+                if let IrExpr::Const(low_lv) = &rng.low {
+                    let low = low_lv.to_u64();
+                    let high = match &rng.high {
+                        Some(IrExpr::Const(h)) => h.to_u64(),
+                        None => low,
+                        _ => {
+                            has_non_const = true;
+                            continue;
+                        }
+                    };
+                    for v in low..=high {
+                        const_map.insert(v, (bin.name, bin.bin_type.clone()));
+                    }
+                }
+            }
+        } else {
+            has_non_const = true;
+        }
+    }
+    (const_map, has_non_const)
+}
+
 /// Check if a value matches a wildcard bin pattern (supports ? and * wildcards).
 #[allow(dead_code)]
 fn wildcard_match(value: u64, pattern: &str) -> bool {
@@ -711,72 +758,101 @@ impl SimulationEngine {
                 // default. Semantik IEEE 1800: ignore_bins = nilai yang
                 // dikecualikan (tidak dihitung); illegal_bins = nilai yang
                 // TIDAK BOLEH muncul (error saat kena); bins normal = dihitung.
-                let prev_key = Symbol::intern(&format!("{}.{}", inst_prefix, cp.name));
+                //
+                // PERF-16: Pre-computed constant-bin lookup O(1) via HashMap.
+                let cp_key = Symbol::intern(&format!("{}.{}", inst_prefix, cp.name));
+                let prev_key = cp_key;
                 let prev = self.covergroup_prev.get(&prev_key).copied();
                 let mut ignored = false;
                 let mut illegal = false;
                 let mut normal_hit: Option<Symbol> = None;
-                'bins: for bin in &cp.bins {
-                    if !bin.transitions.is_empty() {
-                        // Transition bin: cocokkan (prev => curr). Sekuens
-                        // panjang 2 = kasus umum; >2 belum didukung (tidak
-                        // match → auto-bin).
-                        if let Some(p) = prev {
-                            for seq in &bin.transitions {
-                                if seq.len() == 2 {
-                                    let v1 = self
-                                        .evaluate_expr(&seq[0])
-                                        .unwrap_or(LogicVec::from_u64(0, 32))
-                                        .to_u64();
-                                    let v2 = self
-                                        .evaluate_expr(&seq[1])
-                                        .unwrap_or(LogicVec::from_u64(0, 32))
-                                        .to_u64();
-                                    if p == v1 && val_u == v2 {
-                                        match bin.bin_type {
-                                            maria_ast::types::BinType::Ignore => {
-                                                ignored = true;
-                                                break 'bins;
-                                            }
-                                            maria_ast::types::BinType::Illegal => {
-                                                illegal = true;
-                                                break 'bins;
-                                            }
-                                            maria_ast::types::BinType::Normal => {
-                                                normal_hit = Some(bin.name);
-                                                break 'bins;
+
+                // Build const bin map on first access (lazy cache).
+                if !cp.bins.is_empty()
+                    && !self.covergroup_const_bins.contains_key(&cp_key)
+                {
+                    let (cmap, _has_non_const) = build_const_bin_map(&cp.bins);
+                    self.covergroup_const_bins.insert(cp_key, cmap);
+                }
+                // Try O(1) constant-bin lookup first.
+                if let Some(cmap) = self.covergroup_const_bins.get(&cp_key) {
+                    if let Some((bin_name, bin_type)) = cmap.get(&val_u) {
+                        match bin_type {
+                            maria_ast::types::BinType::Ignore => {
+                                ignored = true;
+                            }
+                            maria_ast::types::BinType::Illegal => {
+                                illegal = true;
+                            }
+                            maria_ast::types::BinType::Normal => {
+                                normal_hit = Some(*bin_name);
+                            }
+                        }
+                    }
+                }
+                // Fallback: linear scan for non-const bins (transitions + expr ranges).
+                if !ignored && !illegal && normal_hit.is_none() {
+                    'bins: for bin in &cp.bins {
+                        if !bin.transitions.is_empty() {
+                            // Transition bin: cocokkan (prev => curr).
+                            if let Some(p) = prev {
+                                for seq in &bin.transitions {
+                                    if seq.len() == 2 {
+                                        let v1 = self
+                                            .evaluate_expr(&seq[0])
+                                            .unwrap_or(LogicVec::from_u64(0, 32))
+                                            .to_u64();
+                                        let v2 = self
+                                            .evaluate_expr(&seq[1])
+                                            .unwrap_or(LogicVec::from_u64(0, 32))
+                                            .to_u64();
+                                        if p == v1 && val_u == v2 {
+                                            match bin.bin_type {
+                                                maria_ast::types::BinType::Ignore => {
+                                                    ignored = true;
+                                                    break 'bins;
+                                                }
+                                                maria_ast::types::BinType::Illegal => {
+                                                    illegal = true;
+                                                    break 'bins;
+                                                }
+                                                maria_ast::types::BinType::Normal => {
+                                                    normal_hit = Some(bin.name);
+                                                    break 'bins;
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
-                    } else {
-                        for rng in &bin.ranges {
-                            let low = self
-                                .evaluate_expr(&rng.low)
-                                .unwrap_or(LogicVec::from_u64(0, 32))
-                                .to_u64();
-                            let high = match &rng.high {
-                                Some(h) => self
-                                    .evaluate_expr(h)
+                        } else if !bin.ranges.is_empty() {
+                            // Non-const range bins (only if const map missed).
+                            for rng in &bin.ranges {
+                                let low = self
+                                    .evaluate_expr(&rng.low)
                                     .unwrap_or(LogicVec::from_u64(0, 32))
-                                    .to_u64(),
-                                None => low,
-                            };
-                            if val_u >= low && val_u <= high {
-                                match bin.bin_type {
-                                    maria_ast::types::BinType::Ignore => {
-                                        ignored = true;
-                                        break 'bins;
-                                    }
-                                    maria_ast::types::BinType::Illegal => {
-                                        illegal = true;
-                                        break 'bins;
-                                    }
-                                    maria_ast::types::BinType::Normal => {
-                                        normal_hit = Some(bin.name);
-                                        break 'bins;
+                                    .to_u64();
+                                let high = match &rng.high {
+                                    Some(h) => self
+                                        .evaluate_expr(h)
+                                        .unwrap_or(LogicVec::from_u64(0, 32))
+                                        .to_u64(),
+                                    None => low,
+                                };
+                                if val_u >= low && val_u <= high {
+                                    match bin.bin_type {
+                                        maria_ast::types::BinType::Ignore => {
+                                            ignored = true;
+                                            break 'bins;
+                                        }
+                                        maria_ast::types::BinType::Illegal => {
+                                            illegal = true;
+                                            break 'bins;
+                                        }
+                                        maria_ast::types::BinType::Normal => {
+                                            normal_hit = Some(bin.name);
+                                            break 'bins;
+                                        }
                                     }
                                 }
                             }

@@ -343,6 +343,10 @@ pub struct SimulationEngine {
     /// Nilai coverpoint terakhir per (covergroup, coverpoint) — dipakai
     /// transition bins `(a => b)` (VERIF-31). Key = "cg.cp".
     pub covergroup_prev: HashMap<Symbol, u64>,
+    /// PERF-16: Pre-computed constant-bin lookup map.
+    /// Key = Symbol("cg.cp"), Value = HashMap<u64, Symbol> (value → bin name).
+    /// Dihitung sekali per covergroup saat sampling pertama, di-cache.
+    pub covergroup_const_bins: HashMap<Symbol, HashMap<u64, (Symbol, maria_ast::types::BinType)>>,
     /// Iterasi loop AST terkumpul selama satu eksekusi method/task (anti-hang
     /// saat loop berisi blocking event yang tidak memajukan waktu).
     pub ast_loop_iters: u64,

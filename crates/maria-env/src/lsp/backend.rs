@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse,
     CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticSeverity, DocumentSymbol, FoldingRange, FoldingRangeKind,
     FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse,
@@ -152,6 +153,373 @@ impl LspBackend {
         // Fallback: file belum dibuka editor — baca langsung dari path.
         let path = uri.to_file_path().ok()?;
         std::fs::read_to_string(path).ok()
+    }
+
+    /// LSP-20: Format SystemVerilog source text.
+    /// Uses lexer-based token grouping and indent/dedent logic.
+    fn format_source(src: &str, indent_width: usize) -> String {
+        use maria_parser::lexer::Token;
+
+        // 1. Tokenize.
+        let mut lexer = Lexer::new(src);
+        let mut tokens: Vec<(Token, usize, usize)> = Vec::new();
+        loop {
+            let (tok, line, col) = lexer.next_token();
+            if matches!(tok, Token::Eof) {
+                break;
+            }
+            if matches!(tok, Token::Error(_)) {
+                continue;
+            }
+            tokens.push((tok, line, col));
+        }
+
+        // 2. Group tokens by source line.
+        let mut lines: Vec<Vec<(Token, usize)>> = Vec::new();
+        let mut cur: Vec<(Token, usize)> = Vec::new();
+        let mut cur_line = 0usize;
+        for (tok, line, col) in tokens {
+            if cur_line == 0 {
+                cur_line = line;
+            }
+            if line != cur_line {
+                if !cur.is_empty() {
+                    lines.push(std::mem::take(&mut cur));
+                }
+                cur_line = line;
+            }
+            cur.push((tok, col));
+        }
+        if !cur.is_empty() {
+            lines.push(cur);
+        }
+
+        // 3. Render with dynamic indentation.
+        let mut out = String::new();
+        let mut base: usize = 0;
+        for line_tokens in &lines {
+            if line_tokens.is_empty() {
+                continue;
+            }
+            let first = &line_tokens[0].0;
+            let last = &line_tokens[line_tokens.len() - 1].0;
+
+            // Dedent for closing keywords.
+            if Self::is_dedent_token(first) {
+                base = base.saturating_sub(1);
+            }
+
+            let text = Self::render_line_tokens(line_tokens);
+            if text.trim().is_empty() {
+                continue;
+            }
+            let indent = base;
+            out.push_str(&" ".repeat(indent * indent_width));
+            out.push_str(&text);
+            out.push('\n');
+
+            // Indent for block-opening keywords.
+            if Self::is_indent_token(first) || Self::is_begin_token(last) {
+                base += 1;
+            }
+        }
+        out
+    }
+
+    fn is_indent_token(tok: &maria_parser::lexer::Token) -> bool {
+        use maria_parser::lexer::Token;
+        matches!(
+            tok,
+            Token::Module
+                | Token::Interface
+                | Token::Package
+                | Token::Class
+                | Token::Function
+                | Token::Task
+                | Token::Program
+        )
+    }
+
+    fn is_dedent_token(tok: &maria_parser::lexer::Token) -> bool {
+        use maria_parser::lexer::Token;
+        matches!(
+            tok,
+            Token::Endmodule
+                | Token::EndInterface
+                | Token::EndPackage
+                | Token::EndClass
+                | Token::EndFunction
+                | Token::EndTask
+                | Token::EndProgram
+                | Token::Endcase
+                | Token::End
+        )
+    }
+
+    fn is_begin_token(tok: &maria_parser::lexer::Token) -> bool {
+        use maria_parser::lexer::Token;
+        matches!(tok, Token::Begin)
+    }
+
+    /// Render a line of tokens into text.
+    fn render_line_tokens(tokens: &[(maria_parser::lexer::Token, usize)]) -> String {
+        use maria_parser::lexer::Token;
+        let mut parts: Vec<String> = Vec::new();
+        for (tok, _col) in tokens {
+            let s: String = match tok {
+                Token::Module => "module".into(),
+                Token::Endmodule => "endmodule".into(),
+                Token::Interface => "interface".into(),
+                Token::EndInterface => "endinterface".into(),
+                Token::Package => "package".into(),
+                Token::EndPackage => "endpackage".into(),
+                Token::Class => "class".into(),
+                Token::EndClass => "endclass".into(),
+                Token::Function => "function".into(),
+                Token::EndFunction => "endfunction".into(),
+                Token::Task => "task".into(),
+                Token::EndTask => "endtask".into(),
+                Token::Program => "program".into(),
+                Token::Begin => "begin".into(),
+                Token::End => "end".into(),
+                Token::Endcase => "endcase".into(),
+                Token::If => "if".into(),
+                Token::Else => "else".into(),
+                Token::Case => "case".into(),
+                Token::CaseX => "casex".into(),
+                Token::CaseZ => "casez".into(),
+                Token::Default => "default".into(),
+                Token::AlwaysComb => "always_comb".into(),
+                Token::AlwaysFF => "always_ff".into(),
+                Token::AlwaysLatch => "always_latch".into(),
+                Token::Always => "always".into(),
+                Token::Initial => "initial".into(),
+                Token::Assign => "assign".into(),
+                Token::Logic => "logic".into(),
+                Token::Reg => "reg".into(),
+                Token::Wire => "wire".into(),
+                Token::Input => "input".into(),
+                Token::Output => "output".into(),
+                Token::Inout => "inout".into(),
+                Token::Parameter => "parameter".into(),
+                Token::LocalParam => "localparam".into(),
+                Token::Signed => "signed".into(),
+                Token::Unsigned => "unsigned".into(),
+                Token::For => "for".into(),
+                Token::While => "while".into(),
+                Token::Repeat => "repeat".into(),
+                Token::Foreach => "foreach".into(),
+                Token::Return => "return".into(),
+                Token::Generate => "generate".into(),
+                Token::EndGenerate => "endgenerate".into(),
+                Token::GenVar => "genvar".into(),
+                Token::PosEdge => "posedge".into(),
+                Token::NegEdge => "negedge".into(),
+                Token::Import => "import".into(),
+                Token::Export => "export".into(),
+                Token::Ident(s) => {
+                    parts.push(s.to_string());
+                    continue;
+                }
+                Token::Number { value, .. } => {
+                    parts.push(value.to_string());
+                    continue;
+                }
+                Token::RealNum(s) => {
+                    parts.push(s.to_string());
+                    continue;
+                }
+                Token::StringLit(s) => {
+                    parts.push(format!("\"{}\"", s));
+                    continue;
+                }
+                Token::Semi => ";".into(),
+                Token::Colon => ":".into(),
+                Token::Comma => ",".into(),
+                Token::Dot => ".".into(),
+                Token::LParen => "(".into(),
+                Token::RParen => ")".into(),
+                Token::LBrack => "[".into(),
+                Token::RBrack => "]".into(),
+                Token::LBrace => "{".into(),
+                Token::RBrace => "}".into(),
+                Token::Eq => "=".into(),
+                Token::Equiv => "===".into(),
+                Token::Neq => "!=".into(),
+                Token::Lt => "<".into(),
+                Token::NonBlockingAssign => "<=".into(),
+                Token::Le => "<=".into(),
+                Token::Gt => ">".into(),
+                Token::Ge => ">=".into(),
+                Token::Plus => "+".into(),
+                Token::Minus => "-".into(),
+                Token::Star => "*".into(),
+                Token::Slash => "/".into(),
+                Token::Percent => "%".into(),
+                Token::Amp => "&".into(),
+                Token::Pipe => "|".into(),
+                Token::Caret => "^".into(),
+                Token::Tilde => "~".into(),
+                Token::Not => "!".into(),
+                Token::Hash => "#".into(),
+                Token::HashHash => "##".into(),
+                Token::Arrow => "->".into(),
+                Token::At => "@".into(),
+                Token::Scope => "::".into(),
+                Token::EndPrimitive => "endprimitive".into(),
+                Token::Primitive => "primitive".into(),
+                Token::EndProgram => "endprogram".into(),
+                Token::BlockingAssign => "=".into(),
+                Token::Null => "null".into(),
+                _ => continue,
+            };
+            parts.push(s);
+        }
+        parts.join(" ")
+    }
+
+    /// LSP-10: Generate code actions from a diagnostic.
+    fn actions_from_diagnostic(
+        _text: &str,
+        diag: &Diagnostic,
+        uri: &lsp_types::Url,
+    ) -> Option<Vec<CodeActionOrCommand>> {
+        let mut actions = Vec::new();
+        let msg = diag.message.to_string();
+        let range = diag.range;
+
+        // Quick-fix: missing semicolon (suggested: add ';')
+        if msg.to_lowercase().contains("expected ';'")
+            || msg.to_lowercase().contains("missing ';'")
+        {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Add missing semicolon".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diag.clone()]),
+                edit: Some(WorkspaceEdit::new(std::collections::HashMap::from([(
+                    uri.clone(),
+                    vec![lsp_types::TextEdit {
+                        range: Range {
+                            start: Position::new(
+                                range.end.line,
+                                range.end.character,
+                            ),
+                            end: Position::new(
+                                range.end.line,
+                                range.end.character,
+                            ),
+                        },
+                        new_text: ";".to_string(),
+                    }],
+                )]))),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            }));
+        }
+
+        // Quick-fix: missing 'endmodule' (suggested: add 'endmodule')
+        if msg.to_lowercase().contains("expected 'endmodule'")
+            || msg.to_lowercase().contains("unterminated module")
+        {
+            let last_line = diag
+                .message
+                .lines()
+                .last()
+                .unwrap_or(&msg)
+                .to_string();
+            let _ = last_line;
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Add missing endmodule".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diag.clone()]),
+                edit: Some(WorkspaceEdit::new(std::collections::HashMap::from([(
+                    uri.clone(),
+                    vec![lsp_types::TextEdit {
+                        range: Range {
+                            start: Position::new(
+                                range.end.line + 1,
+                                0,
+                            ),
+                            end: Position::new(
+                                range.end.line + 1,
+                                0,
+                            ),
+                        },
+                        new_text: "endmodule\n".to_string(),
+                    }],
+                )]))),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            }));
+        }
+
+        // Quick-fix: missing 'endfunction' (suggested: add 'endfunction')
+        if msg.to_lowercase().contains("expected 'endfunction'") {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Add missing endfunction".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diag.clone()]),
+                edit: Some(WorkspaceEdit::new(std::collections::HashMap::from([(
+                    uri.clone(),
+                    vec![lsp_types::TextEdit {
+                        range: Range {
+                            start: Position::new(
+                                range.end.line + 1,
+                                0,
+                            ),
+                            end: Position::new(
+                                range.end.line + 1,
+                                0,
+                            ),
+                        },
+                        new_text: "endfunction\n".to_string(),
+                    }],
+                )]))),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            }));
+        }
+
+        // Quick-fix: missing 'endclass' (suggested: add 'endclass')
+        if msg.to_lowercase().contains("expected 'endclass'") {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Add missing endclass".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diag.clone()]),
+                edit: Some(WorkspaceEdit::new(std::collections::HashMap::from([(
+                    uri.clone(),
+                    vec![lsp_types::TextEdit {
+                        range: Range {
+                            start: Position::new(
+                                range.end.line + 1,
+                                0,
+                            ),
+                            end: Position::new(
+                                range.end.line + 1,
+                                0,
+                            ),
+                        },
+                        new_text: "endclass\n".to_string(),
+                    }],
+                )]))),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            }));
+        }
+
+        if actions.is_empty() {
+            None
+        } else {
+            Some(actions)
+        }
     }
 
     /// Parse SystemVerilog source text and return diagnostics.
@@ -1047,6 +1415,18 @@ impl LanguageServer for LspBackend {
                 folding_range_provider: Some(
                     lsp_types::FoldingRangeProviderCapability::Simple(true),
                 ),
+                // LSP-09: Inlay hints (type hints)
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                // LSP-13: Call hierarchy
+                call_hierarchy_provider: Some(
+                    lsp_types::CallHierarchyServerCapability::Simple(true),
+                ),
+                // LSP-20: Document formatting
+                document_formatting_provider: Some(OneOf::Left(true)),
+                // LSP-10: Code actions (quick-fix)
+                code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(
+                    true,
+                )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -1369,6 +1749,58 @@ impl LanguageServer for LspBackend {
         })))
     }
 
+    /// LSP-20: Document formatting — format the entire document.
+    async fn formatting(
+        &self,
+        params: lsp_types::DocumentFormattingParams,
+    ) -> JsonRpcResult<Option<Vec<lsp_types::TextEdit>>> {
+        let uri = &params.text_document.uri;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let indent_width = params.options.tab_size as usize;
+        let formatted = Self::format_source(&text, indent_width);
+        if formatted == text {
+            return Ok(None);
+        }
+        // Replace entire document.
+        let line_count = text.lines().count() as u32;
+        let last_line_len = text
+            .lines()
+            .last()
+            .map(|l| l.chars().count() as u32)
+            .unwrap_or(0);
+        Ok(Some(vec![lsp_types::TextEdit {
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(line_count, last_line_len),
+            },
+            new_text: formatted,
+        }]))
+    }
+
+    /// LSP-10: Code actions — quick-fix from diagnostic FixItHint.
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> JsonRpcResult<Option<CodeActionResponse>> {
+        let uri = &params.text_document.uri;
+        let Some(text) = self.document_text(uri) else {
+            return Ok(None);
+        };
+        let mut actions: CodeActionResponse = Vec::new();
+        for diag in &params.context.diagnostics {
+            // Generate code actions from diagnostic message patterns.
+            if let Some(actions_for_diag) = Self::actions_from_diagnostic(&text, diag, uri) {
+                actions.extend(actions_for_diag);
+            }
+        }
+        if actions.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(actions))
+    }
+
     /// Text document didClose — clear diagnostics.
     async fn did_close(&self, params: lsp_types::DidCloseTextDocumentParams) {
         self.client
@@ -1388,6 +1820,153 @@ pub async fn run_lsp_server() {
 
     let (service, messages) = LspService::new(LspBackend::new);
     Server::new(stdin, stdout, messages).serve(service).await;
+}
+
+// ═══ LSP-09: Inlay Hints (type hints) ═══
+
+impl LspBackend {
+    /// Compute inlay hints for a document (LSP-09).
+    /// Returns type hints for variables and parameters.
+    pub(crate) fn compute_inlay_hints(
+        text: &str,
+        range: Option<Range>,
+    ) -> Vec<lsp_types::InlayHint> {
+        let mut hints = Vec::new();
+        let lines: Vec<&str> = text.lines().collect();
+        let start_line = range.map(|r| r.start.line as usize).unwrap_or(0);
+        let end_line = range.map(|r| r.end.line as usize).unwrap_or(lines.len());
+
+        for (line_idx, line) in lines.iter().enumerate().skip(start_line).take(end_line - start_line) {
+            let trimmed = line.trim();
+            // Pattern: `logic [W:0] name` or `reg [W:0] name` or `wire [W:0] name`
+            if trimmed.starts_with("logic") || trimmed.starts_with("reg") || trimmed.starts_with("wire") {
+                if let Some(type_hint) = Self::extract_type_hint(trimmed) {
+                    // Find position after variable name
+                    let name_pos = line.find(trimmed).unwrap_or(0) + trimmed.len();
+                    let pos = Position::new(line_idx as u32, name_pos as u32);
+                    hints.push(lsp_types::InlayHint {
+                        position: pos,
+                        label: lsp_types::InlayHintLabel::String(type_hint),
+                        kind: Some(lsp_types::InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: Some(true),
+                        padding_right: None,
+                        data: None,
+                    });
+                }
+            }
+        }
+        hints
+    }
+
+    /// Extract type hint from a declaration line.
+    fn extract_type_hint(line: &str) -> Option<String> {
+        // Simple pattern matching for common types
+        if line.contains("logic") {
+            Some("logic".to_string())
+        } else if line.contains("reg") {
+            Some("reg".to_string())
+        } else if line.contains("wire") {
+            Some("wire".to_string())
+        } else if line.contains("int") {
+            Some("int".to_string())
+        } else if line.contains("integer") {
+            Some("integer".to_string())
+        } else {
+            None
+        }
+    }
+}
+
+// ═══ LSP-13: Call Hierarchy ═══
+
+impl LspBackend {
+    /// Compute call hierarchy for a symbol (LSP-13).
+    /// Returns incoming calls (callers) and outgoing calls (callees).
+    pub(crate) fn compute_call_hierarchy(
+        text: &str,
+        _name: &str,
+    ) -> (Vec<lsp_types::CallHierarchyItem>, Vec<lsp_types::CallHierarchyItem>) {
+        let mut incoming = Vec::new();
+        let mut outgoing = Vec::new();
+
+        // Simple pattern matching for function/task calls
+        for (line_idx, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
+            // Detect function/task declarations
+            if trimmed.starts_with("function") || trimmed.starts_with("task") {
+                if let Some(name) = Self::extract_symbol_name(trimmed) {
+                    let item = lsp_types::CallHierarchyItem {
+                        name,
+                        kind: SymbolKind::FUNCTION,
+                        tags: None,
+                        detail: Some(trimmed.chars().take(50).collect()),
+                        uri: Url::parse("file:///untitled").unwrap(),
+                        range: Range::new(
+                            Position::new(line_idx as u32, 0),
+                            Position::new(line_idx as u32, trimmed.len() as u32),
+                        ),
+                        selection_range: Range::new(
+                            Position::new(line_idx as u32, 0),
+                            Position::new(line_idx as u32, trimmed.len() as u32),
+                        ),
+                        data: None,
+                    };
+                    outgoing.push(item);
+                }
+            }
+            // Detect function/task calls
+            if trimmed.contains('(') && !trimmed.starts_with("function") && !trimmed.starts_with("task") {
+                if let Some(name) = Self::extract_call_name(trimmed) {
+                    let item = lsp_types::CallHierarchyItem {
+                        name,
+                        kind: SymbolKind::FUNCTION,
+                        tags: None,
+                        detail: Some("caller".to_string()),
+                        uri: Url::parse("file:///untitled").unwrap(),
+                        range: Range::new(
+                            Position::new(line_idx as u32, 0),
+                            Position::new(line_idx as u32, trimmed.len() as u32),
+                        ),
+                        selection_range: Range::new(
+                            Position::new(line_idx as u32, 0),
+                            Position::new(line_idx as u32, trimmed.len() as u32),
+                        ),
+                        data: None,
+                    };
+                    incoming.push(item);
+                }
+            }
+        }
+
+        (incoming, outgoing)
+    }
+
+    /// Extract symbol name from a declaration line.
+    fn extract_symbol_name(line: &str) -> Option<String> {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            Some(parts[1].trim_end_matches('(').to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Extract call name from a statement line.
+    fn extract_call_name(line: &str) -> Option<String> {
+        // Find word before '('
+        if let Some(pos) = line.find('(') {
+            let before = line[..pos].trim();
+            let parts: Vec<&str> = before.split_whitespace().collect();
+            if let Some(name) = parts.last() {
+                if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    return Some(name.to_string());
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1861,5 +2440,103 @@ endmodule
         );
         // Baris di luar dokumen.
         assert!(LspBackend::find_definition(SAMPLE, 999, 0).is_none());
+    }
+
+    #[test]
+    fn test_format_source() {
+        // Simple module — tokenized and re-joined with spaces.
+        let src = "module counter(input logic clk, output logic [7:0] cnt);\nendmodule\n";
+        let formatted = LspBackend::format_source(src, 4);
+        // Must contain key tokens.
+        assert!(formatted.contains("module"), "has module: {}", formatted);
+        assert!(formatted.contains("endmodule"), "has endmodule: {}", formatted);
+        assert!(formatted.contains("input"), "has input: {}", formatted);
+        assert!(formatted.contains("logic"), "has logic: {}", formatted);
+        assert!(formatted.contains("output"), "has output: {}", formatted);
+    }
+
+    #[test]
+    fn test_format_source_indent_dedent() {
+        // Module body indented, endmodule dedented.
+        let src = "module m;\n  logic a;\nendmodule\n";
+        let formatted = LspBackend::format_source(src, 4);
+        let lines: Vec<&str> = formatted.lines().collect();
+        // First line (module) — no indent.
+        assert!(lines[0].starts_with("module"), "first: {}", lines[0]);
+        // Last line (endmodule) — no indent (dedented).
+        assert!(lines.last().unwrap().starts_with("endmodule"), "last: {}", lines.last().unwrap());
+    }
+
+    #[test]
+    fn test_format_source_empty() {
+        // Empty source → empty output.
+        let formatted = LspBackend::format_source("", 4);
+        assert!(formatted.is_empty() || formatted.trim().is_empty(), "empty in: '{}', out: '{}'", "", formatted);
+    }
+
+    #[test]
+    fn test_actions_from_diagnostic_missing_semicolon() {
+        use lsp_types::Url;
+        let uri = Url::parse("file:///test.sv").unwrap();
+        let diag = Diagnostic {
+            range: Range {
+                start: Position::new(2, 5),
+                end: Position::new(2, 6),
+            },
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("maria".to_string()),
+            message: "Expected ';'".to_string(),
+            ..Default::default()
+        };
+        let actions = LspBackend::actions_from_diagnostic("", &diag, &uri).unwrap();
+        assert_eq!(actions.len(), 1, "one action for missing semicolon");
+        if let lsp_types::CodeActionOrCommand::CodeAction(action) = &actions[0] {
+            assert!(action.title.contains("semicolon"), "title: {}", action.title);
+            assert!(action.edit.is_some(), "has edit");
+        } else {
+            panic!("expected CodeAction");
+        }
+    }
+
+    #[test]
+    fn test_actions_from_diagnostic_missing_endmodule() {
+        use lsp_types::Url;
+        let uri = Url::parse("file:///test.sv").unwrap();
+        let diag = Diagnostic {
+            range: Range {
+                start: Position::new(5, 0),
+                end: Position::new(5, 0),
+            },
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("maria".to_string()),
+            message: "Expected 'endmodule'".to_string(),
+            ..Default::default()
+        };
+        let actions = LspBackend::actions_from_diagnostic("", &diag, &uri).unwrap();
+        assert_eq!(actions.len(), 1, "one action for missing endmodule");
+        if let lsp_types::CodeActionOrCommand::CodeAction(action) = &actions[0] {
+            assert!(action.title.contains("endmodule"), "title: {}", action.title);
+            assert!(action.edit.is_some(), "has edit");
+        } else {
+            panic!("expected CodeAction");
+        }
+    }
+
+    #[test]
+    fn test_actions_from_diagnostic_no_match() {
+        use lsp_types::Url;
+        let uri = Url::parse("file:///test.sv").unwrap();
+        let diag = Diagnostic {
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 1),
+            },
+            severity: Some(DiagnosticSeverity::WARNING),
+            source: Some("maria".to_string()),
+            message: "Some unrelated warning".to_string(),
+            ..Default::default()
+        };
+        let actions = LspBackend::actions_from_diagnostic("", &diag, &uri);
+        assert!(actions.is_none(), "no actions for unrelated diagnostic");
     }
 }

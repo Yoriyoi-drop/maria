@@ -143,6 +143,7 @@ impl SimulationEngine {
             cover_total: HashMap::new(),
             cover_bins: HashMap::new(),
             covergroup_prev: HashMap::new(),
+            covergroup_const_bins: HashMap::new(),
             ast_loop_iters: 0,
             plusargs: HashMap::new(),
             debug_mode: DebugMode::Normal,
