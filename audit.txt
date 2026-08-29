@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 2407 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 2588 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -105,7 +105,7 @@ constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif + cache + TSAN + Miri, ✅ 2407 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif + cache + TSAN + Miri, ✅ 2588 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
 dan ✅ 90 item audit telah diperbaiki (termasuk monorepo workspace,
@@ -136,7 +136,7 @@ ROUND 85 COMP-08 sign extension elimination + COMP-09 X/Z constant
 propagation (MIR passes + 9 test) + COMP-12 case analysis
 parallel_case/full_case (mlint --case-analysis) + SIM-12 mixed
 blocking/non-blocking race detection (signal_write_types + 7 callers).
-2407 tests pass, 0 fail.
+2588 tests pass, 0 fail.
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW

@@ -20,3 +20,9 @@ mod display_format_fuzz;
 mod param_override_fuzz;
 #[cfg(test)]
 mod port_conn_fuzz;
+#[cfg(test)]
+mod foreach_fuzz;
+#[cfg(test)]
+mod struct_field_fuzz;
+#[cfg(test)]
+mod enum_fuzz;

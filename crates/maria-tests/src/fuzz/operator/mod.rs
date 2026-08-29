@@ -20,3 +20,13 @@ mod streaming_fuzz;
 mod inside_range_fuzz;
 #[cfg(test)]
 mod cast_fuzz;
+#[cfg(test)]
+mod chained_ternary_fuzz;
+#[cfg(test)]
+mod generate_for_fuzz;
+#[cfg(test)]
+mod unary_reduction_fuzz;
+#[cfg(test)]
+mod paren_fuzz;
+#[cfg(test)]
+mod comparison_fuzz;

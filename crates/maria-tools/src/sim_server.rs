@@ -125,6 +125,8 @@ impl SimServer {
             return Ok(id);
         }
 
+        // Compute ID before re-locking
+        drop(sessions);
         let id = format!("sim_{}_{}", user, self.next_id());
         let session = SimSession {
             id: id.clone(),

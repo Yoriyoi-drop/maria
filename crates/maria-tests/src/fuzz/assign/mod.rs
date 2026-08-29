@@ -8,3 +8,5 @@ mod fill_literal_fuzz;
 mod packed_write_fuzz;
 #[cfg(test)]
 mod cont_partsel_fuzz;
+#[cfg(test)]
+mod chained_assign_fuzz;

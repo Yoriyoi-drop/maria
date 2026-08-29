@@ -8,3 +8,7 @@ mod always_ff_fuzz;
 mod event_sensitivity_fuzz;
 #[cfg(test)]
 mod priority_fuzz;
+#[cfg(test)]
+mod while_fuzz;
+#[cfg(test)]
+mod nested_if_fuzz;
