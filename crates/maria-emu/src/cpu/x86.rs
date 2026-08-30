@@ -1213,12 +1213,35 @@ impl X86Cpu {
                     self.push16(mem, self.flags)?;
                 }
             }
-            0x9d => {
+             0x9d => {
                 if opsz == 32 {
                     self.flags = self.pop32(mem)? as u16;
                 } else {
                     self.flags = self.pop16(mem)?;
                 }
+            }
+            // ── sahf (9e) / lahf (9f): transfer FLAGS ↔ AH ──
+            0x9e => {
+                // sahf: load SF/ZF/AF/PF/CF dari AH (bit 7/6/4/2/0).
+                let ah = self.r8h(0);
+                let keep = self.flags & !(FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF);
+                self.flags = keep
+                    | if ah & 0x80 != 0 { FLAG_SF } else { 0 }
+                    | if ah & 0x40 != 0 { FLAG_ZF } else { 0 }
+                    | if ah & 0x10 != 0 { FLAG_AF } else { 0 }
+                    | if ah & 0x04 != 0 { FLAG_PF } else { 0 }
+                    | if ah & 0x01 != 0 { FLAG_CF } else { 0 };
+            }
+            0x9f => {
+                // lahf: AH = SF ZF x AF x x PF x CF (bit1 selalu 1).
+                let f = self.flags;
+                let ah = (if f & FLAG_SF != 0 { 0x80 } else { 0 })
+                    | (if f & FLAG_ZF != 0 { 0x40 } else { 0 })
+                    | (if f & FLAG_AF != 0 { 0x10 } else { 0 })
+                    | (if f & FLAG_PF != 0 { 0x04 } else { 0 })
+                    | (if f & FLAG_CF != 0 { 0x01 } else { 0 })
+                    | 0x02;
+                self.r8h_set(0, ah as u8);
             }
             // ── mov string (a4-a7) ──
             0xa4 => self.movs(mem, 1, rep, seg_ov)?,
@@ -1400,7 +1423,8 @@ impl X86Cpu {
                 };
                 self.write_op(mem, &ea, r, 8, false)?;
                 self.set_logic_flags(r, 8);
-                self.set_flag(FLAG_OF, (r & 0x80) != 0 && (v & 0x80) == 0);
+                // 8-bit INC/DEC OF: hasil == INT_MIN (INC) / INT_MAX (DEC).
+                self.set_flag(FLAG_OF, if m.r == 0 { r == 0x80 } else { r == 0x7f });
             }
             // ── grup ff: inc/dec/call/jmp/push r/m ──
             0xff => self.exec_ff_group(op, opsz, seg_ov, mem)?,
@@ -1956,6 +1980,54 @@ impl X86Cpu {
                     }
                 }
             }
+            7 => {
+                // idiv r/m: bertanda. 8-bit: AX/a; 16-bit: DX:AX/a; 32-bit: EDX:EAX/a.
+                // Quotient → AX/EAX, sisa → AH/EDX (tanda mengikuti dividend).
+                if a == 0 {
+                    self.halt("idiv by zero");
+                    return Ok(());
+                }
+                if !wide {
+                    let divd = self.r16(0) as i16 as i32;
+                    let d = a as i8 as i32;
+                    let q = divd / d;
+                    let rem = divd % d;
+                    if !(-128..=127).contains(&q) {
+                        self.halt("idiv overflow");
+                    } else {
+                        self.r8_set(0, q as u8);
+                        self.r8h_set(0, rem as u8);
+                    }
+                } else if opsz == 32 {
+                    // EDX:EAX 64-bit signed dividend.
+                    let hi = self.r32(2) as u32;
+                    let lo = self.r32(0) as u32;
+                    let divd = (((hi as i64) << 32) | lo as i64) as i64 as i128;
+                    let d = a as u32 as i32 as i128;
+                    let q = divd / d;
+                    let rem = divd % d;
+                    if divd != 0 && (q > i64::MAX as i128 || q < i64::MIN as i128) {
+                        self.halt("idiv overflow");
+                    } else {
+                        self.r32_set(0, q as u32);
+                        self.r32_set(2, rem as u32);
+                    }
+                } else {
+                    // DX:AX 32-bit signed dividend.
+                    let hi = self.r16(2) as u16;
+                    let lo = self.r16(0) as u16;
+                    let divd = (((hi as i32) << 16) | lo as i32) as i64;
+                    let d = a as u16 as i16 as i64;
+                    let q = divd / d;
+                    let rem = divd % d;
+                    if !(-32768..=32767).contains(&q) {
+                        self.halt("idiv overflow");
+                    } else {
+                        self.r16_set(0, q as u16);
+                        self.r16_set(2, rem as u16);
+                    }
+                }
+            }
             _ => self.halt(&format!("f6/f7 /{} belum didukung", m.r)),
         }
         Ok(())
@@ -1990,10 +2062,13 @@ impl X86Cpu {
                 self.write_op(mem, &ea, r, opsz, true)?;
                 self.set_logic_flags(r, bits as u8);
                 let sign_bit = if opsz == 32 { 0x8000_0000u64 } else { 0x8000 };
+                // OF konsisten dgn grup inc/dec reg (40-4f):
+                //   INC OF = hasil == INT_MIN (0x8000..) — operand +max → −min
+                //   DEC OF = hasil == INT_MAX (0x7fff..) — operand −min → +max
                 let ov = if m.r == 0 {
-                    (v & sign_bit) != 0 && (r & sign_bit) == 0
+                    r == sign_bit
                 } else {
-                    (v & sign_bit) == 0 && (r & sign_bit) != 0 && (r & !sign_bit) == sign_bit - 1
+                    r == sign_bit.wrapping_sub(1)
                 };
                 self.set_flag(FLAG_OF, ov);
             }
@@ -2246,6 +2321,80 @@ impl X86Cpu {
             // ── clts (0f 06): clear CR0.TS ──
             0x06 => {
                 self.cr[0] &= !(1 << 3);
+            }
+            // ── cpuid (0f a2): CPU identification — GRUB/Linux membutuhkan ──
+            // EAX = leaf: 0 → vendor string, 1 → features/stepping, 0x80000001 → extended.
+            0xa2 => {
+                let leaf = self.r32(0);
+                match leaf {
+                    0 => {
+                        // Vendor: "GenuineIntel" (EBX 'uneG', EDX 'ineI', ECX 'ntel')
+                        self.r32_set(1, 0x756e6547); // EBX: 'uneG'
+                        self.r32_set(3, 0x49656e69); // EDX: 'ineI'
+                        self.r32_set(2, 0x6c65746e); // ECX: 'ntel'
+                    }
+                    1 => {
+                        // Family 6, Model 0x1A (Nehalem), Stepping 0
+                        // EAX: [31:28] ext_family=0, [27:20]=0, [19:16] family=6,
+                        //       [15:12] ext_model=0, [11:8] model=0x1A, [7:0] stepping=0
+                        self.r32_set(0, 0x000_06_1A_00);
+                        // EBX: brand index=0, cache line=0, max apic=0, logical proc=0
+                        self.r32_set(3, 0);
+                        // ECX: feature bits (SSE3=0, SSSE3=0, CX16=0, POPCNT=0)
+                        // GRUB/Linux hanya cek少量 feature — semua 0 cukup untuk boot
+                        self.r32_set(2, 0);
+                        // EDX: feature bits — set FPU(0), TSC(4), CX8(8), SSE(25),
+                        // SSE2(26) agar GRUB/LINUX tidak reject CPU
+                        self.r32_set(3, (1 << 0) | (1 << 4) | (1 << 8) | (1 << 25) | (1 << 26));
+                    }
+                    0x8000_0001 => {
+                        // Extended: set Long Mode bit (29) untuk 64-bit support
+                        // EDX: LM(29), NX(20) — Linux perlu LM untuk 64-bit
+                        self.r32_set(3, (1 << 20) | (1 << 29));
+                        self.r32_set(2, 0); // ECX extended features = 0
+                    }
+                    0x8000_0002..=0x8000_0004 => {
+                        // Processor name string (48 bytes dari 3 leaf)
+                        // "Maria Virtual CPU    " (32 chars per 4 regs = 16 bytes)
+                        let name_parts: [[u32; 4]; 3] = [
+                            // leaf 2: "Maria Virtu"
+                            [0x7261694D, 0x20616C65, 0x75726956, 0x00206C61],
+                            // leaf 3: "al CPU     "
+                            [0x20204C50, 0x20202055, 0x20202020, 0x20202020],
+                            // leaf 4: (padding)
+                            [0x20202020, 0x20202020, 0x20202020, 0x00202020],
+                        ];
+                        let idx = (leaf - 0x8000_0002) as usize;
+                        if idx < 3 {
+                            for (i, &v) in name_parts[idx].iter().enumerate() {
+                                self.r32_set(i, v);
+                            }
+                        }
+                    }
+                    _ => {
+                        // Unknown CPUID leaf: return zeros (BIOS/Linux toleransi)
+                        self.r32_set(0, 0);
+                        self.r32_set(1, 0);
+                        self.r32_set(2, 0);
+                        self.r32_set(3, 0);
+                    }
+                }
+            }
+            // ── rdtsc (0f 31): read timestamp counter → EDX:EAX ──
+            // Return cycle count monotonik — GRUB/Linux pakai untuk timing.
+            0x31 => {
+                // Timestamp berdasarkan instruction count (estimasi)
+                let ts = self.steps.wrapping_mul(1);
+                self.r32_set(0, ts as u32);          // EAX low
+                self.r32_set(2, (ts >> 32) as u32);   // EDX high
+            }
+            // ── bswap r32 (0f c8-cf): byte swap endian ──
+            // Berguna untuk GRUB little-endian ↔ big-endian conversion.
+            0xc8..=0xcf => {
+                let r = (op - 0xc8) as usize;
+                let v = self.r32(r);
+                let swapped = v.swap_bytes();
+                self.r32_set(r, swapped);
             }
             _ => self.halt(&format!("opcode 0f 0x{:02x} belum didukung", op)),
         }
@@ -3011,5 +3160,228 @@ mod tests {
             "GRUB boot.img harus mengeksekusi >= 20 instruksi, dapat {}",
             ok
         );
+    }
+
+    #[test]
+    fn test_cpuid_leaf0_vendor() {
+        // CPUID leaf 0 → vendor string "GenuineIntel"
+        let code = [
+            0x31, 0xc0,             // xor eax, eax  (eax = 0)
+            0x0f, 0xa2,             // cpuid
+            0x90,                   // nop (placeholder)
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 3);
+        // EBX=0x756e6547 ('uneG'), EDX=0x49656e69 ('ineI'), ECX=0x6c65746e ('ntel')
+        assert_eq!(cpu.r32(1), 0x756e_6547, "EBX vendor 'uneG'");
+        assert_eq!(cpu.r32(3), 0x4965_6e69, "EDX vendor 'ineI'");
+        assert_eq!(cpu.r32(2), 0x6c65_746e, "ECX vendor 'ntel'");
+        // Vendor string utuh "GenuineIntel" (little-endian per 4-byte reg).
+        let mut v: Vec<u8> = Vec::new();
+        v.extend_from_slice(&cpu.r32(1).to_le_bytes());
+        v.extend_from_slice(&cpu.r32(3).to_le_bytes());
+        v.extend_from_slice(&cpu.r32(2).to_le_bytes());
+        assert_eq!(String::from_utf8_lossy(&v), "GenuineIntel");
+    }
+
+    #[test]
+    fn test_cpuid_leaf1_features() {
+        // CPUID leaf 1 → features + stepping
+        // Real mode: xor eax, eax + mov al, 1 (set low byte saja, 0 extend ke 32-bit)
+        let code = [
+            0x31, 0xc0,    // xor eax, eax
+            0xb0, 0x01,    // mov al, 1 → eax = 1
+            0x0f, 0xa2,    // cpuid
+            0x90,          // nop
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        // EDX harus punya FPU(0), TSC(4), CX8(8), SSE(25), SSE2(26)
+        let edx = cpu.r32(3);
+        assert!(edx & (1 << 0) != 0, "FPU bit harus set");
+        assert!(edx & (1 << 4) != 0, "TSC bit harus set");
+        assert!(edx & (1 << 25) != 0, "SSE bit harus set");
+        assert!(edx & (1 << 26) != 0, "SSE2 bit harus set");
+    }
+
+    #[test]
+    fn test_bswap_ecx() {
+        // BSWAP ECX (0f c9): 0x12345678 → 0x78563412
+        // Real mode: prefix 66 untuk 32-bit operand
+        let code = [
+            0x66, 0xb9, 0x78, 0x56, 0x34, 0x12, // mov ecx, 0x12345678
+            0x0f, 0xc9,                           // bswap ecx
+            0x90,                                 // nop
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 3);
+        assert_eq!(cpu.r32(1), 0x7856_3412, "bswap ecx harus balik byte");
+    }
+
+    #[test]
+    fn test_bswap_eax() {
+        // BSWAP EAX (0f c8): 0xAABBCCDD → 0xDDCCBBAA
+        let code = [
+            0x66, 0xb8, 0xDD, 0xCC, 0xBB, 0xAA, // mov eax, 0xAABBCCDD
+            0x0f, 0xc8,                           // bswap eax
+            0x90,                                 // nop
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 3);
+        assert_eq!(cpu.r32(0), 0xDDCC_BBAA, "bswap eax harus balik byte");
+    }
+
+    #[test]
+    fn test_rdtsc_returns_nonzero() {
+        // RDTSC (0f 31): harus return timestamp > 0 setelah beberapa instruksi
+        let code = [
+            0x0f, 0x31, // rdtsc → EDX:EAX
+            0x90,       // nop
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 2);
+        let ts = cpu.r32(0) as u64 | ((cpu.r32(2) as u64) << 32);
+        assert!(ts > 0, "RDTSC harus return timestamp > 0");
+    }
+
+    #[test]
+    fn test_cpuid_leaf_extended() {
+        // CPUID leaf 0x80000001 → extended features (LM bit)
+        let code = [
+            0x66, 0xb8, 0x01, 0x00, 0x00, 0x80, // mov eax, 0x80000001
+            0x0f, 0xa2,                           // cpuid
+            0x90,                                 // nop
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 3);
+        let edx = cpu.r32(3);
+        assert!(edx & (1 << 29) != 0, "Long Mode bit harus set");
+        assert!(edx & (1 << 20) != 0, "NX bit harus set");
+    }
+
+    #[test]
+    fn test_inc_dec_of_flag() {
+        // OF INC/DEC harus set hanya saat signed overflow:
+        //   INC: hasil == INT_MIN (0x8000)  → operand +max
+        //   DEC: hasil == INT_MAX (0x7fff)  → operand −min
+        // Grup ff (r/m16): ff c0 (inc ax), ff c8 (dec ax).
+        let mut m = mem();
+        // mov ax, 0x7fff; inc ax; dec ax
+        let code = [
+            0xb8, 0xff, 0x7f, // mov ax, 0x7fff
+            0xff, 0xc0,       // inc ax → 0x8000 (overflow!)
+            0xff, 0xc8,       // dec ax → 0x7fff (back, overflow!)
+        ];
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 3);
+        assert_eq!(cpu.flag(FLAG_OF), true, "inc ax 0x7fff→0x8000 harus OF");
+
+        // Dari 0x8000: inc → 0x8001 (TIDAK overflow), dec dari 0x8001 → 0x8000 (tidak)
+        let code = [
+            0xb8, 0x00, 0x80, // mov ax, 0x8000
+            0xff, 0xc0,       // inc ax → 0x8001 (tidak overflow)
+            0xff, 0xc8,       // dec ax → 0x8000 (tidak overflow)
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 3);
+        assert_eq!(cpu.flag(FLAG_OF), false, "inc/dec di sekitar 0x8000 (negatif) tak OF");
+
+        // 8-bit (fe): inc al 0x7f→0x80 overflow; dec al dari 0x00 → 0xff TIDAK overflow
+        let code = [
+            0xb0, 0x7f, // mov al, 0x7f
+            0xfe, 0xc0, // inc al → 0x80 (overflow)
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 2);
+        assert_eq!(cpu.flag(FLAG_OF), true, "inc al 0x7f→0x80 harus OF");
+
+        let code = [
+            0xb0, 0x00, // mov al, 0x00
+            0xfe, 0xc8, // dec al → 0xff (tidak overflow)
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 2);
+        assert_eq!(cpu.flag(FLAG_OF), false, "dec al 0x00→0xff tak OF");
+    }
+
+    #[test]
+    fn test_idiv_signed_16bit() {
+        // DX:AX = -21 (0xFFFFFFEB); idiv cx (cx=7) → AX = -3 (0xFFFD), DX = 0
+        let code = [
+            0xba, 0xff, 0xff, // mov dx, 0xffff
+            0xb8, 0xeb, 0xff, // mov ax, 0xffeb
+            0xb9, 0x07, 0x00, // mov cx, 7
+            0xf7, 0xf9,       // idiv cx
+            0x90,             // nop
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        assert_eq!(cpu.r16(0) as i16, -3, "kuosien idiv -21/7 = -3");
+        assert_eq!(cpu.r16(2), 0, "sisa idiv -21/7 = 0");
+    }
+
+    #[test]
+    fn test_idiv_remainder_and_byzero() {
+        // DX:AX = 7; idiv cx (cx=2) → AX=3, DX=1
+        let code = [
+            0xba, 0x00, 0x00, // mov dx, 0
+            0xb8, 0x07, 0x00, // mov ax, 7
+            0xb9, 0x02, 0x00, // mov cx, 2
+            0xf7, 0xf9,       // idiv cx
+            0x90,
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        assert_eq!(cpu.r16(0), 3, "7/2 = 3");
+        assert_eq!(cpu.r16(2), 1, "7%2 = 1");
+
+        // idiv by zero → halted
+        let code = [
+            0xb9, 0x00, 0x00, // mov cx, 0
+            0xf7, 0xf9,       // idiv cx → by zero
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 2);
+        assert!(cpu.halted, "idiv by zero harus halt");
+    }
+
+    #[test]
+    fn test_lahf_sahf() {
+        // lahf: 'lahf' opcode 0x9f — set flags lalu AH = FLAGS yg relevan.
+        let code = [
+            0xf9,       // stc → CF=1
+            0x9f,       // lahf → AH = 0x03 (CF + bit1)
+            0xb4, 0x00, // mov ah, 0
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 2);
+        assert_eq!(cpu.r8h(0), 0x03, "lahf dgn CF set → AH = 0x03");
+
+        // sahf: muat AH ke flags → SF/ZF/CF (0xC1: SF+ZF+CF).
+        let code = [
+            0xb4, 0xc1, // mov ah, 0xc1 (SF+ZF+CF)
+            0x9e,       // sahf
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 2);
+        assert!(cpu.flag(FLAG_SF), "sahf SF");
+        assert!(cpu.flag(FLAG_ZF), "sahf ZF");
+        assert!(cpu.flag(FLAG_CF), "sahf CF");
+        assert!(!cpu.flag(FLAG_AF), "sahf AF harus bersih");
+        assert!(!cpu.flag(FLAG_PF), "sahf PF harus bersih");
     }
 }

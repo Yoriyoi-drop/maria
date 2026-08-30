@@ -514,29 +514,103 @@ impl SimulationEngine {
         changed: &[(usize, LogicVec, LogicVec)],
         _t: usize,
     ) -> Result<(), SimError> {
-        let processes = self.design.top.processes.clone();
-        // Collect triggered combinational processes for potential parallel execution
-        // Skip fused processes — they're evaluated as part of clock domain fusion
+        // PERF: Phase 1 — collect triggered pids via immutable scan (NO clone of all 176K processes).
+        // Previous code cloned self.design.top.processes (ALL processes) on every delta cycle.
+        // For OpenTitan (176K processes × thousands of delta cycles), this caused billions of
+        // allocations and was the primary cause of time step stuck at #0.
         let mut comb_indices: Vec<usize> = Vec::new();
-        for (pid, process) in processes.iter().enumerate() {
-            if let Process::Combinational { sensitivity, .. } = process {
-                // Skip if this process is fused into a clock domain
-                if self.use_cycle_fusion
-                    && self
-                        .clock_analysis
+        let mut combreactive_indices: Vec<usize> = Vec::new();
+        // Sequential: collect (pid, clock, reset, iff) for later evaluation
+        let mut seq_candidates: Vec<(
+            usize,
+            ClockEdge,
+            Option<maria_ir::ResetInfo>,
+            Option<IrExpr>,
+            bool, // clock_trigger
+        )> = Vec::new();
+
+        for (pid, process) in self.design.top.processes.iter().enumerate() {
+            match process {
+                Process::Combinational { sensitivity, .. } => {
+                    // Skip if this process is fused into a clock domain
+                    if self.use_cycle_fusion
+                        && self
+                            .clock_analysis
+                            .as_ref()
+                            .map(|a| a.fused_processes.contains(&pid))
+                            .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    let should_trigger =
+                        sensitivity.is_empty() || sensitivity_triggered(sensitivity, changed);
+                    if should_trigger {
+                        comb_indices.push(pid);
+                    }
+                }
+                Process::CombReactive { sensitivity, .. } => {
+                    let should_trigger =
+                        sensitivity.is_empty() || sensitivity_triggered(sensitivity, changed);
+                    if should_trigger {
+                        combreactive_indices.push(pid);
+                    }
+                }
+                Process::Sequential {
+                    clock,
+                    reset,
+                    iff,
+                    ..
+                } => {
+                    let clock_trigger = match clock {
+                        ClockEdge::PosEdge(_) | ClockEdge::PosEdgeHier(_) => {
+                            let sid = self.clock_edge_signal(clock).unwrap_or(usize::MAX);
+                            changed.iter().any(|(id, old, new)| {
+                                *id == sid
+                                    && old.to_bool() != Some(true)
+                                    && new.to_bool() == Some(true)
+                            })
+                        }
+                        ClockEdge::NegEdge(_) | ClockEdge::NegEdgeHier(_) => {
+                            let sid = self.clock_edge_signal(clock).unwrap_or(usize::MAX);
+                            changed.iter().any(|(id, old, new)| {
+                                *id == sid
+                                    && old.to_bool() != Some(false)
+                                    && new.to_bool() == Some(false)
+                            })
+                        }
+                    };
+                    let reset_trigger = reset
                         .as_ref()
-                        .map(|a| a.fused_processes.contains(&pid))
-                        .unwrap_or(false)
-                {
-                    continue;
+                        .filter(|r| r.r#async)
+                        .map(|r| {
+                            let sid = r.signal;
+                            let active_high = r.polarity;
+                            changed.iter().any(|(id, old, new)| {
+                                *id == sid
+                                    && if active_high {
+                                        old.to_bool() != Some(true)
+                                            && new.to_bool() == Some(true)
+                                    } else {
+                                        old.to_bool() != Some(false)
+                                            && new.to_bool() == Some(false)
+                                    }
+                            })
+                        })
+                        .unwrap_or(false);
+                    if clock_trigger || reset_trigger {
+                        seq_candidates.push((
+                            pid,
+                            clock.clone(),
+                            reset.clone(),
+                            iff.clone(),
+                            clock_trigger,
+                        ));
+                    }
                 }
-                let should_trigger =
-                    sensitivity.is_empty() || sensitivity_triggered(sensitivity, changed);
-                if should_trigger {
-                    comb_indices.push(pid);
-                }
+                _ => {}
             }
         }
+        // ── End Phase 1: immutable borrow released ──
 
         // If enough processes to parallelize and config allows it, use parallel eval
         crate::dbg_sim!(
@@ -592,8 +666,7 @@ impl SimulationEngine {
                 let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
                     .par_iter()
                     .map(|&pid| {
-                        let process = &processes[pid];
-                        if let Process::Combinational { body, .. } = process {
+                        if let Process::Combinational { body, .. } = &self.design.top.processes[pid] {
                             crate::dbg_sim!(
                                 3,
                                 "t={} delta={} par-eval pid={}",
@@ -663,8 +736,7 @@ impl SimulationEngine {
                 let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
                     .par_iter()
                     .map(|&pid| {
-                        let process = &processes[pid];
-                        if let Process::Combinational { body, .. } = process {
+                        if let Process::Combinational { body, .. } = &self.design.top.processes[pid] {
                             crate::dbg_sim!(
                                 3,
                                 "t={} delta={} par-eval pid={}",
@@ -701,137 +773,85 @@ impl SimulationEngine {
             }
         } else {
             // Sequential path: evaluate triggered comb processes inline
+            // PERF: clone only triggered bodies, not all 176K processes
             for &pid in &comb_indices {
-                let process = &processes[pid];
-                if let Process::Combinational { body, .. } = process {
-                    crate::dbg_sim!(
-                        3,
-                        "t={} delta={} seq-eval pid={}",
-                        self.current_time,
-                        self.current_delta,
-                        pid
-                    );
-                    self.evaluate_stmt_block(body)?;
-                }
+                let body = match &self.design.top.processes[pid] {
+                    Process::Combinational { body, .. } => body.clone(),
+                    _ => continue,
+                };
+                crate::dbg_sim!(
+                    3,
+                    "t={} delta={} seq-eval pid={}",
+                    self.current_time,
+                    self.current_delta,
+                    pid
+                );
+                self.evaluate_stmt_block(&body)?;
             }
         }
 
-        // Handle CombReactive, Sequential, and other process types (always sequential)
-        for (pid, process) in processes.iter().enumerate() {
-            match process {
-                Process::CombReactive { sensitivity, .. } => {
-                    let should_trigger =
-                        sensitivity.is_empty() || sensitivity_triggered(sensitivity, changed);
-                    if should_trigger {
-                        self.reactive_events.push(EventKind::EvalProcess(pid));
-                    }
-                }
-                Process::Sequential {
-                    clock,
-                    reset,
-                    body,
-                    iff,
-                    ..
-                } => {
-                    let clock_trigger = match clock {
-                        // F27: *Hier = clock lewat port interface (`posedge
-                        // b.clk`) — resolve Symbol path via hier_signal_map.
-                        ClockEdge::PosEdge(_) | ClockEdge::PosEdgeHier(_) => {
-                            let sid = self.clock_edge_signal(clock).unwrap_or(usize::MAX);
-                            changed.iter().any(|(id, old, new)| {
-                                *id == sid
-                                    && old.to_bool() != Some(true)
-                                    && new.to_bool() == Some(true)
-                            })
-                        }
-                        ClockEdge::NegEdge(_) | ClockEdge::NegEdgeHier(_) => {
-                            let sid = self.clock_edge_signal(clock).unwrap_or(usize::MAX);
-                            changed.iter().any(|(id, old, new)| {
-                                *id == sid
-                                    && old.to_bool() != Some(false)
-                                    && new.to_bool() == Some(false)
-                            })
-                        }
-                    };
-                    // LANG-27: guard `iff (cond)` — proses hanya dijalankan bila
-                    // kondisi benar saat edge clock terjadi. Kondisi dievaluasi
-                    // di nilai sesudah edge (delta ini). Guard HANYA untuk
-                    // edge clock — reset async harus tetap memicu walau iff
-                    // false (kalau tidak, reset terlewat → FF stuck X).
-                    let trigger = clock_trigger
-                        && match iff {
-                            Some(cond) => match self.evaluate_expr(cond) {
-                                Ok(v) => v.to_bool().unwrap_or(false),
-                                Err(_) => false,
-                            },
-                            None => true,
-                        };
-                    // F40 fix: async reset edge (negedge rst_n / posedge rst)
-                    // memicu proses LANGSUNG — dulu reset diabaikan di sini
-                    // (`reset: _reset`) sehingga `always_ff @(posedge clk or
-                    // negedge rst_n)` tidak pernah fire saat reset, dan FF
-                    // tanpa init tetap X/z selamanya. Body always_ff berisi
-                    // branch `if (!rst_n)` yang mengeksekusi reset value.
-                    let trigger = trigger
-                        || reset
-                            .as_ref()
-                            .filter(|r| r.r#async)
-                            .map(|r| {
-                                let sid = r.signal;
-                                // polarity: true = aktif-high (posedge),
-                                // false = aktif-low (negedge) — diisi
-                                // elaborator dari event sensitivity.
-                                let active_high = r.polarity;
-                                changed.iter().any(|(id, old, new)| {
-                                    *id == sid
-                                        && if active_high {
-                                            old.to_bool() != Some(true)
-                                                && new.to_bool() == Some(true)
-                                        } else {
-                                            old.to_bool() != Some(false)
-                                                && new.to_bool() == Some(false)
-                                        }
-                                })
-                            })
-                            .unwrap_or(false);
-                    if trigger {
-                        // ── Cycle-Based Fusion: jika process ini termasuk fused domain,
-                        // evaluasi SEMUA process dalam domain sekaligus (sequential + follower comb).
-                        // Skip event queue overhead untuk process sinkronus murni. ──
-                        // Clone domain upfront untuk hindari borrow conflict
-                        // antara self.clock_analysis (immutable) dan self.evaluate_clock_domain (&mut).
-                        let fused_domain = if self.use_cycle_fusion {
-                            self.clock_analysis.as_ref().and_then(|a| {
-                                if a.fused_processes.contains(&pid) {
-                                    a.domains
-                                        .iter()
-                                        .find(|d| d.sequential_processes.contains(&pid))
-                                        .cloned()
+        // ── Phase 2b: CombReactive — push to reactive_events (just pids, no clone) ──
+        for pid in combreactive_indices {
+            self.reactive_events.push(EventKind::EvalProcess(pid));
+        }
+
+        // ── Phase 2c: Sequential — evaluate clock/reset/iff per candidate ──
+        for (pid, _clock, reset, iff, clock_trigger) in seq_candidates {
+            // LANG-27: guard `iff (cond)` — evaluate with &mut self
+            let trigger = clock_trigger
+                && match &iff {
+                    Some(cond) => match self.evaluate_expr(cond) {
+                        Ok(v) => v.to_bool().unwrap_or(false),
+                        Err(_) => false,
+                    },
+                    None => true,
+                };
+            // F40 fix: async reset edge
+            let trigger = trigger
+                || reset
+                    .as_ref()
+                    .filter(|r| r.r#async)
+                    .map(|r| {
+                        let sid = r.signal;
+                        let active_high = r.polarity;
+                        changed.iter().any(|(id, old, new)| {
+                            *id == sid
+                                && if active_high {
+                                    old.to_bool() != Some(true)
+                                        && new.to_bool() == Some(true)
                                 } else {
-                                    None
+                                    old.to_bool() != Some(false)
+                                        && new.to_bool() == Some(false)
                                 }
-                            })
+                        })
+                    })
+                    .unwrap_or(false);
+            if trigger {
+                // ── Cycle-Based Fusion ──
+                let fused_domain = if self.use_cycle_fusion {
+                    self.clock_analysis.as_ref().and_then(|a| {
+                        if a.fused_processes.contains(&pid) {
+                            a.domains
+                                .iter()
+                                .find(|d| d.sequential_processes.contains(&pid))
+                                .cloned()
                         } else {
                             None
-                        };
-                        if let Some(domain) = fused_domain {
-                            self.evaluate_clock_domain(&domain)?;
-                            continue; // Skip individual eval
                         }
-                        // Fallback: evaluate only this sequential process
-                        self.evaluate_stmt_block(body)?;
-                    }
+                    })
+                } else {
+                    None
+                };
+                if let Some(domain) = fused_domain {
+                    self.evaluate_clock_domain(&domain)?;
+                    continue;
                 }
-                // Skip fused combinational processes — they're evaluated
-                // as part of their clock domain's follower set
-                Process::Combinational { .. }
-                    if self.use_cycle_fusion
-                        && self
-                            .clock_analysis
-                            .as_ref()
-                            .map(|a| a.fused_processes.contains(&pid))
-                            .unwrap_or(false) => {}
-                _ => {}
+                // Clone body per-pid (only triggered, not all 176K)
+                let body = match &self.design.top.processes[pid] {
+                    Process::Sequential { body, .. } => body.clone(),
+                    _ => continue,
+                };
+                self.evaluate_stmt_block(&body)?;
             }
         }
         Ok(())

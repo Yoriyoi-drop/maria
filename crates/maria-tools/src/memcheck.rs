@@ -3,7 +3,6 @@
 //! Menyediakan API untuk menjalankan valgrind/heaptrack pada binary Maria
 //! dan mem-parsing hasilnya untuk deteksi memory leak.
 
-use std::path::Path;
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};

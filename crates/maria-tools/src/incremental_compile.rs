@@ -4,8 +4,6 @@
 //! need recompilation. Uses dependency graph to propagate changes.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
-use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 

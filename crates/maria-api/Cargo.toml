@@ -25,3 +25,5 @@ lsp = ["maria-env/lsp"]
 formal = ["dep:maria-formal", "maria-formal/formal"]
 # Native GUI (egui)
 gui = ["dep:maria-gui"]
+# Window display emulator (minifb framebuffer) — maria emu --window
+window = ["maria-emu/window"]

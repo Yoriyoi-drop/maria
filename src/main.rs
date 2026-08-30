@@ -497,6 +497,19 @@ fn real_main() {
             crate::cli::MariaCmd::Bench(a) => dispatch_bench(a),
             crate::cli::MariaCmd::Synth(a) => dispatch_synth(a),
             crate::cli::MariaCmd::Emu(a) => dispatch_emu(a),
+            crate::cli::MariaCmd::Batch(a) => dispatch_batch(a),
+            crate::cli::MariaCmd::Memcheck(a) => dispatch_memcheck(a),
+            crate::cli::MariaCmd::Tbgen(a) => dispatch_tbgen(a),
+            crate::cli::MariaCmd::Waiver(a) => dispatch_waiver(a),
+            crate::cli::MariaCmd::Vault(a) => dispatch_vault(a),
+            crate::cli::MariaCmd::Ipxact(a) => dispatch_ipxact(a),
+            crate::cli::MariaCmd::DesignRepo(a) => dispatch_design_repo(a),
+            crate::cli::MariaCmd::Project(a) => dispatch_project(a),
+            crate::cli::MariaCmd::Sdc(a) => dispatch_sdc(a),
+            crate::cli::MariaCmd::EquivCheck(a) => dispatch_equiv_check(a),
+            crate::cli::MariaCmd::Regression(a) => dispatch_regression(a),
+            crate::cli::MariaCmd::Eco(a) => dispatch_eco(a),
+            crate::cli::MariaCmd::CovClosure(a) => dispatch_cov_closure(a),
         }
     }
 
@@ -3669,9 +3682,18 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                     "--boot-iso butuh region RAM — definisikan ram = { base, size } di config .meu (mis. 0x0:0x100000)",
                 ));
             }
-            let bytes = std::fs::read(iso_path).map_err(|e| {
-                SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e))
-            })?;
+            let mut bytes = Vec::new();
+            {
+                use std::io::Read;
+                let mut f = std::fs::File::open(iso_path).map_err(|e| {
+                    SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e))
+                })?;
+                // Baca HANYA 512 byte pertama (MBR) — jangan `std::fs::read`
+                // seluruh ISO (6GB) ke RAM hanya untuk 1 sektor boot.
+                f.take(512)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e)))?;
+            }
             if bytes.len() < 512 {
                 return Err(SimError::with_diag(
                     DiagCode::InvalidSyntax,
@@ -3684,17 +3706,18 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 maria_api::emu::cpu::x86::FileDisk::open(iso_path)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?,
             ));
-            cpu.load_boot_sector(&mut memmap, &bytes[..512])
+            cpu.load_boot_sector(&mut memmap, &bytes)
                 .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e.reason))?;
             let max_steps = a.max_steps.unwrap_or(50_000);
             let mut machine = Machine::new(Box::new(cpu), memmap, max_steps);
-            match machine.run() {
+            let result = match machine.run() {
                 Ok(result) => {
                     out.push_str(&format!("\n{}", result.summary()));
                     out.push_str(&format!(
                         "\nBIOS console: {}\n",
                         String::from_utf8_lossy(&result.console)
                     ));
+                    result
                 }
                 Err(e) => {
                     return Err(SimError::with_diag(
@@ -3702,6 +3725,51 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                         format!("x86 fault: {:?}", e),
                     ))
                 }
+            };
+            // ── Window display (opsional) ──
+            if let Some(ref win_arg) = a.window {
+                let cfg = maria_api::emu::display::DisplayConfig::from_wh(win_arg)
+                    .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
+                let mut disp = maria_api::emu::display::VgaDisplay::new(cfg);
+                disp.open_window().map_err(|e| {
+                    SimError::with_diag(DiagCode::InvalidSyntax, e)
+                })?;
+                // Render console output ke VGA display
+                let console_str = String::from_utf8_lossy(&result.console);
+                let mut col = 0;
+                let mut row = 0;
+                for ch in console_str.bytes() {
+                    match ch {
+                        b'\n' => {
+                            col = 0;
+                            row += 1;
+                            if row >= 25 {
+                                disp.scroll_up();
+                                row = 24;
+                            }
+                        }
+                        b'\r' => col = 0,
+                        b'\t' => col = (col + 8) & !7,
+                        _ => {
+                            if col < 80 && row < 25 {
+                                disp.write_char(col, row, ch, 0x0A);
+                                col += 1;
+                            }
+                        }
+                    }
+                }
+                disp.update();
+                // Tunggu user tekan key atau tutup jendela
+                eprintln!("[Maria] Window aktif. Tekan ESC atau tutup jendela untuk keluar.");
+                loop {
+                    if let Some(ch) = disp.poll_input() {
+                        if ch == '\x1b' {
+                            break;
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                return Ok(());
             }
             print!("{}", out);
             return Ok(());
@@ -3822,7 +3890,57 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             let max_steps = a.max_steps.unwrap_or(10_000);
             let mut machine = Machine::new(Box::new(cpu), memmap, max_steps);
             match machine.run() {
-                Ok(result) => out.push_str(&format!("\n{}", result.summary())),
+                Ok(result) => {
+                    // ── Window display (opsional) ──
+                    if let Some(ref win_arg) = a.window {
+                        let cfg = maria_api::emu::display::DisplayConfig::from_wh(win_arg)
+                            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
+                        let mut disp = maria_api::emu::display::VgaDisplay::new(cfg);
+                        disp.open_window().map_err(|e| {
+                            SimError::with_diag(DiagCode::InvalidSyntax, e)
+                        })?;
+                        // Render summary + console ke VGA display
+                        let summary = result.summary();
+                        let console_str = String::from_utf8_lossy(&result.console);
+                        let full = format!("{}\n\n{}", summary, console_str);
+                        let mut col = 0;
+                        let mut row = 0;
+                        for ch in full.bytes() {
+                            match ch {
+                                b'\n' => {
+                                    col = 0;
+                                    row += 1;
+                                    if row >= 25 {
+                                        disp.scroll_up();
+                                        row = 24;
+                                    }
+                                }
+                                b'\r' => col = 0,
+                                b'\t' => col = (col + 8) & !7,
+                                _ => {
+                                    if col < 80 && row < 25 {
+                                        disp.write_char(col, row, ch, 0x0A);
+                                        col += 1;
+                                    }
+                                }
+                            }
+                        }
+                        disp.update();
+                        eprintln!("[Maria] Window aktif. Tekan ESC atau tutup jendela untuk keluar.");
+                        loop {
+                            if let Some(ch) = disp.poll_input() {
+                                if ch == '\x1b' {
+                                    break;
+                                }
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                        mem_final = machine.mem;
+                        print!("{}", out);
+                        return Ok(());
+                    }
+                    out.push_str(&format!("\n{}", result.summary()));
+                }
                 Err(e) => {
                     return Err(SimError::with_diag(
                         DiagCode::InvalidSyntax,
@@ -3901,4 +4019,598 @@ fn exit_tool(result: Result<(), SimError>) -> ! {
         process::exit(e.exit_code());
     }
     process::exit(0);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Additional tools dispatch functions
+// ══════════════════════════════════════════════════════════════════════
+
+fn dispatch_batch(a: &crate::cli::MbatchArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        match &a.cmd {
+            crate::cli::MbatchCmd::Run { config } => {
+                use maria_api::tools::batch::BatchConfig;
+                let cfg = BatchConfig::from_file(std::path::Path::new(config))
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                let mut runner = cfg.to_runner();
+                let results = runner.run();
+                let summary = runner.summary();
+                println!("{}", summary);
+                for r in &results {
+                    let status = match &r.status {
+                        maria_api::tools::batch::JobStatus::Completed => "✓ OK".to_string(),
+                        maria_api::tools::batch::JobStatus::Failed(e) => format!("✗ FAILED: {}", e),
+                        maria_api::tools::batch::JobStatus::Skipped => "⊘ SKIPPED".to_string(),
+                        _ => "? PENDING".to_string(),
+                    };
+                    println!("  {}: {} ({:.2}s)", r.name, status, r.duration.as_secs_f64());
+                }
+            }
+            crate::cli::MbatchCmd::Status => {
+                println!("Batch status: no active batch runs");
+            }
+            crate::cli::MbatchCmd::Summary => {
+                println!("Batch summary: use 'mbatch run <config.toml>' to run");
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_memcheck(a: &crate::cli::MmemcheckArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        let binary = a.binary.clone();
+        let args: Vec<String> = a.args.clone();
+        let tool_result = match a.tool.as_str() {
+            "valgrind" => maria_api::tools::memcheck::run_valgrind(&binary, &args, &[])
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?,
+            "heaptrack" => maria_api::tools::memcheck::run_heaptrack(&binary, &args)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?,
+            _ => {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    format!("tool '{}' tidak dikenal (gunakan 'valgrind' atau 'heaptrack')", a.tool),
+                ))
+            }
+        };
+        println!("Tool: {}", tool_result.tool);
+        println!("Exit code: {}", tool_result.exit_code);
+        println!("Summary: {}", tool_result.summary);
+        if tool_result.has_leaks() {
+            println!("⚠ Memory leaks detected!");
+        }
+        if tool_result.has_errors() {
+            println!("✗ {} errors found", tool_result.errors);
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_tbgen(a: &crate::cli::MtbgenArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::tbgen;
+        let mut inputs: Vec<(&str, u32)> = Vec::new();
+        let mut outputs: Vec<(&str, u32)> = Vec::new();
+        if let Some(ref input_str) = a.inputs {
+            for part in input_str.split(',') {
+                if let Some((name, width)) = part.split_once('=') {
+                    inputs.push((name.trim(), width.trim().parse().unwrap_or(1)));
+                }
+            }
+        }
+        if let Some(ref output_str) = a.outputs {
+            for part in output_str.split(',') {
+                if let Some((name, width)) = part.split_once('=') {
+                    outputs.push((name.trim(), width.trim().parse().unwrap_or(1)));
+                }
+            }
+        }
+        let module_name = a.module.as_deref().unwrap_or("dut");
+        let tb = tbgen::quick_tb(module_name, &inputs, &outputs);
+        if let Some(ref output) = a.output {
+            std::fs::write(output, &tb)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", output, e)))?;
+            println!("Testbench written to {}", output);
+        } else {
+            print!("{}", tb);
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_waiver(a: &crate::cli::MwaiverArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::waiver::WaiverStore;
+        let mut store = WaiverStore::new();
+        let db_path = std::path::Path::new(".maria/waivers.json");
+        if db_path.exists() {
+            store = WaiverStore::load(db_path)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+        }
+        match &a.cmd {
+            crate::cli::MwaiverCmd::Add { rule, file_pattern, reason, owner } => {
+                let id = store.add(rule, file_pattern.as_deref(), reason, owner);
+                store.save(db_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Waiver {} added: {}", id, rule);
+            }
+            crate::cli::MwaiverCmd::List { rule, json } => {
+                let waivers: Vec<_> = store.waivers.iter()
+                    .filter(|w| rule.as_ref().map(|r| w.rule == *r).unwrap_or(true))
+                    .collect();
+                if *json {
+                    let json_str = serde_json::to_string_pretty(&waivers)
+                        .map_err(|e| SimError::with_diag(DiagCode::IoError, e.to_string()))?;
+                    println!("{}", json_str);
+                } else {
+                    for w in &waivers {
+                        println!("{}: {} ({})", w.id, w.rule, w.reason);
+                    }
+                }
+            }
+            crate::cli::MwaiverCmd::Check { rule, file } => {
+                if let Some(m) = store.is_waived(rule, file.as_deref(), None) {
+                    println!("✓ Waived: {} (confidence: {:.0}%)", m.waiver.id, m.confidence * 100.0);
+                } else {
+                    println!("✗ Not waived: {}", rule);
+                }
+            }
+            crate::cli::MwaiverCmd::Export { output } => {
+                store.save(std::path::Path::new(output))
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Waivers exported to {}", output);
+            }
+            crate::cli::MwaiverCmd::Import { input } => {
+                let imported = WaiverStore::load(std::path::Path::new(input))
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                for w in imported.waivers {
+                    store.add(&w.rule, w.file_pattern.as_deref(), &w.reason, &w.owner);
+                }
+                store.save(db_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Waivers imported from {}", input);
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_vault(a: &crate::cli::MvaultArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::vault::SecureVault;
+        let vault = SecureVault::new();
+        match &a.cmd {
+            crate::cli::MvaultCmd::Register { file, user } => {
+                let entry = vault.register(std::path::Path::new(file), user)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Registered: {} (owner: {})", entry.path, entry.permissions.owner);
+            }
+            crate::cli::MvaultCmd::Lock { file, user } => {
+                vault.lock(file, user)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Locked: {} by {}", file, user);
+            }
+            crate::cli::MvaultCmd::Unlock { file, user } => {
+                vault.unlock(file, user)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Unlocked: {} by {}", file, user);
+            }
+            crate::cli::MvaultCmd::Verify { file } => {
+                let ok = vault.verify(std::path::Path::new(file))
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                if ok {
+                    println!("✓ Integrity OK: {}", file);
+                } else {
+                    println!("✗ Integrity FAILED: {}", file);
+                }
+            }
+            crate::cli::MvaultCmd::List => {
+                let entries = vault.list();
+                for e in &entries {
+                    println!("{} (owner: {}, locked: {})", e.path, e.permissions.owner, e.locked_by.as_deref().unwrap_or("no"));
+                }
+            }
+            crate::cli::MvaultCmd::Summary => {
+                println!("{}", vault.summary());
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_ipxact(a: &crate::cli::MipxactArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::ipxact::IpxactComponent;
+        match &a.cmd {
+            crate::cli::MipxactCmd::Generate { module, vendor, library, version, output, inputs, outputs } => {
+                let mut ports: Vec<(String, String, Option<u32>)> = Vec::new();
+                if let Some(ref input_str) = inputs {
+                    for part in input_str.split(',') {
+                        if let Some((name, width)) = part.split_once('=') {
+                            ports.push((name.trim().to_string(), "in".to_string(), width.trim().parse().ok()));
+                        }
+                    }
+                }
+                if let Some(ref output_str) = outputs {
+                    for part in output_str.split(',') {
+                        if let Some((name, width)) = part.split_once('=') {
+                            ports.push((name.trim().to_string(), "out".to_string(), width.trim().parse().ok()));
+                        }
+                    }
+                }
+                let mut comp = IpxactComponent::from_module(module, &ports);
+                comp.vendor = vendor.clone();
+                comp.library = library.clone();
+                comp.version = version.clone();
+                let xml = comp.to_xml();
+                if let Some(ref out) = output {
+                    comp.save_xml(std::path::Path::new(out))
+                        .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                    println!("IP-XACT written to {}", out);
+                } else {
+                    print!("{}", xml);
+                }
+            }
+            crate::cli::MipxactCmd::Summary => {
+                println!("IP-XACT: use 'mipxact generate' to create XML");
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_design_repo(a: &crate::cli::MdesignRepoArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::design_repo::{DesignRepository, DesignFileInfo};
+        match &a.cmd {
+            crate::cli::MdesignRepoCmd::Init { root } => {
+                let _repo = DesignRepository::open(std::path::PathBuf::from(root));
+                println!("Design repository initialized at {}", root);
+            }
+            crate::cli::MdesignRepoCmd::Commit { author, message, files } => {
+                let repo = DesignRepository::open(std::path::PathBuf::from("."));
+                let file_infos: Vec<DesignFileInfo> = files.iter().map(|f| DesignFileInfo {
+                    path: f.clone(),
+                    checksum: "auto".to_string(),
+                    size: 0,
+                }).collect();
+                let commit = repo.commit(author, message, file_infos);
+                println!("Committed: {} by {}", commit.hash, commit.author);
+            }
+            crate::cli::MdesignRepoCmd::Log { max } => {
+                let repo = DesignRepository::open(std::path::PathBuf::from("."));
+                let commits = repo.log(*max);
+                for c in &commits {
+                    println!("{}: {} ({})", &c.hash[..12], c.message, c.author);
+                }
+            }
+            crate::cli::MdesignRepoCmd::Tag { name, commit, description } => {
+                let repo = DesignRepository::open(std::path::PathBuf::from("."));
+                let tag = repo.tag(name, commit, description)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Tagged: {} -> {}", tag.name, tag.commit_hash);
+            }
+            crate::cli::MdesignRepoCmd::Diff { a, b } => {
+                let repo = DesignRepository::open(std::path::PathBuf::from("."));
+                if let Some(diffs) = repo.diff(a, b) {
+                    for d in &diffs {
+                        println!("{}", d);
+                    }
+                } else {
+                    println!("Commits not found");
+                }
+            }
+            crate::cli::MdesignRepoCmd::Summary => {
+                let repo = DesignRepository::open(std::path::PathBuf::from("."));
+                println!("{}", repo.summary());
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_project(a: &crate::cli::MprojectArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::project::{WorkspaceConfig, ProjectEntry};
+        let config_path = std::path::Path::new(".maria/workspace.toml");
+        let mut config = if config_path.exists() {
+            WorkspaceConfig::load(config_path)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
+        } else {
+            WorkspaceConfig::default_config()
+        };
+        match &a.cmd {
+            crate::cli::MprojectCmd::Init { root } => {
+                let _ = std::fs::create_dir_all(format!("{}/.maria", root));
+                config.save(config_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Workspace initialized at {}", root);
+            }
+            crate::cli::MprojectCmd::Add { name, path, top, depends } => {
+                let deps: Vec<String> = depends.as_ref()
+                    .map(|d| d.split(',').map(|s| s.trim().to_string()).collect())
+                    .unwrap_or_default();
+                config.add_project(ProjectEntry {
+                    name: name.clone(),
+                    path: path.clone(),
+                    top: top.clone(),
+                    depends: deps,
+                    incdirs: Vec::new(),
+                    defines: Vec::new(),
+                    features: Vec::new(),
+                });
+                config.save(config_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Project '{}' added", name);
+            }
+            crate::cli::MprojectCmd::Remove { name } => {
+                if config.remove_project(name) {
+                    config.save(config_path)
+                        .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                    println!("Project '{}' removed", name);
+                } else {
+                    println!("Project '{}' not found", name);
+                }
+            }
+            crate::cli::MprojectCmd::List => {
+                for p in &config.projects {
+                    println!("{}: {} (top: {})", p.name, p.path, p.top.as_deref().unwrap_or("-"));
+                }
+            }
+            crate::cli::MprojectCmd::Analyze => {
+                let analysis = config.analyze(std::path::Path::new("."));
+                println!("Dependency order: {:?}", analysis.dependency_order);
+                if !analysis.errors.is_empty() {
+                    println!("Errors: {:?}", analysis.errors);
+                }
+            }
+            crate::cli::MprojectCmd::Summary => {
+                println!("Workspace: {} projects", config.projects.len());
+                for p in &config.projects {
+                    println!("  {} -> {}", p.name, p.path);
+                }
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_sdc(a: &crate::cli::MsdcArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::sdc::SdcDocument;
+        let doc = SdcDocument::load(std::path::Path::new(&a.file))
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+        if a.clocks_only {
+            for c in doc.clocks() {
+                println!("{:?}", c);
+            }
+        } else if a.json {
+            let json = serde_json::to_string_pretty(&doc)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e.to_string()))?;
+            println!("{}", json);
+        } else {
+            println!("{}", doc.summary());
+            for c in &doc.constraints {
+                println!("  {:?}", c);
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_equiv_check(a: &crate::cli::MequivCheckArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::equiv_check::EquivChecker;
+        let checker = EquivChecker::new(&a.method);
+        // Load golden and impl from JSON files
+        let golden_content = std::fs::read_to_string(&a.golden)
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", a.golden, e)))?;
+        let impl_content = std::fs::read_to_string(&a.impl_file)
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", a.impl_file, e)))?;
+        let golden: Vec<(String, Vec<u64>)> = serde_json::from_str(&golden_content)
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, e.to_string()))?;
+        let impl_vals: Vec<(String, Vec<u64>)> = serde_json::from_str(&impl_content)
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, e.to_string()))?;
+        let mapping = Vec::new();
+        let result = checker.check_combinational(&mapping, &golden, &impl_vals);
+        if result.equivalent {
+            println!("✓ EQUIVALENT (method: {}, time: {}ms)", result.method, result.proof_time_ms);
+        } else {
+            println!("✗ NOT EQUIVALENT (method: {}, time: {}ms)", result.method, result.proof_time_ms);
+            if let Some(ce) = &result.counter_example {
+                println!("  Counter-example at cycle {}", ce.cycle);
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_regression(a: &crate::cli::MregressionArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::regression::{RegressionDb, RegressionRun, TestResult};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let db_path = std::path::Path::new(".maria/regression.json");
+        let mut db = if db_path.exists() {
+            RegressionDb::load(db_path)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
+        } else {
+            RegressionDb::new()
+        };
+        match &a.cmd {
+            crate::cli::MregressionCmd::Record { input, branch, commit } => {
+                let content = std::fs::read_to_string(input)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", input, e)))?;
+                let results: Vec<TestResult> = serde_json::from_str(&content)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e.to_string()))?;
+                let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let run = RegressionRun {
+                    id: format!("run-{}", ts),
+                    timestamp: ts,
+                    branch: branch.clone(),
+                    commit: commit.clone(),
+                    results,
+                    total_duration_ms: 0,
+                };
+                db.record(run);
+                db.save(db_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Regression run recorded");
+            }
+            crate::cli::MregressionCmd::Summary => {
+                println!("{}", db.summary());
+            }
+            crate::cli::MregressionCmd::Flaky => {
+                let flaky = db.flaky_tests();
+                if flaky.is_empty() {
+                    println!("No flaky tests detected");
+                } else {
+                    for (name, rate) in &flaky {
+                        println!("  {}: {:.0}% pass rate", name, rate * 100.0);
+                    }
+                }
+            }
+            crate::cli::MregressionCmd::Trend => {
+                let trend = db.trend();
+                println!("Trend: {:?}", trend);
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_eco(a: &crate::cli::MecoArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::eco::{EcoDb, EcoSeverity, EcoStatus};
+        let db_path = std::path::Path::new(".maria/eco.json");
+        let mut db = if db_path.exists() {
+            EcoDb::load(db_path)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
+        } else {
+            EcoDb::new()
+        };
+        match &a.cmd {
+            crate::cli::MecoCmd::Create { title, description, severity, author } => {
+                let sev = match severity.as_str() {
+                    "critical" => EcoSeverity::Critical,
+                    "major" => EcoSeverity::Major,
+                    "minor" => EcoSeverity::Minor,
+                    "cosmetic" => EcoSeverity::Cosmetic,
+                    _ => {
+                        return Err(SimError::with_diag(
+                            DiagCode::InvalidSyntax,
+                            format!("severity '{}' tidak dikenal (critical/major/minor/cosmetic)", severity),
+                        ))
+                    }
+                };
+                let id = db.create(title, description, sev, author);
+                db.save(db_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("ECO created: {}", id);
+            }
+            crate::cli::MecoCmd::List { status, severity } => {
+                for e in &db.entries {
+                    if let Some(s) = status {
+                        if format!("{:?}", e.status).to_lowercase() != s.to_lowercase() {
+                            continue;
+                        }
+                    }
+                    if let Some(s) = severity {
+                        if format!("{:?}", e.severity).to_lowercase() != s.to_lowercase() {
+                            continue;
+                        }
+                    }
+                    println!("{}: {} [{:?}] ({:?})", e.id, e.title, e.severity, e.status);
+                }
+            }
+            crate::cli::MecoCmd::Transition { id, new_status } => {
+                let status = match new_status.as_str() {
+                    "draft" => EcoStatus::Draft,
+                    "submitted" => EcoStatus::Submitted,
+                    "reviewed" => EcoStatus::Reviewed,
+                    "approved" => EcoStatus::Approved,
+                    "implemented" => EcoStatus::Implemented,
+                    "verified" => EcoStatus::Verified,
+                    "closed" => EcoStatus::Closed,
+                    "rejected" => EcoStatus::Rejected,
+                    _ => {
+                        return Err(SimError::with_diag(
+                            DiagCode::InvalidSyntax,
+                            format!("status '{}' tidak dikenal", new_status),
+                        ))
+                    }
+                };
+                db.transition(id, status)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                db.save(db_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("ECO {} transitioned to {}", id, new_status);
+            }
+            crate::cli::MecoCmd::Comment { id, author, text } => {
+                db.comment(id, author, text)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                db.save(db_path)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("Comment added to {}", id);
+            }
+            crate::cli::MecoCmd::Summary => {
+                println!("{}", db.summary());
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
+}
+
+fn dispatch_cov_closure(a: &crate::cli::McovClosureArgs) -> ! {
+    let result: Result<(), SimError> = (|| {
+        use maria_api::tools::cov_closure::CoverageClosure;
+        match &a.cmd {
+            crate::cli::McovClosureCmd::Analyze { input } => {
+                let cc = CoverageClosure::load(std::path::Path::new(input))
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                println!("{}", cc.summary());
+                println!("\nCoverage by type:");
+                for (t, pct) in cc.coverage_by_type() {
+                    println!("  {}: {:.1}%", t, pct);
+                }
+            }
+            crate::cli::McovClosureCmd::Critical { input } => {
+                let cc = CoverageClosure::load(std::path::Path::new(input))
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                let critical = cc.critical_tests();
+                if critical.is_empty() {
+                    println!("No critical tests");
+                } else {
+                    for tc in &critical {
+                        println!("  {} (unique: {})", tc.test_name, tc.unique_points.len());
+                    }
+                }
+            }
+            crate::cli::McovClosureCmd::Uncovered { input } => {
+                let cc = CoverageClosure::load(std::path::Path::new(input))
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+                let uncovered = cc.find_uncovered();
+                if uncovered.is_empty() {
+                    println!("All points covered!");
+                } else {
+                    for p in &uncovered {
+                        println!("  {} ({}:{})", p.id, p.file, p.line);
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
+    exit_tool(result);
 }

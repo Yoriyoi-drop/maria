@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 description = "Maria emulator — Hardware-Software Emulator (EMULATOR.md). R0: MHIR (Maria Hardware IR) extraction dari IrDesign + memory map dump."
 
+[features]
+# Jendela grafis untuk display emulator (framebuffer, VGA text mode)
+window = ["minifb"]
+# Cranelift JIT backend untuk CPU emulator (R3)
+jit = ["maria-simulator/jit"]
+default = []
+
 [dependencies]
 maria-core = { path = "../maria-core" }
 maria-ir = { path = "../maria-ir" }
@@ -17,6 +24,8 @@ memmap2 = "0.9"
 # Konfigurasi emulator: file TOML terpisah (`.meu`), bukan section di `.maria`.
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+# Window display (opsional): framebuffer VGA text mode.
+minifb = { version = "0.25", optional = true }
 
 [dev-dependencies]
 # Test ekstraksi memakai pipeline parse+elaborasi penuh (compile → IrDesign).

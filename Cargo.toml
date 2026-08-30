@@ -119,6 +119,9 @@ dpi = ["libloading", "maria-simulator/dpi", "maria-env/dpi"]
 # Native GUI (egui) — re-export di maria-api; binary `maria-gui` di crate maria-gui
 gui = ["maria-api/gui"]
 
+# Window display emulator (minifb framebuffer) — maria emu --window
+window = ["maria-api/window"]
+
 [profile.release]
 opt-level = 3
 lto = true

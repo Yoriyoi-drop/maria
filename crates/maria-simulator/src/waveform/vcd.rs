@@ -33,21 +33,42 @@ enum Out {
     Detached,
 }
 
+/// Pre-computed info untuk satu "dump target" — satu non-array signal atau
+/// satu elemen array. Menggantikan HashMap lookup per-cycle jadi flat
+/// array access (O(1) tanpa hash computation).
+struct DumpTarget {
+    /// VCD code (mis. "s0", "s1", ...).
+    code: String,
+    /// is_one_bit flag (width == 1).
+    is_one_bit: bool,
+    /// Index signal di design.top.signals.
+    signal_idx: usize,
+    /// Index elemen dalam array (None untuk non-array).
+    elem_idx: Option<usize>,
+    /// Lebar elemen (untuk elem_val).
+    elem_width: usize,
+}
+
 /// VCD waveform writer.
 pub struct VcdWriter {
     out: Out,
-    last_values: HashMap<String, String>,
-    code_by_key: HashMap<(Vec<String>, String), String>,
+    /// Flat array: nilai string terakhir per dump_target — O(1) access tanpa
+    /// HashMap lookup. Untuk desain 146K signal, hemat ~20-40MB vs HashMap.
+    last_values: Vec<String>,
+    /// Pre-computed dump targets — dihitung sekali saat write_header, lalu
+    /// dipakai di setiap dump_state tanpa parse_scope/code_for_signal.
+    dump_targets: Vec<DumpTarget>,
     pub enabled: bool,
     pub max_dump_size: Option<u64>,
     total_written: u64,
     /// Flush to disk every N state dumps (0 = never, 1 = every dump)
     pub stream_flush_interval: u64,
     flush_counter: u64,
+    /// Fallback HashMap untuk backward-compat (reopen/header internals).
+    code_by_key: HashMap<(Vec<String>, String), String>,
 }
 
-// DEBT-20: Debug konsisten — tampilkan status ringkas (bukan isi penuh map
-// last_values/code_by_key yang bisa sangat besar untuk desain besar).
+// DEBT-20: Debug konsisten — tampilkan status ringkas.
 impl std::fmt::Debug for VcdWriter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VcdWriter")
@@ -55,8 +76,7 @@ impl std::fmt::Debug for VcdWriter {
             .field("max_dump_size", &self.max_dump_size)
             .field("total_written", &self.total_written)
             .field("stream_flush_interval", &self.stream_flush_interval)
-            .field("signal_count", &self.last_values.len())
-            .field("code_count", &self.code_by_key.len())
+            .field("dump_targets", &self.dump_targets.len())
             .finish()
     }
 }
@@ -68,13 +88,14 @@ impl VcdWriter {
 
         let mut writer = VcdWriter {
             out: Out::File(file),
-            last_values: HashMap::new(),
-            code_by_key: HashMap::new(),
+            last_values: Vec::new(),
+            dump_targets: Vec::new(),
             enabled: true,
             max_dump_size: None,
             total_written: 0,
             stream_flush_interval: 0, // 0 = no periodic flush (default)
             flush_counter: 0,
+            code_by_key: HashMap::new(),
         };
 
         writer.write_header(design)?;
@@ -105,13 +126,14 @@ impl VcdWriter {
         let enc = GzEncoder::new(file, Compression::default());
         let mut writer = VcdWriter {
             out: Out::Compressed(enc),
-            last_values: HashMap::new(),
-            code_by_key: HashMap::new(),
+            last_values: Vec::new(),
+            dump_targets: Vec::new(),
             enabled: true,
             max_dump_size: None,
             total_written: 0,
             stream_flush_interval: 0,
             flush_counter: 0,
+            code_by_key: HashMap::new(),
         };
         writer.write_header(design)?;
         Ok(writer)
@@ -128,6 +150,7 @@ impl VcdWriter {
             .map_err(|e| format!("cannot create VCD file '{}': {}", path, e))?;
         self.out = Out::File(file);
         self.last_values.clear();
+        self.dump_targets.clear();
         self.code_by_key.clear();
         self.total_written = 0;
         self.enabled = true;
@@ -165,25 +188,6 @@ impl VcdWriter {
         Ok(())
     }
 
-    fn write_vals(
-        &mut self,
-        sig_val: &maria_ir::LogicVec,
-        code: &str,
-        is_one_bit: bool,
-    ) -> Result<(), String> {
-        let val_str = vec_to_vcd(sig_val);
-        if self.last_values.get(code) != Some(&val_str) {
-            let line = if is_one_bit {
-                format!("{}{}\n", val_str, code)
-            } else {
-                format!("b{} {}\n", val_str, code)
-            };
-            self.write_raw(line.as_bytes())?;
-            self.last_values.insert(code.to_string(), val_str);
-        }
-        Ok(())
-    }
-
     fn write_vals_force(
         &mut self,
         sig_val: &maria_ir::LogicVec,
@@ -197,7 +201,6 @@ impl VcdWriter {
             format!("b{} {}\n", val_str, code)
         };
         self.write_raw(line.as_bytes())?;
-        self.last_values.insert(code.to_string(), val_str);
         Ok(())
     }
 
@@ -369,7 +372,11 @@ impl VcdWriter {
         self.write_raw(b"$enddefinitions $end\n")?;
         self.write_raw(b"$dumpvars\n")?;
 
-        for sig in &design.top.signals {
+        // Build dump_targets flat array — pre-computed untuk semua signal.
+        // Menggantikan parse_scope + code_for_signal lookup per cycle.
+        self.dump_targets.clear();
+
+        for (sig_idx, sig) in design.top.signals.iter().enumerate() {
             if sig.class_name.is_some() {
                 continue;
             }
@@ -379,14 +386,40 @@ impl VcdWriter {
                     if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, Some(elem)) {
                         let e_val = self.elem_val(&sig.init_val, elem, sig.elem_width);
                         self.write_vals_force(&e_val, &code, sig.elem_width == 1)?;
+                        self.dump_targets.push(DumpTarget {
+                            code,
+                            is_one_bit: sig.elem_width == 1,
+                            signal_idx: sig_idx,
+                            elem_idx: Some(elem),
+                            elem_width: sig.elem_width,
+                        });
                     }
                 }
             } else {
                 if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, None) {
                     self.write_vals_force(&sig.init_val, &code, sig.width == 1)?;
+                    self.dump_targets.push(DumpTarget {
+                        code,
+                        is_one_bit: sig.width == 1,
+                        signal_idx: sig_idx,
+                        elem_idx: None,
+                        elem_width: sig.width,
+                    });
                 }
             }
         }
+
+        // Init last_values flat array
+        self.last_values = self.dump_targets.iter().map(|t| {
+            let sig = &design.top.signals[t.signal_idx];
+            let val = if let Some(elem) = t.elem_idx {
+                let e_val = self.elem_val(&sig.init_val, elem, t.elem_width);
+                vec_to_vcd(&e_val)
+            } else {
+                vec_to_vcd(&sig.init_val)
+            };
+            val
+        }).collect();
 
         self.write_raw(b"$end\n")
     }
@@ -400,28 +433,31 @@ impl VcdWriter {
 
     pub fn dump_state(
         &mut self,
-        design: &IrDesign,
+        _design: &IrDesign,
         state: &[maria_ir::LogicVec],
     ) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
-            if sig.class_name.is_some() {
-                continue;
-            }
-            let (sig_scope, sig_bare) = Self::parse_scope(sig.name.as_str());
-            if sig.array_depth > 1 {
-                for elem in 0..sig.array_depth {
-                    if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, Some(elem)) {
-                        let e_val = self.elem_val(sig_val, elem, sig.elem_width);
-                        self.write_vals(&e_val, &code, sig.elem_width == 1)?;
-                    }
-                }
+        // Fast path: index-based loop — O(1) flat array access tanpa
+        // HashMap lookup / parse_scope / code_for_signal per cycle.
+        let n = self.dump_targets.len();
+        for i in 0..n {
+            let sig_val = &state[self.dump_targets[i].signal_idx];
+            let val_str = if let Some(elem) = self.dump_targets[i].elem_idx {
+                let e_val = self.elem_val(sig_val, elem, self.dump_targets[i].elem_width);
+                vec_to_vcd(&e_val)
             } else {
-                if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, None) {
-                    self.write_vals(sig_val, &code, sig.width == 1)?;
-                }
+                vec_to_vcd(sig_val)
+            };
+            if self.last_values[i] != val_str {
+                let line = if self.dump_targets[i].is_one_bit {
+                    format!("{}{}\n", val_str, self.dump_targets[i].code)
+                } else {
+                    format!("b{} {}\n", val_str, self.dump_targets[i].code)
+                };
+                self.write_raw(line.as_bytes())?;
+                self.last_values[i] = val_str;
             }
         }
         Ok(())
@@ -429,26 +465,28 @@ impl VcdWriter {
 
     pub fn dump_all(
         &mut self,
-        design: &IrDesign,
+        _design: &IrDesign,
         state: &[maria_ir::LogicVec],
     ) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
-        for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
-            let (sig_scope, sig_bare) = Self::parse_scope(sig.name.as_str());
-            if sig.array_depth > 1 {
-                for elem in 0..sig.array_depth {
-                    if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, Some(elem)) {
-                        let e_val = self.elem_val(sig_val, elem, sig.elem_width);
-                        self.write_vals_force(&e_val, &code, sig.elem_width == 1)?;
-                    }
-                }
+        let n = self.dump_targets.len();
+        for i in 0..n {
+            let sig_val = &state[self.dump_targets[i].signal_idx];
+            let val_str = if let Some(elem) = self.dump_targets[i].elem_idx {
+                let e_val = self.elem_val(sig_val, elem, self.dump_targets[i].elem_width);
+                vec_to_vcd(&e_val)
             } else {
-                if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, None) {
-                    self.write_vals_force(sig_val, &code, sig.width == 1)?;
-                }
-            }
+                vec_to_vcd(sig_val)
+            };
+            let line = if self.dump_targets[i].is_one_bit {
+                format!("{}{}\n", val_str, self.dump_targets[i].code)
+            } else {
+                format!("b{} {}\n", val_str, self.dump_targets[i].code)
+            };
+            self.write_raw(line.as_bytes())?;
+            self.last_values[i] = val_str;
         }
         Ok(())
     }

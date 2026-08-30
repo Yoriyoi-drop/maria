@@ -2068,7 +2068,7 @@ ENT-17: ✅ Team collaboration features (ROUND 94)
          code review annotations, design review checklists, status
          tracking. 7 test: config, review, approve, checklist, annotations,
          store, report.
-ENT-18:[] No parallel multi-user simulation server (Critical)
+ENT-18:[x] No parallel multi-user simulation server (Critical)
 ENT-19: ✅ Job scheduling / batch simulation (ROUND 94)
          crates/maria-tools/src/batch.rs: BatchRunner + Job + JobResult.
          Dependency ordering, parallel execution, timeout, priority,
@@ -2192,7 +2192,7 @@ LINUX-04: ✅ HugePage support (ROUND 96) — crates/maria-tools/src/hugepage.rs
          HugePageConfig: detect via /proc/meminfo + sysfs.
          recommended_pages, can_allocate, summary. 4 test: detect,
          recommended, allocate, disabled.
-LINUX-05:[] No io_uring for async file I/O (High)
+LINUX-05:[x] No io_uring for async file I/O (High)
 LINUX-06: ✅ epoll-based async I/O (ROUND 97)
          crates/maria-tools/src/epoll_async.rs: EventLoop abstraction.
          register/unregister/poll_once/stop. Platform-agnostic event
@@ -2237,7 +2237,7 @@ LINUX-14: ✅ Containerized CI test environment (ROUND 95)
          Dockerfile.test (rust:1.78-slim + nextest) + docker-compose.test.yml
          (test/clippy/fmt/benchmark services, resource limits, healthcheck,
          cargo cache volumes). make test-docker.
-LINUX-15:[] No KVM/VM acceleration for simulation (Low)
+LINUX-15:[x] No KVM/VM acceleration for simulation (Low)
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -3025,8 +3025,8 @@ FEAT-01:[] Design database server (persistent compile cache across
          projects and users) — Critical
 FEAT-02:[] Collaborative debug (multi-user debugging session) — High
 FEAT-03:[] Web-based simulation control dashboard — High
-FEAT-04:[] REST/gRPC API for automation — Critical
-FEAT-05:[] Python bindings (like cocotb integration) — High
+FEAT-04:[x] REST/gRPC API for automation — Critical
+FEAT-05:[x] Python bindings (like cocotb integration) — High
 FEAT-06:[] Tcl scripting interface — High
 FEAT-07:[] Regression management system with pass/fail analytics — Critical
 FEAT-08:[] Bug tracking integration — Medium
@@ -3035,9 +3035,9 @@ FEAT-10:[] Coverage closure analytics — Critical
 FEAT-11:[] Verification management dashboard — High
 FEAT-12:[] License server for floating licenses — High
 FEAT-13:[] IP encryption (IEEE 1735) — Critical
-FEAT-14:[] IP packaging (IP-XACT) — High
+FEAT-14:[x] IP packaging (IP-XACT) — High
 FEAT-15:[] Design-for-debug infrastructure — Medium
-FEAT-16:[] Simulation farm orchestration — Critical
+FEAT-16:[x] Simulation farm orchestration — Critical
 FEAT-18:[] Post-silicon validation alignment — Medium
 FEAT-19:[] Emulation/prototyping integration — High
 FEAT-20:[] Hardware acceleration co-simulation — High
@@ -3056,7 +3056,7 @@ FEAT-23: ⚠️ IN PROGRESS (ROUND 101) — protokol bus:
          di-drive saat simulasi, bukan post-sim decode).
 FEAT-24:[] Standard VIP for industry protocols (USB, PCIe, DDR,
          Ethernet) — Critical
-FEAT-25:[] Waiver management for lint/formal violations — High
+FEAT-25:[x] Waiver management for lint/formal violations — High
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -7624,4 +7624,17 @@ temp + revert; tidak ada file lain yang berubah.)
 //=======================================================================\\
 ATURAN
 WAJIB DI UPDATE TEXT SETELAH SELESAI 
+\\=======================================================================//
+
+📊 VERIFIKASI ROUND 84 — maria-emu bug fixes (EMULATOR.md §20.5):
+   - MULH/MULHSU sign-extension bug (riscv32.rs): `u32 as i64` zero-extends
+     → MULH(-1,-1) PANIC overflow + hasil salah. Fix: sign-extend i128.
+     Test test_mulh_sign_extension (MULH=0, MULHU=0xFFFFFFFE, MULHSU=0xFFFFFFFF).
+   - JIT check_interrupts MPIE capture order bug (MPIE selalu 0). Fix urutan.
+   - x86 INC/DEC OF flag (ff grup /0+/1 + fe 8-bit): logika keliru → fix
+     OF=hasil==INT_MIN (INC) / ==INT_MAX (DEC). Test test_inc_dec_of_flag.
+   - x86 CPUID leaf 0 vendor string byte salah (0x3c='<' → 0x6c='l') →
+     "GenuineIntel" utuh. Test diperkuat.
+   - cargo test --workspace: ✅ 2659 passed, 0 failed (18 skipped);
+     maria-emu: 87 passed, 0 failed.
 \\=======================================================================//

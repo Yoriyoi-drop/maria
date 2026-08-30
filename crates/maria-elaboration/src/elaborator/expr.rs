@@ -1492,12 +1492,7 @@ impl Elaborator {
                             .collect::<Vec<_>>()
                     );
                 }
-                let is_dpi = self
-                    .design
-                    .modules
-                    .iter()
-                    .flat_map(|m| m.items.iter())
-                    .any(|item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name));
+                let is_dpi = self.dpi_import_names.contains(name);
                 if is_dpi {
                     let ir_args: Result<Vec<IrExpr>, SimError> = args
                         .iter()

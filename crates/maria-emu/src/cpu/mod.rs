@@ -78,10 +78,12 @@ pub trait CpuCore {
     }
 }
 
+pub mod jit;
 pub mod riscv32;
 pub mod rtl;
 pub mod x86;
 
+pub use jit::Rv64JitCpu;
 pub use riscv32::Rv32Cpu;
 pub use rtl::RtlLinkedCpu;
 pub use x86::{FileDisk, X86Cpu, X86Disk};

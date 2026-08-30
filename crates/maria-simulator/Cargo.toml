@@ -29,6 +29,8 @@ cranelift-module = { version = "0.110", optional = true }
 # Optional: DPI-C FFI (simulator/dpi.rs) — feature "dpi"
 libloading = { version = "0.8", optional = true }
 
+
+
 [features]
 jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module"]
 dpi = ["libloading"]

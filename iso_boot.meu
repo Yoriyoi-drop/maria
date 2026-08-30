@@ -1,0 +1,7 @@
+# Konfigurasi boot ISO x86 (real-mode BIOS path) — maria emu --boot-iso
+cpu = "x86"
+console = "stdio"
+
+[ram]
+base = 0x0
+size = 0x2000000

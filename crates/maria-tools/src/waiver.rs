@@ -5,7 +5,7 @@
 //! Supports import/export in JSON format and git-compatible diff tracking.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};

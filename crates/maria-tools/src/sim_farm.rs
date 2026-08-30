@@ -4,8 +4,8 @@
 //! Supports priority queues, job dependencies, resource tracking,
 //! and failover with automatic retry.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::collections::{HashMap, VecDeque};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 

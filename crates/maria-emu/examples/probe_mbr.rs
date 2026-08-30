@@ -40,7 +40,7 @@ fn main() {
             break;
         }
         let pc = cpu.pc();
-        let b = m.read(pc, 1).unwrap_or(0);
+        let _b = m.read(pc, 1).unwrap_or(0);
         let _ = cpu.step(&mut m);
         n += 1;
         if n % 500000 == 0 {

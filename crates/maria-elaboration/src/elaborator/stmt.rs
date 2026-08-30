@@ -1124,9 +1124,7 @@ fn ir_const_value(e: &IrExpr) -> Option<i64> {
                             });
                         }
                         // Check if this is a DPI function call used as a statement
-                        let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter()).any(
-                            |item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name),
-                        );
+                        let is_dpi = self.dpi_import_names.contains(name);
                         if is_dpi {
                             let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                             Ok(IrStmt::SysCall {

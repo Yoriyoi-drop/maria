@@ -101,11 +101,7 @@ impl Elaborator {
     /// error E3001 (design tanpa DPI sama sekali — regresi test
     /// `test_elab_err_func_not_found_*`).
     pub(crate) fn design_has_dpi_imports(&self) -> bool {
-        self.design.modules.iter().any(|m| {
-            m.items
-                .iter()
-                .any(|item| matches!(item, ModuleItem::DpiImport(_) | ModuleItem::DpiExport(_)))
-        })
+        !self.dpi_import_names.is_empty()
     }
 
     pub(crate) fn elaborate_dpi_imports(&self) -> Result<Vec<IrDpiImport>, SimError> {

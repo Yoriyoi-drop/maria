@@ -944,10 +944,25 @@ maria emu wrapper.sv picorv32.v --config emu_ram.meu \
 5. Interpreter `Rv32Cpu`: `csrrw` (op=1) menulis `zimm` (field rs1 sebagai
    angka) bukan nilai register `regs[rs1]` → mtvec salah → trap melompat ke
    alamat salah (riscv32.rs).
+6. **`MULH`/`MULHSU` sign-extension** (riscv32.rs): `a as i64` pada u32
+   zero-extends (bukan sign-extend) → MULH(-1,-1) PANIC overflow i64 & hasil
+   salah; MULHSU juga salah. Fix: sign-extend ke i128
+   (`a as u32 as i32 as i128`) + gunakan i128 agar tak overflow.
+7. JIT `check_interrupts` (cpu/jit.rs): `MPIE = MIE` dibaca SETELAH `MIE=0`
+   → MPIE selalu 0 (salah). Fix: baca MPIE sebelum clear MIE (urutan benar).
+8. x86 `INC`/`DEC` OF flag (cpu/x86.rs): logika `ff /0+/1` & `fe` (8-bit)
+   keliru — INC OF hanya saat hasil == INT_MIN, DEC OF saat hasil == INT_MAX.
+   Sebelumnya terbalik (INC di 0x7fff→0x8000 tak set OF; DEC set OF di 0↔-1).
+   Fix konsisten dgn grup `40-4f` yang sudah benar.
+9. x86 CPUID leaf 0 vendor string: ECX `0x3c65746e` salah 1 byte
+   (0x3c='<', harus 0x6c='l') → vendor `"GenuineInte<"` bukan
+   `"GenuineIntel"` → pencocokan string vendor boot bisa gagal. Fix
+   `0x6c65746e`; test vendor utuh.
 
-Verifikasi: `cargo test --workspace` **2009 test pass, 0 fail** (termasuk
-61 test `maria-emu`: e2e picorv32 RTL + e2e MMIO UART console store/read +
-e2e interrupt device UART (bit 3) + timer device-initiated (bit 4)).
+Verifikasi: `cargo test --workspace` **2659 test pass, 0 fail** (18 skip,
+termasuk 87 test `maria-emu`: e2e picorv32 RTL + e2e MMIO UART console
+store/read + e2e interrupt device UART (bit 3) + timer device-initiated
+(bit 4) + MULH sign-extension + x86 INC/DEC OF).
 
 ---
 

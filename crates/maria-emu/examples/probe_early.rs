@@ -2,7 +2,7 @@
 use maria_core::intern::Symbol;
 use maria_emu::cpu::x86::{FileDisk, X86Cpu};
 use maria_emu::cpu::CpuCore;
-use maria_emu::mem::{MemoryMap, MemoryPort, RamRegion, RegionKind};
+use maria_emu::mem::{MemoryMap, RamRegion, RegionKind};
 
 fn main() {
     let mut m = MemoryMap::new();

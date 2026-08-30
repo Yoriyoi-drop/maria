@@ -232,9 +232,9 @@ fn build_scc_deps(
 
 /// BFS layer computation on DAG.
 fn compute_layers(deps: &[HashSet<usize>], n: usize) -> Vec<Vec<usize>> {
-    let mut in_degree = vec![0usize; n];
+    let _in_degree = vec![0usize; n];
     for scc_id in 0..n {
-        for &dep in &deps[scc_id] {
+        for &_dep in &deps[scc_id] {
             // scc_id depends on dep → dep is a prerequisite
             // In compile order, dep comes BEFORE scc_id
             // Layer: dep should have LOWER layer number
@@ -246,7 +246,7 @@ fn compute_layers(deps: &[HashSet<usize>], n: usize) -> Vec<Vec<usize>> {
     // So j → i in DAG
     let mut reverse_in_degree = vec![0usize; n];
     for i in 0..n {
-        for &dep in &deps[i] {
+        for &_dep in &deps[i] {
             reverse_in_degree[i] += 1;
         }
     }
@@ -290,11 +290,11 @@ fn assign_partitions(
     layers: &[Vec<usize>],
     sccs: &[Vec<usize>],
     modules: &[CompileModule],
-    max_partitions: usize,
+    _max_partitions: usize,
 ) -> Vec<CompilePartition> {
     let mut partitions = Vec::new();
-    let mut partition_modules: Vec<Vec<String>> = Vec::new();
-    let mut partition_depends: Vec<Vec<usize>> = Vec::new();
+    let _partition_modules: Vec<Vec<String>> = Vec::new();
+    let _partition_depends: Vec<Vec<usize>> = Vec::new();
 
     // Build SCC → module name mapping
     let mut scc_to_names: Vec<Vec<String>> = Vec::new();
@@ -380,7 +380,7 @@ fn assign_partitions(
 /// Compute cross-partition dependencies.
 fn compute_cross_partition_deps(
     modules: &[CompileModule],
-    name_to_idx: &HashMap<&str, usize>,
+    _name_to_idx: &HashMap<&str, usize>,
     partitions: &[CompilePartition],
     _scc_map: &HashMap<usize, usize>,
 ) -> Vec<(String, String)> {
@@ -415,7 +415,7 @@ fn topological_sort_partitions(partitions: &[CompilePartition]) -> Vec<usize> {
     let mut in_degree = vec![0usize; n];
 
     for part in partitions {
-        for &dep in &part.depends_on {
+        for &_dep in &part.depends_on {
             in_degree[part.id] += 1; // part depends on dep → part has incoming edge
         }
     }

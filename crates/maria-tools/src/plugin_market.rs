@@ -250,7 +250,7 @@ fn topological_sort(deps: &HashMap<&str, Vec<&str>>) -> Result<Vec<String>, Stri
 
     for (_, dep_list) in deps {
         for &dep in dep_list {
-            if let Some(d) = in_degree.get_mut(dep) {
+            if let Some(_d) = in_degree.get_mut(dep) {
                 // This doesn't work directly — we need reverse mapping
             }
         }

@@ -379,6 +379,12 @@ pub struct Elaborator {
     /// Statistik optimasi untuk cache pipeline (db.md "6. optimize/",
     /// "10. expression/") — const fold, loop unroll, evaluasi ekspresi.
     pub opt_stats: super::util::OptStats,
+    /// Cache nama DPI import dari design (dihitung SEKALI di constructor).
+    /// Dipakai oleh is_dpi check di expr.rs/stmt.rs untuk menentukan apakah
+    /// function tak dikenal harus di-degrade ke DPI stub. Tanpa cache ini,
+    /// mem::take(&mut self.design.modules) di elaboration loop mengosongkan
+    /// modules → is_dpi selalu false → semua DPI function jadi hard error E3001.
+    pub dpi_import_names: std::collections::HashSet<Symbol>,
 }
 
 impl Elaborator {
@@ -565,6 +571,19 @@ impl Elaborator {
             );
         }
 
+        // Cache DPI import names SEKALI di constructor — self.design.modules
+        // akan di-mem::take() saat elaboration loop, jadi is_dpi check harus
+        // pakai cache ini (bukan scan self.design.modules yang sudah kosong).
+        let dpi_import_names: std::collections::HashSet<Symbol> = design
+            .modules
+            .iter()
+            .flat_map(|m| m.items.iter())
+            .filter_map(|item| match item {
+                ModuleItem::DpiImport(d) => Some(d.name),
+                _ => None,
+            })
+            .collect();
+
         Elaborator {
             design,
             modules: HashMap::new(),
@@ -600,6 +619,7 @@ impl Elaborator {
             cache_misses: 0,
             param_ir_cache: HashMap::new(),
             opt_stats: super::util::OptStats::default(),
+            dpi_import_names,
         }
     }
 
@@ -1242,6 +1262,7 @@ impl Elaborator {
                 self.cache_misses
             );
         }
+
         // Elaborate interfaces as modules (ports + decls + processes), so
         // interface initial/always/assign blocks actually run inside the
         // flattened hierarchy. Falls back to a signal-only module if the
@@ -1325,6 +1346,7 @@ impl Elaborator {
                 }
             }
         }
+
 
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!(
@@ -2099,7 +2121,7 @@ impl Elaborator {
             source_lines: if self.source_lines.is_empty() {
                 None
             } else {
-                Some(self.source_lines.clone())
+                Some(std::mem::take(&mut self.source_lines))
             },
             source_file: if self.source_file.is_empty() {
                 None

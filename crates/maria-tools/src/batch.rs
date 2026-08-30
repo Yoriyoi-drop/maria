@@ -14,9 +14,8 @@
 //! let results = runner.run();
 //! ```
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Status job.

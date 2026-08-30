@@ -27,13 +27,7 @@ fn make_elf(payload: &[u8]) -> Vec<u8> {
 
 fn main() {
     let out = std::env::args().nth(1).expect("arg: out.elf");
-    // t0=42; a0=0x80000000; sw t0,0(a0); lw a1,0(a0); a2=a1+t0; sw a2,4(a0); ebreak
-    let code = [
-        (42u32 << 20) | (5u32 << 7) | 0x13,       // addi t0, zero, 42
-        (0x80000u32 << 12) | (10u32 << 7) | 0x37, // lui a0, 0x80000
-        (6u32 << 20) | (10u32 << 15) | (2u32 << 12) | 0x23, // sw t0, 0(a0) — rs2=t0=5? lihat bawah
-        0x0010_0073,                              // ebreak
-    ];
+    // t0=42; a0=0x80000000; sw t0,0(a0); ebreak
     // Perbaiki sw: rs2 = 5 (t0), rs1 = 10 (a0), f3=2 (sw), op=0x23
     let sw = (5u32 << 20) | (10u32 << 15) | (2u32 << 12) | 0x23;
     let code = [

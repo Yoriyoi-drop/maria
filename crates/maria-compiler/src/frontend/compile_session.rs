@@ -280,8 +280,11 @@ impl CompileSession {
 
                 let mut pp = base_pp.clone();
                 let path_str = path.to_string_lossy();
-                let src_str = String::from_utf8_lossy(holder.as_bytes()).into_owned();
-                let preprocessed = pp.preprocess(&src_str, None).map_err(|e| {
+                // Gunakan Cow::from_utf8_lossy — untuk data valid UTF-8
+                // (99%+ file SV), tidak ada alokasi baru: hanya borrow mmap bytes.
+                // Sebelumnya .into_owned() SELALU mengalokasi String baru per file.
+                let src_cow = String::from_utf8_lossy(holder.as_bytes());
+                let preprocessed = pp.preprocess(&src_cow, None).map_err(|e| {
                     SimError::with_diag(
                         DiagCode::InvalidSyntax,
                         format!("preprocessor {}: {}", path_str, e),
@@ -594,14 +597,16 @@ impl CompileSession {
         {
             let mut parts = self.combined_parts.lock().unwrap();
             parts.sort_by_key(|(idx, _)| *idx);
-            let merged_source: String = parts.iter().map(|(_, s)| s.clone()).collect();
-            self.merged_source = Some(merged_source);
-            // Store per-file combined sources for future incremental compiles
+            // Pre-allocate merged_source dengan kapasitas tepat (hemat realokasi)
+            let total_len: usize = parts.iter().map(|(_, s)| s.len()).sum();
+            let mut merged_source = String::with_capacity(total_len);
+            // Simpan per-file combined sources untuk incremental compile berikutnya
             self.prev_combined_sources.clear();
-            for (path, combined) in paths.iter().zip(parts.iter()) {
-                self.prev_combined_sources
-                    .insert(path.clone(), combined.1.clone());
+            for (path, (_, s)) in paths.iter().zip(parts.iter()) {
+                merged_source.push_str(s);
+                self.prev_combined_sources.insert(path.clone(), s.clone());
             }
+            self.merged_source = Some(merged_source);
             parts.clear();
         }
 

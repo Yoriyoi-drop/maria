@@ -599,15 +599,18 @@ impl Rv32Cpu {
                     // funct7=1 (bit 3 = 1): M extension
                     0x8 => (a as u32).wrapping_mul(b as u32), // MUL (low)
                     0x9 => {
-                        // MULH: high dari (a_sign * b_sign) 64-bit
-                        (((a as i64) * (b as i64)) >> 32) as u32
+                        // MULH: signed rs1 × signed rs2, ambil high 32-bit.
+                        // Wajib sign-extend `a`/`b` ke i128 (u32→i64 zero-extends
+                        // → nilai negatif salah DAN overflow i64 saat kedua
+                        // operand 0xFFFFFFFF). Pakai i128 untuk hindari overflow.
+                        (((a as u32 as i32 as i128) * (b as u32 as i32 as i128)) >> 32) as u32
                     }
                     0xa => {
-                        // MULHSU
-                        (((a as i64 as i128) * (b as u32 as u64 as i128)) >> 32) as u32
+                        // MULHSU: signed rs1 × unsigned rs2, high 32-bit.
+                        (((a as u32 as i32 as i128) * (b as u32 as u128 as i128)) >> 32) as u32
                     }
                     0xb => {
-                        // MULHU
+                        // MULHU: unsigned × unsigned, high 32-bit.
                         (((a as u64) * (b as u64)) >> 32) as u32
                     }
                     0xc => {
@@ -916,6 +919,32 @@ mod tests {
     }
 
     #[test]
+    fn test_mulh_sign_extension() {
+        // Gate klasik: kedua operand 0xFFFFFFFF (signed -1). Sebelumnya
+        // `u32 as i64` zero-extends → (-1)² tidak valid & overflow i64 PANIC.
+        // MULH(-1,-1) harus high = 0 (produk 64-bit = 1).
+        let mut m = map();
+        let mut cpu = Rv32Cpu::new();
+        // t0=-1, t1=-1, t2=2
+        let code = [
+            i(-1, 0, 0, 5, ADDI),
+            i(-1, 0, 0, 6, ADDI),
+            r(1, 6, 5, 1, 7, OP),   // MULH t2 = t0*t1 (signed -1 * -1)
+            r(1, 6, 5, 3, 8, OP),   // MULHU t3 = t0*t1 (unsigned 0xFFFFFFFF²)
+            i(2, 0, 0, 9, ADDI),    // t4 = 2
+            r(1, 9, 5, 2, 10, OP),  // MULHSU t5 = t0(-1) * t4(2) = -2
+        ];
+        load_code(&mut cpu, &mut m, 0x420, &code);
+        run(&mut cpu, &mut m, 6);
+        // MULH(-1,-1): -1 * -1 = 1 → high 32-bit = 0
+        assert_eq!(cpu.read_reg(7), 0, "MULH(-1,-1) high harus 0");
+        // MULHU(0xFFFFFFFF, 0xFFFFFFFF): 0xFFFFFFFF² = 0xFFFFFFFE00000001 → high = 0xFFFFFFFE
+        assert_eq!(cpu.read_reg(8) as u32, 0xffff_fffe, "MULHU high");
+        // MULHSU(-1, 2) = -2 = 0xFFFFFFFFFFFFFFFE → high = 0xFFFFFFFF
+        assert_eq!(cpu.read_reg(10) as u32, 0xffff_ffff, "MULHSU high");
+    }
+
+    #[test]
     fn test_div_by_zero() {
         let mut m = map();
         let mut cpu = Rv32Cpu::new();
@@ -1022,11 +1051,6 @@ mod tests {
         let mut m = map();
         let mut cpu = Rv32Cpu::new();
         // mtvec = 0x200 (mret di sana), lalu lw a0, 0(a1) dengan a1 = 0xDEAD0000 (unmapped)
-        let code = [
-            i(0x200, 0, 0, 10, ADDI),  // a0 = 0x200
-            i(0x305, 10, 1, 0, CSRRW), // mtvec = a0
-            i(0xdead, 0, 0, 11, ADDI), // a1 = 0xDEAD (imm 12-bit: 0xDEAD & 0xfff = 0xead)
-        ];
         // a1 = 0xDEAD0000 via lui+addi:
         let code = [
             i(0x200, 0, 0, 10, ADDI),

@@ -54,6 +54,47 @@ pub enum MariaCmd {
     /// reset/memory + back-pointer) dan memory map dump
     #[command(name = "emu")]
     Emu(EmuArgs),
+
+    // ── Additional tools (belum ada di CLI sebelumnya) ──
+    /// mbatch — batch simulation runner (parallel/sequential jobs)
+    #[command(alias = "mbatch")]
+    Batch(MbatchArgs),
+    /// mmemcheck — memory profiling (valgrind/heaptrack integration)
+    #[command(alias = "mmemcheck")]
+    Memcheck(MmemcheckArgs),
+    /// mtbgen — automated testbench generation from module ports
+    #[command(alias = "mtbgen")]
+    Tbgen(MtbgenArgs),
+    /// mwaiver — lint/formal violation waiver management
+    #[command(alias = "mwaiver")]
+    Waiver(MwaiverArgs),
+    /// mvault — RTL secure vault (file locking, integrity, access control)
+    #[command(alias = "mvault")]
+    Vault(MvaultArgs),
+    /// mipxact — IP-XACT (IEEE 1685) XML component packaging
+    #[command(alias = "mipxact")]
+    Ipxact(MipxactArgs),
+    /// mdesign-repo — versioned design storage repository
+    #[command(alias = "mdesign-repo")]
+    DesignRepo(MdesignRepoArgs),
+    /// mproject — multi-project workspace management
+    #[command(alias = "mproject")]
+    Project(MprojectArgs),
+    /// msdc — SDC timing constraints parser
+    #[command(alias = "msdc")]
+    Sdc(MsdcArgs),
+    /// mequiv — sequential equivalence checking
+    #[command(alias = "mequiv")]
+    EquivCheck(MequivCheckArgs),
+    /// mregression — regression test management and analytics
+    #[command(alias = "mregression")]
+    Regression(MregressionArgs),
+    /// meco — engineering change order (ECO) tracking
+    #[command(alias = "meco")]
+    Eco(MecoArgs),
+    /// mcov-closure — coverage closure analytics
+    #[command(alias = "mcov-closure")]
+    CovClosure(McovClosureArgs),
 }
 
 /// minspect — Maria Inspect.
@@ -713,6 +754,12 @@ pub struct EmuArgs {
     /// Butuh `ram = { base, size }` di config .meu (minimal 0x0:0x100000).
     #[arg(long = "boot-iso", value_name = "PATH")]
     pub boot_iso: Option<String>,
+
+    /// Tampilkan jendela grafis untuk emulator (framebuffer display).
+    /// Mode default: text console 80x25 (VGA text mode).
+    /// Format: WIDTHxHEIGHT (default: 80x25) atau `--window` (80x25 default).
+    #[arg(long = "window", value_name = "WxH")]
+    pub window: Option<String>,
 }
 
 #[derive(ClapParser, Clone)]
@@ -1104,3 +1151,489 @@ pub struct Cli {
     #[arg(skip)]
     pub config_elab_mode: Option<String>,
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// Additional tools — baru ditambahkan ke CLI
+// ══════════════════════════════════════════════════════════════════════
+
+/// mbatch — Batch simulation runner.
+#[derive(clap::Args, Clone)]
+pub struct MbatchArgs {
+    /// Subcommand: run, status, summary
+    #[command(subcommand)]
+    pub cmd: MbatchCmd,
+}
+
+/// mbatch subcommand.
+#[derive(Subcommand, Clone)]
+pub enum MbatchCmd {
+    /// Jalankan batch jobs dari file TOML
+    Run {
+        /// Batch config file (TOML)
+        #[arg(required = true)]
+        config: String,
+    },
+    /// Tampilkan status batch terakhir
+    Status,
+    /// Tampilkan ringkasan batch
+    Summary,
+}
+
+/// mmemcheck — Memory profiling (valgrind/heaptrack).
+#[derive(clap::Args, Clone)]
+pub struct MmemcheckArgs {
+    /// Tool: valgrind (default) atau heaptrack
+    #[arg(long, default_value = "valgrind")]
+    pub tool: String,
+    /// Binary path untuk di-profile
+    #[arg(required = true)]
+    pub binary: String,
+    /// Arguments untuk binary
+    #[arg(last = true)]
+    pub args: Vec<String>,
+}
+
+/// mtbgen — Testbench generation.
+#[derive(clap::Args, Clone)]
+pub struct MtbgenArgs {
+    /// Module name untuk testbench
+    #[arg(short = 'm', long = "module")]
+    pub module: Option<String>,
+    /// Output file (default: stdout)
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<String>,
+    /// Clock name (default: clk)
+    #[arg(long = "clock", default_value = "clk")]
+    pub clock_name: String,
+    /// Clock period (default: 10)
+    #[arg(long = "period", default_value = "10")]
+    pub clock_period: u32,
+    /// Reset name (default: rst_n)
+    #[arg(long = "reset", default_value = "rst_n")]
+    pub reset_name: String,
+    /// Reset active high (default: active low)
+    #[arg(long = "reset-high")]
+    pub reset_high: bool,
+    /// Simulation time (default: 1000)
+    #[arg(long = "sim-time", default_value = "1000")]
+    pub sim_time: u32,
+    /// Include waveform dump
+    #[arg(long = "dump-vcd", default_value = "true")]
+    pub dump_vcd: bool,
+    /// Include basic checks
+    #[arg(long = "checks", default_value = "true")]
+    pub include_checks: bool,
+    /// Input ports: name=width (comma-separated)
+    #[arg(long = "inputs")]
+    pub inputs: Option<String>,
+    /// Output ports: name=width (comma-separated)
+    #[arg(long = "outputs")]
+    pub outputs: Option<String>,
+}
+
+/// mwaiver — Waiver management.
+#[derive(clap::Args, Clone)]
+pub struct MwaiverArgs {
+    /// Subcommand: add, list, check, export, import
+    #[command(subcommand)]
+    pub cmd: MwaiverCmd,
+}
+
+/// mwaiver subcommand.
+#[derive(Subcommand, Clone)]
+pub enum MwaiverCmd {
+    /// Tambah waiver baru
+    Add {
+        /// Rule name (e.g. W1001)
+        #[arg(short = 'r', long = "rule")]
+        rule: String,
+        /// File pattern (optional)
+        #[arg(short = 'f', long = "file")]
+        file_pattern: Option<String>,
+        /// Alasan waiver
+        #[arg(short = 'R', long = "reason")]
+        reason: String,
+        /// Owner
+        #[arg(short = 'o', long = "owner")]
+        owner: String,
+    },
+    /// List semua waivers
+    List {
+        /// Filter by rule
+        #[arg(short = 'r', long = "rule")]
+        rule: Option<String>,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check apakah violation di-waive
+    Check {
+        /// Rule name
+        #[arg(short = 'r', long = "rule")]
+        rule: String,
+        /// File path (optional)
+        #[arg(short = 'f', long = "file")]
+        file: Option<String>,
+    },
+    /// Export waivers ke JSON
+    Export {
+        /// Output file
+        #[arg(short = 'o', long = "output")]
+        output: String,
+    },
+    /// Import waivers dari JSON
+    Import {
+        /// Input file
+        #[arg(short = 'i', long = "input")]
+        input: String,
+    },
+}
+
+/// mvault — RTL Secure Vault.
+#[derive(clap::Args, Clone)]
+pub struct MvaultArgs {
+    /// Subcommand: register, lock, unlock, verify, list, summary
+    #[command(subcommand)]
+    pub cmd: MvaultCmd,
+}
+
+/// mvault subcommand.
+#[derive(Subcommand, Clone)]
+pub enum MvaultCmd {
+    /// Register file ke vault
+    Register {
+        /// File path
+        #[arg(required = true)]
+        file: String,
+        /// User name
+        #[arg(short = 'u', long = "user")]
+        user: String,
+    },
+    /// Lock file untuk exclusive access
+    Lock {
+        /// File path
+        #[arg(required = true)]
+        file: String,
+        /// User name
+        #[arg(short = 'u', long = "user")]
+        user: String,
+    },
+    /// Unlock file
+    Unlock {
+        /// File path
+        #[arg(required = true)]
+        file: String,
+        /// User name
+        #[arg(short = 'u', long = "user")]
+        user: String,
+    },
+    /// Verify file integrity
+    Verify {
+        /// File path
+        #[arg(required = true)]
+        file: String,
+    },
+    /// List semua files di vault
+    List,
+    /// Tampilkan ringkasan vault
+    Summary,
+}
+
+/// mipxact — IP-XACT packaging.
+#[derive(clap::Args, Clone)]
+pub struct MipxactArgs {
+    /// Subcommand: generate, summary
+    #[command(subcommand)]
+    pub cmd: MipxactCmd,
+}
+
+/// mipxact subcommand.
+#[derive(Subcommand, Clone)]
+pub enum MipxactCmd {
+    /// Generate IP-XACT XML dari module
+    Generate {
+        /// Module name
+        #[arg(short = 'm', long = "module")]
+        module: String,
+        /// Vendor name
+        #[arg(long = "vendor", default_value = "maria")]
+        vendor: String,
+        /// Library name
+        #[arg(long = "library", default_value = "rtl")]
+        library: String,
+        /// Version
+        #[arg(long = "version", default_value = "1.0")]
+        version: String,
+        /// Output file (default: stdout)
+        #[arg(short = 'o', long = "output")]
+        output: Option<String>,
+        /// Input ports: name=width (comma-separated)
+        #[arg(long = "inputs")]
+        inputs: Option<String>,
+        /// Output ports: name=width (comma-separated)
+        #[arg(long = "outputs")]
+        outputs: Option<String>,
+    },
+    /// Tampilkan ringkasan IP-XACT
+    Summary,
+}
+
+/// mdesign-repo — Design repository.
+#[derive(clap::Args, Clone)]
+pub struct MdesignRepoArgs {
+    /// Subcommand: init, commit, log, tag, diff, summary
+    #[command(subcommand)]
+    pub cmd: MdesignRepoCmd,
+}
+
+/// mdesign-repo subcommand.
+#[derive(Subcommand, Clone)]
+pub enum MdesignRepoCmd {
+    /// Initialize repository
+    Init {
+        /// Repository root directory
+        #[arg(default_value = ".")]
+        root: String,
+    },
+    /// Create commit
+    Commit {
+        /// Author name
+        #[arg(short = 'a', long = "author")]
+        author: String,
+        /// Commit message
+        #[arg(short = 'm', long = "message")]
+        message: String,
+        /// Files to include (space-separated)
+        #[arg(required = true)]
+        files: Vec<String>,
+    },
+    /// Show commit history
+    Log {
+        /// Max entries
+        #[arg(short = 'n', long, default_value = "10")]
+        max: usize,
+    },
+    /// Create tag
+    Tag {
+        /// Tag name
+        #[arg(required = true)]
+        name: String,
+        /// Commit hash
+        #[arg(required = true)]
+        commit: String,
+        /// Description
+        #[arg(short = 'd', long = "description")]
+        description: String,
+    },
+    /// Diff between two commits
+    Diff {
+        /// Commit A hash
+        #[arg(required = true)]
+        a: String,
+        /// Commit B hash
+        #[arg(required = true)]
+        b: String,
+    },
+    /// Tampilkan ringkasan repository
+    Summary,
+}
+
+/// mproject — Multi-project workspace management.
+#[derive(clap::Args, Clone)]
+pub struct MprojectArgs {
+    /// Subcommand: init, add, remove, list, analyze, summary
+    #[command(subcommand)]
+    pub cmd: MprojectCmd,
+}
+
+/// mproject subcommand.
+#[derive(Subcommand, Clone)]
+pub enum MprojectCmd {
+    /// Initialize workspace
+    Init {
+        /// Workspace root directory
+        #[arg(default_value = ".")]
+        root: String,
+    },
+    /// Add project ke workspace
+    Add {
+        /// Project name
+        #[arg(short = 'n', long = "name")]
+        name: String,
+        /// Project path
+        #[arg(short = 'p', long = "path")]
+        path: String,
+        /// Top module
+        #[arg(short = 't', long = "top")]
+        top: Option<String>,
+        /// Dependencies (comma-separated)
+        #[arg(short = 'd', long = "depends")]
+        depends: Option<String>,
+    },
+    /// Remove project dari workspace
+    Remove {
+        /// Project name
+        #[arg(required = true)]
+        name: String,
+    },
+    /// List projects di workspace
+    List,
+    /// Analyze workspace dependencies
+    Analyze,
+    /// Tampilkan ringkasan workspace
+    Summary,
+}
+
+/// msdc — SDC timing constraints parser.
+#[derive(clap::Args, Clone)]
+pub struct MsdcArgs {
+    /// SDC file path
+    #[arg(required = true)]
+    pub file: String,
+    /// Output JSON
+    #[arg(long)]
+    pub json: bool,
+    /// Tampilkan clocks saja
+    #[arg(long = "clocks-only")]
+    pub clocks_only: bool,
+}
+
+/// mequiv — Equivalence checking.
+#[derive(clap::Args, Clone)]
+pub struct MequivCheckArgs {
+    /// Golden values file (JSON)
+    #[arg(short = 'g', long = "golden")]
+    pub golden: String,
+    /// Implementation values file (JSON)
+    #[arg(short = 'i', long = "impl")]
+    pub impl_file: String,
+    /// Signal mapping file (JSON)
+    #[arg(short = 'm', long = "mapping")]
+    pub mapping: Option<String>,
+    /// Method: miter (default), bit-blasting
+    #[arg(long, default_value = "miter")]
+    pub method: String,
+}
+
+/// mregression — Regression test management.
+#[derive(clap::Args, Clone)]
+pub struct MregressionArgs {
+    /// Subcommand: record, summary, flaky, trend
+    #[command(subcommand)]
+    pub cmd: MregressionCmd,
+}
+
+/// mregression subcommand.
+#[derive(Subcommand, Clone)]
+pub enum MregressionCmd {
+    /// Record new regression run
+    Record {
+        /// Results file (JSON)
+        #[arg(short = 'i', long = "input")]
+        input: String,
+        /// Branch name
+        #[arg(short = 'b', long = "branch", default_value = "main")]
+        branch: String,
+        /// Commit hash
+        #[arg(short = 'c', long = "commit")]
+        commit: String,
+    },
+    /// Tampilkan ringkasan regression
+    Summary,
+    /// Tampilkan flaky tests
+    Flaky,
+    /// Tampilkan trend regression
+    Trend,
+}
+
+/// meco — ECO management.
+#[derive(clap::Args, Clone)]
+pub struct MecoArgs {
+    /// Subcommand: create, list, transition, comment, summary
+    #[command(subcommand)]
+    pub cmd: MecoCmd,
+}
+
+/// meco subcommand.
+#[derive(Subcommand, Clone)]
+pub enum MecoCmd {
+    /// Create ECO baru
+    Create {
+        /// Title
+        #[arg(short = 'T', long = "title")]
+        title: String,
+        /// Description
+        #[arg(short = 'd', long = "description")]
+        description: String,
+        /// Severity: critical, major, minor, cosmetic
+        #[arg(short = 's', long = "severity")]
+        severity: String,
+        /// Author
+        #[arg(short = 'a', long = "author")]
+        author: String,
+    },
+    /// List ECOs
+    List {
+        /// Filter by status
+        #[arg(short = 's', long = "status")]
+        status: Option<String>,
+        /// Filter by severity
+        #[arg(short = 'S', long = "severity")]
+        severity: Option<String>,
+    },
+    /// Transition ECO status
+    Transition {
+        /// ECO ID
+        #[arg(required = true)]
+        id: String,
+        /// New status
+        #[arg(required = true)]
+        new_status: String,
+    },
+    /// Add comment ke ECO
+    Comment {
+        /// ECO ID
+        #[arg(required = true)]
+        id: String,
+        /// Author
+        #[arg(short = 'a', long = "author")]
+        author: String,
+        /// Comment text
+        #[arg(short = 'c', long = "comment")]
+        text: String,
+    },
+    /// Tampilkan ringkasan ECOs
+    Summary,
+}
+
+/// mcov-closure — Coverage closure analytics.
+#[derive(clap::Args, Clone)]
+pub struct McovClosureArgs {
+    /// Subcommand: analyze, critical, uncovered
+    #[command(subcommand)]
+    pub cmd: McovClosureCmd,
+}
+
+/// mcov-closure subcommand.
+#[derive(Subcommand, Clone)]
+pub enum McovClosureCmd {
+    /// Analyze coverage closure
+    Analyze {
+        /// Coverage data file (JSON)
+        #[arg(short = 'i', long = "input")]
+        input: String,
+    },
+    /// Tampilkan critical tests
+    Critical {
+        /// Coverage data file (JSON)
+        #[arg(short = 'i', long = "input")]
+        input: String,
+    },
+    /// Tampilkan uncovered points
+    Uncovered {
+        /// Coverage data file (JSON)
+        #[arg(short = 'i', long = "input")]
+        input: String,
+    },
+}
+

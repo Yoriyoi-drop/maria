@@ -1464,13 +1464,50 @@ impl SimulationEngine {
                 self.signal_writers.clear();
                 self.signal_write_types.clear();
 
-                // Sched-04: Refresh preponed snapshot every delta cycle for edge detection
-                let num_sigs = self.state.signals.len();
-                let mut snap = Vec::with_capacity(num_sigs);
-                for i in 0..num_sigs {
-                    snap.push(self.state.read_signal(i).clone());
+                // PERF: Only refresh signal_snapshot when something actually needs it
+                // for edge/level detection. Full snapshot = 146K LogicVec clones per delta.
+                // For OpenTitan at time 0 with thousands of deltas, this was 5+ GB → OOM.
+                let needs_snapshot = !self.pending_events.is_empty()
+                    || !self.pending_waits.is_empty()
+                    || !self.pending_ast_events.is_empty()
+                    || !self.pending_wait_orders.is_empty();
+                if needs_snapshot {
+                    let num_sigs = self.state.signals.len();
+                    let mut snap = Vec::with_capacity(num_sigs);
+                    for i in 0..num_sigs {
+                        snap.push(self.state.read_signal(i).clone());
+                    }
+                    self.signal_snapshot = Some(snap);
                 }
-                self.signal_snapshot = Some(snap);
+            }
+
+            // TEMP-DIAG per time step: RSS + arena + event size
+            {
+                let rss = std::fs::read_to_string("/proc/self/status")
+                    .ok()
+                    .and_then(|s| {
+                        s.lines()
+                            .find(|l| l.starts_with("VmRSS"))
+                            .and_then(|l| l.split_whitespace().nth(1).map(|x| x.to_string()))
+                    })
+                    .unwrap_or_default();
+                let ndeltas = self.osc_state_hashes.len();
+                let mut committed = 0usize;
+                for i in 0..self.state.signals.len() {
+                    if self.state.changed[i] {
+                        committed += 1;
+                    }
+                }
+                eprintln!(
+                    "[DIAG] t={} RSS={}kB arena={} ndeltas={} committed_signals={} co_snap={} seq_hist={}",
+                    self.state.time,
+                    rss,
+                    self.sim_arena.memory_used(),
+                    ndeltas,
+                    committed,
+                    self.coverage_snapshot.as_ref().map(|v| v.len()).unwrap_or(0),
+                    self.signal_seq_history.len()
+                );
             }
 
             // ── UPF: Evaluate power states based on current supply net values ──

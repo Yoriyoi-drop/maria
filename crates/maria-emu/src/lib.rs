@@ -11,6 +11,7 @@
 
 pub mod config;
 pub mod cpu;
+pub mod display;
 pub mod dump;
 pub mod elf;
 pub mod machine;
