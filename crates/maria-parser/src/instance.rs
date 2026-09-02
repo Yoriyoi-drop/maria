@@ -578,6 +578,27 @@ impl Parser {
         self.expect(Token::LParen)?;
         let mut items = Vec::new();
         loop {
+            // Modport clocking reference: `modport host_mp(clocking cb, ...)`
+            // (LRM 1800 §25.5.3) — nama clocking dipakai sbg interface item.
+            if self.peek() == &Token::Clocking {
+                self.advance();
+                let cb_name = self.expect_ident()?;
+                items.push(ModportItem {
+                    name: cb_name,
+                    direction: PortDirection::Input,
+                });
+                match self.peek() {
+                    Token::Comma => {
+                        self.advance();
+                        continue;
+                    }
+                    Token::RParen => {
+                        self.advance();
+                        break;
+                    }
+                    _ => continue,
+                }
+            }
             let dir = match self.peek() {
                 Token::Input => {
                     self.advance();
@@ -708,7 +729,7 @@ impl Parser {
                         _ => PortDirection::Input,
                     };
 
-                    if matches!(
+                    let consumed_keyword_type = if matches!(
                         self.peek(),
                         Token::Wire
                             | Token::Reg
@@ -722,30 +743,35 @@ impl Parser {
                             | Token::Integer
                     ) {
                         self.advance();
-                    }
+                        true
+                    } else {
+                        false
+                    };
 
                     // Check for type parameter reference (identifier before port name or range)
                     let mut dtype_name = None;
-                    if let Token::Ident(_s) = self.peek() {
-                        let ah1 = self.peek_ahead(1).clone();
-                        if ah1 == Token::Scope {
-                            let pkg = self.expect_ident()?;
-                            self.expect(Token::Scope)?;
-                            let typ = self.expect_ident()?;
-                            dtype_name = Some(format!("{}::{}", pkg, typ));
-                        } else if ah1 == Token::Dot {
-                            // Port bertipe interface + modport: `axi_lite.dut bus`
-                            // → dtype_name = "axi_lite.dut". Elaborator men-strip
-                            // bagian modport saat mencocokkan nama interface.
-                            let iface = self.expect_ident()?;
-                            self.expect(Token::Dot)?;
-                            let mp = self.expect_ident()?;
-                            dtype_name = Some(format!("{}.{}", iface, mp));
-                        } else if matches!(ah1, Token::Ident(_) | Token::LBrack) {
-                            let name = self.expect_ident()?;
-                            dtype_name = Some(name.as_str().to_string());
+                    if !consumed_keyword_type {
+                        if let Token::Ident(_s) = self.peek() {
+                            let ah1 = self.peek_ahead(1).clone();
+                            if ah1 == Token::Scope {
+                                let pkg = self.expect_ident()?;
+                                self.expect(Token::Scope)?;
+                                let typ = self.expect_ident()?;
+                                dtype_name = Some(format!("{}::{}", pkg, typ));
+                            } else if ah1 == Token::Dot {
+                                // Port bertipe interface + modport: `axi_lite.dut bus`
+                                // → dtype_name = "axi_lite.dut". Elaborator men-strip
+                                // bagian modport saat mencocokkan nama interface.
+                                let iface = self.expect_ident()?;
+                                self.expect(Token::Dot)?;
+                                let mp = self.expect_ident()?;
+                                dtype_name = Some(format!("{}.{}", iface, mp));
+                            } else if matches!(ah1, Token::Ident(_) | Token::LBrack) {
+                                let name = self.expect_ident()?;
+                                dtype_name = Some(name.as_str().to_string());
+                            }
                         }
-                    }
+                    } // if !consumed_keyword_type
 
                     if self.peek() == &Token::Signed {
                         self.advance();
@@ -955,7 +981,7 @@ impl Parser {
     /// key `__param0`, `__param1`, … (konvensi lama elaborator).
     /// F31: dipakai di DUA posisi (`mod #(.P(1)) u (...)` dan
     /// `mod u #(.P(1)) (...)`).
-    fn parse_param_block(
+    pub(crate) fn parse_param_block(
         &mut self,
     ) -> Result<
         (
@@ -1052,7 +1078,26 @@ impl Parser {
 
         // Parse optional array range [msb:lsb] for arrayed instances
         let range = if self.peek() == &Token::LBrack {
-            self.parse_range()?
+            let saved = self.pos.get();
+            match self.parse_range() {
+                Ok(Some(er)) => Some(er),
+                _ => {
+                    // `mod inst[N] (...)` / interface array `ifce vif[P](...)` —
+                    // ukuran tunggal tanpa ':' → setara `[N-1:0]`.
+                    self.pos.set(saved);
+                    self.advance(); // '['
+                    let size = self.parse_expr(0)?;
+                    self.expect(Token::RBrack)?;
+                    Some(ExprRange {
+                        msb: Expr::BinaryOp {
+                            op: BinaryOp::Sub,
+                            lhs: Box::new(size),
+                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                        },
+                        lsb: Expr::Value(Value::Decimal(0)),
+                    })
+                }
+            }
         } else {
             None
         };
@@ -1070,6 +1115,11 @@ impl Parser {
             self.advance();
             if self.peek() != &Token::RParen {
                 loop {
+                    // `continue` dari `.*` kembali ke sini — periksa RParen agar
+                    // `mod u(.*);` tidak jatuh ke parse_expr positional.
+                    if self.peek() == &Token::RParen {
+                        break;
+                    }
                     if self.peek() == &Token::Dot {
                         self.advance();
 

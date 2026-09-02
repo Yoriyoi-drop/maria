@@ -318,6 +318,10 @@ pub enum DiagCode {
     Unreachable,
     /// Not yet implemented (RT9003)
     NotImplemented,
+    /// Resource limit exceeded (RT9004) — simulasi melebihi batas memori
+    /// yang dikonfigurasi (`MARIA_SIM_MEM_LIMIT_MB`), dicegah oleh
+    /// `SimResourceGuard` sebelum kernel OOM-kill.
+    ResourceLimit,
 
     // ── Legacy Runtime (E9xxx) ──
     /// General simulation error (E9001)
@@ -432,6 +436,7 @@ impl DiagCode {
             DiagCode::InternalError => "RT9001",
             DiagCode::Unreachable => "RT9002",
             DiagCode::NotImplemented => "RT9003",
+            DiagCode::ResourceLimit => "RT9004",
             // Infrastructure
             DiagCode::PreprocessorError => "E0101",
             DiagCode::DebuggerError => "E0003",
@@ -526,6 +531,7 @@ impl DiagCode {
             DiagCode::InternalError => "internal simulator error",
             DiagCode::Unreachable => "unreachable code reached",
             DiagCode::NotImplemented => "not yet implemented",
+            DiagCode::ResourceLimit => "resource limit exceeded",
             // Infrastructure
             DiagCode::PreprocessorError => "preprocessor error",
             DiagCode::DebuggerError => "debugger error",
@@ -694,6 +700,8 @@ impl DiagCode {
                 "A timing check (setup, hold, width, period, recovery, removal, skew, etc.) was violated during simulation.",
             DiagCode::SlowSimulation =>
                 "A simulation region or process is significantly slower than others.",
+            DiagCode::ResourceLimit =>
+                "The simulation exceeded the configured memory limit and was stopped before the kernel could OOM-kill the process. Reduce the design scope, cap simulation time (-T), or raise MARIA_SIM_MEM_LIMIT_MB if RAM is available.",
         }
     }
 
@@ -842,6 +850,8 @@ impl DiagCode {
                 "Review the timing constraints in the specify block or SDF annotation, and ensure data transitions respect setup/hold/window requirements.",
             DiagCode::SlowSimulation =>
                 "Optimize the identified region or process to improve simulation performance.",
+            DiagCode::ResourceLimit =>
+                "Run the simulation with a bounded -T time, stream the waveform (--waveform-stream), disable unneeded VCD/FST, or increase MARIA_SIM_MEM_LIMIT_MB if the machine has spare RAM.",
         }
     }
 
@@ -895,9 +905,10 @@ impl DiagCode {
             | DiagCode::CoverProperty
             | DiagCode::AssertionDisableError => "Assertion",
             DiagCode::DpiError | DiagCode::DpiImportNotFound | DiagCode::DpiScopeError => "DPI",
-            DiagCode::InternalError | DiagCode::Unreachable | DiagCode::NotImplemented => {
-                "Internal"
-            }
+            DiagCode::InternalError
+            | DiagCode::Unreachable
+            | DiagCode::NotImplemented
+            | DiagCode::ResourceLimit => "Internal",
             DiagCode::WaveformError => "Waveform",
             DiagCode::PreprocessorError | DiagCode::DebuggerError | DiagCode::IoError => {
                 "Infrastructure"

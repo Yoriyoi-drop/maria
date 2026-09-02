@@ -43,6 +43,7 @@
 *.d
 *.mk
 *.dat
+*.trx
 
 
 # Artifact laporan coverage (mcov/msim) — dihasilkan saat testing

@@ -152,14 +152,13 @@ impl<'a> FastLexer<'a> {
                 if self.handle_line_directive() {
                     continue;
                 }
-                // Unknown backtick — skip line
-                while self.peek() != 0 && self.peek() != b'\n' {
-                    self.skip_byte();
-                }
-                if self.peek() == b'\n' {
-                    self.skip_byte();
-                }
-                continue;
+                // Backtick lain (makro tak terdefinisi sisa dari preprocessor).
+                // JANGAN lewati seluruh baris — itu menghapus statement dan
+                // merusak parse berikutnya (mis. `default: `uvm_fatal(...)`
+                // → `endcase` jadi "expected expression, found Endcase").
+                // Ekspor token Error agar parser melewatinya sama seperti
+                // lexer legacy (Token::Error("unexpected character")).
+                break;
             }
             break;
         }

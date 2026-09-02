@@ -50,8 +50,8 @@ pub fn run(args: &ElabArgs) -> Result<(), SimError> {
             .map(|t| format!("{}/{}", t.0, t.1))
             .unwrap_or_else(|| "-".into()),
     );
-    kv("parse time", format!("{} ms", session.timing.parse_ms));
-    kv("elab time", format!("{} ms", session.timing.elab_ms));
+    kv("parse time", format!("{} µs", session.timing.parse_us));
+    kv("elab time", format!("{} µs", session.timing.elab_us));
 
     if args.tree {
         print_tree(&ir);

@@ -1089,6 +1089,12 @@ pub struct Cli {
     #[arg(long = "cache-clear")]
     pub cache_clear: bool,
 
+    /// Target directory for build artifacts (precompiled analysis, cache).
+    /// Similar to Rust's `target/` — all build output goes here.
+    /// Default: `.maria/database/`. Override for cross-project sharing.
+    #[arg(long = "target-dir")]
+    pub target_dir: Option<String>,
+
     /// CSV waveform output file path (signal values as comma-separated values)
     /// Compatible with spreadsheet tools and the built-in HTML viewer.
     #[arg(long = "waveform-csv")]
@@ -1150,6 +1156,18 @@ pub struct Cli {
     /// Tidak di-parse dari CLI — diisi oleh `apply_config_to_cli` di main.rs.
     #[arg(skip)]
     pub config_elab_mode: Option<String>,
+
+    /// Suppress all warnings (WR/RT9xxx codes)
+    #[arg(long = "no-warn")]
+    pub no_warn: bool,
+
+    /// Suppress specific warning codes (comma-separated, e.g. WR0102,RT9003)
+    #[arg(long = "allow", num_args = 1)]
+    pub allow_codes: Vec<String>,
+
+    /// Stop after N warnings (default: unlimited)
+    #[arg(long = "max-warnings", value_name = "N")]
+    pub max_warnings: Option<usize>,
 }
 
 // ══════════════════════════════════════════════════════════════════════

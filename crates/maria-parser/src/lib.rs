@@ -41,6 +41,10 @@ pub struct Parser {
     package_tdefs: std::collections::HashMap<Symbol, Vec<Symbol>>,
     type_param_names: Vec<Symbol>,
     file_line_map: Vec<(usize, String)>,
+    /// Offset cumulative line untuk konversi token line → file-relative line.
+    /// Dihitung dari total baris combined source file sebelumnya. Dipakai saat
+    /// file_line_map kosong (FastLexer tidak handle `line directive).
+    line_base: usize,
     recursion_depth: usize,
     /// Safety counter: total tokens consumed. Reset per `parse_design()` call.
     /// If this exceeds MAX_PARSE_STEPS, parsing aborts to prevent infinite loops.
@@ -102,6 +106,7 @@ impl Parser {
             package_tdefs: std::collections::HashMap::new(),
             type_param_names: Vec::new(),
             file_line_map: Vec::new(),
+            line_base: 0,
             recursion_depth: 0,
             parse_steps: 0,
             peek_count: std::cell::Cell::new(0),
@@ -116,6 +121,13 @@ impl Parser {
 
     pub fn with_file_line_map(mut self, map: Vec<(usize, String)>) -> Self {
         self.file_line_map = map;
+        self
+    }
+
+    /// Set cumulative line base offset untuk konversi token line → file-relative.
+    /// Dipakai saat file_line_map kosong (FastLexer).
+    pub fn with_line_base(mut self, base: usize) -> Self {
+        self.line_base = base;
         self
     }
 
@@ -151,6 +163,9 @@ impl Parser {
         }
         let file_relative = if best_line > 0 {
             cumulative_line - best_line
+        } else if self.line_base > 0 && cumulative_line > self.line_base {
+            // Fallback: pakai line_base (FastLexer path)
+            cumulative_line - self.line_base
         } else {
             cumulative_line
         };
@@ -225,9 +240,17 @@ impl Parser {
             DiagCode::InvalidSyntax
         };
 
-        // Buat source snippet jika ada source line
-        let source_line = if cumulative_line > 0 && cumulative_line <= self.source_lines.len() {
-            Some(self.source_lines[cumulative_line - 1].clone())
+        // Buat source snippet — source_lines berisi `line directive` + source file.
+        // display_line adalah file-relative (dari resolve_source_file), tapi
+        // source_lines[0] = `line directive`, jadi offset +1 untuk mapping.
+        let source_line = if display_line > 0 {
+            // +1 karena source_lines[0] = `line 1 "file"` directive
+            let idx = display_line; // display_line 1 → source_lines[1]
+            if idx < self.source_lines.len() {
+                Some(self.source_lines[idx].clone())
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -421,11 +444,13 @@ impl Parser {
     fn push_warning_at(&mut self, msg: impl Into<String>, line: usize, col: usize) {
         let msg: String = msg.into();
         let msg_for_diag = msg.clone();
+        let (display_file, display_line) = self.resolve_source_file(line);
         let mut diag = Diagnostic::new(DiagLevel::Warning, DiagCode::InvalidSyntax, msg_for_diag)
             .with_code_context();
-        if line > 0 && line <= self.source_lines.len() {
-            let source_line = &self.source_lines[line - 1];
-            let snippet = SourceSnippet::new(&self.source_file, line, col, source_line.trim_end());
+        // NOTE: gunakan display_line (file-relative), bukan line (cumulative lintas file).
+        if display_line > 0 && display_line <= self.source_lines.len() {
+            let source_line = &self.source_lines[display_line - 1];
+            let snippet = SourceSnippet::new(&display_file, display_line, col, source_line.trim_end());
             diag = diag.with_source_snippet(snippet);
 
             // Generate fix-it for common warnings
@@ -433,8 +458,8 @@ impl Parser {
             if msg.contains("missing semicolon") || msg.contains("expected ';'") {
                 if !trimmed.ends_with(';') {
                     let fix_it = FixItHint::insert(
-                        self.source_file.clone(),
-                        line,
+                        display_file.clone(),
+                        display_line,
                         trimmed.len() + 1,
                         ";",
                         "Add missing semicolon",
@@ -1226,6 +1251,18 @@ impl Parser {
                     if depth <= 0 {
                         break;
                     }
+                }
+                // Assertion `... else `ASSERT_ERROR(X)` tanpa ';' sebelum
+                // endinterface/endmodule/dll (OpenTitan prim_assert style) —
+                // jangan menelan keyword penutup blok.
+                Token::EndInterface
+                | Token::Endmodule
+                | Token::EndFunction
+                | Token::EndTask
+                | Token::EndGroup
+                | Token::EndPackage
+                | Token::EndGenerate => {
+                    break;
                 }
                 _ => {
                     self.advance();
@@ -2160,6 +2197,8 @@ impl Parser {
                 Token::End
                 | Token::Endcase
                 | Token::Join
+                | Token::JoinAny
+                | Token::JoinNone
                 | Token::EndFunction
                 | Token::EndTask
                 | Token::Endmodule

@@ -500,12 +500,6 @@ impl SimulationEngine {
                 let cval = self.evaluate_expr(cond)?;
                 let tv = self.evaluate_expr(true_expr)?;
                 let fv = self.evaluate_expr(false_expr)?;
-                // LRM §11.4.11: lebar hasil = max(lebar kedua cabang);
-                // cabang yang lebih sempit di-extend (zero utk unsigned).
-                // Tanpa ini reduksi/comparison atas ternary dgn cabang
-                // beda lebar salah (`&(c ? 33'd7 : {3{b[0]}})` dievaluasi
-                // atas 3-bit alih-alih 33-bit — ditemukan fuzzer baru,
-                // konfirmasi Icarus).
                 let w = tv.width.max(fv.width);
                 let tv = if tv.width < w { tv.resize(w) } else { tv };
                 let fv = if fv.width < w { fv.resize(w) } else { fv };

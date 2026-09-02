@@ -27,13 +27,72 @@ use maria_parser::preprocessor::Preprocessor;
 use maria_parser::Parser;
 use rayon::prelude::*;
 
+/// Default simulasi maksimum (ns) saat tidak ada `-T` / `simulation.max_time`.
+///
+/// VCS/Questa mengharuskan pengguna menetapkan batas via `-T`; tanpa itu
+/// simulasi berjalan sampai `$finish` (unlimited) → untuk design besar
+/// (SoC/GPU) yang tidak pernah `$finish`, RSS naik terus bersama akumulasi
+/// waveform → OOM kill. Shell default finite yang cukup kuat untuk SoC/GPU
+/// (100µs @ 1GHz = 100k cycle) namun tetap membatasi memori. User bisa
+/// override kapan saja dengan `-T` / `--max-time <ns>`.
+pub const DEFAULT_MAX_TIME_NS: u64 = 100_000;
+
 /// Emit a list of diagnostics through TerminalEmitter.
+// Global warning filter state (set once at startup, used by emit_diags_filtered)
+static mut WARN_FILTER_NO_WARN: bool = false;
+static mut WARN_FILTER_ALLOW: Vec<String> = Vec::new();
+static mut WARN_FILTER_MAX: Option<usize> = None;
+
+/// Initialize global warning filter from CLI args (call once at startup)
+fn init_warn_filter(cli: &Cli) {
+    unsafe {
+        WARN_FILTER_NO_WARN = cli.no_warn;
+        WARN_FILTER_ALLOW = cli.allow_codes.clone();
+        WARN_FILTER_MAX = cli.max_warnings;
+    }
+}
+
 fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
+    let (no_warn, allow_codes, max_warn) = unsafe {
+        (WARN_FILTER_NO_WARN, &WARN_FILTER_ALLOW, WARN_FILTER_MAX)
+    };
     if diags.is_empty() {
         return;
     }
+    use std::collections::HashSet;
+    let mut seen: HashSet<(String, String, usize)> = HashSet::new(); // (code, file, line)
     let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
+    static WARN_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     for diag in diags {
+        if no_warn && diag.level == maria_core::diagnostics::DiagLevel::Warning {
+            continue;
+        }
+        if !allow_codes.is_empty() && diag.level == maria_core::diagnostics::DiagLevel::Warning {
+            let code_str = format!("{}", diag.code);
+            if allow_codes.iter().any(|c| c == &code_str) {
+                continue;
+            }
+        }
+        // Deduplicate warnings by (code, file, line)
+        if diag.level == maria_core::diagnostics::DiagLevel::Warning {
+            let file = diag.source_snippet.as_ref().map(|s| s.file.clone()).unwrap_or_default();
+            let line = diag.source_snippet.as_ref().map(|s| s.line).unwrap_or(0);
+            let key = (format!("{}", diag.code), file, line);
+            if !seen.insert(key) {
+                continue;
+            }
+        }
+        if let Some(max) = max_warn {
+            if diag.level == maria_core::diagnostics::DiagLevel::Warning {
+                let count = WARN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if count > max {
+                    if count == max + 1 {
+                        eprintln!("\n... more warnings suppressed (use --max-warnings to adjust)");
+                    }
+                    continue;
+                }
+            }
+        }
         let _ = emitter.emit(diag);
     }
 }
@@ -205,6 +264,17 @@ fn pick_elab_mode(cli: &Cli) -> ElaborateMode {
     }
 }
 
+/// Path root database MICD, dengan support `--target-dir`.
+/// `--target-dir <path>` override path default (`.maria/database`).
+fn micd_root_for(cli: &Cli) -> std::path::PathBuf {
+    use maria_compiler::micd::MicdDatabase;
+    if let Some(ref dir) = cli.target_dir {
+        std::path::PathBuf::from(dir).join("database")
+    } else {
+        MicdDatabase::default_root()
+    }
+}
+
 /// Bersihkan database MICD (`.maria/database`). Menghapus isi
 /// `<root>/.maria/database` (atau `MARIA_MICD_DIR` bila di-set).
 fn run_clean() -> ! {
@@ -233,9 +303,16 @@ fn micd_save_and_print(session: &mut CompileSession, quiet: bool, suppress: bool
     match session.save_micd() {
         Ok(Some(st)) => {
             if !quiet && !suppress {
+                // Tambah info precompiled bila ada.
+                let precompiled_info = session
+                    .micd
+                    .as_ref()
+                    .and_then(|db| db.precompiled_db.as_ref())
+                    .map(|pdb| format!(" precompiled={}", pdb.len()))
+                    .unwrap_or_default();
                 eprintln!(
-                    "[MICD] files={} restored={} changed={} snapshots={}",
-                    st.files, st.restored_designs, st.changed_files, st.snapshot_id
+                    "[MICD] files={} restored={} changed={} snapshots={}{}",
+                    st.files, st.restored_designs, st.changed_files, st.snapshot_id, precompiled_info
                 );
             }
         }
@@ -255,7 +332,12 @@ fn anim_active(anim: &Option<PipelineAnimator>) -> bool {
 
 /// Kapan animasi pipeline diizinkan: bukan quiet, bukan mode debug/step,
 /// bukan compile-only/lazy (output verbose akan merusak area animasi).
+/// `MARIA_NO_ANIM` menonaktifkan animasi paksa (dipakai saat profiling/debug
+/// dengan gdb/scripting — area animasi bisa mengganggu output dan thread render).
 fn anim_enabled(cli: &Cli) -> bool {
+    if std::env::var("MARIA_NO_ANIM").is_ok() {
+        return false;
+    }
     !cli.quiet
         && !cli.compile_only
         && !cli.lazy
@@ -469,6 +551,9 @@ fn real_main() {
         }
     };
     apply_config_to_cli(&mut cli, &cfg);
+
+    // Initialize warning filter from CLI flags
+    init_warn_filter(&cli);
 
     // Configure rayon thread pool with larger stack for deep recursion in parser
     // Some SV files have deeply nested blocks that need more than the default 2MB stack
@@ -866,7 +951,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // ── MICD: hasil preprocess di-cache per file (konten-hash). File yang
     // tidak berubah di-reuse → preprocessor di-skip. Database scoped per
     // project (ProjectID) agar tidak tercampur antar project. ──
-    let micd_root = maria_compiler::micd::MicdDatabase::default_root();
+    let micd_root = micd_root_for(&cli);
     let proot = std::env::current_dir().unwrap_or_default();
     let src_paths: Vec<std::path::PathBuf> = sources.iter().map(std::path::PathBuf::from).collect();
     let pid = maria_compiler::micd::MicdDatabase::project_id(
@@ -882,9 +967,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     let mut micd = maria_compiler::micd::MicdDatabase::open_project_with_context(
         &micd_root, &pid, &proot, &src_paths,
     );
-    // `--cache-clear`: hapus MICD SEBELUM reuse, agar run ini benar-benar
-    // full-rebuild (lihat juga blok attach_micd untuk jalur run).
-    if cli.cache_clear {
+    // `--cache-clear` atau `--recompile`: hapus MICD SEBELUM reuse, agar run
+    // ini benar-benar full-rebuild (lihat juga blok attach_micd untuk jalur
+    // run_fast). `--recompile` di legacy sebelumnya tidak menghapus cache →
+    // data lama bisa stale (Gap #12).
+    if cli.cache_clear || cli.recompile {
         let _ = micd.clear();
     }
 
@@ -1046,26 +1133,8 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             }
         }
     }
-    if micd_reused > 0 || !fresh_results.is_empty() {
-        let changed_before = micd.changed;
-        if let Err(e) = micd.save() {
-            eprintln!("[MICD] save warning: {}", e);
-        }
-        // Kritik 14 db.md: rekam profil build legacy (stats.mdb). Jalur legacy
-        // tidak punya SessionTiming — isi yang tersedia saja.
-        let mut prof = micd.stats_db.next_profile();
-        prof.files = micd.files.len();
-        prof.changed_files = changed_before;
-        prof.dirty_nodes = changed_before;
-        prof.restored_designs = micd_reused;
-        prof.cache_hits = micd_reused;
-        prof.cache_misses = micd.files.len().saturating_sub(micd_reused);
-        prof.peak_mem_kb = maria_compiler::micd::peak_rss_kb();
-        micd.set_stats(prof);
-        if let Err(e) = micd.save() {
-            eprintln!("[MICD] stats save warning: {}", e);
-        }
-    }
+    // Save ditunda ke akhir run (setelah symbol/type/graph + prune_stale)
+    // agar hanya satu save transaksional per build (Gap #8).
 
     if !anim_active(&anim) {
         eprintln!(
@@ -1086,6 +1155,39 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             break;
         }
         tokens.push((tok, line, col));
+    }
+    // ── MICD: cache lexer payload (tokens summary + stream) ──
+    // Legacy path sebelumnya tidak menyimpan token data → lexer/ selalu 0.
+    {
+        use maria_compiler::micd::cache::pipeline::{LexerPayload, LexerSummary, TokenRecord, token_family};
+        let mut summary = LexerSummary {
+            token_count: tokens.len() as u64,
+            identifiers: 0,
+            numbers: 0,
+            strings: 0,
+            errors: 0,
+            source_bytes: combined.len() as u64,
+        };
+        let mut records = Vec::with_capacity(tokens.len());
+        for (tok, line, col) in &tokens {
+            summary.observe(tok);
+            records.push(TokenRecord {
+                kind: token_family(tok),
+                line: *line as u32,
+                col: *col as u32,
+            });
+        }
+        // Cache ke pipeline: kunci = combined source path (fallback: first source).
+        let key = sources.first().map(|s| s.to_string()).unwrap_or_default();
+        if let Some(layer) = micd.cache_layer.as_mut() {
+            if let Ok(b) = bincode::serialize(&LexerPayload { summary, tokens: records }) {
+                let _ = layer.put(
+                    maria_compiler::micd::CacheCategory::Lexer,
+                    &key,
+                    &b,
+                );
+            }
+        }
     }
     if !anim_active(&anim) {
         eprintln!(
@@ -1248,12 +1350,12 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         }
     }
 
-    // ── MICD tanpa `--fast`: lengkapi store yang tidak diisi jalur preproc-only. ──
-    // Jalur `run` (legacy) hanya menulis preproc/metadata/stats. Agar
-    // types.mdb / symbol.mdb / graph.mdb tetap ada (sejalan dengan `--fast`),
-    // populasikan dari design yang sudah di-parse. Atribusi simbol → file
-    // lewat scan teks sumber (`module X`, `package X`, dst) karena AST legacy
-    // tidak membawa info file.
+    // ── MICD legacy: lengkapi store symbol/type/graph + save terpadu. ──
+    // Jalur `run` (legacy) menggabungkan semua source jadi satu design.
+    // Simbol → file di-atribusi via scan teks (`module X`, `package X`, dst)
+    // karena AST legacy tidak membawa info file. Satu save di akhir
+    // (menggantikan 3 save terpisah sebelumnya — Gap #8) + prune_stale
+    // (Gap #10) + auto-snapshot (Gap #4).
     {
         use maria_ast::ModuleItem;
         let mut syms: Vec<(String, String)> = Vec::new();
@@ -1370,8 +1472,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
         // ── Lapisan cache pipeline (db.md cache/, baris 1141-1605) — jalur
         // legacy (tanpa --fast). Isi kategori dari design merged + state MICD
-        // hanya saat ada file fresh (changed); store disimpan micd.save() di
-        // bawah. ──
+        // hanya saat ada file fresh (changed); store disimpan di save terpadu. ──
         if micd.cache_layer.is_some() && !fresh_results.is_empty() {
             use maria_compiler::micd::cache::pipeline::{CachePopulateInput, CachePopulator};
             let cli_defines: Vec<(String, String)> = cli
@@ -1443,8 +1544,51 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             micd.cache_layer = layer;
         }
 
+        // ── Prune stale files (Gap #10): buang file yang bukan bagian
+        // project aktif agar tidak menumpuk lintas-project. ──
+        let active: Vec<PathBuf> = sources
+            .iter()
+            .map(PathBuf::from)
+            .chain(cli.libfiles.iter().map(PathBuf::from))
+            .collect();
+        let pruned = micd.prune_stale(&active);
+        if pruned > 0 && std::env::var("MARIA_DBG_MICD").is_ok() {
+            eprintln!("[MICD-DBG] prune_stale removed {} file(s)", pruned);
+        }
+
+        // ── Save terpadu (Gap #8): satu save untuk semua store
+        // (preproc + metadata + symbol + type + graph + stats). ──
+        let changed_before = micd.changed;
         if let Err(e) = micd.save() {
-            eprintln!("[MICD] symbol/type/graph save warning: {}", e);
+            eprintln!("[MICD] save warning: {}", e);
+        }
+
+        // ── Profil build (stats.mdb) — rekam sekali setelah save. ──
+        let mut prof = micd.stats_db.next_profile();
+        prof.files = micd.files.len();
+        prof.changed_files = changed_before;
+        prof.dirty_nodes = changed_before;
+        prof.restored_designs = micd_reused;
+        prof.cache_hits = micd_reused;
+        prof.cache_misses = micd.files.len().saturating_sub(micd_reused);
+        prof.peak_mem_kb = maria_compiler::micd::peak_rss_kb();
+        micd.set_stats(prof);
+        if let Err(e) = micd.save() {
+            eprintln!("[MICD] stats save warning: {}", e);
+        }
+
+        // ── Auto-snapshot (Gap #4): seperti commit git, simpan state
+        // saat ada perubahan nyata agar rollback tersedia. ──
+        if changed_before > 0 && changed_before > micd.last_snapshotted_changed {
+            micd.last_snapshotted_changed = changed_before;
+            if let Ok(id) = micd.snapshot(format!(
+                "build: {} file(s) changed (legacy)",
+                changed_before
+            )) {
+                if !cli.quiet && !anim_active(&anim) {
+                    eprintln!("[MICD] snapshot build-{:03} created", id);
+                }
+            }
         }
     }
 
@@ -1551,61 +1695,128 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         }
     };
 
-    // ── Simulation Readiness Check (Rule 6) ──
-    // Check all prerequisites before starting simulation
-    let _parse_ok = true; // Already passed if we got here
-    let _semantic_ok = true; // Already checked during elaboration
-    let _hierarchy_ok = true; // Checked during elaboration
-    let _top_resolution_ok = true; // Checked during elaboration
-    let _dpi_linking_ok = true; // Will be checked later
-
-    // Check for elaboration errors
+    // ── Simulation Readiness Check (Rule 6) — full validation ──
+    // Note: parse errors already handled earlier (early return for real errors)
     let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
     let has_elab_errors = elab_errs > 0;
 
-    // Print readiness check
+    // Per-tahap validation
+    let sem_errs = elab_diags.iter().filter(|d| {
+        d.is_error() && matches!(d.code,
+            DiagCode::UndefinedSignal | DiagCode::TypeMismatch
+            | DiagCode::WidthMismatch | DiagCode::UndefinedVariable
+        )
+    }).count();
+    let hier_errs = elab_diags.iter().filter(|d| {
+        d.is_error() && matches!(d.code,
+            DiagCode::ModuleNotFound | DiagCode::CircularDependency
+            | DiagCode::CircularHierarchy | DiagCode::UnresolvedInstantiation
+            | DiagCode::InstanceNotFound
+        )
+    }).count();
+    let top_errs = elab_diags.iter().filter(|d| {
+        d.is_error() && matches!(d.code,
+            DiagCode::TopResolutionFailed | DiagCode::MultipleCandidateTops
+            | DiagCode::MissingRootModule
+        )
+    }).count();
+    let dpi_errs = elab_diags.iter().filter(|d| {
+        d.is_error() && matches!(d.code,
+            DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError
+        )
+    }).count();
+
+    // Cetak hasil pemeriksaan kesiapan
     if !cli.quiet {
-        println!("\nSimulation Readiness");
+        println!("\nKesiapan Simulasi");
         println!("✓ Parse");
-        println!("✓ Semantic");
-        println!("✓ Hierarchy");
-        if has_elab_errors || recovered {
-            println!("✗ Top Resolution");
-        } else {
-            println!("✓ Top Resolution");
+
+        // Helper function (duplikat dari Block 2 — bisa di-refactor nanti)
+        fn bl_diag_loc(d: &maria_core::diagnostics::diagnostic::Diagnostic) -> Option<String> {
+            if let Some(ss) = &d.source_snippet {
+                return Some(format!("{}:{}:{}", ss.file, ss.line, ss.col));
+            }
+            if let Some(span) = d.spans.first() {
+                return Some(format!("{}:{}:{}", span.file, span.start, span.end));
+            }
+            None
         }
-        println!("✓ DPI Linking");
+        fn bl_print_cat(label: &str, count: usize, diags: &[&maria_core::diagnostics::diagnostic::Diagnostic], max: usize) {
+            if count == 0 { println!("✓ {}", label); return; }
+            println!("✗ {} ({} error)", label, count);
+            let mut shown = 0;
+            for d in diags {
+                if shown >= max { break; }
+                let loc = bl_diag_loc(d).unwrap_or_else(|| "?".into());
+                let msg = d.message.to_string();
+                let short = if msg.len() > 80 { format!("{}…", &msg[..77]) } else { msg };
+                println!("  {} | {}", loc, short);
+                shown += 1;
+            }
+            if count > max { println!("  ... dan {} error lainnya", count - max); }
+        }
+
+        // Semantik
+        let sem_diags: Vec<_> = elab_diags.iter().filter(|d| {
+            d.is_error() && matches!(d.code, DiagCode::UndefinedSignal | DiagCode::TypeMismatch | DiagCode::WidthMismatch | DiagCode::UndefinedVariable)
+        }).collect();
+        bl_print_cat("Semantik", sem_errs, &sem_diags, 10);
+        // Hierarki
+        let hier_diags: Vec<_> = elab_diags.iter().filter(|d| {
+            d.is_error() && matches!(d.code, DiagCode::ModuleNotFound | DiagCode::CircularDependency | DiagCode::CircularHierarchy | DiagCode::UnresolvedInstantiation | DiagCode::InstanceNotFound)
+        }).collect();
+        bl_print_cat("Hierarki", hier_errs, &hier_diags, 10);
+        // Resolusi Top
+        if has_elab_errors || recovered {
+            let top_diags: Vec<_> = elab_diags.iter().filter(|d| {
+                d.is_error() && matches!(d.code, DiagCode::TopResolutionFailed | DiagCode::MultipleCandidateTops | DiagCode::MissingRootModule)
+            }).collect();
+            bl_print_cat("Resolusi Top", top_errs, &top_diags, 10);
+        } else {
+            println!("✓ Resolusi Top");
+        }
+        // Penghubung DPI
+        let dpi_diags: Vec<_> = elab_diags.iter().filter(|d| {
+            d.is_error() && matches!(d.code, DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError)
+        }).collect();
+        bl_print_cat("Penghubung DPI", dpi_errs, &dpi_diags, 10);
         println!();
 
-        if has_elab_errors {
-            println!("Simulation: NOT READY");
-            println!("Simulation aborted.");
+        let any_errors = has_elab_errors || recovered;
+        if any_errors {
+            println!("Simulasi: TIDAK SIAP");
+            println!("Simulasi dibatalkan.");
             return Err(SimError::Diagnostic(elab_abort_diag(
                 elab_errs,
                 &elab_diags,
                 format!(
-                    "simulation aborted: {} elaboration error(s) — design not ready",
-                    elab_errs
+                    "simulasi dibatalkan: {} error ({} semantik + {} hierarki + {} top + {} dpi)",
+                    elab_errs, sem_errs, hier_errs, top_errs, dpi_errs
                 ),
             )));
         } else if recovered {
-            println!("Simulation: NOT READY (analysis mode)");
-            println!("Top-level design not uniquely determined — simulation & VCD disabled.");
+            println!("Simulasi: TIDAK SIAP (mode analisis)");
+            println!("Top-level design tidak bisa ditentukan secara unik — simulasi & VCD dinonaktifkan.");
         } else {
-            println!("Simulation: READY");
+            println!("Simulasi: SIAP");
         }
     }
 
     // ── Gate: jangan simulasikan bila masih ada error elaborasi / module di-skip ──
-    // Maria hanya boleh menjalankan simulasi & menulis VCD jika design elaborasi
-    // 100% bersih. Error E3001 (module tidak ditemukan / di-skip) termasuk blokir.
-    let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
     if elab_errs > 0 && !cli.force_sim {
         if !cli.quiet {
-            eprintln!(
-                "\n⚠  Simulasi DIBATALKAN: {} error elaborasi (termasuk module yang di-skip).",
-                elab_errs
-            );
+            if sem_errs > 0 {
+                eprintln!("⚠  Semantik: {} error.", sem_errs);
+            }
+            if hier_errs > 0 {
+                eprintln!("⚠  Hierarki: {} error.", hier_errs);
+            }
+            if top_errs > 0 || recovered {
+                eprintln!("⚠  Resolusi Top: {} error, recovered={}.", top_errs, recovered);
+            }
+            if dpi_errs > 0 {
+                eprintln!("⚠  Penghubung DPI: {} error.", dpi_errs);
+            }
             eprintln!(
                 "    Perbaiki semua error terlebih dahulu — VCD TIDAK dihasilkan.\n    (Gunakan `--force-sim` hanya untuk debugging internal.)"
             );
@@ -1759,7 +1970,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             ..Default::default()
         };
         let mut master = maria_api::simulator::distributed::DistributedMaster::new(config);
-        master.run(&ir_design, cli.max_time.unwrap_or(u64::MAX))?;
+        master.run(&ir_design, cli.max_time.unwrap_or(DEFAULT_MAX_TIME_NS))?;
         if !cli.quiet {
             println!("Distributed simulation (master) complete");
         }
@@ -1770,7 +1981,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         let config = maria_api::simulator::distributed::SlaveConfig {
             master_host: cli.master_host.clone(),
             master_port: cli.dist_port,
-            max_time: cli.max_time.unwrap_or(u64::MAX),
+            max_time: cli.max_time.unwrap_or(DEFAULT_MAX_TIME_NS),
             verbose: !cli.quiet,
         };
         let mut slave = maria_api::simulator::distributed::DistributedSlave::new(config);
@@ -1781,12 +1992,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         return Ok(());
     }
 
-    // Default: unlimited — berhenti saat $finish/$fatal; user bisa membatasi
-    // dengan `--max-time <n>`. Tidak ada konstanta batas "ajaib".
+    // Default: sim dibatasi `DEFAULT_MAX_TIME_NS` (anti-OOM untuk design
+    // besar yang tidak pernah `$finish`). User bisa override dengan `-T`
+    // / `--max-time <n>` (jadi Finite) — tanpa itu memakai default finite.
     let sim_limit = cli
         .max_time
         .map(maria_api::simulator::SimulationLimit::Finite)
-        .unwrap_or(maria_api::simulator::SimulationLimit::Unlimited);
+        .unwrap_or(maria_api::simulator::SimulationLimit::Finite(DEFAULT_MAX_TIME_NS));
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
 
@@ -2459,7 +2671,7 @@ fn run_fast(
     // MICD scoped per project (ProjectID): OpenTitan dan test/counter.sv
     // tidak pernah berbagi database → tidak ada kontaminasi lintas project.
     {
-        let micd_root = maria_compiler::micd::MicdDatabase::default_root();
+        let micd_root = micd_root_for(&cli);
         let proot = std::env::current_dir().unwrap_or_default();
         let pid = maria_compiler::micd::MicdDatabase::project_id(
             &proot,
@@ -2711,61 +2923,225 @@ fn run_fast(
         elab_opt = Some(elab);
     }
 
-    // ── Simulation Readiness Check (Rule 6) ──
+    // ── Simulation Readiness Check (Rule 6) — full validation ──
     let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
     let has_elab_errors = elab_errs > 0;
+    let parse_errs = session.parse_errors.len();
+    let has_parse_errors = parse_errs > 0;
 
-    if !cli.quiet {
-        println!("\nSimulation Readiness");
-        println!("✓ Parse");
-        println!("✓ Semantic");
-        println!("✓ Hierarchy");
-        if has_elab_errors || recovered {
-            println!("✗ Top Resolution");
-        } else {
-            println!("✓ Top Resolution");
+    // Per-tahap validation: hitung error per kategori dari elab_diags
+    let sem_errs = elab_diags.iter().filter(|d| {
+        d.is_error() && matches!(d.code,
+            DiagCode::UndefinedSignal
+            | DiagCode::TypeMismatch
+            | DiagCode::WidthMismatch
+            | DiagCode::UndefinedVariable
+        )
+    }).count();
+    let hier_errs = elab_diags.iter().filter(|d| {
+        d.is_error() && matches!(d.code,
+            DiagCode::ModuleNotFound
+            | DiagCode::CircularDependency
+            | DiagCode::CircularHierarchy
+            | DiagCode::UnresolvedInstantiation
+            | DiagCode::InstanceNotFound
+        )
+    }).count();
+    let top_errs = elab_diags.iter().filter(|d| {
+        d.is_error() && matches!(d.code,
+            DiagCode::TopResolutionFailed
+            | DiagCode::MultipleCandidateTops
+            | DiagCode::MissingRootModule
+        )
+    }).count();
+    let dpi_errs = elab_diags.iter().filter(|d| {
+        d.is_error() && matches!(d.code,
+            DiagCode::DpiImportNotFound
+            | DiagCode::DpiError
+            | DiagCode::DpiScopeError
+        )
+    }).count();
+
+    use maria_core::diagnostics::diagnostic::{DiagCode as DCode, DiagLevel as DLevel, Diagnostic as DDiag};
+
+    /// Ekstrak lokasi error dari Diagnostic: source_snippet → spans → message parsing.
+    fn diag_loc(d: &maria_core::diagnostics::diagnostic::Diagnostic) -> Option<String> {
+        if let Some(ss) = &d.source_snippet {
+            return Some(format!("{}:{}:{}", ss.file, ss.line, ss.col));
         }
-        println!("✓ DPI Linking");
-        println!();
+        if let Some(span) = d.spans.first() {
+            return Some(format!("{}:{}:{}", span.file, span.start, span.end));
+        }
+        // Coba parse format "line N: msg" dari message
+        let msg = d.message.to_string();
+        if let Some(rest) = msg.strip_prefix("line ") {
+            if let Some(end) = rest.find(':') {
+                if let Ok(line) = rest[..end].trim().parse::<usize>() {
+                    return Some(format!("baris {}", line));
+                }
+            }
+        }
+        None
+    }
 
-        if has_elab_errors {
-            println!("Simulation: NOT READY");
-            println!("Simulation aborted.");
-            return Err(SimError::Diagnostic(elab_abort_diag(
-                elab_errs,
-                &elab_diags,
-                format!(
-                    "simulation aborted: {} elaboration error(s) — design not ready",
-                    elab_errs
-                ),
-            )));
-        } else if recovered {
-            println!("Simulation: NOT READY (analysis mode)");
-            println!("Top-level design not uniquely determined — simulation & VCD disabled.");
-        } else {
-            println!("Simulation: READY");
+    /// Cetak maks N error per kategori dengan lokasi + pesan.
+    fn print_err_category(
+        label: &str,
+        count: usize,
+        errors: &[&maria_core::diagnostics::diagnostic::Diagnostic],
+        max_show: usize,
+    ) {
+        if count == 0 {
+            println!("✓ {}", label);
+            return;
+        }
+        println!("✗ {} ({} error)", label, count);
+        let mut shown = 0;
+        for d in errors {
+            if shown >= max_show { break; }
+            let loc = diag_loc(d).unwrap_or_else(|| "?".into());
+            // Potong message jika terlalu panjang
+            let msg = d.message.to_string();
+            let msg_short = if msg.len() > 80 { format!("{}…", &msg[..77]) } else { msg };
+            println!("  {} | {}", loc, msg_short);
+            shown += 1;
+        }
+        if count > max_show {
+            println!("  ... dan {} error lainnya", count - max_show);
         }
     }
 
-    // ── Gate: jangan simulasikan bila masih ada error elaborasi / module di-skip ──
-    if elab_errs > 0 && !cli.force_sim {
+    if !cli.quiet {
+        println!("\nKesiapan Simulasi");
+
+        // Kumpulkan error per kategori
+        let parse_err_diags: Vec<_> = session.parse_errors.iter().filter(|d| d.is_error()).collect();
+        let sem_err_diags: Vec<_> = elab_diags.iter().filter(|d| {
+            d.is_error() && matches!(d.code,
+                DiagCode::UndefinedSignal | DiagCode::TypeMismatch
+                | DiagCode::WidthMismatch | DiagCode::UndefinedVariable
+            )
+        }).collect();
+        let hier_err_diags: Vec<_> = elab_diags.iter().filter(|d| {
+            d.is_error() && matches!(d.code,
+                DiagCode::ModuleNotFound | DiagCode::CircularDependency
+                | DiagCode::CircularHierarchy | DiagCode::UnresolvedInstantiation
+                | DiagCode::InstanceNotFound
+            )
+        }).collect();
+        let top_err_diags: Vec<_> = elab_diags.iter().filter(|d| {
+            d.is_error() && matches!(d.code,
+                DiagCode::TopResolutionFailed | DiagCode::MultipleCandidateTops
+                | DiagCode::MissingRootModule
+            )
+        }).collect();
+        let dpi_err_diags: Vec<_> = elab_diags.iter().filter(|d| {
+            d.is_error() && matches!(d.code,
+                DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError
+            )
+        }).collect();
+
+        const MAX_SHOW: usize = 10;
+
+        // 1. Parse
+        print_err_category("Parse", parse_errs, &parse_err_diags, MAX_SHOW);
+        // 2. Semantik
+        print_err_category("Semantik", sem_errs, &sem_err_diags, MAX_SHOW);
+        // 3. Hierarki
+        print_err_category("Hierarki", hier_errs, &hier_err_diags, MAX_SHOW);
+        // 4. Resolusi Top
+        if has_elab_errors || recovered {
+            print_err_category("Resolusi Top", top_errs, &top_err_diags, MAX_SHOW);
+        } else {
+            println!("✓ Resolusi Top");
+        }
+        // 5. Penghubung DPI
+        print_err_category("Penghubung DPI", dpi_errs, &dpi_err_diags, MAX_SHOW);
+        println!();
+
+        // Kesiapan keseluruhan
+        let any_ready = has_parse_errors || sem_errs > 0 || hier_errs > 0
+            || has_elab_errors || recovered || dpi_errs > 0;
+        if any_ready && !cli.force_sim {
+            println!("Simulasi: TIDAK SIAP");
+            println!("Simulasi dibatalkan.");
+            let total_errs = parse_errs + elab_errs;
+            let first_err = parse_err_diags.first()
+                .or_else(|| sem_err_diags.first())
+                .or_else(|| hier_err_diags.first())
+                .or_else(|| top_err_diags.first())
+                .or_else(|| dpi_err_diags.first());
+            let loc_str = first_err.and_then(|d| diag_loc(d));
+            let msg = match &loc_str {
+                Some(loc) => format!(
+                    "simulasi dibatalkan: {} error ({} parse + {} semantik + {} hierarki + {} top + {} dpi) — error pertama di {}",
+                    total_errs, parse_errs, sem_errs, hier_errs, top_errs, dpi_errs, loc
+                ),
+                None => format!(
+                    "simulasi dibatalkan: {} error ({} parse + {} semantik + {} hierarki + {} top + {} dpi)",
+                    total_errs, parse_errs, sem_errs, hier_errs, top_errs, dpi_errs
+                ),
+            };
+            let mut diag = DDiag::new(DLevel::Error, DCode::UnexpectedToken, msg);
+            if let Some(d) = first_err {
+                if let Some(ss) = &d.source_snippet {
+                    diag = diag.with_source_snippet(ss.clone());
+                }
+            }
+            return Err(SimError::Diagnostic(diag));
+        } else if recovered {
+            println!("Simulasi: TIDAK SIAP (mode analisis)");
+            println!("Top-level design tidak bisa ditentukan secara unik — simulasi & VCD dinonaktifkan.");
+        } else {
+            println!("Simulasi: SIAP");
+        }
+    }
+
+    // ── Gate: jangan simulasikan bila masih ada error ──
+    use maria_core::diagnostics::diagnostic::Diagnostic;
+    if (has_elab_errors || has_parse_errors) && !cli.force_sim {
         if !cli.quiet {
-            eprintln!(
-                "\n⚠  Simulasi DIBATALKAN: {} error elaborasi (termasuk module yang di-skip).",
-                elab_errs
-            );
+            if has_parse_errors {
+                eprintln!("\n⚠  Simulasi DIBATALKAN: {} parse error.", parse_errs);
+            }
+            if sem_errs > 0 {
+                eprintln!("⚠  Semantik: {} error.", sem_errs);
+            }
+            if hier_errs > 0 {
+                eprintln!("⚠  Hierarki: {} error.", hier_errs);
+            }
+            if top_errs > 0 || recovered {
+                eprintln!("⚠  Resolusi Top: {} error, recovered={}.", top_errs, recovered);
+            }
+            if dpi_errs > 0 {
+                eprintln!("⚠  Penghubung DPI: {} error.", dpi_errs);
+            }
             eprintln!(
                 "    Perbaiki semua error terlebih dahulu — VCD TIDAK dihasilkan.\n    (Gunakan `--force-sim` hanya untuk debugging internal.)"
             );
         }
-        return Err(SimError::Diagnostic(elab_abort_diag(
-            elab_errs,
-            &elab_diags,
-            format!(
-                "simulasi dibatalkan: {} error elaborasi — design belum 100% bersih",
-                elab_errs
+        let total_errs = parse_errs + elab_errs;
+        let first_err = session.parse_errors.iter().find(|d| d.is_error())
+            .or_else(|| elab_diags.iter().find(|d| d.is_error()));
+        let loc_str = first_err.and_then(|d| {
+            d.source_snippet.as_ref()
+                .map(|ss| format!("{}:{}:{}", ss.file, ss.line, ss.col))
+        });
+        let msg = match &loc_str {
+            Some(loc) => format!(
+                "simulasi dibatalkan: {} error total ({} parse + {} elaborasi) — error pertama di {}",
+                total_errs, parse_errs, elab_errs, loc
             ),
-        )));
+            None => format!(
+                "simulasi dibatalkan: {} error total ({} parse + {} elaborasi) — design belum 100% bersih",
+                total_errs, parse_errs, elab_errs
+            ),
+        };
+        let mut diag = Diagnostic::error(DiagCode::ModuleNotFound, msg);
+        if let Some(ss) = first_err.and_then(|d| d.source_snippet.as_ref()) {
+            diag = diag.with_source_snippet(ss.clone());
+        }
+        return Err(SimError::Diagnostic(diag));
     }
 
     // ── Recovery/analisis mode (tanpa `--top`): jangan simulasikan modul tebakan ──
@@ -2921,12 +3297,12 @@ fn run_fast(
         ));
     }
 
-    // Default: unlimited — berhenti saat $finish/$fatal; user bisa membatasi
-    // dengan `--max-time <n>`. Tidak ada konstanta batas "ajaib".
+    // Default: sim dibatasi `DEFAULT_MAX_TIME_NS` (anti-OOM). Override via
+    // `-T` / `--max-time <n>`; tanpa itu memakai default finite.
     let sim_limit = cli
         .max_time
         .map(maria_api::simulator::SimulationLimit::Finite)
-        .unwrap_or(maria_api::simulator::SimulationLimit::Unlimited);
+        .unwrap_or(maria_api::simulator::SimulationLimit::Finite(DEFAULT_MAX_TIME_NS));
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
 
@@ -3472,7 +3848,7 @@ fn dispatch_sim(a: &crate::cli::MsimArgs) -> ! {
         incdirs: &a.incdirs,
         defines: &a.defines,
         top: a.top.as_deref(),
-        max_time: a.max_time.unwrap_or(u64::MAX),
+        max_time: a.max_time.unwrap_or(DEFAULT_MAX_TIME_NS),
         output: a.output.as_deref(),
         fst: a.fst,
         assertions: a.assertions,
@@ -3487,7 +3863,7 @@ fn dispatch_cov(a: &crate::cli::McovArgs) -> ! {
         incdirs: &a.incdirs,
         defines: &a.defines,
         top: a.top.as_deref(),
-        max_time: a.max_time.unwrap_or(u64::MAX),
+        max_time: a.max_time.unwrap_or(DEFAULT_MAX_TIME_NS),
         output: a.output.as_deref(),
         json: a.json,
         html: a.html,
@@ -3585,7 +3961,7 @@ fn dispatch_prof(a: &crate::cli::MprofArgs) -> ! {
         incdirs: &a.incdirs,
         defines: &a.defines,
         top: a.top.as_deref(),
-        max_time: a.max_time.unwrap_or(u64::MAX),
+        max_time: a.max_time.unwrap_or(DEFAULT_MAX_TIME_NS),
         cached: a.cached,
     };
     exit_tool(maria_api::tools::prof::run(&args));
@@ -3688,11 +4064,23 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 let mut f = std::fs::File::open(iso_path).map_err(|e| {
                     SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e))
                 })?;
-                // Baca HANYA 512 byte pertama (MBR) — jangan `std::fs::read`
-                // seluruh ISO (6GB) ke RAM hanya untuk 1 sektor boot.
-                f.take(512)
-                    .read_to_end(&mut bytes)
-                    .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e)))?;
+                // Jalur boot CD yang benar: El Torito boot catalog → boot image
+                // (cdboot/GRUB) — BUKAN MBR. Booting MBR hybrid = jalur USB/HDD
+                // yang berujung salah unit LBA saat GRUB baca filesystem CD.
+                let eltorito = maria_api::emu::iso::parse_eltorito(&mut f)
+                    .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
+                if eltorito.entry.media_type != 0 {
+                    return Err(SimError::with_diag(
+                        DiagCode::InvalidSyntax,
+                        format!(
+                            "boot image ISO media type {} bukan no-emulation (0)",
+                            eltorito.entry.media_type
+                        ),
+                    ));
+                }
+                // no-emul: BIOS muat boot image (cdboot, ~512-2048 byte).
+                bytes = maria_api::emu::iso::read_boot_image(&mut f, &eltorito.entry, 0x10000)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
             }
             if bytes.len() < 512 {
                 return Err(SimError::with_diag(
@@ -3700,13 +4088,13 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                     "ISO terlalu kecil (min 512 byte)",
                 ));
             }
-            // MBR (sektor 0) ke 0x7c00 — konvensi boot BIOS
+            // Boot image CD (El Torito no-emul) ke 0x7c00, DL = 0xE0
             let mut cpu = maria_api::emu::cpu::x86::X86Cpu::new();
             cpu.disk = Some(Box::new(
                 maria_api::emu::cpu::x86::FileDisk::open(iso_path)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?,
             ));
-            cpu.load_boot_sector(&mut memmap, &bytes)
+            cpu.load_boot_image(&mut memmap, &bytes, 0xE0)
                 .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e.reason))?;
             let max_steps = a.max_steps.unwrap_or(50_000);
             let mut machine = Machine::new(Box::new(cpu), memmap, max_steps);

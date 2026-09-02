@@ -438,6 +438,8 @@ pub struct SimulationEngine {
     pub sim_dag: Option<SimulationDag>,
     /// Enable DAG-parallel process evaluation
     pub use_dag_parallel: bool,
+    /// Layer resource guard (MARIA-SIM-34): pantau RSS, cegah OOM kill.
+    pub resource_guard: crate::simulator::guard::SimResourceGuard,
     /// Clock domain analysis + fused domains for cycle-based simulation
     pub clock_analysis: Option<ClockDomainAnalysis>,
     /// Enable cycle-based simulation fusion

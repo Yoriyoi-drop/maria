@@ -26,3 +26,36 @@ mod foreach_fuzz;
 mod struct_field_fuzz;
 #[cfg(test)]
 mod enum_fuzz;
+// ── New fuzz tests (expanded coverage) ───────────────────────────────────
+#[cfg(test)]
+mod package_import_fuzz;
+#[cfg(test)]
+mod class_inherit_fuzz;
+#[cfg(test)]
+mod struct_union_fuzz;
+#[cfg(test)]
+mod typedef_fuzz;
+#[cfg(test)]
+mod memory_array_fuzz;
+#[cfg(test)]
+mod constraint_signed_fuzz;
+#[cfg(test)]
+mod display_sysfuzz;
+#[cfg(test)]
+mod param_gen_fuzz;
+#[cfg(test)]
+mod force_release_fuzz_v2;
+#[cfg(test)]
+mod covergroup_fuzz;
+#[cfg(test)]
+mod complex_design_fuzz;
+#[cfg(test)]
+mod cmp_context_width_fuzz;
+#[cfg(test)]
+mod reduction_ternary_fuzz;
+#[cfg(test)]
+mod streaming_concat_fuzz;
+#[cfg(test)]
+mod inside_fuzz;
+#[cfg(test)]
+mod complex_expr_fuzz;

@@ -225,10 +225,17 @@ impl MicdDatabase {
     /// ada (build terakhir yang paling berguna untuk rollback). Untuk menjaga
     /// DAG tetap utuh, parent yang dibuang di-rewrite dari keturunannya
     /// (squash) sehingga tidak ada referensi menggantung.
+    ///
+    /// Atomik: semua snapshot yang di-squash ditulis ke temp dulu, dan file
+    /// hanya di-commit (rename) bila SELURUH serialisasi berhasil. Gagal
+    /// di tengah → tidak ada snapshot yang berubah, DAG tetap konsisten.
+    /// Gagal serialize tidak pernah menulis data kosong.
     fn prune_snapshots(&mut self, keep: usize) {
         while self.snapshots.len() > keep {
             let oldest = *self.snapshots.first().unwrap();
-            // Squash: hapus `oldest` dari daftar parent semua snapshot lain.
+            // Kumpulkan rewrite terhadap isi yang sudah stable (copy hasil
+            // squash ke memori), bukan menulis satu per satu ke disk.
+            let mut rewrites: Vec<(PathBuf, Vec<u8>)> = Vec::new();
             for id in &self.snapshots {
                 if *id == oldest {
                     continue;
@@ -236,13 +243,27 @@ impl MicdDatabase {
                 if let Some(mut s) = read_snapshot(&self.state_dir(), *id) {
                     if s.parents.contains(&oldest) {
                         s.parents.retain(|p| *p != oldest);
-                        let path = snapshot_path(&self.state_dir(), *id);
-                        if let Some(parent) = path.parent() {
-                            std::fs::create_dir_all(parent).ok();
-                        }
-                        let _ = std::fs::write(path, bincode::serialize(&s).unwrap_or_default());
+                        let bytes = match bincode::serialize(&s) {
+                            Ok(b) => b,
+                            Err(_) => return, // gagal serialize → batal, DAG utuh
+                        };
+                        rewrites.push((snapshot_path(&self.state_dir(), *id), bytes));
                     }
                 }
+            }
+            // Fase komit: tulis temp semua, lalu rename semua (atomik per file).
+            for (path, bytes) in &rewrites {
+                if let Some(parent) = path.parent() {
+                    if std::fs::create_dir_all(parent).is_err() {
+                        return;
+                    }
+                }
+                if super::format::write_tmp(path, bytes).is_err() {
+                    return;
+                }
+            }
+            for (path, _) in &rewrites {
+                let _ = super::format::commit_tmp(path);
             }
             let _ = std::fs::remove_file(snapshot_path(&self.state_dir(), oldest));
             self.snapshots.retain(|x| *x != oldest);

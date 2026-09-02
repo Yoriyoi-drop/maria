@@ -36,7 +36,6 @@ fn run_sim(src: String) -> Option<u64> {
 
 /// Chained blocking assignment: a = b = val -> both get val.
 #[test]
-#[ignore] // chained blocking assign not fully supported yet
 fn chained_blocking_assign_matches_golden() {
     let mut mismatch = Vec::new();
     let mut checked = 0u32;

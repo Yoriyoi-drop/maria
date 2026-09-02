@@ -242,6 +242,14 @@ impl JITEvaluator {
 
 /// Recursively collect signal IDs from an IrExpr tree.
 /// Returns false if any unsupported variant is encountered.
+///
+/// NOTE: Shift operators (Shl/Shr/Sshl/Sshr) are excluded because the
+/// expression-level JIT operates on raw 64-bit values without width masking.
+/// `~(2'b10) << 2'b11` evaluates as `0xFFFFFFFFFFFFFFFD << 3` at 64-bit,
+/// producing a huge value instead of the correct 2-bit result. Width masking
+/// is only done in `eval_binary` / `evaluate_expr_ctx`, so shifts must go
+/// through the interpreted path. (ditemukan bug comparison-context-width:
+/// `y = (ternary < ~(2'b10) << 2'b11)` → wrong sign due to 64-bit shift.)
 pub(crate) fn collect_signal_ids(expr: &IrExpr, ids: &mut Vec<usize>) -> bool {
     match expr {
         IrExpr::Const(_) | IrExpr::FillLit(_) => true,
@@ -249,7 +257,17 @@ pub(crate) fn collect_signal_ids(expr: &IrExpr, ids: &mut Vec<usize>) -> bool {
             ids.push(*id);
             true
         }
-        IrExpr::BinaryOp(_, lhs, rhs) => {
+        IrExpr::BinaryOp(op, lhs, rhs) => {
+            // Shifts need width masking that JIT doesn't provide
+            if matches!(
+                op,
+                BinaryIrOp::Shl
+                    | BinaryIrOp::Shr
+                    | BinaryIrOp::Sshl
+                    | BinaryIrOp::Sshr
+            ) {
+                return false;
+            }
             collect_signal_ids(lhs, ids) && collect_signal_ids(rhs, ids)
         }
         IrExpr::UnaryOp(_, inner) => collect_signal_ids(inner, ids),

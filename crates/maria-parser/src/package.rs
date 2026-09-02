@@ -219,6 +219,12 @@ impl Parser {
                         Token::Class => {
                             items.push(PackageItem::Class(self.parse_class()?));
                         }
+                        Token::Virtual if self.peek_ahead(1) == &Token::Class => {
+                            // `virtual class Name #(...) ...;` di dalam package
+                            self.advance(); // consume 'virtual' agar parse_class
+                                            // melihat token 'class'
+                            items.push(PackageItem::Class(self.parse_class()?));
+                        }
                         Token::Typedef => {
                             // Check for 'typedef class' (forward declaration)
                             if matches!(self.peek_ahead(1), Token::Class | Token::Virtual) {
@@ -236,6 +242,17 @@ impl Parser {
                         }
                         Token::Import => {
                             self.advance();
+                            // DPI-C import di package: `import "DPI-C" context
+                            // function void name(...)` / `task`. Parser membaca
+                            // deklarasi lalu mengabaikan isinya (simulator tidak
+                            // menjalankan DPI body), simpan sebagai DpiImport.
+                            if self.peek() == &Token::StringLit(Symbol::intern("DPI-C"))
+                                || self.peek() == &Token::StringLit(Symbol::intern("DPI"))
+                            {
+                                let dpi = self.parse_dpi_import()?;
+                                items.push(PackageItem::DpiImport(dpi));
+                                continue;
+                            }
                             let pkg = self.expect_ident()?;
                             self.expect(Token::Scope)?;
                             let item = if self.peek() == &Token::Star {
@@ -259,16 +276,25 @@ impl Parser {
                         }
                         Token::Export => {
                             self.advance();
-                            let pkg = self.expect_ident()?;
-                            self.expect(Token::Scope)?;
-                            let item = if self.peek() == &Token::Star {
-                                self.advance();
-                                Symbol::intern("*")
-                            } else {
-                                self.expect_ident()?
-                            };
+                            // export bisa beberapa item dipisah koma:
+                            // `export pkg::a, pkg::b;` (LRM 1800 §26.4).
+                            loop {
+                                let pkg = self.expect_ident()?;
+                                self.expect(Token::Scope)?;
+                                let item = if self.peek() == &Token::Star {
+                                    self.advance();
+                                    Symbol::intern("*")
+                                } else {
+                                    self.expect_ident()?
+                                };
+                                items.push(PackageItem::Export { package: pkg, item });
+                                if self.peek() == &Token::Comma {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
                             self.skip_semi();
-                            items.push(PackageItem::Export { package: pkg, item });
                         }
                         _ => {
                             let decl = self.parse_decl()?;

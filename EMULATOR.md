@@ -966,6 +966,77 @@ store/read + e2e interrupt device UART (bit 3) + timer device-initiated
 
 ---
 
+## 20.6 Status R6 x86 ISO boot (2026-08-30)
+
+**Boot ISO Ubuntu nyata** (`--boot-iso ubuntu-26.04-desktop-amd64.iso`) diperbaiki
+dari "halt di INT 13h AH=4B" menjadi **menjalankan GRUB kernel di protected mode
+tanpa fault** (puluhan–ratusan juta step).
+
+Jalur boot yang benar (bukan MBR hybrid):
+`El Torito catalog (LBA 666) → boot image cdboot (LBA 667, no-emul, 2048-unit)
+→ cdboot baca boot file (bi_file=667, 31662 B) via AH=42 blok 2048
+→ LZMA decompress kernel → GRUB kernel pmode` → Linux (⏳, butuh JIT).
+
+Perbaikan bug + fitur sesi ini (maria-emu, `maria emu --boot-iso`):
+
+| Item | Status |
+|---|---|
+| `iso.rs` — parser El Torito (volume descriptors, boot catalog, boot entry no-emul) + `load_boot_image` (DL=0xE0, `cd_drive` di-set) | ✅ baru, 2 test |
+| `INT 13h AH=42` read drive CD (DL==cd_drive): LBA & count dalam blok **2048-byte** (CD), bukan 512 (HDD) — via `X86Disk::read_bytes` | ✅ fix |
+| `INT 13h AH=4B AL=01` Get CD-ROM Information → isi CDRP (`media_type=0`, `drive_no=0xE0`) di DS:SI — GRUB biosdisk mengenali CD no-emul | ✅ fix |
+| `SHLD/SHRD` (0F A4/A5/AC/AD, imm/cl, 16/32-bit) | ✅ baru, 1 test |
+| `ea16` mod=0 rm=6 (`[disp16]` absolute) memakai **DS** bukan SS (menyalahi x86; boot code `mov [abs16]` salah segmen) | ✅ fix |
+| DAP `INT 13h AH=42` LBA dibaca **64-bit** (dword tinggi @+12 ikut), bukan 32-bit | ✅ fix |
+| `X86Cpu.console_output()` di-wire → `MachineResult.console` — BIOS output (INT 10h teletype `"GRUB "`) kini tampil di CLI | ✅ fix, 1 test |
+| Mirror **VGA text buffer** (0xB8000+) di `write8/16/32` + `vga_text()` (untuk console pasca-pmode/kernel) | ✅ baru |
+| `iso_boot.meu` RAM 32 MB → **2 GB** (GRUB tulis ~1.06 GB selama decompress) | ✅ config |
+| `MARIA_NO_ANIM=1` — nonaktifkan animasi pipeline terminal (untuk session gdb/profiling) | ✅ guard |
+| `[profile.prof]` (inherits release, `debug=2`) — biner cepat + info Dwarf penuh untuk gdb membaca state guest | ✅ Cargo |
+
+Profil dengan **gdb** (sampling, `prof` build): thread emulasi tunggal,
+hot path = `Machine::run → step → exec_op2 → exec_arith_group → read8 → mem.read`
+(akses memori ~40% sampel, decode ~30%). State guest saat sampling:
+`pmode=true, cs=8, steps=23-31M, ip 0x1f4908b→0x2e92a13` (walk ~2 B/step)
+dengan `EAX=0x1000001` konstan — GRUB sedang menyalin/melakukan relokasi image
+terhadap buffer decompress 16 MB. Kesimpulan: boot **bukan** macet — murni
+kecepatan interpreter. Langkah berikut (R3): JIT / block-translation untuk
+x86 (konversi blok panas e.g. loop copy/relokasi).
+
+### Optimasi interpreter x86 (2026-08-31) — +45% / 6.4M→9.3M instr-s
+
+Dari profil gdb/tracex, diterapkan 2 optimasi di hot path:
+
+1. **Akses memori bulk** (`mem.rs` + `x86.rs`): `MemoryPort` dapat `read_exact`
+   / `write_exact` (default = per-byte, non-breaking); `MemoryMap` override
+   dengan slice-copy. Dipakai `read16/32`, `write16/32`, string ops
+   (`movs/cmps/stos/lods`), dan copy buffer INT 13h AH=42 — bukan lagi
+   per-byte (region lookup + vtable per byte).
+2. **Prefetch cache instruksi** (`X86Cpu.pf_*`, 16-byte buffer): `fetch8`
+   tidak lagi 1 access memori per byte; dibaca bulk 16 byte, di-invalidasi
+   pada lompatan. Akses memori fetch turun drastis.
+
+Hasil terukur (`tracex compare` cuman sulit karena tracex belum final; ukur
+langsung wall-time): **200M step boot ISO = 31.1s → 21.4-23.0s (~1.4-1.5x)**,
+9.3M instr/s (release LTO). Verifikasi: seluruh suite hijau (**2683 pass**,
+maria-emu 97 test).
+
+### tracex (CATATAN.md) — hasil uji dengan sudo
+
+`kernel.perf_event_paranoid=-1` (sudo) → HW counters aktif:
+- `tracex stat` ✅ — IPC **0.60** (mixed), cache-miss **22.8%** 🔴 (interpreter
+  cache-hostile: guest RAM + kode dispatch), branch-miss **8.3%** 🔴 (big
+  opcode match). Arah optimasi JIT ganjil sebab itu.
+- `tracex inspect <PID>` ⚠️ — men-sampling SEMUA thread (9 idle = noise 90% S),
+  simbol pecah pada release LTO (`GCC_except_table...`). Pakai `prof` build
+  atau filter thread running.
+- `tracex profile` ⚠️ — mode dev; ringkasan tidak muncul walau child selesai
+  (sumo wait 60s). `tracex run/analyze/replay/query` jalan (syscall-level).
+- `tracex analyze maria.trx` ✅ — breakdown syscall (mmap 30, dll).
+
+Verifikasi: `cargo test --workspace` pass (maria-emu **97 test**, +10 baru).
+
+---
+
 ## 21. Roadmap — Urutan Implementasi
 
 Urutan paling masuk akal (dari desain user):

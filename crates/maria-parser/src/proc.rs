@@ -192,6 +192,31 @@ impl Parser {
     pub(crate) fn parse_assign(&mut self) -> Result<ContinuousAssign, SimError> {
         self.advance();
 
+        // Drive strength: `assign (weak0, weak1) net = ...;` / `(strong0, pull1)`.
+        // Strength tokens bukan keyword (weak0/strong1/pull0/highz1 lex sebagai
+        // ident) sehingga deteksi pola `( strength , strength )` manual.
+        if self.peek() == &Token::LParen {
+            let saved = self.pos.get();
+            self.advance(); // '('
+            let s1 = self.peek().clone();
+            self.advance();
+            if self.peek() == &Token::Comma {
+                self.advance();
+                let s2 = self.peek().clone();
+                self.advance();
+                if self.peek() == &Token::RParen
+                    && Self::is_drive_strength(&s1)
+                    && Self::is_drive_strength(&s2)
+                {
+                    self.advance(); // ')'
+                } else {
+                    self.pos.set(saved);
+                }
+            } else {
+                self.pos.set(saved);
+            }
+        }
+
         let delay = if self.peek() == &Token::Hash {
             Some(self.parse_delay()?)
         } else {
@@ -206,8 +231,33 @@ impl Parser {
         Ok(ContinuousAssign { lhs, rhs, delay })
     }
 
+    /// Apakah token ini keyword drive-strength net (LRM 1800 §6.7.2)?
+    fn is_drive_strength(tok: &Token) -> bool {
+        const STRENGTHS: &[&str] = &[
+            "supply0", "strong0", "pull0", "weak0", "highz0", "supply1", "strong1", "pull1",
+            "weak1", "highz1",
+        ];
+        match tok {
+            Token::Ident(name) => {
+                STRENGTHS.iter().any(|s| *name == Symbol::intern(s))
+            }
+            Token::Supply0 | Token::Supply1 => true,
+            _ => false,
+        }
+    }
+
     pub(crate) fn parse_delay(&mut self) -> Result<Delay, SimError> {
         self.advance();
+        // Bentuk polos `#expr` (ex. `assign #1ps net = ...;`) — satu delay
+        // tanpa kurung; time literal (`1ns`, `1ps`) di-parse oleh parse_expr.
+        if self.peek() != &Token::LParen {
+            let d = self.parse_expr(0)?;
+            return Ok(Delay {
+                rise: Some(d),
+                fall: None,
+                turnoff: None,
+            });
+        }
         self.expect(Token::LParen)?;
         let rise = Some(self.parse_expr(0)?);
         let fall = if self.peek() == &Token::Comma {
@@ -340,15 +390,38 @@ impl Parser {
                     Token::Ident(_) | Token::LBrack | Token::Scope
                 ) =>
             {
+                let saved = self.pos.get();
                 let first = self.expect_ident()?;
-                let tp_name = if self.peek() == &Token::Scope {
+                let mut result = None;
+                if self.peek() == &Token::Scope {
+                    // pkg::type (hanya 1 level — method name di-handle function name parser)
                     self.advance();
-                    let second = self.expect_ident()?;
-                    Symbol::intern(&format!("{}::{}", first, second))
+                    match self.peek() {
+                        Token::Ident(_) => {
+                            let second = self.expect_ident()?;
+                            // Ambigu: `pkg::type name(...)` (return type) vs
+                            // `ClassName::method(...)` (out-of-body method).
+                            // Setelah `::ident` masih ada ident/lbrack → return type
+                            // package-qualified; langsung `(` → class-method prefix,
+                            // kembalikan posisi agar return type = None.
+                            if matches!(self.peek(), Token::Ident(_) | Token::LBrack) {
+                                result = Some(Box::new(DataType::UserDefined(
+                                    Symbol::intern(&format!("{}::{}", first, second)),
+                                )));
+                            } else if matches!(self.peek(), Token::LParen) {
+                                self.pos.set(saved);
+                            } else {
+                                result = Some(Box::new(DataType::UserDefined(
+                                    Symbol::intern(&format!("{}::{}", first, second)),
+                                )));
+                            }
+                        }
+                        _ => result = Some(Box::new(DataType::UserDefined(first))),
+                    }
                 } else {
-                    first
-                };
-                Some(Box::new(DataType::UserDefined(tp_name)))
+                    result = Some(Box::new(DataType::UserDefined(first)));
+                }
+                result
             }
             _ => None,
         };
@@ -361,37 +434,47 @@ impl Parser {
             None
         };
         self.skip_extra_packed_dims()?;
-        let name_tok = self.peek().clone();
-        let name = match &name_tok {
-            Token::Ident(n) => {
-                self.advance();
-                *n
-            }
-            Token::New => {
-                self.advance();
-                Symbol::intern("new")
-            }
-            _ => return Err(self.err("expected function name")),
-        };
-        // Handle out-of-body method: class_name :: method_name
+        // Handle out-of-body method: type sudah consume `ClassName`, sekarang `::method`
+        // atau function name langsung (class_name sudah di-return sebagai type oleh type parser)
         let name = if self.peek() == &Token::Scope {
-            self.advance(); // consume ::
-            let tok = self.peek().clone();
-            match &tok {
-                Token::Ident(m) => {
+            // type parser return `ClassName` — consume `::` lalu ambil method name
+            self.advance();
+            match self.peek() {
+                Token::Ident(_) => self.expect_ident()?,
+                Token::New => {
                     self.advance();
-                    *m
+                    Symbol::intern("new")
+                }
+                _ => return Err(self.err("expected method name after ::")),
+            }
+        } else {
+            let name_tok = self.peek().clone();
+            match &name_tok {
+                Token::Ident(n) => {
+                    self.advance();
+                    let method_name = *n;
+                    // Out-of-class method: `function [type] ClassName :: method_name`
+                    // ClassName was taken above; `::method_name` is the actual method.
+                    if self.peek() == &Token::Scope {
+                        self.advance(); // consume `::`
+                        match self.peek() {
+                            Token::Ident(_) => self.expect_ident()?,
+                            Token::New => {
+                                self.advance();
+                                Symbol::intern("new")
+                            }
+                            _ => method_name, // fallback
+                        }
+                    } else {
+                        method_name
+                    }
                 }
                 Token::New => {
                     self.advance();
                     Symbol::intern("new")
                 }
-                _ => {
-                    return Err(self.err("expected method name after ::"));
-                }
+                _ => return Err(self.err("expected function name")),
             }
-        } else {
-            name
         };
         // Parse ANSI-style port list in parens (e.g., function new(int level, string name))
         let mut ports = Vec::new();

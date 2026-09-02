@@ -321,7 +321,13 @@ impl std::fmt::Display for SimError {
             SimError::Debugger(msg) => write!(f, "{}", msg),
             SimError::Io(kind, msg) => write!(f, "I/O error ({}): {}", kind, msg),
             SimError::Diagnostic(diag) => {
-                write!(f, "{}[{}]: {}", diag.level, diag.code, diag.message)
+                // Sertakan file:line:col dari source_snippet jika ada
+                match &diag.source_snippet {
+                    Some(ss) if ss.line > 0 => {
+                        write!(f, "{}[{}]: {}\n  --> {}:{}:{}", diag.level, diag.code, diag.message, ss.file, ss.line, ss.col)
+                    }
+                    _ => write!(f, "{}[{}]: {}", diag.level, diag.code, diag.message),
+                }
             }
         }
     }

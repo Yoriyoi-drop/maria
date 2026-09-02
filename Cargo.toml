@@ -134,3 +134,12 @@ codegen-units = 1
 inherits = "release"
 lto = false
 codegen-units = 16
+
+# Profil debug-gdb: kecepatan release + info Dwarf penuh (variabel lokal) agar
+# `gdb` bisa membaca state guest (X86Cpu.ip/cs/gpr dll). Dipakai saat menyelidik
+# fase boot: `cargo build --profile prof` lalu jalankan `./target/prof/maria`.
+[profile.prof]
+inherits = "release"
+debug = 2
+lto = false
+codegen-units = 16

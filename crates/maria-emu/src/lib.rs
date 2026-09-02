@@ -14,6 +14,7 @@ pub mod cpu;
 pub mod display;
 pub mod dump;
 pub mod elf;
+pub mod iso;
 pub mod machine;
 pub mod mem;
 pub mod mhir;

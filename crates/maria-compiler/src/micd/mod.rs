@@ -39,6 +39,7 @@ pub mod gc;
 pub mod graph;
 pub mod lock;
 pub mod metadata;
+pub mod precompiled;
 pub mod snapshot;
 pub mod stats;
 pub mod stringpool;
@@ -60,6 +61,7 @@ pub use gc::{run_gc, GcConfig, GcStats};
 pub use graph::FileGraph;
 pub use lock::{acquire_write_lock, is_writer_locked, WriteLock};
 pub use metadata::{flags_hash, path_hash, FileMeta, FileStatus, MetadataManifest};
+pub use precompiled::{PrecompiledDb, PrecompiledModule, PrecompiledStats, PortInfo};
 pub use snapshot::{
     history_of, last_snapshot_id, list_snapshots, merge_base, parents_of, read_snapshot,
     snapshot_path, Snapshot,
@@ -150,6 +152,8 @@ pub const DB_JOURNAL: &str = "journal.mdb";
 pub const DIR_STATE: &str = "state";
 pub const DIR_OBJECTS: &str = "objects";
 pub const DIR_LOCKS: &str = "locks";
+/// Direktori artefak precompiled (mirip VCS AN.DB/).
+pub const DIR_PRECOMPILED: &str = "precompiled";
 /// File penanda versi skema di database root.
 pub const FILE_VERSION: &str = "VERSION";
 /// Registri project (pid → info) di database root.
@@ -277,6 +281,10 @@ pub struct MicdDatabase {
     /// Lapisan cache pipeline per kategori (`cache/<pid>/`, db.md 1141-1605).
     /// Best-effort: `None` bila database root tidak bisa menulis.
     pub cache_layer: Option<CacheLayer>,
+    /// Database artefak precompiled per module (mirip VCS AN.DB/).
+    /// Menyimpan hasil analisis per module agar tool downstream bisa
+    /// baca tanpa compile ulang.
+    pub precompiled_db: Option<precompiled::PrecompiledDb>,
 }
 
 impl MicdDatabase {
@@ -467,6 +475,7 @@ impl MicdDatabase {
             changed: 0,
             last_snapshotted_changed: 0,
             cache_layer: None,
+            precompiled_db: None,
         };
 
         db.snapshots = list_snapshots(&st);
@@ -475,6 +484,12 @@ impl MicdDatabase {
         // 21 store seragam di `cache/<pid>/`. Dibuka sekali saat open; `None`
         // bila database root tak bisa ditulis (best-effort — non-kritis).
         db.cache_layer = CacheLayer::open(&root, &db.pid, db.flags_hash).ok();
+
+        // Database artefak precompiled (VCS AN.DB / Questa _info analog).
+        // Menyimpan hasil analisis per module agar tool downstream bisa baca
+        // tanpa compile ulang.
+        let precompiled_root = db.root.join(DIR_PRECOMPILED).join(&db.pid);
+        db.precompiled_db = Some(precompiled::PrecompiledDb::open(&precompiled_root));
 
         // metadata.mdb — pintu schema (Kritik 3 db.md). Bila schema version
         // tidak cocok, SELURUH store dianggap tidak kompatibel → bangun ulang
@@ -945,6 +960,18 @@ impl MicdDatabase {
             self.diags.remove(p);
             self.graph.remove_file(p);
         }
+        // Sweep CAS objects di disk secara langsung (Gap #13): objek yang
+        // tidak lagi dirujuk ast_cache/preproc_cache dihapus sekarang, bukan
+        // ditunda ke save() berikutnya — mencegah akumulasi sampah bila save()
+        // gagal atau tidak dipanggil.
+        {
+            let live_ast: std::collections::HashSet<u64> =
+                self.ast_cache.values().map(|(h, _)| *h).collect();
+            let _ = sweep_objects(&self.objects_dir(), OBJ_AST, &live_ast);
+            let live_preproc: std::collections::HashSet<u64> =
+                self.preproc_cache.values().map(|e| e.content_hash).collect();
+            let _ = sweep_objects(&self.objects_dir(), OBJ_PREPROC, &live_preproc);
+        }
         self.dirty = true;
         self.dirty_ast = true;
         self.dirty_preproc = true;
@@ -1094,7 +1121,7 @@ impl MicdDatabase {
                     bincode::serialize(meta).map_err(io::Error::other)?,
                 );
             }
-            pending.push((st.join(DB_METADATA), w.serialize()));
+            pending.push((st.join(DB_METADATA), w.serialize().map_err(io::Error::other)?));
         }
 
         // graph.mdb — rebuild reverse index sebelum serialize (set_deps
@@ -1107,7 +1134,7 @@ impl MicdDatabase {
                 format::KIND_GRAPH,
                 bincode::serialize(&self.graph).map_err(io::Error::other)?,
             );
-            pending.push((st.join(DB_GRAPH), w.serialize()));
+            pending.push((st.join(DB_GRAPH), w.serialize().map_err(io::Error::other)?));
         }
 
         // verify.mdb
@@ -1120,7 +1147,7 @@ impl MicdDatabase {
                     bincode::serialize(v).map_err(io::Error::other)?,
                 );
             }
-            pending.push((st.join(DB_VERIFY), w.serialize()));
+            pending.push((st.join(DB_VERIFY), w.serialize().map_err(io::Error::other)?));
         }
 
         // diagnostics.mdb
@@ -1133,7 +1160,7 @@ impl MicdDatabase {
                     bincode::serialize(d).map_err(io::Error::other)?,
                 );
             }
-            pending.push((st.join(DB_DIAG), w.serialize()));
+            pending.push((st.join(DB_DIAG), w.serialize().map_err(io::Error::other)?));
         }
 
         // symbol.mdb
@@ -1144,7 +1171,7 @@ impl MicdDatabase {
                 format::KIND_SYMBOL,
                 bincode::serialize(&self.symbols).map_err(io::Error::other)?,
             );
-            pending.push((st.join(DB_SYMBOL), w.serialize()));
+            pending.push((st.join(DB_SYMBOL), w.serialize().map_err(io::Error::other)?));
         }
 
         // types.mdb
@@ -1155,7 +1182,7 @@ impl MicdDatabase {
                 format::KIND_TYPE,
                 bincode::serialize(&self.type_index).map_err(io::Error::other)?,
             );
-            pending.push((st.join(DB_TYPE), w.serialize()));
+            pending.push((st.join(DB_TYPE), w.serialize().map_err(io::Error::other)?));
         }
 
         // ── Objek CAS (payload immutable) — ditulis di luar transaksi batch:
@@ -1176,7 +1203,7 @@ impl MicdDatabase {
                 format::KIND_STATS,
                 bincode::serialize(&self.stats_db).map_err(io::Error::other)?,
             );
-            pending.push((st.join(DB_STATS), w.serialize()));
+            pending.push((st.join(DB_STATS), w.serialize().map_err(io::Error::other)?));
         }
 
         // ── Fase 2–5: transaksi (lock → journal → tmp → commit → bersihkan). ──
@@ -1210,6 +1237,13 @@ impl MicdDatabase {
         if let Some(layer) = self.cache_layer.as_mut() {
             if layer.is_dirty() {
                 let _ = layer.save();
+            }
+        }
+
+        // Artefak precompiled: simpan manifest bila ada perubahan.
+        if let Some(pdb) = self.precompiled_db.as_mut() {
+            if pdb.dirty {
+                let _ = pdb.save();
             }
         }
 
@@ -1307,6 +1341,10 @@ impl MicdDatabase {
         // Lapisan cache pipeline dihapus + dibuka ulang (kosong).
         let _ = CacheLayer::remove_all(&self.root, &self.pid);
         self.cache_layer = CacheLayer::open(&self.root, &self.pid, 0).ok();
+        // Artefak precompiled dihapus + dibuka ulang (kosong).
+        let precompiled_root = self.root.join(DIR_PRECOMPILED).join(&self.pid);
+        let _ = std::fs::remove_dir_all(&precompiled_root);
+        self.precompiled_db = Some(precompiled::PrecompiledDb::open(&precompiled_root));
         self.files.clear();
         self.graph = FileGraph::new();
         self.verify.clear();

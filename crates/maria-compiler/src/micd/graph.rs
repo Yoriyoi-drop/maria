@@ -53,29 +53,30 @@ impl FileGraph {
     }
 
     /// Bangun reverse index. O(total deps) — panggil SEKALI setelah batch
-    /// set_deps, bukan per-call.
+    /// set_deps, bukan per-call. Dedup via HashSet per node agar tidak O(n²)
+    /// pada file yang punya banyak dependent.
     pub fn rebuild(&mut self) {
-        let mut rev: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+        let mut rev: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
         for (file, deps) in self.deps.iter() {
             for d in deps {
-                let list = rev.entry(d.clone()).or_default();
-                if !list.contains(file) {
-                    list.push(file.clone());
-                }
+                rev.entry(d.clone()).or_default().insert(file.clone());
             }
         }
-        self.dependents = rev;
+        self.dependents = rev
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect();
         // Reverse symbol index (Kritik 2).
-        let mut users: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        let mut users: HashMap<String, HashSet<PathBuf>> = HashMap::new();
         for (file, symbols) in self.symbol_uses.iter() {
             for s in symbols {
-                let list = users.entry(s.clone()).or_default();
-                if !list.contains(file) {
-                    list.push(file.clone());
-                }
+                users.entry(s.clone()).or_default().insert(file.clone());
             }
         }
-        self.symbol_users = users;
+        self.symbol_users = users
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect();
         self.dirty_reverse = false;
     }
 
@@ -100,13 +101,9 @@ impl FileGraph {
     pub fn remove_file(&mut self, file: &Path) {
         self.deps.remove(file);
         self.symbol_uses.remove(file);
-        let removed = self
-            .dependents
+        self.dependents
             .iter_mut()
-            .filter(|(_, v)| v.iter().any(|f| f == file))
-            .map(|(_, v)| v.retain(|f| f != file))
-            .count();
-        let _ = removed;
+            .for_each(|(_, v)| v.retain(|f| f != file));
         self.symbol_defs.retain(|_, f| f != file);
         self.symbol_users
             .iter_mut()

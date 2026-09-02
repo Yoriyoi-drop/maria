@@ -31,6 +31,7 @@ pub mod coverage_db;
 #[cfg(feature = "dpi")]
 pub mod dpi;
 pub mod engine;
+pub mod guard;
 pub mod jit;
 #[cfg(feature = "jit")]
 pub mod jit_cranelift;

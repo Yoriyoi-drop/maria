@@ -778,6 +778,7 @@ pub enum PackageItem {
     Class(ClassDecl),
     Import { package: Symbol, item: Symbol },
     Export { package: Symbol, item: Symbol },
+    DpiImport(DpiImport),
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

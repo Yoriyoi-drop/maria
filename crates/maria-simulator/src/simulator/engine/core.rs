@@ -195,6 +195,7 @@ impl SimulationEngine {
             sim_arena: crate::simulator::arena::SimulationArena::with_bump_size(4 * 1024 * 1024), // 4MB initial
             sim_dag: None,
             use_dag_parallel: false,
+            resource_guard: crate::simulator::guard::SimResourceGuard::from_env(),
             clock_analysis: None,
             use_cycle_fusion: false,
             cycle_based: false,
@@ -931,6 +932,14 @@ impl SimulationEngine {
             let step_start_events = self.sim_perf.counters.events_processed;
             let t = self.state.time as usize;
 
+            // ── Layer resource guard (MARIA-SIM-34): poll RSS tiap interval
+            // untuk mencegah kernel OOM-kill pada design besar (OpenTitan).
+            if self.resource_guard.is_enabled() {
+                if (t as u64) % self.resource_guard.check_interval() == 0 {
+                    self.resource_guard.poll(self.state.time, t as u64)?;
+                }
+            }
+
             // ── Guard: event di luar jendela alokasi → abort graceful ──
             if self.event_alloc_exceeded {
                 return Err(SimError::with_diag(
@@ -1320,6 +1329,15 @@ impl SimulationEngine {
                 }
                 delta_count += 1;
                 self.current_delta = delta_count;
+                // ── Layer resource guard (MARIA-SIM-34): poll RSS tiap delta
+                // pada delta awal (lonjakan time-0 sering terjadi di delta kecil,
+                // mis. big_30000 RSS 1.5GB dalam delta=2), lalu tiap 256 delta
+                // setelahnya agar overhead baca /proc tidak memberatkan.
+                if self.resource_guard.is_enabled()
+                    && (delta_count < 1024 || delta_count % 256 == 0)
+                {
+                    self.resource_guard.check_limit(self.state.time)?;
+                }
 
                 // ── Oscillation detection (SIM-28) ──
                 // Kombinational loop (cycle) membuat state sinyal berulang
@@ -1479,35 +1497,6 @@ impl SimulationEngine {
                     }
                     self.signal_snapshot = Some(snap);
                 }
-            }
-
-            // TEMP-DIAG per time step: RSS + arena + event size
-            {
-                let rss = std::fs::read_to_string("/proc/self/status")
-                    .ok()
-                    .and_then(|s| {
-                        s.lines()
-                            .find(|l| l.starts_with("VmRSS"))
-                            .and_then(|l| l.split_whitespace().nth(1).map(|x| x.to_string()))
-                    })
-                    .unwrap_or_default();
-                let ndeltas = self.osc_state_hashes.len();
-                let mut committed = 0usize;
-                for i in 0..self.state.signals.len() {
-                    if self.state.changed[i] {
-                        committed += 1;
-                    }
-                }
-                eprintln!(
-                    "[DIAG] t={} RSS={}kB arena={} ndeltas={} committed_signals={} co_snap={} seq_hist={}",
-                    self.state.time,
-                    rss,
-                    self.sim_arena.memory_used(),
-                    ndeltas,
-                    committed,
-                    self.coverage_snapshot.as_ref().map(|v| v.len()).unwrap_or(0),
-                    self.signal_seq_history.len()
-                );
             }
 
             // ── UPF: Evaluate power states based on current supply net values ──

@@ -59,23 +59,23 @@ pub fn run(args: &ProfArgs) -> Result<(), SimError> {
     let mut phases: Vec<PhaseTime> = vec![
         PhaseTime {
             name: "Discovery",
-            ms: t.discovery_ms,
+            ms: t.discovery_us / 1000,
         },
         PhaseTime {
             name: "Preprocess",
-            ms: t.preprocess_ms,
+            ms: t.preprocess_us / 1000,
         },
         PhaseTime {
             name: "Parse",
-            ms: t.parse_ms,
+            ms: t.parse_us / 1000,
         },
         PhaseTime {
             name: "Index",
-            ms: t.index_ms,
+            ms: t.index_us / 1000,
         },
         PhaseTime {
             name: "Elaboration",
-            ms: t.elab_ms,
+            ms: t.elab_us / 1000,
         },
         PhaseTime {
             name: "Simulation",

@@ -568,6 +568,38 @@ impl Parser {
                             (None, None, None)
                         }
                     };
+                    // Dimensi unpacked LANJUTAN `[..][..]` (mis. `bit a[4][8]`,
+                    // `sw_logs[string][addr_data_t]`) — AST hanya representasikan
+                    // SATU dim; sisanya di-skip buta sampai `]` seimbang agar
+                    // deklarasi multi-dim user-type tidak gagal parse.
+                    while self.peek() == &Token::LBrack {
+                        self.advance(); // '['
+                        let mut bdepth = 0i32;
+                        loop {
+                            match self.peek() {
+                                Token::Eof => break,
+                                Token::LParen | Token::LBrace | Token::LBrack => {
+                                    bdepth += 1;
+                                    self.advance();
+                                }
+                                Token::RParen | Token::RBrace => {
+                                    bdepth = bdepth.saturating_sub(1);
+                                    self.advance();
+                                }
+                                Token::RBrack => {
+                                    if bdepth <= 0 {
+                                        self.advance();
+                                        break;
+                                    }
+                                    bdepth -= 1;
+                                    self.advance();
+                                }
+                                _ => {
+                                    self.advance();
+                                }
+                            }
+                        }
+                    }
                     let var_range = var_expr_range.as_ref().and_then(|er| {
                         if let (Ok(m), Ok(l)) =
                             (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
@@ -810,6 +842,17 @@ impl Parser {
                 }
                 _ => return Err(self.err("expected type in struct/union member")),
             };
+            // Modifier signed/unsigned SETELAH tipe dasar: `int unsigned id;`
+            // (umum di struct OpenTitan). unsigned = no-op; signed dibungkus.
+            let member_type = if self.peek() == &Token::Signed {
+                self.advance();
+                DataType::Signed(Box::new(member_type))
+            } else if self.peek() == &Token::Unsigned {
+                self.advance();
+                member_type
+            } else {
+                member_type
+            };
             let (range, expr_range) = if self.peek() == &Token::LBrack {
                 let er = self.parse_range()?;
                 let resolved = er.as_ref().and_then(|er| {
@@ -829,6 +872,17 @@ impl Parser {
             };
             self.skip_extra_packed_dims()?;
             let name = self.expect_ident()?;
+            // Unpacked array dims setelah nama: `bit [3:0] [31:0] plain_text[4]`
+            // (struktur data OpenTitan). Bisa beberapa dims: `name[4][8]`.
+            while self.peek() == &Token::LBrack {
+                if self.peek_is_packed_dim() {
+                    let _ = self.parse_range()?;
+                } else {
+                    self.advance(); // '['
+                    let _ = self.parse_expr(0)?;
+                    self.expect(Token::RBrack)?;
+                }
+            }
             self.skip_semi();
             members.push(StructMember {
                 name,
@@ -873,6 +927,13 @@ impl Parser {
     pub(crate) fn parse_typedef(&mut self) -> Result<TypedefDecl, SimError> {
         self.advance(); // consume typedef
         let (name, dtype, range, extra_packed_dims) = match self.peek() {
+            // Forward class declaration: `typedef class foo;` (LRM 1800 §6.18).
+            Token::Class => {
+                self.advance();
+                let name = self.expect_ident()?;
+                self.skip_semi();
+                (name, DataType::UserDefined(name), None, Vec::new())
+            }
             Token::Enum => {
                 self.advance();
                 let base = match self.peek() {
@@ -1240,6 +1301,24 @@ impl Parser {
     }
 
     pub(crate) fn parse_type_expr(&mut self) -> Result<DataType, SimError> {
+        // `virtual <iface_type>` — tipe virtual interface (param class UVM,
+        // mis. `uvm_config_db#(virtual alert_esc_if)::get(...)`). Marker
+        // `virtual` dibuang; tipe interface diterjemahkan sbg UserDefined.
+        if self.peek() == &Token::Virtual {
+            self.advance();
+            if let Token::Ident(name) = self.peek() {
+                let name = *name;
+                self.advance();
+                // Type virtual interface parametrik: `virtual force_if#(.P(1),...)`
+                // (param class UVM, mis. `uvm_config_db#(virtual force_if#(...))`).
+                // Parametrik dibuang — tipe dipetakan ke UserDefined.
+                if self.peek() == &Token::Hash {
+                    let _ = self.parse_param_block()?;
+                }
+                return Ok(DataType::UserDefined(name));
+            }
+            return Err(self.err("expected interface type after virtual"));
+        }
         let dt = match self.peek() {
             Token::Bit => { self.advance(); DataType::Bit }
             Token::Logic => { self.advance(); DataType::Logic }
@@ -1261,6 +1340,11 @@ impl Parser {
                     let _inner = self.expect_ident()?;
                     DataType::UserDefined(_inner)
                 } else {
+                    // Type parametrik `force_if#(.P(1),...)` — param dibuang,
+                    // tipe dipetakan ke UserDefined (mis. `#(virtual x_if#(...))`).
+                    if self.peek() == &Token::Hash {
+                        let _ = self.parse_param_block()?;
+                    }
                     DataType::UserDefined(name)
                 }
             }
@@ -1483,8 +1567,16 @@ impl Parser {
     pub(crate) fn parse_extra_packed_dims(&mut self) -> Result<Vec<ExprRange>, SimError> {
         let mut dims = Vec::new();
         while self.peek() == &Token::LBrack {
-            if let Some(r) = self.parse_range()? {
-                dims.push(r);
+            if self.peek_is_packed_dim() {
+                if let Some(r) = self.parse_range()? {
+                    dims.push(r);
+                }
+            } else {
+                // Unpacked single dimension `[N]` (struct member / typedef):
+                // `bit [3:0] [31:0] plain_text[4]` — konsumsi dan buang.
+                self.advance(); // '['
+                let _ = self.parse_expr(0)?;
+                self.expect(Token::RBrack)?;
             }
         }
         Ok(dims)

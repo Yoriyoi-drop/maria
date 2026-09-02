@@ -12,3 +12,7 @@ mod priority_fuzz;
 mod while_fuzz;
 #[cfg(test)]
 mod nested_if_fuzz;
+#[cfg(test)]
+mod for_loop_fuzz;
+#[cfg(test)]
+mod always_comb_fuzz;

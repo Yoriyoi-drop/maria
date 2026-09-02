@@ -301,11 +301,17 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
                 | BinaryIrOp::Ge
                 | BinaryIrOp::LogicalAnd
                 | BinaryIrOp::LogicalOr => {
-                    // Operand comparison context-determined terhadap
-                    // satu sama lain + konteks.
-                    let wa1 = propagate_context_width(a, ctx.max(wb0), signals);
-                    let wb1 = propagate_context_width(b, ctx.max(wa1), signals);
-                    let _ = propagate_context_width(a, ctx.max(wb1), signals);
+                    // LRM Table 11-21: comparison operands are
+                    // context-determined to max of BOTH operand widths.
+                    // Assignment context does NOT flow into operands —
+                    // only the operands size each other. E.g.
+                    // `~(1'b1) < 65'hX`: ~(1'b1) sized to max(1,65)=65
+                    // but `2-bit_expr < 2-bit_expr` stays 2-bit.
+                    // Bug: using ctx.max(wb0) leaked assignment width
+                    // into shift, widening ~(2'b10) from 2 to 8/32.
+                    let cmp_ctx = wb0.max(wa0);
+                    let wa1 = propagate_context_width(a, cmp_ctx, signals);
+                    let wb1 = propagate_context_width(b, cmp_ctx, signals);
                     wrap_cast(e, ctx, signals)
                 }
                 BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl => {
@@ -780,6 +786,40 @@ fn ir_const_value(e: &IrExpr) -> Option<i64> {
                 let (lhs_line, lhs_col) = expr_location(lhs);
                 self.check_width_mismatch(&ir_lhs, &ir_rhs, signals, lhs_line, lhs_col);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
+                // FIX: Unpacked array literal init — `arr = '{e0, e1, ...}`.
+                // Concat membangun value MSB-first `{e0, e1, e2, e3}` tapi
+                // unpacked array storage punya element 0 di bit terendah.
+                // Decompose di AST level sebelum ir_rhs di-fold jadi Const:
+                //   arr[0] = e0; arr[1] = e1; arr[2] = e2; arr[3] = e3;
+                if let IrLValue::Signal(sid, _) = &ir_lhs {
+                    if let Some(sig) = signals.get(*sid) {
+                        if sig.array_depth > 1 {
+                            // Check if RHS is AST-level Concat (array literal '{...}')
+                            if let Expr::Concat(elems) = rhs {
+                                if elems.len() == sig.array_depth {
+                                    let mut stmts: Vec<IrStmt> = Vec::new();
+                                    for (i, elem) in elems.iter().enumerate() {
+                                        let ir_elem = self.elaborate_expr(elem, signal_map, signals)?;
+                                        let idx_expr = IrExpr::Const(
+                                            LogicVec::from_u64(i as u64, 32),
+                                        );
+                                        let elem_lvalue = IrLValue::ArrayIndex {
+                                            sig_id: *sid,
+                                            index: Box::new(idx_expr),
+                                            elem_width: sig.elem_width.max(1),
+                                        };
+                                        stmts.push(IrStmt::BlockingAssign {
+                                            lhs: elem_lvalue,
+                                            rhs: ir_elem,
+                                            delay: None,
+                                        });
+                                    }
+                                    return Ok(IrStmt::Block { stmts });
+                                }
+                            }
+                        }
+                    }
+                }
                 Ok(IrStmt::BlockingAssign {
                     lhs: ir_lhs,
                     rhs: ir_rhs,

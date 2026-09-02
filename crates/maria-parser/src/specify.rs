@@ -13,6 +13,7 @@ use super::Parser;
 use crate::lexer::*;
 use maria_ast::*;
 use maria_core::error::SimError;
+use maria_core::intern::Symbol;
 
 impl Parser {
     pub(crate) fn parse_clocking_block(&mut self) -> Result<ClockingBlock, SimError> {
@@ -24,16 +25,44 @@ impl Parser {
         self.expect(Token::LParen)?;
         let clock_event = if self.peek() == &Token::PosEdge {
             self.advance();
-            let sig = self.expect_ident()?;
+            let mut sig = self.expect_ident()?;
+            while self.peek() == &Token::Dot {
+                self.advance();
+                let seg = self.expect_ident()?;
+                sig = Symbol::intern(&format!("{}.{}", sig, seg));
+            }
             ClockEvent::Posedge(sig)
         } else if self.peek() == &Token::NegEdge {
             self.advance();
-            let sig = self.expect_ident()?;
+            let mut sig = self.expect_ident()?;
+            while self.peek() == &Token::Dot {
+                self.advance();
+                let seg = self.expect_ident()?;
+                sig = Symbol::intern(&format!("{}.{}", sig, seg));
+            }
             ClockEvent::Negedge(sig)
         } else {
-            let sig = self.expect_ident()?;
+            let mut sig = self.expect_ident()?;
+            while self.peek() == &Token::Dot {
+                self.advance();
+                let seg = self.expect_ident()?;
+                sig = Symbol::intern(&format!("{}.{}", sig, seg));
+            }
             ClockEvent::Edge(sig)
         };
+        // Clock event boleh berisi beberapa edge dipisah `or`:
+        // `clocking cb @(posedge clk or negedge rst);` — skip event lanjutan.
+        while self.peek() == &Token::Or {
+            self.advance();
+            if self.peek() == &Token::PosEdge || self.peek() == &Token::NegEdge {
+                self.advance();
+            }
+            let _ = self.expect_ident()?;
+            while self.peek() == &Token::Dot {
+                self.advance();
+                let _ = self.expect_ident()?;
+            }
+        }
         self.expect(Token::RParen)?;
         self.skip_semi();
 

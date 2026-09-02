@@ -22,6 +22,9 @@ struct CondFrame {
 struct MacroDef {
     value: String,
     params: Vec<String>,
+    /// Nilai default per param SV (`` `define M(a, b = 2) `` → b default "2").
+    /// Kosong bila param tak punya default.
+    defaults: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -70,6 +73,7 @@ impl Preprocessor {
             MacroDef {
                 value: value.to_string(),
                 params: Vec::new(),
+                defaults: Vec::new(),
             },
         );
     }
@@ -498,7 +502,7 @@ impl Preprocessor {
             return;
         }
 
-        let (name, params, value) = if let Some(open_paren) = s.find('(') {
+        let (name, params, value, defaults) = if let Some(open_paren) = s.find('(') {
             let name = s[..open_paren].trim().to_string();
             let close_paren = s[open_paren..]
                 .find(')')
@@ -509,25 +513,44 @@ impl Preprocessor {
             } else {
                 ""
             };
-            let params: Vec<String> = params_str
-                .split(',')
-                .map(|p| p.trim().to_string())
-                .filter(|p| !p.is_empty())
-                .collect();
+            let mut params: Vec<String> = Vec::new();
+            let mut defaults: Vec<String> = Vec::new();
+            for p in params_str.split(',') {
+                let p = p.trim();
+                if p.is_empty() {
+                    continue;
+                }
+                match p.find('=') {
+                    Some(eq) => {
+                        // `` `define M(a, b = 2) `` → param "b", default "2".
+                        // Stripping default mencegah param `b = 2` tidak pernah
+                        // cocok di body → literal + paste backtick bocor.
+                        let name = p[..eq].trim().to_string();
+                        let default = p[eq + 1..].trim().to_string();
+                        params.push(name);
+                        defaults.push(default);
+                    }
+                    None => {
+                        params.push(p.to_string());
+                        defaults.push(String::new());
+                    }
+                }
+            }
             let value = if close_paren < s.len() {
                 s[close_paren + 1..].trim().to_string()
             } else {
                 String::new()
             };
-            (name, params, value)
+            (name, params, value, defaults)
         } else {
             let end = s.find(|c: char| c.is_whitespace()).unwrap_or(s.len());
             let name = s[..end].to_string();
             let value = s[end..].trim().to_string();
-            (name, Vec::new(), value)
+            (name, Vec::new(), value, Vec::new())
         };
 
-        self.defines.insert(name, MacroDef { value, params });
+        self.defines
+            .insert(name, MacroDef { value, params, defaults });
     }
 
     /// Evaluate `ifdef/`ifndef expression. Supports:
@@ -580,11 +603,25 @@ impl Preprocessor {
                 result.push_str(&line[i..]);
                 break;
             }
+            // Stringify langsung penggunaan (di luar body macro): `` `"X`" `` →
+            // `"X"`. Undef yang menghasilkan `` `"path`" `` (mis. pemakaian di
+            // $assertoff) harus jadi string literal, bukan backtick sisa.
+            if bytes[i] == b'`' && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                result.push('"');
+                i += 2;
+                continue;
+            }
             if bytes[i] == b'`'
                 && i + 1 < bytes.len()
                 && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_')
             {
                 i += 1;
+                // Token-paste run: `` `NAME` `` / `` ``NAME`` `` — konsumsi SEMUA
+                // backtick di depan nama biar tidak ada sisa ` di output
+                // (mis. `PARAM_NAME_``_MINSTANDARD` → `TLOW_MINSTANDARD`).
+                while i < bytes.len() && bytes[i] == b'`' {
+                    i += 1;
+                }
                 let start = i;
                 while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
@@ -628,10 +665,23 @@ impl Preprocessor {
                         } else {
                             Vec::new()
                         };
-                        let expanded_args: Vec<String> = args
+                        let mut expanded_args: Vec<String> = args
                             .iter()
                             .map(|arg| self.expand_inline_macros_depth(arg, depth + 1))
                             .collect();
+                        // Isi arg yang TIDAK dikirim saat pemanggilan dengan
+                        // default param-nya (SV): `` `define M(a, b = 2) ``
+                        // dipanggil `M(x)` → b diisi "2". Bila tanpa default →
+                        // kosong. Tanpa ini param bocor literal/paste backtick
+                        // (`top_darjeeling``pd_hier``.u_...`).
+                        for k in expanded_args.len()..mdef.params.len() {
+                            let d = mdef
+                                .defaults
+                                .get(k)
+                                .map(|s| self.expand_inline_macros_depth(s, depth + 1))
+                                .unwrap_or_default();
+                            expanded_args.push(d);
+                        }
                         // Substitute parameters with expanded arguments — single pass on bytes
                         let mut expanded = String::with_capacity(mdef.value.len());
                         let val_bytes = mdef.value.as_bytes();
@@ -684,8 +734,51 @@ impl Preprocessor {
                                 {
                                     expanded.push_str(arg);
                                     pos += param.len();
+                                    // Paste sufiks: `PARAM_``_SUFFIX` — backtick
+                                    // langsung setelah param diikuti alpha/_ →
+                                    // buang run, rekatkan ke teks berikutnya
+                                    // (I2C_GET_MIN_PARAM: `PARAM_NAME_``_MINSTANDARD`).
+                                    if pos < val_bytes.len() && val_bytes[pos] == b'`' {
+                                        let mut r = pos;
+                                        while r < val_bytes.len() && val_bytes[r] == b'`' {
+                                            r += 1;
+                                        }
+                                        if r < val_bytes.len()
+                                            && (val_bytes[r].is_ascii_alphabetic()
+                                                || val_bytes[r] == b'_')
+                                        {
+                                            pos = r;
+                                        }
+                                    }
                                     matched = true;
                                     break;
+                                }
+                            }
+                            // OpenTitan token-paste extension dalam body macro:
+                            // `` `NAME` `` / `` ``NAME`` `` (backtick mengapit
+                            // param) → strip semua backtick, paste arg polos.
+                            // Berbeda dari `` `"p`" `` stringify. Contoh pembangkit
+                            // (otbn.sv): `` `define DEF_FAC_BIT(NAME) ...``NAME``... ``
+                            if !matched && val_bytes[pos] == b'`' {
+                                let mut k = pos;
+                                while k < val_bytes.len() && val_bytes[k] == b'`' {
+                                    k += 1;
+                                }
+                                for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
+                                    if !param.is_empty()
+                                        && k + param.len() <= val_bytes.len()
+                                        && &val_bytes[k..k + param.len()] == param.as_bytes()
+                                    {
+                                        let after = k + param.len();
+                                        let mut a2 = after;
+                                        while a2 < val_bytes.len() && val_bytes[a2] == b'`' {
+                                            a2 += 1;
+                                        }
+                                        expanded.push_str(arg);
+                                        pos = a2;
+                                        matched = true;
+                                        break;
+                                    }
                                 }
                             }
                             if !matched {
@@ -702,12 +795,34 @@ impl Preprocessor {
                     // placeholder string agar output preprocessed valid.
                     result.push_str("\"<preprocessed>\"");
                 } else {
-                    result.push('`');
+                    // Makro TIDAK dikenal (mis. `` `uvm_fatal `` / `` `gfn `` saat
+                    // uvm_macros tidak include) — strip backtick, sisakan nama +
+                    // arg polos. Membuang backtick mencegah FastLexer menganggap
+                    // baris sebagai directive dan MENGHAPUS seluruh baris
+                    // (`default: `uvm_fatal(...)` → endcase jadi
+                    // "expected expression, found Endcase"). Hasilnya panggilan
+                    // polos `uvm_fatal(...)` yang tetap parse-able.
                     result.push_str(name);
                 }
             } else {
-                result.push(bytes[i] as char);
-                i += 1;
+                if bytes[i] == b'`'
+                    && i + 1 < bytes.len()
+                    && (bytes[i + 1].is_ascii_alphanumeric()
+                        || bytes[i + 1] == b'_'
+                        || bytes[i + 1] == b'`')
+                    && i > 0
+                    && (bytes[i - 1].is_ascii_alphanumeric()
+                        || bytes[i - 1] == b'_'
+                        || bytes[i - 1] == b'`')
+                {
+                    // Paste marker antar token literal (mis. `0``0``0` dari
+                    // coverpoint macro generate) — bukan operator SV, buang.
+                    // Hanya saat diapit karakter alnum/paste (bukan directive).
+                    i += 1;
+                } else {
+                    result.push(bytes[i] as char);
+                    i += 1;
+                }
             }
         }
         result

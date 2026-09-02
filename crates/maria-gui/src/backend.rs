@@ -169,27 +169,27 @@ pub fn compile_project(
     let pipeline = vec![
         PipelineStage {
             name: "Discovery".into(),
-            ms: t.discovery_ms,
+            ms: t.discovery_us / 1000,
             status: "ok".into(),
         },
         PipelineStage {
             name: "Preprocessor".into(),
-            ms: t.preprocess_ms,
+            ms: t.preprocess_us / 1000,
             status: "ok".into(),
         },
         PipelineStage {
             name: "Lexer".into(),
-            ms: t.lex_ms,
+            ms: t.lex_us / 1000,
             status: "ok".into(),
         },
         PipelineStage {
             name: "Parser".into(),
-            ms: t.parse_ms,
+            ms: t.parse_us / 1000,
             status: "ok".into(),
         },
         PipelineStage {
             name: "Elaborator".into(),
-            ms: t.elab_ms,
+            ms: t.elab_us / 1000,
             status: "ok".into(),
         },
         PipelineStage {

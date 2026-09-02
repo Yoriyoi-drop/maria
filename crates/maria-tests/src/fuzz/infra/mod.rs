@@ -8,3 +8,5 @@ mod preproc;
 mod concurrency_diff;
 #[cfg(test)]
 mod ifdef_fuzz;
+#[cfg(test)]
+mod multi_module_fuzz;

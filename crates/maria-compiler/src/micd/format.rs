@@ -219,15 +219,23 @@ impl MdbWriter {
     /// Serialisasi ke bytes (header + object table + payload). Bila mode
     /// kompresi aktif, setiap blob dikompresi LZ4 sebelum masuk payload, dan
     /// checksum dihitung atas byte TERSIMPAN (terkompresi).
-    pub fn serialize(&self) -> Vec<u8> {
+    ///
+    /// Mengembalikan `Err` bila kompresi LZ4 gagal — TIDAK boleh diam-diam
+    /// mengganti blob dengan data kosong (korupsi senyap). Pemanggil harus
+    /// menangani error (batal tulis, bukan menulis data rusak).
+    pub fn serialize(&self) -> Result<Vec<u8>, MdbError> {
         let mut stored: Vec<Vec<u8>> = Vec::with_capacity(self.blobs.len());
         for blob in &self.blobs {
             match self.compression {
                 Compression::None => stored.push(blob.clone()),
                 Compression::Lz4 => {
                     let mut enc = FrameEncoder::new(Vec::new());
-                    let _ = enc.write_all(blob);
-                    stored.push(enc.finish().unwrap_or_default());
+                    enc.write_all(blob)
+                        .map_err(|e| MdbError::Format(format!("LZ4 compress: {}", e)))?;
+                    let compressed = enc
+                        .finish()
+                        .map_err(|e| MdbError::Format(format!("LZ4 finish: {}", e)))?;
+                    stored.push(compressed);
                 }
             }
         }
@@ -260,12 +268,12 @@ impl MdbWriter {
             out.extend_from_slice(&e.to_bytes());
         }
         out.extend_from_slice(&payload);
-        out
+        Ok(out)
     }
 
     /// Tulis ke path secara atomik (temp + rename).
     pub fn write_to(&self, path: &Path) -> std::io::Result<()> {
-        let data = self.serialize();
+        let data = self.serialize().map_err(std::io::Error::other)?;
         write_tmp(path, &data)?;
         commit_tmp(path)
     }
@@ -554,7 +562,7 @@ mod tests {
         .into_bytes();
         let mut w = MdbWriter::with_compression(Compression::Lz4);
         w.put(1, KIND_AST, big.clone());
-        let data = w.serialize();
+        let data = w.serialize().unwrap();
         assert!(
             data.len() < big.len(),
             "LZ4 harus mengecilkan blob ({})",

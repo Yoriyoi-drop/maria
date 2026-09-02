@@ -151,6 +151,9 @@ impl PipelineAnimator {
     /// false saat `--quiet` / mode debug). Mengembalikan `None` bila tidak
     /// ada animasi (bukan TTY atau disabled).
     pub fn start(enabled: bool) -> Option<PipelineAnimator> {
+        if std::env::var("MARIA_NO_ANIM").is_ok() {
+            return None;
+        }
         if !enabled || !stdout_is_tty() {
             return None;
         }

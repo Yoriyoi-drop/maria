@@ -40,6 +40,23 @@ pub trait MemoryPort {
     fn read(&self, addr: u64, size: u8) -> Result<u64, AccessFault>;
     fn write(&mut self, addr: u64, size: u8, val: u64) -> Result<(), AccessFault>;
     fn region_of(&self, addr: u64) -> Option<RegionRef>;
+
+    /// Baca `buf.len()` byte berurutan (fast path bulk — default: per-byte).
+    /// Dipakai interpreter x86 untuk string ops / fetch berkelompok.
+    fn read_exact(&self, addr: u64, buf: &mut [u8]) -> Result<(), AccessFault> {
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = self.read(addr + i as u64, 1)? as u8;
+        }
+        Ok(())
+    }
+
+    /// Tulis `buf.len()` byte berurutan (fast path bulk — default: per-byte).
+    fn write_exact(&mut self, addr: u64, buf: &[u8]) -> Result<(), AccessFault> {
+        for (i, b) in buf.iter().enumerate() {
+            self.write(addr + i as u64, 1, *b as u64)?;
+        }
+        Ok(())
+    }
 }
 
 /// Backing store region.
@@ -204,6 +221,64 @@ impl RamRegion {
         Ok(())
     }
 
+    /// Baca `buf.len()` byte langsung dari backing (fast path bulk).
+    pub fn read_slice(&self, addr: u64, buf: &mut [u8]) -> Result<(), AccessFault> {
+        let off = self.offset(addr).ok_or_else(|| AccessFault {
+            addr,
+            reason: format!("di luar region '{}'", self.name.as_str()),
+        })?;
+        if off + buf.len() > self.backing.len() {
+            return Err(AccessFault {
+                addr,
+                reason: format!(
+                    "{} byte melebihi region '{}'",
+                    buf.len(),
+                    self.name.as_str()
+                ),
+            });
+        }
+        buf.copy_from_slice(&self.backing.as_ref()[off..off + buf.len()]);
+        Ok(())
+    }
+
+    /// Tulis `buf.len()` byte langsung ke backing (fast path bulk).
+    pub fn write_slice(&mut self, addr: u64, buf: &[u8]) -> Result<(), AccessFault> {
+        if self.kind == RegionKind::Rom {
+            return Err(AccessFault {
+                addr,
+                reason: format!("write ke ROM '{}'", self.name.as_str()),
+            });
+        }
+        let off = self.offset(addr).ok_or_else(|| AccessFault {
+            addr,
+            reason: format!("di luar region '{}'", self.name.as_str()),
+        })?;
+        if off + buf.len() > self.backing.len() {
+            return Err(AccessFault {
+                addr,
+                reason: format!(
+                    "{} byte melebihi region '{}'",
+                    buf.len(),
+                    self.name.as_str()
+                ),
+            });
+        }
+        self.backing.as_mut()[off..off + buf.len()].copy_from_slice(buf);
+        Ok(())
+    }
+
+    /// Iterator slice (skip region Rom check) untuk string ops cepat.
+    pub fn read_slice_unchecked(&self, off: usize, buf: &mut [u8]) -> Result<(), AccessFault> {
+        if off + buf.len() > self.backing.len() {
+            return Err(AccessFault {
+                addr: off as u64,
+                reason: "keluar dari region".into(),
+            });
+        }
+        buf.copy_from_slice(&self.backing.as_ref()[off..off + buf.len()]);
+        Ok(())
+    }
+
     /// Isi utuh region (untuk dump / snapshot).
     pub fn bytes(&self) -> &[u8] {
         self.backing.as_ref()
@@ -311,6 +386,30 @@ impl MemoryPort for MemoryMap {
                 kind: self.regions[i].kind,
                 index: i,
             })
+    }
+
+    fn read_exact(&self, addr: u64, buf: &mut [u8]) -> Result<(), AccessFault> {
+        for r in &self.regions {
+            if addr >= r.base && addr < r.base + r.size {
+                return r.read_slice(addr, buf);
+            }
+        }
+        Err(AccessFault {
+            addr,
+            reason: "unmapped".into(),
+        })
+    }
+
+    fn write_exact(&mut self, addr: u64, buf: &[u8]) -> Result<(), AccessFault> {
+        let idx = self
+            .regions
+            .iter()
+            .position(|r| addr >= r.base && addr < r.base + r.size)
+            .ok_or_else(|| AccessFault {
+                addr,
+                reason: "unmapped".into(),
+            })?;
+        self.regions[idx].write_slice(addr, buf)
     }
 }
 

@@ -11,6 +11,7 @@ use super::Parser;
 use crate::lexer::*;
 use maria_ast::*;
 use maria_core::error::SimError;
+use maria_core::intern::Symbol;
 
 impl Parser {
     /// Fast skip for first pass: collect class name + fast-skip body to endclass.
@@ -247,38 +248,28 @@ impl Parser {
 
     pub(crate) fn parse_class(&mut self) -> Result<ClassDecl, SimError> {
         self.advance(); // consume 'class'
+        // Bentuk non-standar: `class #(type T = int) Name;` (param list SEBELUM nama).
         let mut type_params = Vec::new();
         if self.peek() == &Token::Hash {
-            self.advance();
-            self.expect(Token::LParen)?;
-            loop {
-                if self.peek() == &Token::RParen {
-                    break;
-                }
-                self.expect(Token::Type)?;
-                let tp_name = self.expect_ident()?;
-                let default_type = if self.peek() == &Token::BlockingAssign {
-                    self.advance();
-                    Some(self.parse_type_expr()?)
-                } else {
-                    None
-                };
-                type_params.push(TypeParam {
-                    name: tp_name,
-                    default_type,
-                });
-                if self.peek() == &Token::Comma {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            self.expect(Token::RParen)?;
+            type_params.extend(self.parse_class_param_list()?);
         }
         let name = self.expect_ident()?;
+        // Bentuk LRM (IEEE 1800-2017 §8.3): `class Name #(param_list) extends ...;`
+        // (param list SETELAH nama class).
+        if self.peek() == &Token::Hash {
+            type_params.extend(self.parse_class_param_list()?);
+        }
         let extends = if self.peek() == &Token::Extends {
             self.advance();
             let base_name = self.expect_ident()?;
+            // Base class package-qualified: `extends pkg::cls;`
+            let base_name = if self.peek() == &Token::Scope {
+                self.advance();
+                let inner = self.expect_ident()?;
+                Symbol::intern(&format!("{}::{}", base_name, inner))
+            } else {
+                base_name
+            };
             // Handle parameterized base class: extends Base #(.PARAM(value), ...)
             if self.peek() == &Token::Hash {
                 self.advance();
@@ -564,5 +555,133 @@ impl Parser {
             type_params,
             members,
         })
+    }
+
+    /// Parse parameter port list class: `#(type T = int, parameter int AW = 7)`.
+    /// Mendukung item `type NAME [= type]` (LRM) maupun `parameter [type] NAME
+    /// [= value]` (dipakai mis. pulp_riscv_dbg `class req_t #(parameter int...)`).
+    pub(crate) fn parse_class_param_list(&mut self) -> Result<Vec<TypeParam>, SimError> {
+        self.advance(); // '#'
+        self.expect(Token::LParen)?;
+        let mut type_params = Vec::new();
+        loop {
+            if matches!(self.peek(), Token::RParen | Token::Eof) {
+                break;
+            }
+            let is_param = matches!(self.peek(), Token::Param | Token::Parameter);
+            // `type NAME [= type_expr]` — port tipe.
+            if self.peek() == &Token::Type || (is_param && self.peek_ahead(1) == &Token::Type) {
+                if is_param {
+                    self.advance(); // parameter
+                }
+                self.advance(); // type
+                let tp_name = self.expect_ident()?;
+                let default_type = if self.peek() == &Token::BlockingAssign {
+                    self.advance();
+                    Some(self.parse_type_expr()?)
+                } else {
+                    None
+                };
+                type_params.push(TypeParam {
+                    name: tp_name,
+                    default_type,
+                });
+            } else {
+                // `parameter [type] NAME [= value]` atau `int NAME = value`.
+                if is_param {
+                    self.advance(); // parameter
+                }
+                // Skip tipe (keyword atau user-defined / pkg::type).
+                while matches!(
+                    self.peek(),
+                    Token::Int
+                        | Token::Integer
+                        | Token::Logic
+                        | Token::Bit
+                        | Token::Byte
+                        | Token::Shortint
+                        | Token::Longint
+                        | Token::Time
+                        | Token::Real
+                        | Token::RealTime
+                        | Token::Reg
+                        | Token::String
+                        | Token::Signed
+                        | Token::Unsigned
+                ) {
+                    self.advance();
+                }
+                if matches!(self.peek(), Token::Ident(_))
+                    && matches!(
+                        self.peek_ahead(1),
+                        Token::Ident(_) | Token::Scope | Token::LBrack
+                    )
+                {
+                    // User-defined type — konsumsi ident lalu optional `::`/range.
+                    self.advance(); // type name
+                    while self.peek() == &Token::Scope {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                    while self.peek() == &Token::LBrack {
+                        let _ = self.skip_balanced_paren();
+                    }
+                }
+                let tp_name = match self.peek() {
+                    Token::Ident(n) => {
+                        let name = *n;
+                        self.advance();
+                        name
+                    }
+                    _ => break,
+                };
+                let default_type = if self.peek() == &Token::BlockingAssign {
+                    self.advance(); // '='
+                    let saved = self.pos.get();
+                    match self.parse_expr(0) {
+                        Ok(_) => None,
+                        Err(_) => {
+                            // Nilai kompleks ({..}, '0, dsb.) — lewati seimbang.
+                            self.pos.set(saved);
+                            let mut depth = 0i32;
+                            loop {
+                                match self.peek() {
+                                    Token::Comma if depth <= 0 => break,
+                                    Token::RParen if depth <= 0 => break,
+                                    Token::LParen | Token::LBrace | Token::LBrack => {
+                                        depth += 1;
+                                        self.advance();
+                                    }
+                                    Token::RParen | Token::RBrace | Token::RBrack => {
+                                        depth -= 1;
+                                        self.advance();
+                                    }
+                                    Token::Eof => break,
+                                    _ => {
+                                        self.advance();
+                                    }
+                                }
+                            }
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                type_params.push(TypeParam {
+                    name: tp_name,
+                    default_type,
+                });
+            }
+            if self.peek() == &Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect(Token::RParen)?;
+        Ok(type_params)
     }
 }

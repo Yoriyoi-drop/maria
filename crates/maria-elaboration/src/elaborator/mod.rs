@@ -419,6 +419,7 @@ impl Elaborator {
                     }
                     PackageItem::Import { .. } => continue,
                     PackageItem::Export { .. } => continue,
+                    PackageItem::DpiImport(_) => continue,
                 };
                 items.insert(name, item.clone());
             }

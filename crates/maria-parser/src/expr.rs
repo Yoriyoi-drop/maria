@@ -118,6 +118,17 @@ impl Parser {
             return Ok(args);
         }
         loop {
+            if self.peek() == &Token::Comma {
+                // Empty positional arg: `f(a, , , msg)` — umum pada macro DV
+                // OpenTitan setelah ekspansi (arg default di-skip). Push
+                // placeholder agar jumlah arg tetap; evaluasi tidak memakai.
+                args.push(Expr::Value(Value::Decimal(1)));
+                self.advance();
+                if self.peek() == &Token::RParen {
+                    break;
+                }
+                continue;
+            }
             if self.peek() == &Token::Dot {
                 // Named arg: `.name(expr)` — skip nama, ambil ekspresinya.
                 self.advance();
@@ -510,7 +521,17 @@ impl Parser {
                         self.advance();
                         Symbol::intern("unsigned")
                     }
-                    _ => return Err(self.err("expected system function name")),
+                    // `$` sebagai ekspresi mandiri: `queue[$]` (indeks terakhir),
+                    // `[0:$]` (range tak-berujung), `with ($countones(...) != 1)`.
+                    // Bukan system function — representasikan sebagai ident khusus
+                    // agar parse tidak gagal; elaborate tak memakai nilainya.
+                    _ => {
+                        return Ok(Expr::Ident {
+                            name: Symbol::intern("$"),
+                            line: sf_line,
+                            col: sf_col,
+                        })
+                    }
                 };
                 // SAFETY: Stack buffer 128 bytes cukup untuk semua system function SV
                 // ($display, $monitor, $urandom, dll.). Symbol.as_str() selalu valid UTF-8.
@@ -561,46 +582,50 @@ impl Parser {
                 let line = self.peek_line();
                 let col = self.peek_col();
                 self.advance();
-                // pkg::item resolution
+                // pkg::item::method resolution (with chaining support)
                 if self.peek() == &Token::Scope {
-                    self.advance();
-                    let sc_line = self.peek_line();
-                    let sc_col = self.peek_col();
-                    let item = self.expect_ident()?;
-                    if self.peek() == &Token::LParen {
-                        let fl = self.peek_line();
-                        let fc = self.peek_col();
+                    let mut scope_path = name;
+                    loop {
                         self.advance();
-                        let args = self.parse_call_args()?;
-                        self.expect(Token::RParen)?;
-                        return Ok(Expr::FuncCall {
-                            name: Symbol::intern(&format!("{}::{}", name, item)),
-                            args,
-                            line: fl,
-                            col: fc,
+                        let sc_line = self.peek_line();
+                        let sc_col = self.peek_col();
+                        let item = self.expect_ident()?;
+                        // Check for another :: (chaining: pkg::item::method)
+                        if self.peek() == &Token::Scope {
+                            scope_path = Symbol::intern(&format!("{}::{}", scope_path, item));
+                            continue;
+                        }
+                        if self.peek() == &Token::LParen {
+                            let fl = self.peek_line();
+                            let fc = self.peek_col();
+                            self.advance();
+                            let args = self.parse_call_args()?;
+                            self.expect(Token::RParen)?;
+                            return Ok(Expr::FuncCall {
+                                name: Symbol::intern(&format!("{}::{}", scope_path, item)),
+                                args,
+                                line: fl,
+                                col: fc,
+                            });
+                        }
+                        // Type cast scoped: `pkg::type'(expr)`
+                        if self.peek() == &Token::Quote {
+                            self.advance();
+                            self.expect(Token::LParen)?;
+                            let expr = self.parse_expr(0)?;
+                            self.expect(Token::RParen)?;
+                            return Ok(Expr::Cast {
+                                dtype: Symbol::intern(&format!("{}::{}", scope_path, item)),
+                                expr: Box::new(expr),
+                            });
+                        }
+                        return Ok(Expr::ScopedIdent {
+                            package: scope_path,
+                            item,
+                            line: sc_line,
+                            col: sc_col,
                         });
                     }
-                    // Type cast scoped: `pkg::type'(expr)` — pola umum di OpenTitan
-                    // (`top_pkg::TL_DBW'('b0001)`, `lc_ctrl_pkg::lc_tx_t'(x)`).
-                    // Sebelumnya `'(` yang tersisa di-parse sebagai statement sampah
-                    // sehingga seluruh always block gagal dan `if` berikutnya disangka
-                    // generate item (banjir RT9003/E2001).
-                    if self.peek() == &Token::Quote {
-                        self.advance();
-                        self.expect(Token::LParen)?;
-                        let expr = self.parse_expr(0)?;
-                        self.expect(Token::RParen)?;
-                        return Ok(Expr::Cast {
-                            dtype: Symbol::intern(&format!("{}::{}", name, item)),
-                            expr: Box::new(expr),
-                        });
-                    }
-                    return Ok(Expr::ScopedIdent {
-                        package: name,
-                        item,
-                        line: sc_line,
-                        col: sc_col,
-                    });
                 }
                 // Class#(Type)::method resolution
                 if self.peek() == &Token::Hash {
@@ -628,40 +653,47 @@ impl Parser {
                         Symbol::intern(&format!("{}#{}", name, suffix))
                     };
                     if self.peek() == &Token::Scope {
-                        self.advance();
-                        let sc_line = self.peek_line();
-                        let sc_col = self.peek_col();
-                        let item = self.expect_ident()?;
-                        if self.peek() == &Token::LParen {
-                            if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen
-                            {
+                        let mut scope_path = class_prefix;
+                        loop {
+                            self.advance();
+                            let sc_line = self.peek_line();
+                            let sc_col = self.peek_col();
+                            let item = self.expect_ident()?;
+                            if self.peek() == &Token::Scope {
+                                scope_path = Symbol::intern(&format!("{}::{}", scope_path, item));
+                                continue;
+                            }
+                            if self.peek() == &Token::LParen {
+                                if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen
+                                {
+                                    self.advance();
+                                    self.advance();
+                                    let expr = self.parse_expr(0)?;
+                                    self.expect(Token::RParen)?;
+                                    return Ok(Expr::Cast {
+                                        dtype: Symbol::intern(&format!("{}::{}", scope_path, item)),
+                                        expr: Box::new(expr),
+                                    });
+                                }
+                                let fl = self.peek_line();
+                                let fc = self.peek_col();
                                 self.advance();
-                                self.advance();
-                                let expr = self.parse_expr(0)?;
+                                let args = self.parse_call_args()?;
                                 self.expect(Token::RParen)?;
-                                return Ok(Expr::Cast {
-                                    dtype: Symbol::intern(&format!("{}::{}", class_prefix, item)),
-                                    expr: Box::new(expr),
+                                return Ok(Expr::FuncCall {
+                                    name: Symbol::intern(&format!("{}::{}", scope_path, item)),
+                                    args,
+                                    line: fl,
+                                    col: fc,
                                 });
                             }
-                            let fl = self.peek_line();
-                            let fc = self.peek_col();
-                            self.advance();
-                            let args = self.parse_call_args()?;
-                            self.expect(Token::RParen)?;
-                            return Ok(Expr::FuncCall {
-                                name: Symbol::intern(&format!("{}::{}", class_prefix, item)),
-                                args,
-                                line: fl,
-                                col: fc,
+                            return Ok(Expr::ScopedIdent {
+                                package: scope_path,
+                                item,
+                                line: sc_line,
+                                col: sc_col,
                             });
                         }
-                        return Ok(Expr::ScopedIdent {
-                            package: class_prefix,
-                            item,
-                            line: sc_line,
-                            col: sc_col,
-                        });
                     }
                     return Ok(Expr::Ident {
                         name: class_prefix,

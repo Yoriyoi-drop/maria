@@ -29,9 +29,18 @@ pub const FLAG_OF: u16 = 1 << 11;
 
 /// Backend disk untuk INT 13h (ISO mentah / image).
 pub trait X86Disk {
+    /// Baca `count` sektor (512-byte unit, HDD) mulai `lba`.
     fn read(&mut self, lba: u64, count: u16, buf: &mut [u8]) -> Result<(), String>;
     fn total_sectors(&self) -> u64;
+    /// Baca byte mentah mulai offset byte file (dipakai CD 2048-byte sector:
+    /// INT 13h AH=42/AH=4B dengan drive CD → LBA dalam blok 2048).
+    fn read_bytes(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), String>;
 }
+
+/// Alamat VGA text mode buffer (real mode linear / low memory).
+pub const VGA_TEXT_ADDR: u64 = 0xB8000;
+/// Ukuran buffer VGA text mode yang di-mirror (16 KB, text mode 4 KB + slack).
+pub const VGA_TEXT_SIZE: usize = 0x4000;
 
 /// Interpreter x86 real-mode. Register internal 64-bit (16/32-bit view sesuai
 /// prefix 66). Memori dipinjam dari pemanggil via `MemoryPort`.
@@ -70,6 +79,22 @@ pub struct X86Cpu {
     pub cr: [u32; 8],
     /// True setelah far jump protected-mode (mode 32-bit aktif).
     pub pmode: bool,
+    /// Mirror VGA text buffer (0xB8000+) — setiap sel 2 byte (char+attr).
+    /// Diisi oleh write8/16/32 saat alamat masuk region VGA. Dipakai console
+    /// pasca-pmode (GRUB/kernel menulis langsung ke VRAM, bukan via INT 10h).
+    pub vga: [u8; VGA_TEXT_SIZE],
+    /// Nomor drive CD (El Torito no-emul, biasanya 0xE0). INT 13h AH=42 yang
+    /// memakai drive ini dibaca dalam blok 2048-byte (CD), bukan 512 (HDD).
+    /// None → tidak ada CD; AH=4B AL=01 melaporkan "drive tak ada".
+    pub cd_drive: Option<u8>,
+    /// Prefetch cache instruksi: 16 byte sejak `pf_base`/`pf_cs`. Mengurangi
+    /// access memory-per-byte saat fetch (hot path profil gdb). Di-invalidasi
+    /// tiap lompatan.
+    pf_valid: bool,
+    pf_cs: u16,
+    pf_base: u32,
+    pf_len: usize,
+    pf_data: [u8; 16],
 }
 
 impl X86Cpu {
@@ -96,7 +121,38 @@ impl X86Cpu {
             gdt_cache: Vec::new(),
             cr: [0; 8],
             pmode: false,
+            vga: [0; VGA_TEXT_SIZE],
+            cd_drive: None,
+            pf_valid: false,
+            pf_cs: 0,
+            pf_base: 0,
+            pf_len: 0,
+            pf_data: [0; 16],
         }
+    }
+
+    /// Ambil teks VGA (80x25) dari buffer mirror — cell = char@off, attr@off+1.
+    /// Baris 80 kolom; atribut dibuang; baris kosong di-skip.
+    pub fn vga_text(&self) -> String {
+        let mut s = String::new();
+        for row in 0..25 {
+            let base = row * 80 * 2;
+            let mut line = String::new();
+            for col in 0..80 {
+                let ch = self.vga[base + col * 2];
+                line.push(if (32..=126).contains(&ch) {
+                    ch as char
+                } else {
+                    ' '
+                });
+            }
+            let trimmed = line.trim_end();
+            if !trimmed.is_empty() {
+                s.push_str(trimmed);
+                s.push('\n');
+            }
+        }
+        s
     }
 
     // ── Akses register 8-bit. Indeks x86: 0=AL 1=CL 2=DL 3=BL 4=AH 5=CH 6=DH 7=BH.
@@ -174,6 +230,15 @@ impl X86Cpu {
     #[inline]
     pub fn di_set(&mut self, v: u16) {
         self.r16_set(7, v);
+    }
+    /// DL (low byte DX) — nomor drive BIOS.
+    #[inline]
+    pub fn dl(&self) -> u8 {
+        self.r8(2)
+    }
+    #[inline]
+    pub fn dl_set(&mut self, v: u8) {
+        self.r8_set(2, v);
     }
 
     // ── FLAGS ──
@@ -260,74 +325,108 @@ impl X86Cpu {
     }
     fn read16(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32) -> Result<u16, CpuFault> {
         let a = self.lin(seg, off);
-        let lo = mem
-            .read(a, 1)
-            .map_err(|e| self.fault(format!("read16 0x{:x}: {}", a, e)))? as u8;
-        let hi =
-            mem.read(a + 1, 1)
-                .map_err(|e| self.fault(format!("read16 0x{:x}: {}", a + 1, e)))? as u8;
-        Ok((lo as u16) | ((hi as u16) << 8))
+        let mut b = [0u8; 2];
+        mem.read_exact(a, &mut b)
+            .map_err(|e| self.fault(format!("read16 0x{:x}: {}", a, e)))?;
+        Ok(u16::from_le_bytes(b))
     }
     fn read32(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32) -> Result<u32, CpuFault> {
         let a = self.lin(seg, off);
-        let b0 = mem
-            .read(a, 1)
-            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a, e)))? as u32;
-        let b1 = mem
-            .read(a + 1, 1)
-            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 1, e)))?
-            as u32;
-        let b2 = mem
-            .read(a + 2, 1)
-            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 2, e)))?
-            as u32;
-        let b3 = mem
-            .read(a + 3, 1)
-            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a + 3, e)))?
-            as u32;
-        Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+        let mut b = [0u8; 4];
+        mem.read_exact(a, &mut b)
+            .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a, e)))?;
+        Ok(u32::from_le_bytes(b))
     }
-    fn write8(&self, mem: &mut dyn MemoryPort, seg: u16, off: u32, v: u8) -> Result<(), CpuFault> {
+    fn write8(&mut self, mem: &mut dyn MemoryPort, seg: u16, off: u32, v: u8) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
+        if (VGA_TEXT_ADDR..VGA_TEXT_ADDR + VGA_TEXT_SIZE as u64).contains(&a) {
+            self.vga[(a - VGA_TEXT_ADDR) as usize] = v;
+        }
         mem.write(a, 1, v as u64)
             .map_err(|e| self.fault(format!("write8 0x{:x}: {}", a, e)))
     }
     fn write16(
-        &self,
+        &mut self,
         mem: &mut dyn MemoryPort,
         seg: u16,
         off: u32,
         v: u16,
     ) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
-        mem.write(a, 1, (v & 0xff) as u64)
-            .and_then(|_| mem.write(a + 1, 1, (v >> 8) as u64))
+        if (VGA_TEXT_ADDR..VGA_TEXT_ADDR + VGA_TEXT_SIZE as u64).contains(&a) {
+            let o = (a - VGA_TEXT_ADDR) as usize;
+            if o + 1 < VGA_TEXT_SIZE {
+                self.vga[o] = (v & 0xff) as u8;
+                self.vga[o + 1] = (v >> 8) as u8;
+            }
+        }
+        mem.write_exact(a, &v.to_le_bytes())
             .map_err(|e| self.fault(format!("write16 0x{:x}: {}", a, e)))
     }
     fn write32(
-        &self,
+        &mut self,
         mem: &mut dyn MemoryPort,
         seg: u16,
         off: u32,
         v: u32,
     ) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
-        for i in 0..4 {
-            mem.write(a + i, 1, ((v >> (8 * i)) & 0xff) as u64)
-                .map_err(|e| self.fault(format!("write32 0x{:x}: {}", a + i, e)))?;
+        if (VGA_TEXT_ADDR..VGA_TEXT_ADDR + VGA_TEXT_SIZE as u64).contains(&a) {
+            let o = (a - VGA_TEXT_ADDR) as usize;
+            for i in 0..4 {
+                let idx = o + i;
+                if idx < VGA_TEXT_SIZE {
+                    self.vga[idx] = ((v >> (8 * i)) & 0xff) as u8;
+                }
+            }
         }
-        Ok(())
+        mem.write_exact(a, &v.to_le_bytes())
+            .map_err(|e| self.fault(format!("write32 0x{:x}: {}", a, e)))
     }
 
     fn fetch8(&mut self, mem: &mut dyn MemoryPort) -> Result<u8, CpuFault> {
-        let a = self.lin(self.cs, self.ip as u32);
-        if (0xbdc0..=0xbe30).contains(&a) && std::env::var("MARIA_X86_TRACE").is_ok() {
-            eprintln!(
-                "FETCH @0x{a:x} ip={} cs=0x{:x} pmode={}",
-                self.ip, self.cs, self.pmode
-            );
+        // Prefetch cache: reload 16 byte bila lompatan / di luar buffer.
+        if !self.pf_valid
+            || self.pf_cs != self.cs
+            || !(self.ip >= self.pf_base && self.ip < self.pf_base + self.pf_len as u32)
+        {
+            let a = self.lin(self.cs, self.ip as u32);
+            if (0xbdc0..=0xbe30).contains(&a) && std::env::var("MARIA_X86_TRACE").is_ok() {
+                eprintln!(
+                    "FETCH @0x{a:x} ip={} cs=0x{:x} pmode={}",
+                    self.ip, self.cs, self.pmode
+                );
+            }
+            // Jangan baca melewati batas offset 16-bit (real mode).
+            let cap = if self.pmode {
+                16
+            } else {
+                (0x10000 - (self.ip as usize & 0xffff)).min(16)
+            };
+            let got = match mem.read_exact(a, &mut self.pf_data[..cap]) {
+                Ok(()) => cap,
+                Err(_) => {
+                    // Region terpotong / keluar peta: baca 1 byte saja.
+                    let b = mem
+                        .read(a, 1)
+                        .map_err(|e| self.fault(format!("fetch @0x{a:x}: {}", e)))? as u8;
+                    self.pf_valid = true;
+                    self.pf_cs = self.cs;
+                    self.pf_base = self.ip;
+                    self.pf_len = 1;
+                    self.pf_data[0] = b;
+                    let r = b;
+                    self.ip = self.ip.wrapping_add(1);
+                    return Ok(r);
+                }
+            };
+            self.pf_valid = true;
+            self.pf_cs = self.cs;
+            self.pf_base = self.ip;
+            self.pf_len = got;
         }
-        let b = self.read8(mem, self.cs, self.ip as u32)?;
+        let idx = (self.ip - self.pf_base) as usize;
+        let b = self.pf_data[idx];
         self.ip = self.ip.wrapping_add(1);
         Ok(b)
     }
@@ -459,7 +558,13 @@ impl X86Cpu {
                 reg: modrm.rm,
             });
         }
-        let base_ss = modrm.rm == 2 || modrm.rm == 3 || modrm.rm == 6; // bp-based → SS
+        // Segmen default: BP-based → SS; sisanya DS. PENTING: mod=0, rm=6
+        // (`[disp16]` absolut) BUKAN berbasis BP → harus DS, bukan SS.
+        let base_ss = match modrm.rm {
+            2 | 3 => true,          // bp+si / bp+di → SS
+            6 => modrm.m != 0,      // [bp+d8/d16] → SS; mod=0 = disp16 absolut → DS
+            _ => false,
+        };
         let default_seg = if base_ss { self.ss } else { self.ds };
         let seg = seg_ov.unwrap_or(default_seg);
         let mut off: u32;
@@ -1263,11 +1368,24 @@ impl X86Cpu {
                 self.r32_set(5, saved);
             }
             0xc3 => {
-                self.ip = if opsz == 32 {
+                let popped = if opsz == 32 {
                     self.pop32(mem)?
                 } else {
                     self.pop16(mem)? as u32
+                };
+                if (8_548_000..=8_626_000).contains(&self.steps)
+                    && std::env::var("MARIA_X86_CALLS").is_ok()
+                {
+                    eprintln!(
+                        "RET  step={} @0x{:08x} pop=0x{:08x} sp_after=0x{:08x} cs=0x{:x}",
+                        self.steps,
+                        self.pc(),
+                        popped,
+                        self.sp(),
+                        self.cs
+                    );
                 }
+                self.ip = popped;
             }
             0xc2 => {
                 let n = if opsz == 32 {
@@ -1348,10 +1466,23 @@ impl X86Cpu {
                 } else {
                     sign16(self.fetch16(mem)?) as i64
                 };
+                let ret = self.ip;
                 if opsz == 32 {
                     self.push32(mem, self.ip)?;
                 } else {
                     self.push16(mem, self.ip as u16)?;
+                }
+                if (8_548_000..=8_626_000).contains(&self.steps)
+                    && std::env::var("MARIA_X86_CALLS").is_ok()
+                {
+                    eprintln!(
+                        "CALL step={} @0x{:08x} ret=0x{:08x} target=0x{:08x} sp=0x{:08x}",
+                        self.steps,
+                        self.pc(),
+                        ret,
+                        (ret as i64 + disp) as u32,
+                        self.sp()
+                    );
                 }
                 self.ip = (self.ip as i64 + disp) as u32;
             }
@@ -2110,6 +2241,59 @@ impl X86Cpu {
     /// Prefix 0f: jcc rel16/32 (80-8f), movzx (b6/b7), movsx (be/bf).
     /// Displacement jcc mengikuti operand-size: rel16 di mode 16-bit,
     /// rel32 dengan prefix 66 — PENTING untuk boot code GRUB/ISOLINUX.
+    /// SHLD/SHRD (double-precision shift): 0F A4/A5 shld, 0F AC/AD shrd.
+    /// dest = hasil geser dest, dengan bit yang "masuk" berasal dari src.
+    fn exec_double_shift(
+        &mut self,
+        op: u8,
+        opsz: u8,
+        mem: &mut dyn MemoryPort,
+    ) -> Result<(), CpuFault> {
+        let mr = self.fetch8(mem)?;
+        let m = ModRm {
+            m: mr >> 6,
+            r: (mr >> 3) & 7,
+            rm: mr & 7,
+        };
+        let is_imm = op == 0xa4 || op == 0xac;
+        let is_shrd = op == 0xac || op == 0xad;
+        let count = if is_imm {
+            self.fetch8(mem)? as u32
+        } else {
+            self.r8(1) as u32 // CL
+        };
+        let (bits, mask): (u32, u32) = if opsz == 32 { (32, 31) } else { (16, 15) };
+        let x = count & mask;
+        let ea = self.ea16(mem, m, None)?;
+        let d = self.read_op(mem, &ea, opsz, true)? & ((1u64 << bits) - 1);
+        let s = if opsz == 32 {
+            self.r32(m.r as usize) as u64
+        } else {
+            self.r16(m.r as usize) as u64
+        };
+        let r: u64 = if x == 0 {
+            // count&mask == 0 → tidak ada pergeseran; CF/OF dibiarkan.
+            d
+        } else if is_shrd {
+            (d >> x) | ((s << (bits - x)) & ((1u64 << bits) - 1))
+        } else {
+            ((d << x) & ((1u64 << bits) - 1)) | (s >> (bits - x))
+        };
+        if x > 0 {
+            // CF = bit terakhir yang keluar.
+            let out = if is_shrd { x - 1 } else { bits - x };
+            self.set_flag(FLAG_CF, (d >> out) & 1 != 0);
+            // OF terdefinisi hanya saat x==1 (Intel): MSB hasil XOR MSB dest.
+            if x == 1 {
+                let msb = bits - 1;
+                self.set_flag(FLAG_OF, ((r >> msb) & 1) != ((d >> msb) & 1));
+            }
+        }
+        self.set_logic_flags(r, bits as u8);
+        self.write_op(mem, &ea, r, opsz, true)?;
+        Ok(())
+    }
+
     fn exec_0f_group(&mut self, opsz: u8, mem: &mut dyn MemoryPort) -> Result<(), CpuFault> {
         let op = self.fetch8(mem)?;
         match op {
@@ -2396,6 +2580,10 @@ impl X86Cpu {
                 let swapped = v.swap_bytes();
                 self.r32_set(r, swapped);
             }
+            // ── shld/shrd (0f a4/a5 = shld imm/cl, 0f ac/ad = shrd imm/cl) ──
+            0xa4 | 0xa5 | 0xac | 0xad => {
+                self.exec_double_shift(op, opsz, mem)?;
+            }
             _ => self.halt(&format!("opcode 0f 0x{:02x} belum didukung", op)),
         }
         Ok(())
@@ -2485,6 +2673,15 @@ impl X86Cpu {
         }
     }
 
+    /// Cek apakah range [addr, addr+n) menyentuh buffer VGA text (0xB8000+).
+    /// Write ke VGA harus lewat write8/16/32 per-byte agar mirror terisi.
+    #[inline]
+    fn vga_hits(&self, addr: u64, n: usize) -> bool {
+        let va = VGA_TEXT_ADDR;
+        let vr = VGA_TEXT_ADDR + VGA_TEXT_SIZE as u64;
+        addr < vr && addr + n as u64 > va
+    }
+
     fn movs(
         &mut self,
         mem: &mut dyn MemoryPort,
@@ -2501,14 +2698,25 @@ impl X86Cpu {
                     self.es, src_seg, self.pmode
                 );
             }
-            for i in 0..n {
-                let b = self.read8(mem, src_seg, si + i)?;
-                self.write8(mem, self.es, di + i, b)?;
+            // Fast path: copy bulk (n ∈ {1,2,4}). Dest VGA → per-byte (mirror).
+            let dst_lin = self.lin(self.es, di);
+            if self.vga_hits(dst_lin, n as usize) {
+                for i in 0..n {
+                    let b = self.read8(mem, src_seg, si + i)?;
+                    self.write8(mem, self.es, di + i, b)?;
+                }
+            } else {
+                let mut buf = [0u8; 4];
+                let src_lin = self.lin(src_seg, si);
+                mem.read_exact(src_lin, &mut buf[..n as usize])
+                    .map_err(|e| self.fault(format!("movs read 0x{:x}: {}", src_lin, e)))?;
+                mem.write_exact(dst_lin, &buf[..n as usize])
+                    .map_err(|e| self.fault(format!("movs write 0x{:x}: {}", dst_lin, e)))?;
             }
             let step = self.dir_step(n);
             self.si32_set((si as i64 + step as i64) as u32);
             self.di32_set((di as i64 + step as i64) as u32);
-            if std::env::var("MARIA_X86_TRACE").is_ok() && !rep {
+            if std::env::var("MARIA_X86_TRACE").is_ok() && !rep && false {
                 eprintln!("MOVS after: si=0x{:x} di=0x{:x}", self.si32(), self.di32());
             }
             if !rep {
@@ -2531,12 +2739,18 @@ impl X86Cpu {
     ) -> Result<(), CpuFault> {
         let src_seg = seg_ov.unwrap_or(self.ds);
         loop {
-            let mut neq = false;
             let (si, di) = (self.si32(), self.di32());
-            for i in 0..n {
-                let a = self.read8(mem, src_seg, si + i)?;
-                let b = self.read8(mem, self.es, di + i)?;
-                if a != b {
+            let mut a = [0u8; 4];
+            let mut b = [0u8; 4];
+            let src_lin = self.lin(src_seg, si);
+            let dst_lin = self.lin(self.es, di);
+            mem.read_exact(src_lin, &mut a[..n as usize])
+                .map_err(|e| self.fault(format!("cmps read 0x{:x}: {}", src_lin, e)))?;
+            mem.read_exact(dst_lin, &mut b[..n as usize])
+                .map_err(|e| self.fault(format!("cmps read 0x{:x}: {}", dst_lin, e)))?;
+            let mut neq = false;
+            for i in 0..n as usize {
+                if a[i] != b[i] {
                     neq = true;
                 }
             }
@@ -2544,9 +2758,6 @@ impl X86Cpu {
             let step = self.dir_step(n);
             self.si32_set((si as i64 + step as i64) as u32);
             self.di32_set((di as i64 + step as i64) as u32);
-            if std::env::var("MARIA_X86_TRACE").is_ok() && !rep {
-                eprintln!("MOVS after: si=0x{:x} di=0x{:x}", self.si32(), self.di32());
-            }
             if !rep {
                 break;
             }
@@ -2566,17 +2777,28 @@ impl X86Cpu {
         seg_ov: Option<u16>,
     ) -> Result<(), CpuFault> {
         let _ = seg_ov;
+        // Pola byte dari register A (dilebarkan ke 4 byte).
+        let mut pat = [0u8; 4];
+        for i in 0..n {
+            pat[i as usize] = if n == 1 {
+                self.r8(0)
+            } else if n == 2 {
+                (self.r16(0) >> (8 * i)) as u8
+            } else {
+                (self.r32(0) >> (8 * i)) as u8
+            };
+        }
         loop {
             let di = self.di32();
-            for i in 0..n {
-                let b = if n == 1 {
-                    self.r8(0)
-                } else if n == 2 {
-                    (self.r16(0) >> (8 * i)) as u8
-                } else {
-                    (self.r32(0) >> (8 * i)) as u8
-                };
-                self.write8(mem, self.es, di + i, b)?;
+            let dst_lin = self.lin(self.es, di);
+            if self.vga_hits(dst_lin, n as usize) {
+                // Dest VGA → per-byte (agar mirror VGA ikut terisi).
+                for i in 0..n as usize {
+                    self.write8(mem, self.es, di + i as u32, pat[i])?;
+                }
+            } else {
+                mem.write_exact(dst_lin, &pat[..n as usize])
+                    .map_err(|e| self.fault(format!("stos write 0x{:x}: {}", dst_lin, e)))?;
             }
             self.di32_set((di as i64 + self.dir_step(n) as i64) as u32);
             if !rep {
@@ -2593,15 +2815,16 @@ impl X86Cpu {
     fn lods(&mut self, mem: &mut dyn MemoryPort, n: u32) -> Result<(), CpuFault> {
         let step = self.dir_step(n);
         let si = self.si32();
+        let src_lin = self.lin(self.ds, si);
+        let mut buf = [0u8; 4];
+        mem.read_exact(src_lin, &mut buf[..n as usize])
+            .map_err(|e| self.fault(format!("lods read 0x{:x}: {}", src_lin, e)))?;
         if n == 1 {
-            let b = self.read8(mem, self.ds, si)?;
-            self.r8_set(0, b);
+            self.r8_set(0, buf[0]);
         } else if n == 2 {
-            let v = self.read16(mem, self.ds, si)?;
-            self.r16_set(0, v);
+            self.r16_set(0, u16::from_le_bytes([buf[0], buf[1]]));
         } else {
-            let v = self.read32(mem, self.ds, si)?;
-            self.r32_set(0, v);
+            self.r32_set(0, u32::from_le_bytes(buf));
         }
         self.si32_set((si as i64 + step as i64) as u32);
         Ok(())
@@ -2699,22 +2922,74 @@ impl X86Cpu {
             0x42 => {
                 // extended read: DAP 16-byte di DS:SI (size@0, count@2,
                 // offset@4, seg@6, lba@8) — layout yang dipakai boot loader
-                // real (isohdpfx/GRUB), BUKAN 24-byte (seg@12).
-                let count = self.read16(mem, self.ds, self.si() as u32 + 2)?;
-                let off = self.read16(mem, self.ds, self.si() as u32 + 4)?;
-                let seg = self.read16(mem, self.ds, self.si() as u32 + 6)?;
-                let lba = self.read32(mem, self.ds, self.si() as u32 + 8)? as u64;
-                let mut data = vec![0u8; (count as usize) * 512];
-                match self.read_disk(lba, count, &mut data) {
+                // real (isohdpfx/GRUB), BUKAN 24-byte (seg@12). LBA = 64-bit
+                // (dword rendah + dword tinggi), bukan 32-bit — DAP spec.
+                let si = self.si() as u32;
+                let count = self.read16(mem, self.ds, si + 2)?;
+                let off = self.read16(mem, self.ds, si + 4)?;
+                let seg = self.read16(mem, self.ds, si + 6)?;
+                let lba = self.read32(mem, self.ds, si + 8)? as u64
+                    | ((self.read32(mem, self.ds, si + 12)? as u64) << 32);
+                // Drive CD (El Torito no-emul): LBA & count dalam blok 2048-byte
+                // (CD logical sector), bukan 512 (HDD). GRUB CD (biosdisk)
+                // membuka CD dengan log_sector_size=11 → semua AH=42 via DL CD.
+                let is_cd = self.is_cd_drive(self.dl());
+                let unit: u64 = if is_cd { 2048 } else { 512 };
+                let mut data = vec![0u8; (count as usize) * unit as usize];
+                match if is_cd {
+                    self.read_cd_blocks(lba, count, &mut data)
+                } else {
+                    self.read_disk(lba, count, &mut data)
+                } {
                     Ok(()) => {
-                        for i in 0..data.len() {
-                            self.write8(mem, seg, off as u32 + i as u32, data[i])?;
+                        // Tulis bulk ke buffer seg:off (fast path).
+                        let dst_lin = self.lin(seg, off as u32);
+                        if self.vga_hits(dst_lin, data.len()) {
+                            for (i, &b) in data.iter().enumerate() {
+                                self.write8(mem, seg, off as u32 + i as u32, b)?;
+                            }
+                        } else {
+                            mem.write_exact(dst_lin, &data).map_err(|e| {
+                                self.fault(format!("int13 AH=42 buf 0x{:x}: {}", dst_lin, e))
+                            })?;
                         }
                         self.r8h_set(0, 0);
                         self.set_flag(FLAG_CF, false);
                     }
                     Err(_) => {
                         self.r8h_set(0, 0x0c);
+                        self.set_flag(FLAG_CF, true);
+                    }
+                }
+            }
+            0x4b => {
+                // El Torito/BIOS CD extensions.
+                // AL=01: Get CD-ROM Information — isi CD drive parameters (CDRP)
+                // di DS:SI; GRUB biosdisk membaca media_type@1 dan drive_no@2.
+                // AL=00: read dengan callback (grub cdrom.S lama) — belum didukung.
+                let al = self.r8(0);
+                let Some(dn) = self.cd_drive else {
+                    // Tidak ada CD → gagal (GRUB: "no CD").
+                    self.r8h_set(0, 0x31);
+                    self.set_flag(FLAG_CF, true);
+                    return Ok(());
+                };
+                match al {
+                    0x01 => {
+                        let base = (self.ds as u64) * 16 + self.si() as u64;
+                        // struct grub_biosdisk_cdrp (biosdisk.h):
+                        //   size@0, media_type@1, drive_no@2, controller_no@3,
+                        //   image_lba@4..8, ...
+                        mem.write(base + 1, 1, 0)
+                            .map_err(|e| self.fault(format!("cdrp media_type: {e}")))?;
+                        mem.write(base + 2, 1, dn as u64)
+                            .map_err(|e| self.fault(format!("cdrp drive_no: {e}")))?;
+                        self.r8h_set(0, 0); // sukses
+                        self.set_flag(FLAG_CF, false);
+                    }
+                    _ => {
+                        // AL=00 read-with-callback: belum didukung → CF error.
+                        self.r8h_set(0, 0x05);
                         self.set_flag(FLAG_CF, true);
                     }
                 }
@@ -2732,6 +3007,31 @@ impl X86Cpu {
             return Err("tidak ada disk".into());
         };
         disk.read(lba, count, buf)
+    }
+
+    /// Drive `dl` adalah drive CD (El Torito no-emul) yang dikonfigurasi?
+    #[inline]
+    fn is_cd_drive(&self, dl: u8) -> bool {
+        self.cd_drive == Some(dl)
+    }
+
+    /// Baca `count` blok 2048-byte dari CD ISO: byte offset = lba * 2048.
+    /// Tiap blok dibaca terpisah agar EOF parsial di-zero-fill benar.
+    fn read_cd_blocks(&mut self, lba: u64, count: u16, buf: &mut [u8]) -> Result<(), String> {
+        let Some(disk) = self.disk.as_mut() else {
+            return Err("tidak ada disk".into());
+        };
+        let mut pos = 0usize;
+        for i in 0..count as u64 {
+            let off = lba.saturating_mul(2048) + i * 2048;
+            let end = (pos + 2048).min(buf.len());
+            if end <= pos {
+                break;
+            }
+            disk.read_bytes(off, &mut buf[pos..end])?;
+            pos = end;
+        }
+        Ok(())
     }
 
     /// INT 15h — system: AX=E820 memory map, AH=88 extended mem size.
@@ -2841,6 +3141,34 @@ impl X86Cpu {
         self.sp_set(0x7c00);
         Ok(())
     }
+
+    // ── boot helper CD (El Torito no-emul) ──
+    /// Muat boot image ISO (cdboot/GRUB) ke 0x0000:0x7C00 seperti BIOS CD:
+    /// DL = nomor drive CD (`drive`, biasanya 0xE0) + `cd_drive` dikonfigurasi
+    /// agar INT 13h dibaca sebagai drive CD (blok 2048).
+    pub fn load_boot_image(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        data: &[u8],
+        drive: u8,
+    ) -> Result<(), CpuFault> {
+        // Muat maksimal sampai 0x9FC00 (bawah EBDA), sisanya tidak relevan
+        // boot image no-emul (cdboot 512 byte; BIOS umumnya muat 1 sektor).
+        let cap = (0x9FC00 - 0x7C00).min(data.len());
+        self.write8(mem, 0x0000, 0x7c00, 0)?; // pastikan region ada
+        for i in 0..cap {
+            self.write8(mem, 0x0000, 0x7c00 + i as u32, data[i])?;
+        }
+        self.cs = 0x0000;
+        self.ip = 0x7c00;
+        self.ds = 0x0000;
+        self.es = 0x0000;
+        self.ss = 0x0000;
+        self.sp_set(0x7c00);
+        self.dl_set(drive);
+        self.cd_drive = Some(drive);
+        Ok(())
+    }
 }
 
 /// Disk backend dari file mentah (ISO / image). `lba` = sektor 512-byte.
@@ -2892,6 +3220,25 @@ impl X86Disk for FileDisk {
     fn total_sectors(&self) -> u64 {
         self.len / 512
     }
+
+    fn read_bytes(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), String> {
+        use std::io::{Read, Seek, SeekFrom};
+        if offset >= self.len {
+            // baca lewat EOF: zero-fill (CD media sering baca melewati akhir).
+            buf.fill(0);
+            return Ok(());
+        }
+        let avail = self.len.saturating_sub(offset) as usize;
+        let n = avail.min(buf.len());
+        self.file
+            .seek(SeekFrom::Start(offset))
+            .map_err(|e| e.to_string())?;
+        self.file
+            .read_exact(&mut buf[..n])
+            .map_err(|e| e.to_string())?;
+        buf[n..].fill(0);
+        Ok(())
+    }
 }
 
 impl CpuCore for X86Cpu {
@@ -2907,6 +3254,24 @@ impl CpuCore for X86Cpu {
             });
         }
         self.steps += 1;
+        let dbg_step = (8_623_590..=8_623_680).contains(&self.steps)
+            && std::env::var("MARIA_X86_DBG").is_ok();
+        if dbg_step {
+            // State sebelum instruksi (dipecahkan per-byte, tanpa akses memori
+            // tambahan yang bisa salah saat mode campuran).
+            let pc = self.pc();
+            let mut bs = [0u8; 8];
+            for (i, b) in bs.iter_mut().enumerate() {
+                *b = self.read8(mem, self.cs, self.ip.wrapping_add(i as u32))?;
+            }
+            eprintln!(
+                "DBG step={} pc=0x{:08x} cs=0x{:x} ip=0x{:08x} pmode={} cr0={:#x} sp=0x{:08x} ax={:#x} bx={:#x} cx={:#x} dx={:#x} si={:#x} di={:#x} bp={:#x} [{}]",
+                self.steps, pc, self.cs, self.ip, self.pmode, self.cr[0],
+                self.gpr[4], self.gpr[0], self.gpr[3], self.gpr[1], self.gpr[2],
+                self.gpr[6], self.gpr[7], self.gpr[5],
+                bs.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+            );
+        }
         self.exec_one(mem)?;
         if self.halted {
             return Ok(CpuStep::Trap {
@@ -2944,6 +3309,14 @@ impl CpuCore for X86Cpu {
 
     fn isa(&self) -> Isa {
         Isa::X86_64
+    }
+
+    /// Console output BIOS (INT 10h AH=0E teletype / INT 21h DOS output).
+    /// Di-wire ke `MachineResult.console` agar CLI `--boot-iso` menampilkan
+    /// output BIOS nyata (sebelumnya selalu kosong — `out` tidak pernah
+    /// diekspos).
+    fn console_output(&self) -> &[u8] {
+        &self.out
     }
 }
 
@@ -3236,6 +3609,64 @@ mod tests {
     }
 
     #[test]
+    fn test_shrd_shld() {
+        // 16-bit SHRD imm8 (0f ac /2, imm): shrd ax, cx, 4
+        // ax = 0x1234, cx = 0xABCD → (0x1234>>4) | (0xABCD<<12) = 0x0123 | 0xD000 = 0xD123
+        // Bahaya endian: shrd dest, src, x: dest.right(x) | src.left(16-x)
+        let code = [
+            0xb8, 0x34, 0x12,             // mov ax, 0x1234
+            0xb9, 0xcd, 0xab,             // mov cx, 0xABCD
+            0x0f, 0xac, 0xc8, 0x04,       // shrd ax, cx, 4
+            0x90,
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        assert_eq!(cpu.r16(0), 0xD123, "shrd ax, cx, 4 = 0xD123");
+        // CF = bit terakhir keluar = bit (x-1=3) dari dest 0x1234 = 0
+        assert_eq!(cpu.flag(FLAG_CF), false, "CF = bit 3 dest = 0");
+
+        // 32-bit SHRD imm (prefix 66): shrd eax, ecx, 8
+        // eax = 0x12345678, ecx = 0xAAAAAAAA → (eax>>8)|(ecx<<24) = 0x00123456 | 0xAA000000 = 0xAA123456
+        let code = [
+            0x66, 0xb8, 0x78, 0x56, 0x34, 0x12, // mov eax, 0x12345678
+            0x66, 0xb9, 0xaa, 0xaa, 0xaa, 0xaa, // mov ecx, 0xAAAAAAAA
+            0x66, 0x0f, 0xac, 0xc8, 0x08,       // shrd eax, ecx, 8
+            0x90,
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        assert_eq!(cpu.r32(0), 0xAA12_3456, "shrd eax, ecx, 8");
+
+        // SHLD 16-bit: shld ax, cx, 4 → (0x1234<<4)|(0xABCD>>12) = 0x2340|0x000A = 0x234A
+        let code = [
+            0xb8, 0x34, 0x12,             // mov ax, 0x1234
+            0xb9, 0xcd, 0xab,             // mov cx, 0xABCD
+            0x0f, 0xa4, 0xc8, 0x04,       // shld ax, cx, 4
+            0x90,
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        assert_eq!(cpu.r16(0), 0x234A, "shld ax, cx, 4 = 0x234A");
+
+        // SHRD by CL (0f ad): cl = 3 → shrd ax, dx, 3
+        // ax = 0x1234, dx = 0xABCD → (0x1234>>3)|(0xABCD<<13) = 0x0246 | 0xA000 = 0xA246
+        let code = [
+            0xb8, 0x34, 0x12,             // mov ax, 0x1234
+            0xba, 0xcd, 0xab,             // mov dx, 0xABCD (bukan CX — CL dipakai count)
+            0xb1, 0x03,                   // mov cl, 3
+            0x0f, 0xad, 0xd0,             // shrd ax, dx, cl  (modrm D0: rm=AX dest, reg=DX src)
+            0x90,
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 5);
+        assert_eq!(cpu.r16(0), 0xA246, "shrd ax, dx, cl(3) = 0xA246");
+    }
+
+    #[test]
     fn test_rdtsc_returns_nonzero() {
         // RDTSC (0f 31): harus return timestamp > 0 setelah beberapa instruksi
         let code = [
@@ -3383,5 +3814,157 @@ mod tests {
         assert!(cpu.flag(FLAG_CF), "sahf CF");
         assert!(!cpu.flag(FLAG_AF), "sahf AF harus bersih");
         assert!(!cpu.flag(FLAG_PF), "sahf PF harus bersih");
+    }
+
+    /// E2E boot CD (El Torito): load_boot_image (DL=0xE0) + AH=42 drive CD
+    /// membaca dalam blok 2048 (byte offset = lba*2048). Disk rekaman mencatat
+    /// read_bytes — cdboot harus membacanya di offset bi_file*2048 = 667*2048.
+    #[test]
+    fn test_cd_boot_eltorito_ah42_reads_2048_block() {
+        use crate::iso::{parse_eltorito, read_boot_image};
+        struct RecDisk {
+            reads: Vec<u64>,
+        }
+        impl X86Disk for RecDisk {
+            fn read(&mut self, _lba: u64, _count: u16, buf: &mut [u8]) -> Result<(), String> {
+                buf.fill(0);
+                Ok(())
+            }
+            fn read_bytes(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), String> {
+                self.reads.push(offset);
+                buf.fill(0xEE);
+                Ok(())
+            }
+            fn total_sectors(&self) -> u64 {
+                0
+            }
+        }
+        let iso = root_of("ubuntu-26.04-desktop-amd64.iso");
+        if !std::path::Path::new(&iso).exists() {
+            eprintln!("skipped: ISO tidak ada");
+            return;
+        }
+        let mut f = std::fs::File::open(&iso).unwrap();
+        let boot = parse_eltorito(&mut f).unwrap();
+        assert_eq!(boot.entry.image_lba, 667);
+        let image = read_boot_image(&mut f, &boot.entry, 0x10000).unwrap();
+        let mut m = mem();
+        let mut cpu = X86Cpu::new();
+        cpu.disk = Some(Box::new(RecDisk { reads: Vec::new() }));
+        cpu.load_boot_image(&mut m, &image, 0xE0).unwrap();
+        assert_eq!(cpu.cd_drive, Some(0xE0));
+        assert_eq!(cpu.dl(), 0xE0);
+        // cdboot step 1-32: inisialisasi + baca bi_file (LBA 667, blok 2048).
+        run(&mut cpu, &mut m, 40);
+        // Target baca cdboot: esc:bx = (DATA_ADDR-0x200)>>4 : 0 → 0x800:0 = linear 0x8000.
+        // Sebaris data 0xEE dari read_bytes → menandakan read_cd_blocks dipakai.
+        let b = m.read(0x8000, 1).unwrap();
+        assert_eq!(b, 0xEE, "cdboot AH=42 (CD) harus membaca via read_bytes (blok 2048)");
+        // Belum halt.
+        assert!(!cpu.halted, "cdboot 40 step tanpa fault");
+    }
+
+    /// E2E Machine: output INT 10h AH=0E (BIOS teletype) harus muncul di
+    /// `MachineResult.console` — sebelumnya X86Cpu.`out` tidak pernah
+    /// diekspos lewat `console_output()` → CLI `--boot-iso` selalu
+    /// "BIOS console:" kosong walau BIOS sudah mencetak "GRUB ".
+    #[test]
+    fn test_console_output_machine_propagates() {
+        use crate::machine::Machine;
+        // loop @0x7c00: lodsb; cmp al,0; je done(0x7c0e); mov ah,0x0e; int 10h; jmp loop
+        // done @0x7c0e: hlt. data "Hi!\0" @0x7c11.
+        let code = [
+            0xbe, 0x11, 0x7c, // 0x7c00: mov si, 0x7c11
+            0xac,             // 0x7c03: lodsb
+            0x3c, 0x00,       // 0x7c04: cmp al, 0
+            0x74, 0x06,       // 0x7c06: je +6 → 0x7c0e
+            0xb4, 0x0e,       // 0x7c08: mov ah, 0x0e
+            0xcd, 0x10,       // 0x7c0a: int 10h
+            0xeb, 0xf1,       // 0x7c0c: jmp -15 → 0x7c00
+            0xf4,             // 0x7c0e: hlt (done)
+            0x90, 0x90,       // 0x7c0f-0x7c10: pad
+            b'H', b'i', b'!', 0x00, // 0x7c11
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        cpu.disk = None;
+        let mut machine = Machine::new(Box::new(cpu), m, 20);
+        let r = machine.run().unwrap();
+        assert_eq!(r.console, b"Hi!", "console harus berisi output INT 10h");
+        assert!(r.summary().contains("console: [Hi!] (3 bytes)"));
+    }
+
+    /// VGA text buffer mirror: write16 ke 0xB8000 ter-capture di `cpu.vga`
+    /// dan `vga_text()` mengembalikan baris teks 80x25.
+    #[test]
+    fn test_vga_text_mirror() {
+        let mut m = mem();
+        // mov word [ds:0x0000], 0x0748 ('H'); mov word [ds:0x0002], 0x0769 ('i')
+        // dengan ds=0xB800 → alamat linear 0xB8000 (region VGA text).
+        let code = [
+            0xc7, 0x06, 0x00, 0x00, 0x48, 0x07, // mov word [0x0000], 0x0748
+            0xc7, 0x06, 0x02, 0x00, 0x69, 0x07, // mov word [0x0002], 0x0769
+        ];
+        let mut cpu = load(&mut m, &code);
+        cpu.ds = 0xB800;
+        run(&mut cpu, &mut m, 2);
+        assert_eq!(cpu.vga[0], b'H');
+        assert_eq!(cpu.vga[1], 0x07);
+        assert_eq!(cpu.vga[2], b'i');
+        let t = cpu.vga_text();
+        assert!(t.starts_with("Hi"), "vga_text harus 'Hi...', dapat: {:?}", t);
+        // Memori guest juga menerima tulis (region RAM menutupi 0xB8000).
+        assert_eq!(m.read(0xB8000, 2).unwrap(), 0x0748);
+    }
+
+    /// INT 13h AH=42 DAP 64-bit LBA: dword tinggi (+12) harus ikut dibaca.
+    /// Disk rekaman mencatat LBA yang diminta.
+    #[test]
+    fn test_int13_dap_64bit_lba() {
+        struct RecDisk {
+            lba: u64,
+            count: u16,
+        }
+        impl X86Disk for RecDisk {
+            fn read(&mut self, lba: u64, count: u16, buf: &mut [u8]) -> Result<(), String> {
+                self.lba = lba;
+                self.count = count;
+                // Tulis LBA yang diminta ke awal buffer agar bisa diverifikasi
+                // oleh test (Box<dyn> tak bisa dibaca balik).
+                for (i, b) in lba.to_le_bytes().iter().enumerate() {
+                    if i < buf.len() {
+                        buf[i] = *b;
+                    }
+                }
+                Ok(())
+            }
+            fn total_sectors(&self) -> u64 {
+                0x1_0000_0002
+            }
+            fn read_bytes(&mut self, _offset: u64, buf: &mut [u8]) -> Result<(), String> {
+                buf.fill(0xBB);
+                Ok(())
+            }
+        }
+        let mut m = mem();
+        // DAP di DS:SI = 0:0x600: lba_lo=2 lba_hi=0x42 → lba = 0x42_0000_0002
+        m.write(0x602, 1, 1).unwrap(); // count
+        m.write(0x604, 1, 0x00).unwrap(); // offset low = 0
+        m.write(0x605, 1, 0x00).unwrap(); // offset high = 0
+        m.write(0x606, 1, 0x00).unwrap(); // seg low
+        m.write(0x607, 1, 0x10).unwrap(); // seg = 0x1000 (buffer @ 0x10000)
+        m.write(0x608, 1, 2).unwrap(); // lba lo (dword 1)
+        m.write(0x60c, 1, 0x42).unwrap(); // lba hi (dword 2)
+        let mut cpu = load(&mut m, &[0xcd, 0x13]); // int 13h
+        cpu.disk = Some(Box::new(RecDisk { lba: 0, count: 0 }));
+        cpu.ds = 0;
+        cpu.si_set(0x600);
+        cpu.r8h_set(0, 0x42);
+        run(&mut cpu, &mut m, 1);
+        assert!(!cpu.cf(), "INT 13h AH=42 harus sukses");
+        // Buffer 0x1000:0 berisi LBA 64-bit yang diminta disk (0x42_0000_0002).
+        let lba = m.read(0x10000, 8).unwrap();
+        assert_eq!(lba, 0x42_0000_0002, "DAP LBA 64-bit harus ikut dword tinggi");
+        let _ = cpu.disk.as_ref().unwrap().total_sectors();
     }
 }

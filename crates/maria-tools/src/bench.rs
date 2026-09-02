@@ -19,10 +19,10 @@ pub struct BenchArgs<'a> {
 
 /// Hasil satu run.
 struct RunResult {
-    total_ms: u64,
-    parse_ms: u64,
+    total_us: u64,
+    parse_us: u64,
     #[allow(dead_code)]
-    elab_ms: u64,
+    elab_us: u64,
     processed: usize,
     cached: usize,
 }
@@ -63,38 +63,38 @@ pub fn run(args: &BenchArgs) -> Result<(), SimError> {
 
         let start = Instant::now();
         let (_design, _ir, _len) = session.compile_and_elaborate(None)?;
-        let total_ms = start.elapsed().as_millis() as u64;
+        let total_us = start.elapsed().as_micros() as u64;
 
         let t = &session.timing;
         results.push(RunResult {
-            total_ms,
-            parse_ms: t.parse_ms,
-            elab_ms: t.elab_ms,
+            total_us,
+            parse_us: t.parse_us,
+            elab_us: t.elab_us,
             processed: t.processed_files,
             cached: t.cached_files,
         });
         println!(
-            "  run {}/{}: compile {} ms (parse {} ms, elab {} ms, {} file)",
+            "  run {}/{}: compile {} µs (parse {} µs, elab {} µs, {} file)",
             i + 1,
             runs,
-            total_ms,
-            t.parse_ms,
-            t.elab_ms,
+            total_us,
+            t.parse_us,
+            t.elab_us,
             t.processed_files
         );
     }
 
     // ── Agregasi ──
-    let min = results.iter().map(|r| r.total_ms).min().unwrap_or(0);
-    let max = results.iter().map(|r| r.total_ms).max().unwrap_or(0);
-    let avg = results.iter().map(|r| r.total_ms).sum::<u64>() / runs as u64;
-    let avg_parse = results.iter().map(|r| r.parse_ms).sum::<u64>() / runs as u64;
+    let min = results.iter().map(|r| r.total_us).min().unwrap_or(0);
+    let max = results.iter().map(|r| r.total_us).max().unwrap_or(0);
+    let avg = results.iter().map(|r| r.total_us).sum::<u64>() / runs as u64;
+    let avg_parse = results.iter().map(|r| r.parse_us).sum::<u64>() / runs as u64;
 
     section("Result");
-    kv("compile min", format!("{} ms", min));
-    kv("compile max", format!("{} ms", max));
-    kv("compile avg", format!("{} ms", avg));
-    kv("parse avg", format!("{} ms", avg_parse));
+    kv("compile min", format!("{} µs", min));
+    kv("compile max", format!("{} µs", max));
+    kv("compile avg", format!("{} µs", avg));
+    kv("parse avg", format!("{} µs", avg_parse));
 
     // Throughput
     let files_per_sec = if avg > 0 {

@@ -304,7 +304,7 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
     section("Synthesis Result");
     print!("{}", emit_summary(nl));
     kv("check score", format!("{:.1}/100", check.overall_score()));
-    kv("elab time", format!("{} ms", session.timing.elab_ms));
+    kv("elab time", format!("{} µs", session.timing.elab_us));
 
     // ── Output ──
     let prefix = args

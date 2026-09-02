@@ -19956,3 +19956,353 @@ endmodule
     // clk toggle tiap 5 tu mulai t=5 → posedge di 5,15,...,95 = 10 posedge
     assert_eq!(av, 10, "hasil fallback identik event-driven (a=10)");
 }
+
+// ── PARSER-REGRESSION (OpenTitan RTL) ──────────────────────────────────────
+// Setiap test di bawah adalah regresi bug parser nyata yang ditemukan saat
+// compile filelist RTL OpenTitan (`--filelist opentitan_rtl.f --recompile`).
+
+#[test]
+fn test_case_default_bare_semicolon() {
+    // hmac_core.sv: `unique case (...) ... default; endcase` — `default;`
+    // tanpa ': ' dan tanpa statement = default kosong (valid SV).
+    let source = r#"
+module tb;
+    int out;
+    always_comb begin
+        case (out)
+          0: out = 1;
+          default;
+        endcase
+    end
+    initial begin
+        out = 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "case `default;` gagal parse: {:?}", design.err());
+}
+
+#[test]
+fn test_assign_drive_strength() {
+    // prim_pad_wrapper.sv: `assign (weak0, weak1) inout_io = ...;`
+    let source = r#"
+module tb(input logic in_io);
+    logic sig;
+    assign (weak0, weak1) sig = in_io;
+    assign (strong0, strong1) sig2 = in_io;
+    initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "assign drive strength gagal parse: {:?}", design.err());
+}
+
+#[test]
+fn test_for_loop_compound_step() {
+    // ibex_alu.sv: `for (int unsigned i = 1; i < 32; i += 2)` — `+=` di step.
+    let source = r#"
+module tb;
+    int acc;
+    initial begin
+        acc = 0;
+        for (int unsigned i = 1; i < 8; i += 2)
+            acc += i;
+        if (acc != 16) $error("acc=%0d", acc);
+        $finish;
+    end
+endmodule
+"#;
+    let result = simulate_signals(source, 10);
+    assert!(result.is_ok(), "for `i += 2` gagal sim: {:?}", result.err());
+}
+
+#[test]
+fn test_dpi_export_function_no_parens() {
+    // ibex_if_stage.sv: `export "DPI-C" function simutil_get_scramble_key;`
+    let source = r#"
+module tb;
+    export "DPI-C" function simutil_get_scramble_key;
+    export "DPI-C" function simutil_get_scramble_nonce;
+    initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "DPI export tanpa parens gagal parse: {:?}", design.err());
+}
+
+#[test]
+fn test_unpacked_array_port_single_dim() {
+    // ibex_pmp.sv: `output logic pmp_req_err_o [PMPNumChan]` — dimensi
+    // unpacked tunggal tanpa range sesudah nama port.
+    let source = r#"
+module tb (
+    input  logic [7:0] data_i [4],
+    output logic       flag_o  [4]
+);
+    assign flag_o[0] = data_i[0][0];
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "unpacked array port [N] gagal parse: {:?}", design.err());
+}
+
+#[test]
+fn test_double_backtick_macro_paste() {
+    // otbn.sv `` `define DEF_FAC_BIT(NAME) ...``NAME``... `` — paste arg
+    // dengan backtick ganda (OpenTitan extension).
+    let source = r#"
+`define DEF_FAC_BIT(NAME) \
+  assign hw2reg.``NAME``.d = 1'b1;
+module top_tb(input logic a);
+    logic hw2reg_bit;
+    `DEF_FAC_BIT(foo)
+    initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "double-backtick paste gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_param_class_after_name() {
+    // pulp_riscv_dbg dmi_test.sv: `class req_t #(parameter int AW = 7);`
+    // — param list SETELAH nama class, item `parameter int N = value`.
+    let source = r#"
+package pkg;
+  class req_t #(
+    parameter int AW = 7
+  );
+    int data;
+  endclass
+endpackage
+module tb;
+    pkg::req_t q;
+    initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "class #(parameter ...) gagal parse: {:?}", design.err());
+}
+
+#[test]
+fn test_virtual_class_in_package() {
+    // dmi_test.sv: `virtual class rand_dmi #(parameter int AW = 32);`
+    let source = r#"
+package pkg;
+  virtual class rand_dmi #(
+    parameter int   AW = 32
+  );
+    int data;
+  endclass
+endpackage
+module tb;
+    pkg::rand_dmi d;
+    initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "virtual class di package gagal parse: {:?}", design.err());
+}
+
+#[test]
+fn test_function_automatic_pkgtype_return() {
+    // lc_ctrl_pkg.sv: `function automatic prim_mubi_pkg::mubi4_t
+    // lc_to_mubi4(lc_tx_t val);` — return type package-qualified.
+    let source = r#"
+package lc_ctrl_pkg;
+  function automatic prim_mubi_pkg::mubi4_t lc_to_mubi4(lc_tx_t val);
+    lc_to_mubi4 = 0;
+  endfunction
+endpackage
+module tb;
+    import lc_ctrl_pkg::*;
+    initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "function auto pkg::type gagal parse: {:?}", design.err());
+}
+
+// ── PARSER-REGRESSION 2 (FastLexer/preprocessor, OpenTitan filelist) ─────────
+// Deret bug nyata dari jalur `run_fast` (CompileSession + FastLexer) —
+// FastLexer punya path tersendiri lintas filelist, beda dari legacy lexer.
+
+#[test]
+fn test_undefined_macro_backtick_parse() {
+    // `default: `uvm_fatal(`gfn, "...")` + `endcase` — FastLexer LAMA membuang
+    // seluruh baris pada backtick undefined → `endcase` jadi
+    // "expected expression, found Endcase".
+    let source = r#"
+module tb;
+  int mode;
+  initial begin
+    case (mode)
+      default: `uvm_fatal(`gfn, "no!")
+    endcase
+  end
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "undefined macro di case default gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_macro_stringify_direct_usage() {
+    // csrng_err_vseq.sv: `` $assertoff(0, `"path`") `` — stringify dipakai
+    // langsung di kode (di luar body macro) → harus jadi string literal.
+    let source = r#"
+module tb;
+  initial begin
+    $assertoff(0, `"tb.dut.sig`");
+    #1 $finish;
+  end
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "stringify langsung gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_macro_param_default_paste() {
+    // tb__xbar_connect.sv: `define M(tl, inst, sig, pd_hier = ) \ ...``pd_hier``...
+    // — param default dipanggil tanpa arg → paste ` ```pd_hier``` ` harus kosong.
+    let source = r#"
+`define DRIVE_IF(tl_name, inst_name, sig_name, pd_hier = ) \
+     force ``tl_name``_tl_if.d2h = dut.top_darjeeling``pd_hier``.u_``inst_name``;
+module tb;
+  `DRIVE_IF(rv_core_ibex__corei, rv_core_ibex, corei_tl_h)
+  initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "macro param default paste gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_macro_paste_between_digits() {
+    // otbn_env_cov.sv: coverpoint bin generated `0``0``0` — paste marker
+    // antar digit harus dibuang (bukan jadi token backtick).
+    let source = r#"
+module tb;
+  logic [7:0] wdr_operand_a;
+  covergroup cg with function sample(logic [7:0] a);
+    cp: coverpoint wdr_operand_a[8'b 0``0``1``1];
+  endgroup
+  initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "paste antar digit gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_instance_array_single_size() {
+    // DV_ALERT_IF_CONNECT: `alert_esc_if alert_if[N](.clk(clk), .rst_n(rst_n));`
+    // — ukuran array `[N]` tunggal tanpa ':' sesudah nama instance.
+    let source = r#"
+interface iface;
+  input clk;
+  input rst_n;
+endinterface
+module tb;
+  logic clk, rst_n;
+  iface alert_if[2](.clk(clk), .rst_n(rst_n));
+  initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "instance array [N] gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_force_release_hierarchical() {
+    // keymgr_dpe_if.sv: `force tb.dut.u_x.sig = v;` / `release tb.dut.u_x.sig;`
+    let source = r#"
+module tb;
+  reg a;
+  initial begin
+    force tb.dut.u_ctrl.gen_en_o = 1'b1;
+    release tb.dut.u_ctrl.gen_en_o;
+  end
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "force/release hierarkis gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_forever_at_bare_signal() {
+    // jtag_dmi_monitor.sv: `forever @cfg.in_reset begin ... end` —
+    // event control `@sig` tanpa kurung.
+    let source = r#"
+module tb;
+  reg d;
+  initial begin
+    forever @tb.d begin
+      #1;
+    end
+  end
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "forever @sig gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_class_extends_pkg_class() {
+    // sec_cm prim_*_if.sv: `class my_proxy extends pkg::base_class;`
+    let source = r#"
+package pkg;
+  class base_proxy; endclass
+endpackage
+interface sec_cm_if;
+  import pkg::*;
+  class my_proxy extends pkg::base_proxy; endclass
+endinterface
+module tb;
+  initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "extends pkg::class gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_uvm_config_db_virtual_type() {
+    // alert_esc_agent.sv: `uvm_config_db#(virtual alert_esc_if)::get(...)`
+    let source = r#"
+interface alert_esc_if; endinterface
+module tb;
+  alert_esc_if vif;
+  initial begin
+    if (uvm_config_db#(virtual alert_esc_if)::get(this, "", "vif", cfg.vif)) begin
+      #1;
+    end
+  end
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "uvm_config_db#(virtual iface) gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_virtual_class_pkg_param() {
+    // dmi_test.sv: `virtual class rand_dmi #(parameter int AW = 32);`
+    let source = r#"
+package pkg;
+  virtual class rand_dmi #(
+    parameter int   AW = 32
+  );
+    i2c_item req;
+  endclass
+endpackage
+module tb;
+  pkg::rand_dmi d;
+  initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "virtual class param gagal: {:?}", design.err());
+}

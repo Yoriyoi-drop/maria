@@ -16,3 +16,5 @@ mod divmod_fuzz;
 mod signed_divmod_fuzz;
 #[cfg(test)]
 mod nested_clog2_fuzz;
+#[cfg(test)]
+mod signed_wide_fuzz;

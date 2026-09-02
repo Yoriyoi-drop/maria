@@ -413,9 +413,20 @@ pub(crate) fn const_fold_width(expr: &Expr, params: &HashMap<Symbol, i64>) -> Op
             true_expr,
             false_expr,
         } => {
-            let tw = const_fold_width(true_expr, params)?;
-            let fw = const_fold_width(false_expr, params)?;
-            Some(tw.max(fw))
+            // Saat const-fold, kondisi diketahui -> hanya cabang yang
+            // diambil yang penting. Jika salah satu branch width
+            // tidak diketahui (mis. signal Ident -> None), kembalikan
+            // None agar `try_fold_const` jatuh ke fallback `.max(32)`.
+            // Sebelumnya: `(Some(t), None) => Some(t)` — BUG: `&(1 ? 1'b1 : b)`
+            // ter-fold jadi Const(1, w=1) lalu &(1'b1)=1 padahal harusnya
+            // Cond evaluator menghitung max(1,2)=2 lalu &(2'b01)=0 (ditemukan
+            // guided_fuzz, dikonfirmasi Icarus).
+            let tw = const_fold_width(true_expr, params);
+            let fw = const_fold_width(false_expr, params);
+            match (tw, fw) {
+                (Some(t), Some(f)) => Some(t.max(f)),
+                _ => None,
+            }
         }
         _ => None,
     }

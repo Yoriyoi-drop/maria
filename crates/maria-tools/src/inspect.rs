@@ -235,6 +235,37 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
         }
     }
 
+    // ── Precompiled modules (VCS AN.DB / Questa _info analog) ──
+    {
+        use maria_compiler::micd::MicdDatabase;
+        let micd_root = MicdDatabase::default_root();
+        let all_files = crate::collect_targets(args.targets)?;
+        let pid = MicdDatabase::project_id(
+            &std::env::current_dir().unwrap_or_default(),
+            &all_files,
+            &args.incdirs.iter().map(std::path::PathBuf::from).collect::<Vec<_>>(),
+            &args.defines.iter().filter_map(|d| d.split_once('=')).map(|(k,v)| (k.to_string(), v.to_string())).collect::<Vec<_>>(),
+        );
+        let pdb_root = micd_root.join(maria_compiler::micd::DIR_PRECOMPILED).join(&pid);
+        let pdb = maria_compiler::micd::PrecompiledDb::open(&pdb_root);
+        let pst = pdb.stats();
+        section("Precompiled Modules");
+        kv("modules", pst.modules);
+        kv("clean", pst.clean_modules);
+        kv("tokens", pst.total_tokens);
+        kv("errors", pst.total_errors);
+        kv("warnings", pst.total_warnings);
+        for (name, m) in pdb.modules.iter().take(12) {
+            println!(
+                "    {:<24} hash={:016x} ports={} deps={}",
+                name, m.content_hash, m.ports.len(), m.depends_on.len()
+            );
+        }
+        if pdb.len() > 12 {
+            println!("    ... and {} more", pdb.len() - 12);
+        }
+    }
+
     section("Cache Summary");
     kv("categories", st.stores);
     kv("entries", st.total_entries);
