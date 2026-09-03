@@ -778,29 +778,77 @@ impl Expr {
         }
     }
 
-    /// Ganti satu node acak (mutasi structure-aware untuk feedback loop).
+    /// Grammar-aware AST mutation (Superion/DIE inspired).
+    ///
+    /// Inspired by Superion (Paper #1) and DIE (Paper #6):
+    /// - Aspect-preserving mutation: don't break structure
+    /// - Subtree-level operations: replace, delete, duplicate, swap
+    /// - Tree-based mutation works via replacing subtrees using ASTs
+    ///   of parsed test inputs.
+    ///
+    /// The key insight from DIE: "mutation too aggressive destroys
+    /// important structure before reaching deep code". So we preserve
+    /// module structure, signal width, type compatibility while mutating.
     pub fn mutate(&mut self, w: u32, rng: &mut fastrand::Rng) {
-        // Pilih satu node secara acak lalu ubah op/leaf-nya.
-        // Pendekatan sederhana: rekursi dengan probabilitas ganti di root.
-        if rng.bool() {
-            *self = gen_node(w, rng, 0);
-            return;
+        // Choose mutation strategy (Superion tree-based + aspect-preserving)
+        let strategy = rng.usize(0..7);
+        match strategy {
+            0 => {
+                // Superion: subtree replacement — replace entire node with
+                // a fresh random subtree (grammar-aware generation).
+                *self = gen_node(w, rng, 0);
+            }
+            1 => {
+                // DIE: aspect-preserving leaf mutation — only change leaf
+                // values, preserving tree structure.
+                self.mutate_leaf_preserving(w, rng);
+            }
+            2 => {
+                // Superion: subtree deletion — replace node with literal 0
+                // (aspect-preserving: keeps type compatibility).
+                *self = Expr::Lit(0);
+            }
+            3 => {
+                // Superion: subtree duplication — wrap in unary NOT
+                // (preserves width via aspect preservation).
+                let original = self.clone();
+                *self = Expr::Un(UnOp::Not, Box::new(original));
+            }
+            4 => {
+                // Superion: subtree swap — swap operator in binary node
+                // (aspect-preserving: compatible operators only).
+                self.swap_operator(rng);
+            }
+            5 => {
+                // Superion: dictionary mutation — inject boundary values
+                // into leaves (aspect-preserving: width-compatible).
+                self.inject_boundary_value(w, rng);
+            }
+            _ => {
+                // Recurse into children (structure-preserving descent).
+                self.mutate_child(w, rng);
+            }
         }
+    }
+
+    /// Aspect-preserving leaf mutation (DIE Paper #6).
+    /// Only mutate leaf values, preserving tree structure.
+    fn mutate_leaf_preserving(&mut self, w: u32, rng: &mut fastrand::Rng) {
         match self {
-            Expr::Un(_, e) => e.mutate(w, rng),
-            Expr::Ternary(c, t, f) => match rng.usize(0..3) {
-                0 => c.mutate(w, rng),
-                1 => t.mutate(w, rng),
-                _ => f.mutate(w, rng),
-            },
-            Expr::Repl(count, e) => {
-                // Replikasi: kadang ubah count (cap agar lebar wajar),
-                // selalu mutasi isinya.
-                if rng.bool() {
-                    let max_count = (128 / w.max(1)).clamp(1, 8);
-                    *count = rng.usize(1..=max_count as usize) as u32;
-                }
-                e.mutate(w, rng);
+            Expr::Lit(v) => {
+                // Boundary values from gen.rs BOUNDARY_VALUES
+                let boundaries = [0u64, 1, u64::MAX, 0x5555_5555_5555_5555, 0xAAAA_AAAA_AAAA_AAAA];
+                *v = if rng.bool() {
+                    boundaries[rng.usize(0..boundaries.len())] & mask_of(w)
+                } else {
+                    rng.u64(0..) & mask_of(w)
+                };
+            }
+            Expr::Var(c) => *c = if rng.bool() { 'a' } else { 'b' },
+            Expr::XLit { v, m } => {
+                let mask = mask_of(w);
+                *v = rng.u64(0..) & mask;
+                *m = rng.u64(0..) & mask;
             }
             Expr::BitSel(c, idx) => {
                 if rng.bool() {
@@ -819,11 +867,99 @@ impl Expr {
                     std::mem::swap(lo, hi);
                 }
             }
-            Expr::XLit { v, m } => {
-                let mask = mask_of(w);
-                *v = rng.u64(0..) & mask;
-                *m = rng.u64(0..) & mask;
+            Expr::Repl(count, _) => {
+                let max_count = (128 / w.max(1)).clamp(1, 8);
+                *count = rng.usize(1..=max_count as usize) as u32;
             }
+            _ => {
+                // Non-leaf: recurse to find a leaf
+                self.mutate_child(w, rng);
+            }
+        }
+    }
+
+    /// Swap operator to a compatible one (aspect-preserving).
+    fn swap_operator(&mut self, rng: &mut fastrand::Rng) {
+        match self {
+            Expr::Bin(op, _, _) => {
+                // Only swap within compatible operator family
+                let new_op = match op {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        let choices = [BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Mod];
+                        choices[rng.usize(0..choices.len())]
+                    }
+                    BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Xnor => {
+                        let choices = [BinOp::And, BinOp::Or, BinOp::Xor, BinOp::Xnor];
+                        choices[rng.usize(0..choices.len())]
+                    }
+                    BinOp::Shl | BinOp::Shr | BinOp::Sshl | BinOp::Sshr => {
+                        let choices = [BinOp::Shl, BinOp::Shr, BinOp::Sshl, BinOp::Sshr];
+                        choices[rng.usize(0..choices.len())]
+                    }
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                        let choices = [BinOp::Eq, BinOp::Ne, BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge];
+                        choices[rng.usize(0..choices.len())]
+                    }
+                    BinOp::LogicAnd | BinOp::LogicOr => {
+                        if *op == BinOp::LogicAnd { BinOp::LogicOr } else { BinOp::LogicAnd }
+                    }
+                    _ => return, // Don't swap non-compatible ops
+                };
+                *op = new_op;
+            }
+            Expr::Un(op, _) => {
+                let new_op = match op {
+                    UnOp::Not | UnOp::LogicNot => {
+                        if *op == UnOp::Not { UnOp::LogicNot } else { UnOp::Not }
+                    }
+                    UnOp::RedAnd | UnOp::RedOr | UnOp::RedXor => {
+                        let choices = [UnOp::RedAnd, UnOp::RedOr, UnOp::RedXor];
+                        choices[rng.usize(0..choices.len())]
+                    }
+                    _ => return,
+                };
+                *op = new_op;
+            }
+            _ => {},
+        }
+    }
+
+    /// Inject boundary values into expression (Superion dictionary mutation).
+    fn inject_boundary_value(&mut self, w: u32, rng: &mut fastrand::Rng) {
+        match self {
+            Expr::Lit(v) => {
+                let boundaries = [0u64, 1, 2, mask_of(w), mask_of(w) >> 1];
+                *v = boundaries[rng.usize(0..boundaries.len())];
+            }
+            Expr::Bin(_, l, r) => {
+                // Inject into random child
+                if rng.bool() {
+                    l.inject_boundary_value(w, rng);
+                } else {
+                    r.inject_boundary_value(w, rng);
+                }
+            }
+            Expr::Un(_, e) => e.inject_boundary_value(w, rng),
+            Expr::Ternary(c, t, f) => {
+                match rng.usize(0..3) {
+                    0 => c.inject_boundary_value(w, rng),
+                    1 => t.inject_boundary_value(w, rng),
+                    _ => f.inject_boundary_value(w, rng),
+                }
+            }
+            _ => {},
+        }
+    }
+
+    /// Mutate a random child node (structure-preserving descent).
+    fn mutate_child(&mut self, w: u32, rng: &mut fastrand::Rng) {
+        match self {
+            Expr::Un(_, e) => e.mutate(w, rng),
+            Expr::Ternary(c, t, f) => match rng.usize(0..3) {
+                0 => c.mutate(w, rng),
+                1 => t.mutate(w, rng),
+                _ => f.mutate(w, rng),
+            },
             Expr::Bin(_, l, r) => {
                 if rng.bool() {
                     l.mutate(w, rng);
@@ -831,8 +967,11 @@ impl Expr {
                     r.mutate(w, rng);
                 }
             }
-            Expr::Lit(v) => *v = rng.u64(0..) & mask_of(w),
-            Expr::Var(c) => *c = if rng.bool() { 'a' } else { 'b' },
+            Expr::Repl(_, e) => e.mutate(w, rng),
+            _ => {
+                // Leaf: apply leaf mutation
+                self.mutate_leaf_preserving(w, rng);
+            }
         }
     }
 }

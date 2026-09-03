@@ -680,6 +680,14 @@ impl Preprocessor {
                                 .get(k)
                                 .map(|s| self.expand_inline_macros_depth(s, depth + 1))
                                 .unwrap_or_default();
+                            eprintln!(
+                                "DBG-FILL mdef={} k={} param={:?} raw_default={:?} expanded_d={:?}",
+                                name,
+                                k,
+                                mdef.params.get(k),
+                                mdef.defaults.get(k),
+                                d
+                            );
                             expanded_args.push(d);
                         }
                         // Substitute parameters with expanded arguments — single pass on bytes

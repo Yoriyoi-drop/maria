@@ -20,7 +20,7 @@ impl Parser {
     /// memakannya). Item: `solve a before b`, `if (c) {..} else {..}` (F12,
     /// constraint kondisional), atau ekspresi (termasuk `inside`/`dist`).
     /// Ekspresi yang gagal di-skip ke `;` (recovery — perilaku lama).
-    fn parse_constraint_items(&mut self) -> Result<Vec<ConstraintItem>, SimError> {
+    pub(crate) fn parse_constraint_items(&mut self) -> Result<Vec<ConstraintItem>, SimError> {
         let mut body = Vec::new();
         while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
             // `solve var before var, var` (di-lex: Ident("solve"), Ident("before"))
@@ -498,14 +498,27 @@ impl Parser {
                 Token::Constraint => {
                     self.advance();
                     let cname = self.expect_ident()?;
-                    self.expect(Token::LBrace)?;
-                    let body = self.parse_constraint_items()?;
-                    self.expect(Token::RBrace)?;
-                    members.push(ClassMember::Constraint {
-                        name: cname,
-                        body,
-                        is_static: false,
-                    });
+                    // Deklarasi constraint forward: `constraint name;` — body
+                    // didefinisikan di luar class (`constraint C::name { ... }`).
+                    // Biasanya ditulis `extern constraint name;` tapi UVM/DV juga
+                    // memakai `constraint name;` tanpa extern.
+                    if self.peek() == &Token::Semi {
+                        self.advance();
+                        members.push(ClassMember::Constraint {
+                            name: cname,
+                            body: Vec::new(),
+                            is_static: false,
+                        });
+                    } else {
+                        self.expect(Token::LBrace)?;
+                        let body = self.parse_constraint_items()?;
+                        self.expect(Token::RBrace)?;
+                        members.push(ClassMember::Constraint {
+                            name: cname,
+                            body,
+                            is_static: false,
+                        });
+                    }
                 }
                 Token::Let => {
                     // LANG-40: `let` di dalam class.

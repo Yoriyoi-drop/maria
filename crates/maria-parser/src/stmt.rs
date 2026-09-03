@@ -615,29 +615,63 @@ impl Parser {
                                                         }
                                                     }
                                                 } else if self.peek() == &Token::LParen {
-                                                    // Transition bin `(a => b => ...)` (VERIF-31) — bisa list
-                                                    // `(a=>b), (c=>d)` dipisah koma. Satu sekuens = deret nilai
-                                                    // yang dipisah `=>`.
-                                                    self.advance();
+                                                    // Transition bin (VERIF-31). Setiap `(...)` = SATU
+                                                    // sekuens transisi; beberapa sekuens dipisah koma
+                                                    // di luar paren: `(a => b)`, `(0 => 1), (1 => 0)`.
+                                                    // Di dalam sekuens, `=>` memisahkan level dan
+                                                    // koma memisahkan nilai/range dalam satu level:
+                                                    //   `(a => b => c)`  `(a, b => c, d)`  `([lo:hi] => v)`.
+                                                    // Representasi: transitions[i] = satu Vec<Expr>
+                                                    // level ter-flatten (panjang 2 = `prev => curr`).
+                                                    // Jika paren TANPA `=>` → value-list; tiap nilai
+                                                    // masuk range_list (bukan transisi).
+                                                    self.advance(); // '('
                                                     loop {
-                                                        let mut seq = Vec::new();
+                                                        // Level pertama.
+                                                        let mut level1 = Vec::new();
                                                         loop {
-                                                            let v = self.parse_expr(0)?;
-                                                            seq.push(v);
-                                                            if self.peek() == &Token::FatArrow {
+                                                            level1.push(self.parse_expr(0)?);
+                                                            if self.peek() == &Token::Comma {
                                                                 self.advance();
                                                             } else {
                                                                 break;
                                                             }
                                                         }
-                                                        transitions.push(seq);
-                                                        if self.peek() == &Token::Comma {
-                                                            self.advance();
+                                                        if self.peek() == &Token::FatArrow {
+                                                            // Transition: kumpulkan level tersisa.
+                                                            let mut seq = level1;
+                                                            while self.peek() == &Token::FatArrow {
+                                                                self.advance(); // '=>'
+                                                                loop {
+                                                                    seq.push(self.parse_expr(0)?);
+                                                                    if self.peek() == &Token::Comma {
+                                                                        self.advance();
+                                                                    } else {
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                            self.expect(Token::RParen)?;
+                                                            transitions.push(seq);
                                                         } else {
-                                                            break;
+                                                            // Value-list: `(0,1,2)` — nilai tunggal.
+                                                            self.expect(Token::RParen)?;
+                                                            for v in level1 {
+                                                                range_list.push(BinRange {
+                                                                    low: v,
+                                                                    high: None,
+                                                                });
+                                                            }
                                                         }
+                                                        if self.peek() == &Token::Comma
+                                                            && self.peek_ahead(1) == &Token::LParen
+                                                        {
+                                                            self.advance(); // ','
+                                                            self.advance(); // '('
+                                                            continue;
+                                                        }
+                                                        break;
                                                     }
-                                                    self.expect(Token::RParen)?;
                                                 } else if self.peek() == &Token::LBrace {
                                                     self.advance();
                                                     loop {
@@ -1018,6 +1052,22 @@ impl Parser {
         if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
             self.skip_attribute();
             return self.parse_stmt();
+        }
+        // Procedural static/automatic variable declaration:
+        // `static SomeType cfg = pkg::type_id::create("x");` — pola umum DV
+        // UVM di dalam blok initial. Sebelumnya `static` jatuh ke fallthrough
+        // parse_primary_expr → "expected expression, found Static" → blok
+        // desync dan statement berikutnya (mis. `uvm_config_db::set`) salah
+        // di-parse sebagai instance. Static/auto hanyalah modifier; deklarasi
+        // sisanya di-parse via parse_decl (termasuk `Type v = expr`).
+        if matches!(self.peek(), Token::Static | Token::Auto) {
+            self.advance();
+            let decl = self.parse_decl()?;
+            return Ok(Stmt::NamedBlock {
+                name: Symbol::EMPTY,
+                stmts: vec![],
+                decls: vec![decl],
+            });
         }
         // Declaration statement in procedural block (e.g. `int index_x1;` or
         // `logic unused;` inside an always/initial block). Sebelumnya dibuang

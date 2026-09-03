@@ -253,26 +253,40 @@ impl Parser {
                                 items.push(PackageItem::DpiImport(dpi));
                                 continue;
                             }
-                            let pkg = self.expect_ident()?;
-                            self.expect(Token::Scope)?;
-                            let item = if self.peek() == &Token::Star {
-                                self.advance();
-                                Symbol::intern("*")
-                            } else {
-                                self.expect_ident()?
-                            };
-                            // Register imported typedef names
-                            if let Some(tdefs) = self.package_tdefs.get(&pkg) {
-                                if item == "*" {
-                                    for name in tdefs {
-                                        self.typedef_names.insert(*name);
+                            let mut imported = Vec::new();
+                            loop {
+                                let pkg = self.expect_ident()?;
+                                self.expect(Token::Scope)?;
+                                let item = if self.peek() == &Token::Star {
+                                    self.advance();
+                                    Symbol::intern("*")
+                                } else {
+                                    self.expect_ident()?
+                                };
+                                // Register imported typedef names
+                                if let Some(tdefs) = self.package_tdefs.get(&pkg) {
+                                    if item == "*" {
+                                        for name in tdefs {
+                                            self.typedef_names.insert(*name);
+                                        }
+                                    } else if tdefs.contains(&item) {
+                                        self.typedef_names.insert(item);
                                     }
-                                } else if tdefs.contains(&item) {
-                                    self.typedef_names.insert(item);
                                 }
+                                imported.push((pkg, item));
+                                if self.peek() == &Token::Comma {
+                                    self.advance();
+                                    continue;
+                                }
+                                break;
                             }
                             self.skip_semi();
-                            items.push(PackageItem::Import { package: pkg, item });
+                            for (pkg, item) in imported {
+                                items.push(PackageItem::Import {
+                                    package: pkg,
+                                    item,
+                                });
+                            }
                         }
                         Token::Export => {
                             self.advance();

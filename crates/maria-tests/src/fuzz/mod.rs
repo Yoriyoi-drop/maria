@@ -26,6 +26,16 @@ pub(crate) mod semantic_mutator;
 pub(crate) mod hierarchy_mutator;
 #[cfg(test)]
 pub(crate) mod differential;
+// ── Paper-inspired enhancements ──────────────────────────────────────────
+// Paper #2 (ChipFuzzer): bug database + bug-guided prioritization
+#[cfg(test)]
+pub(crate) mod bug_db;
+// Paper #5 (EMI): differential compiler testing via equivalence modulo inputs
+#[cfg(test)]
+pub(crate) mod emi;
+// Paper #7 (MOpt): adaptive mutation scheduling
+#[cfg(test)]
+pub(crate) mod mutation_scheduler;
 
 // ── Test modules per kategori ────────────────────────────────────────────
 mod arithmetic;

@@ -322,25 +322,41 @@ impl Parser {
                             op: UnaryOp::Not,
                             expr,
                         } => {
-                            if let Expr::MethodCall {
-                                obj,
-                                method,
-                                args,
-                                with_clause: None,
-                            } = *expr
-                            {
+                            // `!x.randomize() with {...}` — MethodCall dalam.
+                            let inner_attached = match *expr {
+                                Expr::MethodCall {
+                                    obj,
+                                    method,
+                                    args,
+                                    with_clause: None,
+                                } => Some(Expr::MethodCall {
+                                    obj,
+                                    method,
+                                    args,
+                                    with_clause: Some(Box::new(with_expr.clone())),
+                                }),
+                                // `!std::randomize(x) with {...}` — FuncCall dalam
+                                // (pola UVM std::randomize). Clause diabaikan.
+                                Expr::FuncCall { .. }
+                                | Expr::ScopedIdent { .. }
+                                | Expr::Ident { .. } => Some(*expr),
+                                _ => None,
+                            };
+                            if let Some(inner) = inner_attached {
                                 lhs = Expr::UnaryOp {
                                     op: UnaryOp::Not,
-                                    expr: Box::new(Expr::MethodCall {
-                                        obj,
-                                        method,
-                                        args,
-                                        with_clause: Some(Box::new(with_expr)),
-                                    }),
+                                    expr: Box::new(inner),
                                 };
                             } else {
                                 return Err(self.err("'with' clause can only follow a method call"));
                             }
+                        }
+                        // Pola DV UVM `std::randomize(x) with { ... }` /
+                        // `void'(randomize(y) with { ... })` — `with` melekat
+                        // pada panggilan fungsi (FuncCall), bukan hanya method
+                        // call. Clause diabaikan; panggilan dipetahankan utuh.
+                        Expr::FuncCall { .. } | Expr::ScopedIdent { .. } => {
+                            lhs = old_lhs;
                         }
                         _ => return Err(self.err("'with' clause can only follow a method call")),
                     }
@@ -813,9 +829,26 @@ impl Parser {
             }
             Token::RealNum(s) => {
                 self.advance();
-                Ok(Expr::Value(Value::Real(
-                    s.as_str().parse::<f64>().unwrap_or(0.0),
-                )))
+                let mut val = s.as_str().parse::<f64>().unwrap_or(0.0);
+                // Realtime literal dgn satuan waktu: `104166.667ns`, `1.5us`,
+                // `2.5ms` (LRM 1800 §6.4/§22.7). Angka real diikuti token unit;
+                // skala ke basis 1ns. Unit lebih kecil (ps/fs) dibulatkan ke ~ns.
+                if let Token::Ident(u) = self.peek() {
+                    let mult = match u.as_str() {
+                        "s" => Some(1_000_000_000.0),
+                        "ms" => Some(1_000_000.0),
+                        "us" => Some(1_000.0),
+                        "ns" => Some(1.0),
+                        "ps" => Some(1e-3),
+                        "fs" => Some(1e-6),
+                        _ => None,
+                    };
+                    if let Some(m) = mult {
+                        self.advance();
+                        val *= m;
+                    }
+                }
+                Ok(Expr::Value(Value::Real(val)))
             }
             Token::StringLit(s) => {
                 self.advance();
@@ -1223,7 +1256,16 @@ impl Parser {
                     })
                 }
             }
-            ref other => Err(self.err(format!("expected expression, found {:?}", other))),
+            ref other => {
+                let l = self.peek_line();
+                let c = self.peek_col();
+                let (sf, sfl) = self.resolve_source_file(l);
+                eprintln!(
+                    "DBG expected-expr: tok={:?} src={:?} line={} col={} ahead1={:?} ahead2={:?}",
+                    other, sf, sfl, c, self.peek_ahead(1), self.peek_ahead(2)
+                );
+                Err(self.err(format!("expected expression, found {:?}", other)))
+            }
         }
     }
 }

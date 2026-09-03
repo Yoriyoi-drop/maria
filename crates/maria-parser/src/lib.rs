@@ -912,36 +912,46 @@ impl Parser {
                 },
                 Token::Import => {
                     self.advance();
-                    let pkg = match self.expect_ident() {
-                        Ok(p) => p,
-                        Err(e) => {
-                            self.errors.push(e.to_diagnostic());
-                            self.skip_to_next_top_level();
-                            continue;
-                        }
-                    };
-                    if self.peek() != &Token::Scope {
-                        let err = self.err("expected '::' after package name");
-                        self.errors.push(err.to_diagnostic());
-                        self.skip_to_next_top_level();
-                        continue;
-                    }
-                    self.advance(); // consume ::
-                    let item = if self.peek() == &Token::Star {
-                        self.advance();
-                        Symbol::intern("*")
-                    } else {
-                        match self.expect_ident() {
-                            Ok(id) => id,
+                    // Dukung import multi-item dipisah koma:
+                    //   `import pkg::a, pkg::b;` / `import pkg::a, pkg2::b;`
+                    // (pola umum DV — sejumlah top/gen pkg mengimpornya).
+                    loop {
+                        let pkg = match self.expect_ident() {
+                            Ok(p) => p,
                             Err(e) => {
                                 self.errors.push(e.to_diagnostic());
                                 self.skip_to_next_top_level();
-                                continue;
+                                break;
                             }
+                        };
+                        if self.peek() != &Token::Scope {
+                            let err = self.err("expected '::' after package name");
+                            self.errors.push(err.to_diagnostic());
+                            self.skip_to_next_top_level();
+                            break;
                         }
-                    };
+                        self.advance(); // consume ::
+                        let item = if self.peek() == &Token::Star {
+                            self.advance();
+                            Symbol::intern("*")
+                        } else {
+                            match self.expect_ident() {
+                                Ok(id) => id,
+                                Err(e) => {
+                                    self.errors.push(e.to_diagnostic());
+                                    self.skip_to_next_top_level();
+                                    break;
+                                }
+                            }
+                        };
+                        unit_imports.push((pkg, item));
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                            continue;
+                        }
+                        break;
+                    }
                     self.skip_semi();
-                    unit_imports.push((pkg, item));
                     false
                 }
                 Token::LParen if self.peek_ahead(1) == &Token::Star => {
@@ -960,6 +970,37 @@ impl Parser {
                             true
                         }
                     }
+                }
+                Token::Constraint => {
+                    // External constraint definition di luar class body:
+                    //   `constraint ClassName::constraint_name { ... }`
+                    // (IEEE 1800 §18.4/§18.5 — body constraint yang di-deklarasikan
+                    // `extern constraint` di dalam class). Body member/constraint
+                    // sudah dikumpulkan saat class di-parse; eksternal hanya perlu
+                    // di-parse & dibuang agar tidak desync ke konstruk berikut
+                    // (sebelumnya "skipping top-level construct: constraint" → file
+                    // DV seperti alert_esc_seq_item kemudian cascade error).
+                    self.advance(); // 'constraint'
+                    // Header opsional: `Class::name` atau `name`.
+                    while matches!(
+                        self.peek(),
+                        Token::Ident(_) | Token::Scope | Token::Hash
+                    ) {
+                        self.advance();
+                    }
+                    match self.peek() {
+                        Token::LBrace => {
+                            let _ = self.parse_constraint_items();
+                            if self.peek() == &Token::RBrace {
+                                self.advance();
+                            }
+                        }
+                        Token::Semi => {
+                            self.advance();
+                        }
+                        _ => {}
+                    }
+                    false
                 }
                 Token::Covergroup => match self.parse_covergroup() {
                     Ok(cg) => {

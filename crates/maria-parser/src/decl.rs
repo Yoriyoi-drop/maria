@@ -371,6 +371,9 @@ impl Parser {
                                 // int-key associative array
                                 self.advance(); // [
                                 self.advance(); // int
+                                if self.peek() == &Token::Unsigned {
+                                    self.advance();
+                                }
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Int);
@@ -779,6 +782,10 @@ impl Parser {
                 Token::Reg => {
                     self.advance();
                     DataType::Logic
+                }
+                Token::String => {
+                    self.advance();
+                    DataType::String
                 }
                 Token::Signed => {
                     self.advance();
@@ -1386,7 +1393,9 @@ impl Parser {
                 | Token::Byte
                 | Token::Shortint
                 | Token::Longint
-                | Token::Real => {
+                | Token::Real
+                | Token::RealTime
+                | Token::Time => {
                     self.advance();
                 }
                 Token::Ident(_)
