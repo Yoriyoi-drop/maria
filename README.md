@@ -13,15 +13,15 @@ A Rust-based RTL simulator for SystemVerilog. Compiles `.sv` files through a pip
 ## Quick start
 
 ```shell
-cargo run -- test/counter.sv              # simulate counter
-cargo run -- test/tb_counter.sv -T 200    # with max time
-cargo run -- file.sv --ast                # print AST
-cargo run -- file.sv --tokens             # print tokens
+maria run -- test/counter.sv              # simulate counter
+maria run -- test/tb_counter.sv -T 200    # with max time
+maria run -- file.sv --ast                # print AST
+maria run -- file.sv --tokens             # print tokens
 ```
 
 ## Project file
 
-A `.maria` file lists `.sv` sources (one per line, `#` for comments):
+
 
 ```
 counter.sv
@@ -29,7 +29,6 @@ tb_counter.sv
 ```
 
 ```shell
-cargo run -- -f .maria
 ```
 
 ## CLI flags
