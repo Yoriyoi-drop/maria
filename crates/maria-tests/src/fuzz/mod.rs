@@ -37,6 +37,20 @@ pub(crate) mod emi;
 #[cfg(test)]
 pub(crate) mod mutation_scheduler;
 
+// ── Unified AST + Pipeline-Aware Coverage + Auto-Expansion ───────────────
+// AST gabungan: satu representasi untuk semua fitur SV (mengganti 30+ mini-AST)
+#[cfg(test)]
+pub(crate) mod svast;
+// Coverage pipeline-aware: tracking stage mana yang sudah terlatih
+#[cfg(test)]
+pub(crate) mod pipeline_guide;
+// Bug-guided auto-expansion: otomatis generate vari setelah bug ditemukan
+#[cfg(test)]
+pub(crate) mod auto_expand;
+// Orchestration v2: pipeline-aware + auto-expansion
+#[cfg(test)]
+pub(crate) mod guided_fuzz_v2;
+
 // ── Test modules per kategori ────────────────────────────────────────────
 mod arithmetic;
 mod operator;

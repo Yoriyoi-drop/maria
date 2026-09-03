@@ -385,6 +385,18 @@ impl Preprocessor {
                         output.push('\n');
                     }
                 }
+                _ if emitting && rest.trim_start().starts_with('(') => {
+                    // Unknown backtick macro INVOCATION at line start (mis.
+                    // `` `uvm_error(...) `` / `` `uvm_info(...) `` saat uvm_macros
+                    // tidak ter-dedefine). Ini bukan directive — strip backtick
+                    // dan expand sebagai baris statement biasa, supaya panggilan
+                    // polos `uvm_error(...)` tetap parse-able dan baris tidak
+                    // di-skip (yang membuat `if (...) `` `uvm_error(...) `` tanpa
+                    // begin/end menjadi "expected expression, found EndTask").
+                    let expanded = self.expand_inline_macros(&raw_line);
+                    output.push_str(&expanded);
+                    output.push('\n');
+                }
                 _ => {
                     // Unknown backtick directive — skip silently
                 }

@@ -19,6 +19,7 @@
 # MICD — incremental compilation database (build artifact, semua level crate)
 **/.maria/database/
 **/.mdme_corpus
+**/.codegraph
 /obj_dir
 # Waveform artifacts (FST dari simulasi/test)
 *.fst
