@@ -18,17 +18,17 @@ use maria_core::intern::Symbol;
 pub(crate) fn detect_recursive_functions(funcs: &HashMap<Symbol, FunctionDecl>) -> HashSet<Symbol> {
     let mut recursive = HashSet::new();
     // Bangun call graph: nama → daftar fungsi yang dipanggil (incl. dirinya
-    // sendiri untuk direct self-call). `stmt_has_func_call` sudah menelusuri
-    // statement & ekspresi secara lengkap.
-    let mut calls: HashMap<Symbol, Vec<Symbol>> = HashMap::new();
+    // sendiri untuk direct self-call). Performa: SATU traversal body per
+    // fungsi, mengumpulkan SEMUA nama fungsi yang dipanggil (lihat
+    // `collect_called_funcs`). Sebelumnya loop bersarang O(N²) memindai body
+    // penuh untuk tiap pasangan (func, other) → sangat lambat di project
+    // besar (OpenTitan: ribuan fungsi `tlul_*`/`aes_*`).
+    let known: HashSet<Symbol> = funcs.keys().copied().collect();
+    let mut calls: HashMap<Symbol, Vec<Symbol>> = HashMap::with_capacity(funcs.len());
     for (name, func) in funcs {
-        let mut called = Vec::new();
-        for (other, _) in funcs {
-            if stmt_has_func_call(other, &func.stmts) {
-                called.push(*other);
-            }
-        }
-        calls.insert(*name, called);
+        let mut called = HashSet::new();
+        collect_called_funcs(&func.stmts, &known, &mut called);
+        calls.insert(*name, called.into_iter().collect());
     }
     // DFS dari setiap fungsi: apakah bisa kembali ke dirinya sendiri?
     for (&start, _) in funcs.iter() {
@@ -63,8 +63,10 @@ fn dfs_reaches_self(
     false
 }
 
-/// Check if a function body contains calls to a specific function.
-pub(crate) fn stmt_has_func_call(func_name: &Symbol, stmts: &[Stmt]) -> bool {
+/// Kumpulkan SEMUA nama fungsi (dari `known`) yang dipanggil dalam `stmts`.
+/// Satu traversal per function — pengganti pola O(N²) yang memanggil
+/// `stmt_has_func_call(name, stmts)` untuk tiap nama. Mengisi `out`.
+fn collect_called_funcs(stmts: &[Stmt], known: &HashSet<Symbol>, out: &mut HashSet<Symbol>) {
     for stmt in stmts {
         match stmt {
             Stmt::Block { stmts: inner }
@@ -74,25 +76,17 @@ pub(crate) fn stmt_has_func_call(func_name: &Symbol, stmts: &[Stmt]) -> bool {
             | Stmt::LoopFor { stmts: inner, .. }
             | Stmt::Repeat { stmts: inner, .. }
             | Stmt::DoWhile { stmts: inner, .. } => {
-                if stmt_has_func_call(func_name, inner) {
-                    return true;
-                }
+                collect_called_funcs(inner, known, out);
             }
             Stmt::IfElse {
                 cond,
                 true_branch,
                 false_branch,
             } => {
-                if expr_has_func_call(func_name, cond) {
-                    return true;
-                }
-                if stmt_has_func_call(func_name, &[true_branch.as_ref().clone()]) {
-                    return true;
-                }
+                collect_called_expr(cond, known, out);
+                collect_called_funcs(&[true_branch.as_ref().clone()], known, out);
                 if let Some(fb) = false_branch {
-                    if stmt_has_func_call(func_name, &[fb.as_ref().clone()]) {
-                        return true;
-                    }
+                    collect_called_funcs(&[fb.as_ref().clone()], known, out);
                 }
             }
             Stmt::Case {
@@ -135,130 +129,113 @@ pub(crate) fn stmt_has_func_call(func_name: &Symbol, stmts: &[Stmt]) -> bool {
                 items,
                 default,
             } => {
-                if expr_has_func_call(func_name, expr) {
-                    return true;
-                }
+                collect_called_expr(expr, known, out);
                 for item in items {
                     for l in &item.labels {
-                        if expr_has_func_call(func_name, l) {
-                            return true;
-                        }
+                        collect_called_expr(l, known, out);
                     }
-                    if stmt_has_func_call(func_name, &[item.stmt.as_ref().clone()]) {
-                        return true;
-                    }
+                    collect_called_funcs(&[item.stmt.as_ref().clone()], known, out);
                 }
                 if let Some(d) = default {
-                    if stmt_has_func_call(func_name, &[d.as_ref().clone()]) {
-                        return true;
-                    }
+                    collect_called_funcs(&[d.as_ref().clone()], known, out);
                 }
             }
             Stmt::BlockingAssign { rhs, .. } | Stmt::NonBlockingAssign { rhs, .. } => {
-                if expr_has_func_call(func_name, rhs) {
-                    return true;
-                }
+                collect_called_expr(rhs, known, out);
             }
             Stmt::StmtAssign { lhs, rhs } => {
-                if expr_has_func_call(func_name, lhs) || expr_has_func_call(func_name, rhs) {
-                    return true;
-                }
+                collect_called_expr(lhs, known, out);
+                collect_called_expr(rhs, known, out);
             }
             Stmt::Expr { expr } => {
-                if expr_has_func_call(func_name, expr) {
-                    return true;
-                }
+                collect_called_expr(expr, known, out);
             }
             Stmt::Return(expr) => {
                 if let Some(e) = expr {
-                    if expr_has_func_call(func_name, e) {
-                        return true;
-                    }
+                    collect_called_expr(e, known, out);
                 }
             }
             Stmt::Wait { cond, stmt: wstmt } => {
-                if expr_has_func_call(func_name, cond) {
-                    return true;
-                }
+                collect_called_expr(cond, known, out);
                 if let Some(s) = wstmt {
-                    if stmt_has_func_call(func_name, &[*s.clone()]) {
-                        return true;
-                    }
+                    collect_called_funcs(&[*s.clone()], known, out);
                 }
             }
             Stmt::WaitFork => {}
             Stmt::SysCall { args, .. } => {
                 for arg in args {
-                    if expr_has_func_call(func_name, arg) {
-                        return true;
-                    }
+                    collect_called_expr(arg, known, out);
                 }
             }
             Stmt::Fork { processes, .. } => {
                 for p in processes {
-                    if stmt_has_func_call(func_name, std::slice::from_ref(p)) {
-                        return true;
-                    }
+                    collect_called_funcs(std::slice::from_ref(p), known, out);
                 }
             }
             Stmt::Force { rhs, .. } => {
-                if expr_has_func_call(func_name, rhs) {
-                    return true;
-                }
+                collect_called_expr(rhs, known, out);
             }
             _ => {}
         }
     }
-    false
 }
 
-/// Check if an expression contains a call to a specific function.
-pub(crate) fn expr_has_func_call(func_name: &Symbol, expr: &Expr) -> bool {
+/// Kumpulkan SEMUA nama fungsi (dari `known`) yang dipanggil dalam `expr`.
+/// Mengisi `out`.
+fn collect_called_expr(expr: &Expr, known: &HashSet<Symbol>, out: &mut HashSet<Symbol>) {
     match expr {
         Expr::FuncCall { name, args, .. } => {
-            if name == func_name {
-                return true;
+            if known.contains(name) {
+                out.insert(*name);
             }
-            args.iter().any(|arg| expr_has_func_call(func_name, arg))
+            for arg in args {
+                collect_called_expr(arg, known, out);
+            }
         }
         Expr::BinaryOp { lhs, rhs, .. } => {
-            expr_has_func_call(func_name, lhs) || expr_has_func_call(func_name, rhs)
+            collect_called_expr(lhs, known, out);
+            collect_called_expr(rhs, known, out);
         }
-        Expr::UnaryOp { expr: inner, .. } => expr_has_func_call(func_name, inner),
+        Expr::UnaryOp { expr: inner, .. } => collect_called_expr(inner, known, out),
         Expr::TernaryOp {
             cond,
             true_expr,
             false_expr,
         } => {
-            expr_has_func_call(func_name, cond)
-                || expr_has_func_call(func_name, true_expr)
-                || expr_has_func_call(func_name, false_expr)
+            collect_called_expr(cond, known, out);
+            collect_called_expr(true_expr, known, out);
+            collect_called_expr(false_expr, known, out);
         }
-        Expr::Concat(exprs) => exprs.iter().any(|e| expr_has_func_call(func_name, e)),
-        Expr::Replicate { expr: inner, .. } => expr_has_func_call(func_name, inner),
-        Expr::Paren(inner) => expr_has_func_call(func_name, inner),
+        Expr::Concat(exprs) => {
+            for e in exprs {
+                collect_called_expr(e, known, out);
+            }
+        }
+        Expr::Replicate { expr: inner, .. } => collect_called_expr(inner, known, out),
+        Expr::Paren(inner) => collect_called_expr(inner, known, out),
         Expr::RangeSelect {
             expr: inner,
             msb,
             lsb,
         } => {
-            expr_has_func_call(func_name, inner)
-                || expr_has_func_call(func_name, msb)
-                || expr_has_func_call(func_name, lsb)
+            collect_called_expr(inner, known, out);
+            collect_called_expr(msb, known, out);
+            collect_called_expr(lsb, known, out);
         }
         Expr::BitSelect { expr: inner, index } => {
-            expr_has_func_call(func_name, inner) || expr_has_func_call(func_name, index)
+            collect_called_expr(inner, known, out);
+            collect_called_expr(index, known, out);
         }
         Expr::PartSelect {
             expr: inner,
             base,
             width,
         } => {
-            expr_has_func_call(func_name, inner)
-                || expr_has_func_call(func_name, base)
-                || expr_has_func_call(func_name, width)
+            collect_called_expr(inner, known, out);
+            collect_called_expr(base, known, out);
+            collect_called_expr(width, known, out);
         }
-        _ => false,
+        _ => {}
     }
 }
 

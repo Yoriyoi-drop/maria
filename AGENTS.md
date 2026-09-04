@@ -3,7 +3,7 @@
 ## Aturan 
 1 file = 1 tanggung jawab tidak boleh lebih dari 1
 Rust-based SystemVerilog simulator. Pipeline: preprocessor → lexer → parser → AST → elaborator → IR → simulation engine → VCD output.
-semua perbaikan masalah pada maria wajib bersifat global
+
 
 ### 🚫 LARANGAN TOTAL: SCRIPT UNTUK MEMODIFIKASI PROJECT
 **DILARANG TOTAL, TANPA TOLERANSI** — dilarang menggunakan script apa pun (Python, Perl, Ruby, Bash/sed/awk mass-edit, `python -c` one-liner, dan sejenisnya) untuk mengubah/memodifikasi file di project ini.

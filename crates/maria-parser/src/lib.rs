@@ -1472,6 +1472,41 @@ impl Parser {
                 }
             }
             Token::Ident(name) => {
+                // Macro NON-EXPAND di module body: bare `Ident(` (identifier
+                // langsung diikuti `(`) di level module item TIDAK pernah instance
+                // valid (instance = `Type instname (...)` — DUA ident). Ini selalu
+                // macro/function call: prim_assert `ASSERT_KNOWN(...)`, DV uptake
+                // `DV_FCOV_INSTANTIATE_CG(...)`, dll. Macro TIDAK terdefinisi di
+                // preprocessor per-file (RTL OpenTitan meng-include global via
+                // fusesoc). Buang utuh — makro assertion/verification tidak
+                // dipakai engine simulasi. Tanpa ini parser mengira instance →
+                // "expected instance name" & modul terpotong.
+                if matches!(self.peek_ahead(1), Token::LParen)
+                    && !self.class_names.contains(name)
+                    && !self.typedef_names.contains(name)
+                    && !self.module_type_params.contains(name)
+                {
+                    self.advance(); // ident macro-call
+                    let mut depth = 0i64;
+                    loop {
+                        match self.peek() {
+                            Token::Eof => break,
+                            Token::LParen => {
+                                depth += 1;
+                                self.advance();
+                            }
+                            Token::RParen => {
+                                depth -= 1;
+                                self.advance();
+                                if depth <= 0 {
+                                    break;
+                                }
+                            }
+                            _ => self.advance(),
+                        }
+                    }
+                    return Ok(None);
+                }
                 // Bentuk berlabel: `SigintCheck0_A: assert property (...) else ...`
                 // (dihasilkan macro `ASSERT`). Deteksi label + kata kunci assertion
                 // sebelum instance/decl logic diproses.

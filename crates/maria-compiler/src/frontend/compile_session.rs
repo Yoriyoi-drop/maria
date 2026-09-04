@@ -320,6 +320,14 @@ impl CompileSession {
                 base_offsets[*idx] = cumulative;
                 cumulative += s.lines().count();
             }
+            // TEMP DEBUG dump combined output
+            if std::env::var("MARIA_DUMP_COMBINED").is_ok() {
+                let mut out = String::new();
+                for (_idx, s) in parts.iter() {
+                    out.push_str(s);
+                }
+                std::fs::write("/tmp/opencode/combined_dump.txt", out).ok();
+            }
         }
 
         self.timing.preprocess_us = pp_start.elapsed().as_micros() as u64;

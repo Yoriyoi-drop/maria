@@ -1048,6 +1048,61 @@ impl Parser {
         }
     }
 
+    /// True jika statement adalah call macro NON-EXPAND yang body argumen berisi
+    /// `;`/`{` di depth-0 dalam parens call (constraint/randomize body dari
+    /// dv_macros `DV_*`, atau operator SVA prim_assert `ASSERT`). Scan-ahead
+    /// (tanpa konsume) dari `(` sampai close paren yang cocor. Expr statement
+    /// normal (`foo(a, b)`) tidak pernah punya `;`/`{` di depth-0 → tidak
+    /// ter-match. Preambilang: peek saat ini = `Ident`, peek_ahead(1) = `(`.
+    fn is_macro_constraint_call(&self) -> bool {
+        let start = self.pos.get() + 2;
+        let n = self.tokens.len();
+        let mut depth = 0i32;
+        let mut i = start;
+        while i < n {
+            match self.tokens[i].0 {
+                Token::Eof => break,
+                Token::Semi if depth == 0 => return true,
+                Token::LBrace if depth == 0 => return true,
+                Token::LParen => depth += 1,
+                Token::RParen => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                }
+                Token::LBrace | Token::LBrack => depth += 1,
+                Token::RBrace | Token::RBrack => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Konsumu seluruh call balanced `(...)` (plus bracket/brace nested)
+    /// sbg no-op. Preambilang: pos di `(` (Ident di-advance oleh caller).
+    fn skip_balanced_call(&mut self) {
+        let mut depth = 0i32;
+        loop {
+            match self.peek() {
+                Token::Eof => break,
+                Token::LParen | Token::LBrace | Token::LBrack => {
+                    depth += 1;
+                    self.advance();
+                }
+                Token::RParen | Token::RBrace | Token::RBrack => {
+                    depth -= 1;
+                    self.advance();
+                    if depth <= 0 {
+                        break;
+                    }
+                }
+                _ => self.advance(),
+            }
+        }
+    }
+
     fn parse_stmt_impl(&mut self) -> Result<Stmt, SimError> {
         if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
             self.skip_attribute();
@@ -1114,6 +1169,26 @@ impl Parser {
             self.advance(); // label
             self.advance(); // ':'
             return self.parse_immediate_assertion();
+        }
+        // Macro NON-EXPAND sbg statement (blok initial/always): `Ident(...)`
+        // yang body argumen berisi `;` / `{...}` (constraint/randomize body dari
+        // dv_macros `DV_CHECK_*`/`DV_SPINWAIT_*`, atau operator SVA dari
+        // prim_assert `ASSERT(...)`). Macro TIDAK terdefinisi di preprocessor
+        // per-file (OpenTitan meng-include global via fusesoc). Expr parser
+        // TIDAK handle argumen tak-ekspresi → cascade "expected RParen" /
+        // "expected instance name". Buang utuh — assertion/verification macro
+        // tidak dipakai engine simulasi.
+        if matches!(self.peek(), Token::Ident(_))
+            && self.peek_ahead(1) == &Token::LParen
+            && (matches!(
+                self.peek(),
+                Token::Ident(s)
+                    if s.as_str() == "ASSERT" || s.as_str().starts_with("ASSERT_")
+            ) || self.is_macro_constraint_call())
+        {
+            self.advance(); // ident
+            self.skip_balanced_call();
+            return Ok(Stmt::Null);
         }
         match self.peek() {
             Token::Assert | Token::Assume | Token::Cover | Token::Expect => {

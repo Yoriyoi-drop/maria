@@ -612,8 +612,26 @@ impl Preprocessor {
         let mut i = 0;
         while i < bytes.len() {
             if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                result.push_str(&line[i..]);
-                break;
+                // Salin komentar `//...` sampai akhir baris (atau akhir string),
+                // lalu lanjutkan scan ke baris berikutnya — JANGAN blind-copy
+                // sisa string. Pada string multi-baris hasil penggabungan
+                // argumen macro (mis. body `DV_SPINWAIT_EXIT` yang memuat `//`
+                // sebelum `` `DV_CHECK_EQ ``), blind-copy sisa membuat backtick
+                // macro di baris lanjutan bocor ke output → lexical error E1002.
+                let mut j = i;
+                while j < bytes.len() && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                if j < bytes.len() {
+                    // Salin komentar (tanpa newline); loop lanjut dari '\n'.
+                    result.push_str(&line[i..j]);
+                    i = j;
+                } else {
+                    // Baris tunggal / akhir string — salin sisa verbatim.
+                    result.push_str(&line[i..]);
+                    break;
+                }
+                continue;
             }
             // Stringify langsung penggunaan (di luar body macro): `` `"X`" `` →
             // `"X"`. Undef yang menghasilkan `` `"path`" `` (mis. pemakaian di
@@ -692,14 +710,6 @@ impl Preprocessor {
                                 .get(k)
                                 .map(|s| self.expand_inline_macros_depth(s, depth + 1))
                                 .unwrap_or_default();
-                            eprintln!(
-                                "DBG-FILL mdef={} k={} param={:?} raw_default={:?} expanded_d={:?}",
-                                name,
-                                k,
-                                mdef.params.get(k),
-                                mdef.defaults.get(k),
-                                d
-                            );
                             expanded_args.push(d);
                         }
                         // Substitute parameters with expanded arguments — single pass on bytes
@@ -784,6 +794,7 @@ impl Preprocessor {
                                 while k < val_bytes.len() && val_bytes[k] == b'`' {
                                     k += 1;
                                 }
+                                let mut param_matched = false;
                                 for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
                                     if !param.is_empty()
                                         && k + param.len() <= val_bytes.len()
@@ -797,7 +808,47 @@ impl Preprocessor {
                                         expanded.push_str(arg);
                                         pos = a2;
                                         matched = true;
+                                        param_matched = true;
                                         break;
+                                    }
+                                }
+                                // `` `prefix``PARAM `` — run backtick diikuti literal
+                                // non-param (PREFIX) yang lalu di-paste ke param
+                                // (`` `` value args OpenTitan dv_macros, mis.
+                                // `` `dv_``SEV_ `` → `dv_` + SEV_==error → `dv_error`).
+                                // Backtick terdepan (sebelum PREFIX) HARUS dibuang,
+                                // bukan dikopi literal — kalau tidak bocor ` di output
+                                // dan FastLexer memuntahkan lexical error E1002.
+                                if !param_matched {
+                                    let mut prefix_end = k;
+                                    while prefix_end < val_bytes.len()
+                                        && (val_bytes[prefix_end].is_ascii_alphanumeric()
+                                            || val_bytes[prefix_end] == b'_'
+                                            || val_bytes[prefix_end] == b'.')
+                                    {
+                                        prefix_end += 1;
+                                    }
+                                    let mut p2 = prefix_end;
+                                    while p2 < val_bytes.len() && val_bytes[p2] == b'`' {
+                                        p2 += 1;
+                                    }
+                                    for (param, arg) in mdef.params.iter().zip(expanded_args.iter())
+                                    {
+                                        if !param.is_empty()
+                                            && p2 + param.len() <= val_bytes.len()
+                                            && &val_bytes[p2..p2 + param.len()] == param.as_bytes()
+                                        {
+                                            let after = p2 + param.len();
+                                            let mut a2 = after;
+                                            while a2 < val_bytes.len() && val_bytes[a2] == b'`' {
+                                                a2 += 1;
+                                            }
+                                            expanded.push_str(&mdef.value[k..prefix_end]);
+                                            expanded.push_str(arg);
+                                            pos = a2;
+                                            matched = true;
+                                            break;
+                                        }
                                     }
                                 }
                             }

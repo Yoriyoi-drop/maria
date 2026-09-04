@@ -20066,6 +20066,140 @@ endmodule
 }
 
 #[test]
+fn test_macro_token_paste_prefix_param() {
+    // OpenTitan dv_macros.svh: `dv_``SEV_` — backtick + literal prefix `dv_`
+    // di-paste ke param SEV_ (`` ``` ``) → `dv_error`. Backtick terdepan harus
+    // dibuang, bukan dikopi literal (E1002 lexical error) — regresi dari
+    // cip_base_vseq.sv:1368 yang memanggil `DV_CHECK_EQ(...)`.
+    let source = r#"
+`define DV_CHECK_EQ(ACT_, EXP_, SEV_=error) \
+  begin \
+    `dv_``SEV_($sformatf("Check failed"), ACT_) \
+  end
+module top_tb(input logic a);
+  logic got;
+  initial begin
+    `DV_CHECK_EQ(a, 1)
+  end
+  initial #1 $finish;
+endmodule
+"#;
+    let design = compile_str(source);
+    assert!(design.is_ok(), "token-paste prefix+param gagal: {:?}", design.err());
+}
+
+#[test]
+fn test_macro_dv_check_eq_no_backtick() {
+    // Rekonstruksi nilai dari dv_macros.svh:95-101 (DV_CHECK_EQ) lalu panggil —
+    // pastikan TIDAK ada backtick yang bocor ke output preprocessed (regresi
+    // cip_base_vseq.sv:1368 E1002).
+    let source = r#"
+`define DV_CHECK_EQ(ACT_, EXP_, MSG_="", SEV_=error, ID_=`gfn) \
+  begin \
+    if ((ACT_) == (EXP_)) ; else begin \
+      `dv_``SEV_($sformatf("Check failed %s == %s (%0d [0x%0h] vs %0d [0x%0h]) %s", \
+                           `"ACT_`", `"EXP_`", ACT_, ACT_, EXP_, EXP_, MSG_), ID_) \
+    end \
+  end
+module top_tb(input logic a);
+  logic got;
+  initial begin
+    `DV_CHECK_EQ(a, 1, "mismatch")
+  end
+  initial #1 $finish;
+endmodule
+"#;
+    let mut pp = maria_parser::preprocessor::Preprocessor::new();
+    let out = pp.preprocess(source, None).unwrap();
+    assert!(
+        !out.contains('`'),
+        "backtick bocor ke output preprocessed:\n{}",
+        out
+    );
+    assert!(out.contains("dv_error"), "token-paste dv_+SEV_ gagal:\n{}", out);
+}
+
+#[test]
+fn test_dv_check_eq_multiline_define() {
+    // Re-producing the EXACT form from dv_macros.svh:95-101 (backslash continuations
+    // spanning actual lines, NOT a single joined line) — mimics real preprocessor
+    // pipeline where each define line is separate before parse_define gets it.
+    let source = "`define DV_CHECK_EQ(ACT_, EXP_, MSG_=\"\", SEV_=error, ID_=act) \\\n  begin \\\n    if ((ACT_) == (EXP_)) ; else begin \\\n      `dv_``SEV_($sformatf(\"check\"), ACT_) \\\n    end \\\n  end\nmodule top_tb(input logic a);\n  initial begin\n    `DV_CHECK_EQ(a, 1, \"mismatch\")\n  end\n  initial #1 $finish;\nendmodule\n";
+    let mut pp = maria_parser::preprocessor::Preprocessor::new();
+    let out = pp.preprocess(source, None).unwrap();
+    assert!(
+        !out.contains('`'),
+        "backtick bocor ke output preprocessed:\n{}",
+        out
+    );
+    assert!(out.contains("dv_error"), "token-paste dv_+SEV_ gagal:\n{}", out);
+}
+
+#[test]
+fn test_dv_check_eq_real_body() {
+    // Body PERSIS dv_macros.svh:95-101 dengan stringify `"ACT_`"` & token-paste
+    // `dv_``SEV_` di dalam $sformatf — reproduksi akurat E1002. Panggil dengan
+    // 3 arg + isi default SEV_ dan ID_=`gfn`.
+    let source = "`define gfn get_full_name()\n`define DV_CHECK_EQ(ACT_, EXP_, MSG_=\"\", SEV_=error, ID_=`gfn) \\\n  begin \\\n    if ((ACT_) == (EXP_)) ; else begin \\\n      `dv_``SEV_($sformatf(\"Check failed %s == %s (%0d [0x%0h] vs %0d [0x%0h]) %s\", \\\n                           `\"ACT_`\", `\"EXP_`\", ACT_, ACT_, EXP_, EXP_, MSG_), ID_) \\\n    end \\\n  end\nmodule top_tb(input logic a);\n  task check(int alert_name);\n    begin\n      `DV_CHECK_EQ(cfg.m_alert_agent_cfgs[alert_name].vif.get_alert(), 1,\n                   $sformatf(\"fatal error %0s does not trigger!\", alert_name))\n    end\n  endtask\n  initial #1 $finish;\nendmodule\n";
+    let mut pp = maria_parser::preprocessor::Preprocessor::new();
+    let out = pp.preprocess(source, None).unwrap();
+    assert!(
+        !out.contains('`'),
+        "backtick bocor ke output preprocessed (real body):\n{}",
+        out
+    );
+    assert!(out.contains("dv_error"), "token-paste gagal (real body):\n{}", out);
+}
+
+#[test]
+fn test_undefined_macro_midline_strips_backtick() {
+    // cip_base_vseq.sv:1387 — `DV_CHECK_EQ` TIDAK didefinisikan (file tidak
+    // include dv_macros.svh; fresh Preprocessor per file yang hanya diberi
+    // config.defines global) → makro unknown di tengah baris harus kehilangan
+    // backtick (strip), bukan bocor ` ke lexer (E1002).
+    let source = r#"
+module top_tb;
+  task check(int alert_name);
+    begin
+      `DV_CHECK_EQ(cfg.m_alert_agent_cfgs[alert_name].vif.get_alert(), 1,
+                   $sformatf("fatal error %0s does not trigger!", alert_name))
+    end
+  endtask
+  initial #1 $finish;
+endmodule
+"#;
+    let mut pp = maria_parser::preprocessor::Preprocessor::new();
+    let out = pp.preprocess(source, None).unwrap();
+    assert!(
+        !out.contains('`'),
+        "backtick bocor ke output preprocessed (undef macro):\n{}",
+        out
+    );
+    assert!(
+        out.contains("DV_CHECK_EQ"),
+        "undefined macro harus tetap ada (tanpa backtick):\n{}",
+        out
+    );
+}
+
+#[test]
+fn test_dv_real_file_dump() {
+    use std::path::PathBuf;
+    // nextest berjalan dari direktori crate (crates/maria-tests), jadi relatif ke root workspace = ../../
+    let file = PathBuf::from("../../opentitan/hw/dv/sv/cip_lib/seq_lib/cip_base_vseq.sv");
+    let dir = file.parent().unwrap().to_path_buf();
+    let src = std::fs::read_to_string(&file).unwrap();
+    let mut pp = maria_parser::preprocessor::Preprocessor::new();
+    pp.add_search_path(dir.to_str().unwrap());
+    let out = pp.preprocess(&src, Some(&dir)).unwrap();
+    for (ln, line) in out.lines().enumerate() {
+        if line.contains('`') {
+            eprintln!("BACKTICK line {}: {}", ln + 1, line);
+        }
+    }
+}
+
+#[test]
 fn test_param_class_after_name() {
     // pulp_riscv_dbg dmi_test.sv: `class req_t #(parameter int AW = 7);`
     // — param list SETELAH nama class, item `parameter int N = value`.
