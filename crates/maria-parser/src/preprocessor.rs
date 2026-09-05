@@ -447,8 +447,12 @@ impl Preprocessor {
 
     fn split_directive<'a>(&self, directive: &'a str) -> (&'a str, &'a str) {
         let trimmed = directive.trim_start();
+        // Stop-set: whitespace, `(`, `[`, DAN `.`. Tanpa `.`, nama macro yang
+        // dirangkai hierarki (`` `CLKMGR_HIER.reg2hw.foo.q ``) dianggap
+        // satu nama penuh → `defines.contains_key(cmd)` gagal → baris di-skip
+        // diam-diam (macro expansion hilang, cast multi-baris rusak).
         let end = trimmed
-            .find(|c: char| c.is_whitespace() || c == '(' || c == '[')
+            .find(|c: char| c.is_whitespace() || c == '(' || c == '[' || c == '.')
             .unwrap_or(trimmed.len());
         let cmd = &trimmed[..end];
         let rest = trimmed[end..].trim();
@@ -561,8 +565,14 @@ impl Preprocessor {
             (name, Vec::new(), value, Vec::new())
         };
 
-        self.defines
-            .insert(name, MacroDef { value, params, defaults });
+        self.defines.insert(
+            name,
+            MacroDef {
+                value,
+                params,
+                defaults,
+            },
+        );
     }
 
     /// Evaluate `ifdef/`ifndef expression. Supports:
@@ -704,13 +714,26 @@ impl Preprocessor {
                         // dipanggil `M(x)` → b diisi "2". Bila tanpa default →
                         // kosong. Tanpa ini param bocor literal/paste backtick
                         // (`top_darjeeling``pd_hier``.u_...`).
-                        for k in expanded_args.len()..mdef.params.len() {
-                            let d = mdef
-                                .defaults
+                        // Arg KOSONG (`, ,` di pemanggil — pola DV_*}
+                        // `DV_CHECK_FATAL(x, , MsgId)`) JUGA memakai default:
+                        // LRM 1800 §22.5.1 — argumen kosong = use default.
+                        for k in 0..mdef.params.len() {
+                            let is_empty = expanded_args
                                 .get(k)
-                                .map(|s| self.expand_inline_macros_depth(s, depth + 1))
-                                .unwrap_or_default();
-                            expanded_args.push(d);
+                                .map(|s| s.trim().is_empty())
+                                .unwrap_or(true);
+                            if k >= expanded_args.len() || is_empty {
+                                let d = mdef
+                                    .defaults
+                                    .get(k)
+                                    .map(|s| self.expand_inline_macros_depth(s, depth + 1))
+                                    .unwrap_or_default();
+                                if k >= expanded_args.len() {
+                                    expanded_args.push(d);
+                                } else {
+                                    expanded_args[k] = d;
+                                }
+                            }
                         }
                         // Substitute parameters with expanded arguments — single pass on bytes
                         let mut expanded = String::with_capacity(mdef.value.len());
@@ -843,7 +866,48 @@ impl Preprocessor {
                                             while a2 < val_bytes.len() && val_bytes[a2] == b'`' {
                                                 a2 += 1;
                                             }
-                                            expanded.push_str(&mdef.value[k..prefix_end]);
+                                            // Prefix sebelum paste bisa memuat macro
+                                            // BERTINGKAT yang sudah didefinisikan dan
+                                            // harus di-expand, mis. OpenTitan:
+                                            // `` `define SPI_HOST_HIER(i) `PD_MAIN_HIER.u_spi_host``i ``
+                                            // Prefix = `PD_MAIN_HIER.u_spi_host` — segmen
+                                            // pertama `PD_MAIN_HIER` adalah macro.
+                                            // Expand segmen tersebut (recursive) lalu
+                                            // lanjutkan sisa prefix + arg paste.
+                                            let prefix_str = &mdef.value[k..prefix_end];
+                                            let mut prefix_out = String::new();
+                                            let mut seg_start = 0usize;
+                                            while seg_start < prefix_str.len() {
+                                                let dot = prefix_str[seg_start..]
+                                                    .find('.')
+                                                    .map(|d| seg_start + d)
+                                                    .unwrap_or(prefix_str.len());
+                                                let seg = &prefix_str[seg_start..dot];
+                                                // Segmen pertama (ident polos) dapat
+                                                // berupa macro reference.
+                                                if seg_start == 0 && !seg.is_empty() {
+                                                    if let Some(inner) = self.defines.get(seg) {
+                                                        let inner_val = if inner.params.is_empty() {
+                                                            self.expand_inline_macros_depth(
+                                                                &inner.value,
+                                                                depth + 1,
+                                                            )
+                                                        } else {
+                                                            seg.to_string()
+                                                        };
+                                                        prefix_out.push_str(&inner_val);
+                                                    } else {
+                                                        prefix_out.push_str(seg);
+                                                    }
+                                                } else {
+                                                    prefix_out.push_str(seg);
+                                                }
+                                                if dot < prefix_str.len() {
+                                                    prefix_out.push('.');
+                                                }
+                                                seg_start = dot + 1;
+                                            }
+                                            expanded.push_str(&prefix_out);
                                             expanded.push_str(arg);
                                             pos = a2;
                                             matched = true;

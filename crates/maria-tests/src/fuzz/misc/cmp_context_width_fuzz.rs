@@ -7,13 +7,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 100)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 100).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -48,7 +46,13 @@ fn cmp_ctx_ternary_shift_fuzz() {
             3 => ((ternary_result >= shift_result as u64) as u64) & 0x7,
             _ => unreachable!(),
         };
-        let cmp_op = match op { 0 => "<", 1 => ">", 2 => "<=", 3 => ">=", _ => unreachable!() };
+        let cmp_op = match op {
+            0 => "<",
+            1 => ">",
+            2 => "<=",
+            3 => ">=",
+            _ => unreachable!(),
+        };
 
         let src = format!(
             "module m;\n\
@@ -56,7 +60,11 @@ fn cmp_ctx_ternary_shift_fuzz() {
              \x20 assign y = (({cond} ? {tv} : 3'd0) {cmp_op} (~({mask}) << {shift_amt}));\n\
              \x20 initial begin #10; $finish; end\n\
              endmodule\n",
-            cond = cond, tv = tv, mask = mask, shift_amt = shift_amt, cmp_op = cmp_op,
+            cond = cond,
+            tv = tv,
+            mask = mask,
+            shift_amt = shift_amt,
+            cmp_op = cmp_op,
         );
 
         let actual = run_sim(src);
@@ -67,8 +75,12 @@ fn cmp_ctx_ternary_shift_fuzz() {
             ));
         }
     }
-    assert!(mismatch.is_empty(),
-        "{} mismatch cmp_ctx_ternary_shift:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch cmp_ctx_ternary_shift:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 /// Deeply nested comparison: ternary in comparison in ternary
@@ -98,7 +110,9 @@ fn cmp_ctx_nested_ternary_fuzz() {
              \x20     #10; $finish;\n\
              \x20 end\n\
              endmodule\n",
-            cond = cond, a = a, b = b,
+            cond = cond,
+            a = a,
+            b = b,
         );
 
         let actual = run_sim(src);
@@ -109,8 +123,12 @@ fn cmp_ctx_nested_ternary_fuzz() {
             ));
         }
     }
-    assert!(mismatch.is_empty(),
-        "{} mismatch cmp_ctx_nested:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch cmp_ctx_nested:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 /// BitNot in comparison RHS with wider LHS
@@ -133,7 +151,8 @@ fn cmp_ctx_bitnot_rhs_fuzz() {
              \x20 assign y = (aa < ~(3'd{mask}));\n\
              \x20 initial begin aa = 3'd{a}; #10; $finish; end\n\
              endmodule\n",
-            a = a, mask = mask,
+            a = a,
+            mask = mask,
         );
 
         let actual = run_sim(src);
@@ -144,8 +163,12 @@ fn cmp_ctx_bitnot_rhs_fuzz() {
             ));
         }
     }
-    assert!(mismatch.is_empty(),
-        "{} mismatch cmp_ctx_bitnot_rhs:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch cmp_ctx_bitnot_rhs:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 /// Mixed width comparison: 8-bit LHS vs 32-bit RHS (unsigned)
@@ -168,21 +191,36 @@ fn cmp_ctx_mixed_width_fuzz() {
              \x20 assign y1 = (8'd{a} < 8'd{b});\n\
              \x20 initial begin #10; $finish; end\n\
              endmodule\n",
-            a = a, b = b,
+            a = a,
+            b = b,
         );
 
         let (actual8, actual1) = {
             let src_c = src.clone();
-            let r1 = std::thread::Builder::new().stack_size(256*1024*1024).spawn(move || {
-                crate::simulate_signals(&src_c, 100).ok().and_then(|sigs| {
-                    sigs.iter().find(|(n, _)| n == "y8").map(|(_, v)| v.to_u64())
+            let r1 = std::thread::Builder::new()
+                .stack_size(256 * 1024 * 1024)
+                .spawn(move || {
+                    crate::simulate_signals(&src_c, 100).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| n == "y8")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 })
-            }).unwrap().join().unwrap();
-            let r2 = std::thread::Builder::new().stack_size(256*1024*1024).spawn(move || {
-                crate::simulate_signals(&src, 100).ok().and_then(|sigs| {
-                    sigs.iter().find(|(n, _)| n == "y1").map(|(_, v)| v.to_u64())
+                .unwrap()
+                .join()
+                .unwrap();
+            let r2 = std::thread::Builder::new()
+                .stack_size(256 * 1024 * 1024)
+                .spawn(move || {
+                    crate::simulate_signals(&src, 100).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| n == "y1")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 })
-            }).unwrap().join().unwrap();
+                .unwrap()
+                .join()
+                .unwrap();
             (r1, r2)
         };
 
@@ -193,6 +231,10 @@ fn cmp_ctx_mixed_width_fuzz() {
             ));
         }
     }
-    assert!(mismatch.is_empty(),
-        "{} mismatch cmp_ctx_mixed_width:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch cmp_ctx_mixed_width:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }

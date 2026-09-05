@@ -13,7 +13,11 @@ use crate::fuzz::gen::{generate, lit_sv, mask_of};
 const SHIFT_CHAIN_WIDTHS: [u32; 5] = [4, 8, 16, 32, 64];
 
 fn mask_of128(w: u32) -> u128 {
-    if w >= 128 { u128::MAX } else { (1u128 << w) - 1 }
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
 }
 
 fn sign_ext(p: u128, w: u32) -> i128 {
@@ -28,14 +32,22 @@ fn sign_ext(p: u128, w: u32) -> i128 {
 fn golden_shl(lhs: u128, amt: u128, w: u32) -> u128 {
     let m = mask_of128(w);
     let a = amt.min(w as u128) as u32;
-    if a >= w { 0 } else { (lhs << a) & m }
+    if a >= w {
+        0
+    } else {
+        (lhs << a) & m
+    }
 }
 
 /// Golden: `lhs >> amount` mod 2^w (unsigned/logical).
 fn golden_shr(lhs: u128, amt: u128, w: u32) -> u128 {
     let m = mask_of128(w);
     let a = amt.min(w as u128) as u32;
-    if a >= w { 0 } else { (lhs >> a) & m }
+    if a >= w {
+        0
+    } else {
+        (lhs >> a) & m
+    }
 }
 
 /// Golden: `lhs >>> amount` mod 2^w (arithmetic/right-fill sign).
@@ -48,7 +60,11 @@ fn golden_sshr(lhs: u128, amt: u128, w: u32, lhs_signed: bool) -> u128 {
     }
     let sv = sign_ext(lhs, w);
     if a >= w {
-        if sv < 0 { m } else { 0 }
+        if sv < 0 {
+            m
+        } else {
+            0
+        }
     } else {
         ((sv >> a) as u128) & m
     }
@@ -84,7 +100,9 @@ fn shift_chain_shl_then_shr_matches_golden() {
 
     for seed in 0..120u64 {
         let w = SHIFT_CHAIN_WIDTHS[seed as usize % SHIFT_CHAIN_WIDTHS.len()];
-        if w > 64 { continue; }
+        if w > 64 {
+            continue;
+        }
         let mut rng = fastrand::Rng::with_seed(seed ^ 0x11_22_33);
         let m = mask_of128(w);
         let a = rng.u128(..) & m;
@@ -99,7 +117,9 @@ fn shift_chain_shl_then_shr_matches_golden() {
         let c_lit = format!("{}'h{:x}", w, c);
         let src = chain_source(
             &format!("(({} << {}) >> {})", a_lit, b_lit, c_lit),
-            w, "0", "0",
+            w,
+            "0",
+            "0",
         );
 
         let actual = std::thread::Builder::new()
@@ -108,9 +128,11 @@ fn shift_chain_shl_then_shr_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -142,7 +164,9 @@ fn shift_chain_sshr_of_shl_matches_golden() {
 
     for seed in 0..100u64 {
         let w = SHIFT_CHAIN_WIDTHS[seed as usize % SHIFT_CHAIN_WIDTHS.len()];
-        if w > 64 || w < 4 { continue; }
+        if w > 64 || w < 4 {
+            continue;
+        }
         let mut rng = fastrand::Rng::with_seed(seed ^ 0x44_55_66);
         let m = mask_of128(w);
         let a = rng.u128(..) & m;
@@ -157,10 +181,7 @@ fn shift_chain_sshr_of_shl_matches_golden() {
         // bukan logical (zero-fill). LHS unsigned → `>>>` = `>>`.
         let a_lit = format!("{}'sh{:x}", w, a);
         let s_lit = format!("{}'h{:x}", w, shift_amt);
-        let src = chain_source(
-            &format!("(({} << 1) >>> {})", a_lit, s_lit),
-            w, "0", "0",
-        );
+        let src = chain_source(&format!("(({} << 1) >>> {})", a_lit, s_lit), w, "0", "0");
 
         let actual = std::thread::Builder::new()
             .name("sshr-chain-sim".to_string())
@@ -168,9 +189,11 @@ fn shift_chain_sshr_of_shl_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -202,7 +225,9 @@ fn shift_by_addition_matches_golden() {
 
     for seed in 0..80u64 {
         let w = SHIFT_CHAIN_WIDTHS[seed as usize % SHIFT_CHAIN_WIDTHS.len()];
-        if w > 32 { continue; }
+        if w > 32 {
+            continue;
+        }
         let mut rng = fastrand::Rng::with_seed(seed ^ 0x77_88_99);
         let m = mask_of128(w);
         let a = rng.u128(..) & m;
@@ -217,7 +242,9 @@ fn shift_by_addition_matches_golden() {
         let c_lit = format!("{}'h{:x}", w, c as u128);
         let src = chain_source(
             &format!("({} << ({} + {}))", a_lit, b_lit, c_lit),
-            w, "0", "0",
+            w,
+            "0",
+            "0",
         );
 
         let actual = std::thread::Builder::new()
@@ -226,9 +253,11 @@ fn shift_by_addition_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")

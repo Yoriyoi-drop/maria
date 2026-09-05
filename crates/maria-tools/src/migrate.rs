@@ -101,9 +101,7 @@ impl MigrationReport {
                         suggested: "always_ff @(...)".into(),
                         description: "Use always_ff for sequential logic".into(),
                     });
-                } else if !trimmed.contains("always @*")
-                    && !trimmed.contains("always @(*)")
-                {
+                } else if !trimmed.contains("always @*") && !trimmed.contains("always @(*)") {
                     hints.push(MigrationHint {
                         line: line_num,
                         severity: HintSeverity::Suggestion,
@@ -164,7 +162,9 @@ impl MigrationReport {
             }
 
             // Rule 8: case with full case / parallel case pragmas
-            if trimmed.contains("// synopsys full_case") || trimmed.contains("// synthesis full_case") {
+            if trimmed.contains("// synopsys full_case")
+                || trimmed.contains("// synthesis full_case")
+            {
                 hints.push(MigrationHint {
                     line: line_num,
                     severity: HintSeverity::Suggestion,
@@ -223,9 +223,21 @@ impl MigrationReport {
     /// Summary statistics.
     pub fn summary(&self) -> MigrationSummary {
         let total = self.hints.len();
-        let info = self.hints.iter().filter(|h| h.severity == HintSeverity::Info).count();
-        let warning = self.hints.iter().filter(|h| h.severity == HintSeverity::Warning).count();
-        let suggestion = self.hints.iter().filter(|h| h.severity == HintSeverity::Suggestion).count();
+        let info = self
+            .hints
+            .iter()
+            .filter(|h| h.severity == HintSeverity::Info)
+            .count();
+        let warning = self
+            .hints
+            .iter()
+            .filter(|h| h.severity == HintSeverity::Warning)
+            .count();
+        let suggestion = self
+            .hints
+            .iter()
+            .filter(|h| h.severity == HintSeverity::Suggestion)
+            .count();
 
         let mut categories: Vec<(String, usize)> = Vec::new();
         for hint in &self.hints {
@@ -253,8 +265,11 @@ impl MigrationReport {
             "Migration Report: {}\n\
              ========================\n\
              Total hints: {} (💡{} ⚠️{} ℹ️{})\n\n",
-            self.filename, summary.total_hints,
-            summary.suggestion_count, summary.warning_count, summary.info_count,
+            self.filename,
+            summary.total_hints,
+            summary.suggestion_count,
+            summary.warning_count,
+            summary.info_count,
         );
 
         if !summary.categories.is_empty() {
@@ -314,8 +329,14 @@ endmodule
 "#;
         let report = MigrationReport::analyze("counter.v", source);
         assert!(!report.hints.is_empty());
-        assert!(report.hints.iter().any(|h| h.category == "type-modernization"));
-        assert!(report.hints.iter().any(|h| h.category == "process-modernization"));
+        assert!(report
+            .hints
+            .iter()
+            .any(|h| h.category == "type-modernization"));
+        assert!(report
+            .hints
+            .iter()
+            .any(|h| h.category == "process-modernization"));
     }
 
     #[test]
@@ -346,7 +367,10 @@ endmodule
     fn test_defparam_warning() {
         let source = "defparam u0.PARAM = 1;\n";
         let report = MigrationReport::analyze("test.v", source);
-        assert!(report.hints.iter().any(|h| h.severity == HintSeverity::Warning));
+        assert!(report
+            .hints
+            .iter()
+            .any(|h| h.severity == HintSeverity::Warning));
     }
 
     #[test]

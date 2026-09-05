@@ -230,8 +230,17 @@ impl SimulationEngine {
                     // reg TETAP di nilai forced. Simpan hanya untuk wire.
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
                         if !self.forced_signals.contains(&id) {
-                            let is_wire = self.design.top.signals.get(id)
-                                .map(|s| matches!(s.kind, maria_ir::SignalKind::Wire | maria_ir::SignalKind::Logic))
+                            let is_wire = self
+                                .design
+                                .top
+                                .signals
+                                .get(id)
+                                .map(|s| {
+                                    matches!(
+                                        s.kind,
+                                        maria_ir::SignalKind::Wire | maria_ir::SignalKind::Logic
+                                    )
+                                })
                                 .unwrap_or(false);
                             if is_wire {
                                 if let Some(sig) = self.state.signals.get(id) {
@@ -2280,8 +2289,17 @@ impl SimulationEngine {
                     // LRM §10.6.2: wire → restore; reg → keep forced.
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
                         if !self.forced_signals.contains(&id) {
-                            let is_wire = self.design.top.signals.get(id)
-                                .map(|s| matches!(s.kind, maria_ir::SignalKind::Wire | maria_ir::SignalKind::Logic))
+                            let is_wire = self
+                                .design
+                                .top
+                                .signals
+                                .get(id)
+                                .map(|s| {
+                                    matches!(
+                                        s.kind,
+                                        maria_ir::SignalKind::Wire | maria_ir::SignalKind::Logic
+                                    )
+                                })
                                 .unwrap_or(false);
                             if is_wire {
                                 if let Some(sig) = self.state.signals.get(id) {

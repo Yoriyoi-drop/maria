@@ -545,7 +545,32 @@ impl Parser {
                         match self.peek() {
                             Token::Coverpoint => {
                                 self.advance();
-                                let expr = self.parse_expr(0)?;
+                                // Coverpoint expression boleh berupa nama signal
+                                // yang bertabrakan dgn keyword SV (`coverpoint param`,
+                                // `coverpoint wait`, dst. — umum di kode DV).
+                                // Token keyword tidak diparse sbg Ident oleh
+                                // parse_expr → substitute sbg Ident signal.
+                                let expr = if matches!(
+                                    self.peek(),
+                                    Token::Param | Token::Wait | Token::Time | Token::String
+                                ) {
+                                    let kw = match self.peek() {
+                                        Token::Param => "param",
+                                        Token::Wait => "wait",
+                                        Token::Time => "time",
+                                        _ => "string",
+                                    };
+                                    let dl = self.peek_line();
+                                    let dc = self.peek_col();
+                                    self.advance();
+                                    Expr::Ident {
+                                        name: Symbol::intern(kw),
+                                        line: dl,
+                                        col: dc,
+                                    }
+                                } else {
+                                    self.parse_expr(0)?
+                                };
                                 let mut bins = Vec::new();
                                 if self.peek() == &Token::LBrace {
                                     self.advance();
@@ -570,7 +595,19 @@ impl Parser {
                                                         self.advance();
                                                     }
                                                 }
-                                                let bin_name = self.expect_ident()?;
+                                                // `none`/`some` are lexed as Token::None/Some_
+                                                // keywords but are valid bin names in covergroups.
+                                                let bin_name = match self.peek() {
+                                                    Token::None => {
+                                                        self.advance();
+                                                        Symbol::intern("none")
+                                                    }
+                                                    Token::Some_ => {
+                                                        self.advance();
+                                                        Symbol::intern("some")
+                                                    }
+                                                    _ => self.expect_ident()?,
+                                                };
                                                 // Opsional: `[N]` atau `[]` setelah nama (array bins)
                                                 if self.peek() == &Token::LBrack {
                                                     self.advance();
@@ -644,7 +681,8 @@ impl Parser {
                                                                 self.advance(); // '=>'
                                                                 loop {
                                                                     seq.push(self.parse_expr(0)?);
-                                                                    if self.peek() == &Token::Comma {
+                                                                    if self.peek() == &Token::Comma
+                                                                    {
                                                                         self.advance();
                                                                     } else {
                                                                         break;
@@ -907,6 +945,32 @@ impl Parser {
                     self.advance();
                 }
                 let arg_name = self.expect_ident()?;
+                // Dynamic array di DPI: `input bit[7:0] msg[]` — `[]` setelah
+                // nama port (unpacked dynamic dim). Skip agar `,`/`)` berikut
+                // ditemukan; multi-dim unpacked `[N]` juga di-skip.
+                while self.peek() == &Token::LBrack {
+                    self.advance();
+                    if self.peek() != &Token::RBrack {
+                        // size-expr `[N]` — skip sampai `]`
+                        let mut depth = 1;
+                        while depth > 0 && self.peek() != &Token::Eof {
+                            match self.peek() {
+                                Token::LBrack => depth += 1,
+                                Token::RBrack => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        self.advance();
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            self.advance();
+                        }
+                    } else {
+                        self.advance(); // `[]` kosong
+                    }
+                }
                 args.push(DpiArg {
                     direction,
                     dtype,
@@ -930,7 +994,9 @@ impl Parser {
     }
 
     pub(crate) fn skip_dpi_range(&mut self) {
-        if self.peek() == &Token::LBrack {
+        // Skip ALL consecutive packed dimensions: `bit[3:0][7:0][31:0] msg`
+        // (multi-dim packed array di DPI-C — pola lazim di dv dpi_pkg).
+        while self.peek() == &Token::LBrack {
             self.advance();
             let mut depth = 1;
             while depth > 0 && self.peek() != &Token::Eof {
@@ -1037,7 +1103,10 @@ impl Parser {
             | Token::Struct
             | Token::Union
             | Token::Const
-            | Token::Var => true,
+            | Token::Var
+            | Token::Semaphore
+            | Token::Mailbox
+            | Token::Virtual => true,
             Token::Ident(_) => match self.peek_ahead(1) {
                 Token::Ident(_) => true,
                 // pkg::type varname;  (bukan pkg::func(...))
@@ -1082,7 +1151,7 @@ impl Parser {
 
     /// Konsumu seluruh call balanced `(...)` (plus bracket/brace nested)
     /// sbg no-op. Preambilang: pos di `(` (Ident di-advance oleh caller).
-    fn skip_balanced_call(&mut self) {
+    pub(crate) fn skip_balanced_call(&mut self) {
         let mut depth = 0i32;
         loop {
             match self.peek() {
@@ -1489,6 +1558,24 @@ impl Parser {
                     rhs,
                     delay: None,
                 })
+            }
+            // Import statement inside task/function body: `import pkg::item;`
+            // — skip (scope import, tidak berdampak simulasi).
+            Token::Import => {
+                self.advance();
+                // Skip DPI-C import: `import "DPI-C" function ...;`
+                if matches!(self.peek(), Token::StringLit(_)) {
+                    while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                        self.advance();
+                    }
+                } else {
+                    // `import pkg::*;` or `import pkg::item;`
+                    while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                        self.advance();
+                    }
+                }
+                self.skip_semi();
+                Ok(Stmt::Null)
             }
             Token::Semi => {
                 self.advance();
@@ -2026,6 +2113,12 @@ impl Parser {
             }
             _ => {}
         }
+        // Konsumsi `signed`/`unsigned` modifier setelah type keyword jika belum
+        // dikonsumsi di atas (mis. `localparam int unsigned` — `int` dikonsumsi
+        // di arm Token::Int di atas, lalu `unsigned` tersisa).
+        if matches!(self.peek(), Token::Signed | Token::Unsigned) {
+            self.advance();
+        }
         // Optional packed range [msb:lsb]
         let mut expr_range = None;
         if self.peek() == &Token::LBrack {
@@ -2400,30 +2493,109 @@ impl Parser {
     pub(crate) fn parse_foreach_stmt(&mut self) -> Result<Stmt, SimError> {
         self.advance();
         self.expect(Token::LParen)?;
-        let mut array_var = self.expect_ident()?;
-        // Member path sebagai iterable: `foreach(cfg.ral_models[i] ...)` —
-        // gabung segmen path dengan '.' menjadi satu identifier simbolik.
-        while self.peek() == &Token::Dot {
-            self.advance();
-            let seg = self.expect_ident()?;
-            array_var = Symbol::intern(&format!("{}.{}", array_var, seg));
-        }
-        self.expect(Token::LBrack)?;
-        let mut index_vars = Vec::new();
+        let mut array_var = String::new();
+        // Leading identifier
+        array_var.push_str(&self.expect_ident()?.as_str());
         loop {
-            index_vars.push(self.expect_ident()?);
-            if self.peek() == &Token::Comma {
-                self.advance();
-            } else {
-                break;
+            match self.peek() {
+                Token::Dot => {
+                    self.advance();
+                    array_var.push('.');
+                    array_var.push_str(&self.expect_ident()?.as_str());
+                }
+                Token::LBrack => {
+                    // Determine if this bracket group is the LOOP-VAR group:
+                    // contains only identifiers/commas and is immediately
+                    // followed by `)`. Example:
+                    //   `foreach(xbar_hosts[i].valid_devices[j])` — `[i]` is a
+                    //   path-index (has expr), `[j]` is the loop-var group.
+                    let save = self.pos.get();
+                    self.advance(); // '['
+                    let mut loop_group = true;
+                    let mut depth = 1usize;
+                    let mut n = 0usize;
+                    let mut closed = false;
+                    while depth > 0 {
+                        match self.peek_ahead(n) {
+                            Token::Ident(_) | Token::Comma => {
+                                n += 1;
+                            }
+                            Token::RBrack => {
+                                depth -= 1;
+                                n += 1;
+                                if depth == 0 {
+                                    closed = true;
+                                }
+                            }
+                            Token::LBrack => {
+                                depth += 1;
+                                n += 1;
+                            }
+                            _ => {
+                                loop_group = false;
+                                break;
+                            }
+                        }
+                    }
+                    if loop_group && closed && matches!(self.peek_ahead(n), Token::RParen) {
+                        // Loop-var group terakhir.
+                        self.pos.set(save);
+                        self.advance(); // '['
+                        let mut index_vars = Vec::new();
+                        loop {
+                            index_vars.push(self.expect_ident()?);
+                            if self.peek() == &Token::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.expect(Token::RBrack)?;
+                        self.expect(Token::RParen)?;
+                        let stmts = self.parse_stmt_block()?;
+                        return Ok(Stmt::ForeachLoop {
+                            array_var: Symbol::intern(&array_var),
+                            index_vars,
+                            stmts,
+                        });
+                    }
+                    // Path index group: `xbar_hosts[i]` — salin teks `[...]`.
+                    self.pos.set(save);
+                    self.advance(); // '['
+                    array_var.push('[');
+                    let mut depth = 1usize;
+                    while depth > 0 && self.peek() != &Token::Eof {
+                        match self.peek() {
+                            Token::RBrack => {
+                                depth -= 1;
+                                self.advance();
+                                if depth == 0 {
+                                    array_var.push(']');
+                                } else {
+                                    array_var.push_str("]");
+                                }
+                            }
+                            Token::LBrack => {
+                                depth += 1;
+                                self.advance();
+                                array_var.push('[');
+                            }
+                            t => {
+                                array_var.push_str(&format!("{}", t));
+                                self.advance();
+                            }
+                        }
+                    }
+                }
+                _ => break,
             }
         }
-        self.expect(Token::RBrack)?;
+        // Fallback: tidak ada loop-var group eksplisit.
         self.expect(Token::RParen)?;
         let stmts = self.parse_stmt_block()?;
         Ok(Stmt::ForeachLoop {
-            array_var,
-            index_vars,
+            array_var: Symbol::intern(&array_var),
+            index_vars: vec![],
             stmts,
         })
     }
@@ -2466,6 +2638,13 @@ impl Parser {
             match self.peek() {
                 Token::Join => {
                     self.advance();
+                    // Named join: `join : label_name` — skip label
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                     return Ok(Stmt::Fork {
                         processes,
                         join_type: JoinType::Join,
@@ -2473,6 +2652,13 @@ impl Parser {
                 }
                 Token::JoinAny => {
                     self.advance();
+                    // Named join_any: `join_any : label_name` — skip label
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                     return Ok(Stmt::Fork {
                         processes,
                         join_type: JoinType::JoinAny,
@@ -2480,6 +2666,13 @@ impl Parser {
                 }
                 Token::JoinNone => {
                     self.advance();
+                    // Named join_none: `join_none : label_name` — skip label
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                     return Ok(Stmt::Fork {
                         processes,
                         join_type: JoinType::JoinNone,

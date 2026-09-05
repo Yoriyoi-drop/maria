@@ -1,18 +1,22 @@
 // probe: boot CD cepat — tanpa histogram; dump kode guest di akhir + INT 13h count.
+use maria_core::intern::Symbol;
 use maria_emu::cpu::x86::X86Cpu;
 use maria_emu::cpu::CpuCore;
 use maria_emu::iso::{parse_eltorito, read_boot_image};
 use maria_emu::mem::{MemoryMap, MemoryPort, RamRegion, RegionKind};
-use maria_core::intern::Symbol;
 
 fn main() {
     let iso = std::env::var("ISO").unwrap_or_else(|_| "ubuntu-26.04-desktop-amd64.iso".into());
-    let n: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(100000);
+    let n: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100000);
     let mut f = std::fs::File::open(&iso).unwrap();
     let boot = parse_eltorito(&mut f).unwrap();
     let image = read_boot_image(&mut f, &boot.entry, 0x10000).unwrap();
     let mut mem = MemoryMap::new();
-    mem.add(RamRegion::new(Symbol::intern("ram"), 0, 0x80000000, RegionKind::Ram, true).unwrap()).unwrap();
+    mem.add(RamRegion::new(Symbol::intern("ram"), 0, 0x80000000, RegionKind::Ram, true).unwrap())
+        .unwrap();
     let mut cpu = X86Cpu::new();
     cpu.disk = Some(Box::new(maria_emu::cpu::x86::FileDisk::open(&iso).unwrap()));
     cpu.load_boot_image(&mut mem, &image, 0xE0).unwrap();
@@ -30,8 +34,15 @@ fn main() {
         }
         cpu.step(&mut mem).unwrap();
     }
-    println!("final: steps={} pc=0x{:x} cs=0x{:x} pmode={} int13={} out={:?}",
-        n, cpu.pc(), cpu.cs, cpu.pmode, int13, String::from_utf8_lossy(&cpu.out));
+    println!(
+        "final: steps={} pc=0x{:x} cs=0x{:x} pmode={} int13={} out={:?}",
+        n,
+        cpu.pc(),
+        cpu.cs,
+        cpu.pmode,
+        int13,
+        String::from_utf8_lossy(&cpu.out)
+    );
     // Dump region busur 0x8f00-0x9800 ke file /tmp/opencode/lowregion.bin
     {
         let mut v = Vec::with_capacity(0x9800 - 0x8f00);
@@ -53,11 +64,17 @@ fn main() {
             0
         };
         let linear = (base as u64 + cpu.ip as u64) & 0xffff_ffff;
-        println!("gdt_base(sel={:#x})={:#010x} gdt_base_reg={:#010x} linear=0x{:08x}",
-            sel, base, cpu.gdt_base, linear);
+        println!(
+            "gdt_base(sel={:#x})={:#010x} gdt_base_reg={:#010x} linear=0x{:08x}",
+            sel, base, cpu.gdt_base, linear
+        );
         print!("code @ linear-64: ");
         for k in 0..160u64 {
-            print!("{:02x} ", mem.read((linear as i64 - 64).max(0) as u64 + k, 1).unwrap_or(0));
+            print!(
+                "{:02x} ",
+                mem.read((linear as i64 - 64).max(0) as u64 + k, 1)
+                    .unwrap_or(0)
+            );
         }
         println!();
         // Bilangan bukan-nol di sekitar linear?

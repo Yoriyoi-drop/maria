@@ -8,13 +8,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -124,7 +122,11 @@ fn zero_extension_basic() {
         let mut rng = fastrand::Rng::with_seed(seed ^ 0xC1_03);
         let w窄 = [4u32, 8][seed as usize % 2];
         let w宽 = w窄 * 2;
-        let m窄 = if w窄 >= 64 { u64::MAX } else { (1u64 << w窄) - 1 };
+        let m窄 = if w窄 >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << w窄) - 1
+        };
 
         let val = rng.u64(..) & m窄;
         let expected = val; // zero-extended

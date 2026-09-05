@@ -76,9 +76,7 @@ pub unsafe extern "C" fn maria_count_modules(source: *const c_char) -> c_int {
     };
 
     // Count "module " at word boundary (not inside "endmodule")
-    let count = src.split_whitespace()
-        .filter(|t| t == &"module")
-        .count() as c_int;
+    let count = src.split_whitespace().filter(|t| t == &"module").count() as c_int;
     count
 }
 
@@ -193,7 +191,9 @@ mod tests {
         let s = unsafe { CStr::from_ptr(ptr) };
         let info = s.to_str().unwrap();
         assert!(info.contains("0.3.0"));
-        unsafe { maria_free_string(ptr); }
+        unsafe {
+            maria_free_string(ptr);
+        }
     }
 
     #[test]

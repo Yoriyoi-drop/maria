@@ -133,7 +133,12 @@ impl AuditLog {
         details.insert("cycles".into(), cycles.to_string());
         details.insert("signals".into(), signals.to_string());
         details.insert("duration_ms".into(), duration_ms.to_string());
-        self.log(AuditLevel::Info, "simulation", "simulation completed", details);
+        self.log(
+            AuditLevel::Info,
+            "simulation",
+            "simulation completed",
+            details,
+        );
     }
 
     /// Catat formal verification.
@@ -142,7 +147,12 @@ impl AuditLog {
         details.insert("assertions".into(), assertions.to_string());
         details.insert("result".into(), result.into());
         details.insert("bound".into(), bound.to_string());
-        self.log(AuditLevel::Info, "formal", "formal check completed", details);
+        self.log(
+            AuditLevel::Info,
+            "formal",
+            "formal check completed",
+            details,
+        );
     }
 
     /// Flush semua entries ke file (JSON lines format).
@@ -175,10 +185,9 @@ impl AuditLog {
 
         let count = entries.len();
         for entry in &entries {
-            let json = serde_json::to_string(entry)
-                .map_err(|e| format!("gagal serialize: {}", e))?;
-            writeln!(file, "{}", json)
-                .map_err(|e| format!("gagal tulis: {}", e))?;
+            let json =
+                serde_json::to_string(entry).map_err(|e| format!("gagal serialize: {}", e))?;
+            writeln!(file, "{}", json).map_err(|e| format!("gagal tulis: {}", e))?;
         }
 
         Ok(count)

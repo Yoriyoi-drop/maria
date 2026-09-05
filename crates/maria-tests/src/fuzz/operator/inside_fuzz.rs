@@ -14,12 +14,19 @@ use crate::fuzz::gen::{generate, lit_sv, mask_of};
 const INSIDE_WIDTHS: [u32; 5] = [4, 8, 12, 16, 32];
 
 fn mask_of128(w: u32) -> u128 {
-    if w >= 128 { u128::MAX } else { (1u128 << w) - 1 }
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
 }
 
 /// Bangun source dengan `assign y = (lhs inside {items});`
 fn inside_source(lhs_sv: &str, w: u32, items: &[u64], aval: &str, bval: &str) -> String {
-    let items_sv: Vec<String> = items.iter().map(|v| format!("{}'h{:x}", w, v & mask_of(w))).collect();
+    let items_sv: Vec<String> = items
+        .iter()
+        .map(|v| format!("{}'h{:x}", w, v & mask_of(w)))
+        .collect();
     let set = items_sv.join(", ");
     format!(
         "module inside_fuzz_mod;\n\
@@ -87,9 +94,11 @@ fn inside_literal_items_match_golden() {
                 .spawn({
                     let src = src.clone();
                     move || {
-                        crate::simulate_signals(&src, 30)
-                            .ok()
-                            .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                        crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                            sigs.iter()
+                                .find(|(n, _)| *n == "y")
+                                .map(|(_, v)| v.to_u64())
+                        })
                     }
                 })
                 .expect("spawn")
@@ -100,8 +109,16 @@ fn inside_literal_items_match_golden() {
             if actual != Some(expected_bit) {
                 mismatch.push(format!(
                     "seed={} w={} val={:#x} items={:?} harap={} dapat={:?}\n{}",
-                    seed, w, test_val, items.iter().map(|x| format!("{:#x}", x)).collect::<Vec<_>>(),
-                    expected_bit, actual, src
+                    seed,
+                    w,
+                    test_val,
+                    items
+                        .iter()
+                        .map(|x| format!("{:#x}", x))
+                        .collect::<Vec<_>>(),
+                    expected_bit,
+                    actual,
+                    src
                 ));
             }
             checked += 1;
@@ -124,17 +141,19 @@ fn inside_with_signal_as_lhs() {
 
     for seed in 0..80u64 {
         let input = generate(seed ^ 0xAA_BB_11);
-        if input.w > 32 { continue; }
-        if input.expr.eval_has_x(input.w, input.a, input.b) { continue; }
+        if input.w > 32 {
+            continue;
+        }
+        if input.expr.eval_has_x(input.w, input.a, input.b) {
+            continue;
+        }
 
         let w = input.w;
         let sel = input.expr.eval(input.w, input.a, input.b) & mask_of(w);
 
         let mut rng = fastrand::Rng::with_seed(seed ^ 0x22_33_44);
         let n_items = rng.usize(2..=4);
-        let items: Vec<u64> = (0..n_items)
-            .map(|_| rng.u64(0..) & mask_of(w))
-            .collect();
+        let items: Vec<u64> = (0..n_items).map(|_| rng.u64(0..) & mask_of(w)).collect();
 
         let expected = golden_inside(sel, w, &items);
         let items_sv: Vec<String> = items.iter().map(|v| format!("{}'h{:x}", w, v)).collect();
@@ -166,9 +185,11 @@ fn inside_with_signal_as_lhs() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")

@@ -8,13 +8,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 50)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 50).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -91,10 +89,16 @@ fn foreach_weighted() {
         }
         // Weighted sum: vals[0]*1 + vals[1]*2 + vals[2]*3 + vals[3]*4
         // Max = 3*1 + 3*2 + 3*3 + 3*4 = 30 → fits in 8 bits
-        let expected: u64 = vals.iter().enumerate().map(|(i, v)| v * (i as u64 + 1)).sum();
+        let expected: u64 = vals
+            .iter()
+            .enumerate()
+            .map(|(i, v)| v * (i as u64 + 1))
+            .sum();
 
         // Use explicit assignments to avoid array literal reverse-order bug
-        let assigns: Vec<String> = vals.iter().enumerate()
+        let assigns: Vec<String> = vals
+            .iter()
+            .enumerate()
             .map(|(i, v)| format!("arr[{}] = 4'h{:x};", i, v))
             .collect();
         let assign_str = assigns.join(" ");

@@ -62,22 +62,19 @@ impl StaReport {
 
         out.push_str(&format!(
             "Summary: {} paths, {} violations, worst slack: {:.2}ns\n\n",
-            self.summary.total_paths,
-            self.summary.violating_paths,
-            self.summary.worst_slack,
+            self.summary.total_paths, self.summary.violating_paths, self.summary.worst_slack,
         ));
 
         out.push_str("Timing Paths:\n");
         for path in &self.paths {
-            let marker = if path.is_critical { " *** CRITICAL ***" } else { "" };
+            let marker = if path.is_critical {
+                " *** CRITICAL ***"
+            } else {
+                ""
+            };
             out.push_str(&format!(
                 "  {} -> {} | Delay: {:.2} Slack: {:.2} ({}){}\n",
-                path.start_point,
-                path.end_point,
-                path.delay,
-                path.slack,
-                path.path_type,
-                marker,
+                path.start_point, path.end_point, path.delay, path.slack, path.path_type, marker,
             ));
         }
 
@@ -90,13 +87,11 @@ impl StaReport {
         out.push_str("=== Cadence Tempus Timing Report ===\n\n");
         out.push_str(&format!(
             "WNS: {:.3}  TNS: {:.3}\n",
-            self.summary.worst_slack,
-            self.summary.total_negative_slack,
+            self.summary.worst_slack, self.summary.total_negative_slack,
         ));
         out.push_str(&format!(
             "Failing Paths: {}/{}\n\n",
-            self.summary.violating_paths,
-            self.summary.total_paths,
+            self.summary.violating_paths, self.summary.total_paths,
         ));
 
         for (i, path) in self.paths.iter().enumerate() {
@@ -119,11 +114,7 @@ impl StaReport {
         for clk in &self.clocks {
             out.push_str(&format!(
                 "create_clock -name {} -period {} -waveform {{{} {}}} [get_ports {}]\n",
-                clk.name,
-                clk.period,
-                clk.waveform.0,
-                clk.waveform.1,
-                clk.source_port,
+                clk.name, clk.period, clk.waveform.0, clk.waveform.1, clk.source_port,
             ));
         }
         out
@@ -134,7 +125,10 @@ impl StaReport {
         let total = paths.len();
         let violating = paths.iter().filter(|p| p.slack < 0.0).count();
         let worst = paths.iter().map(|p| p.slack).fold(f64::INFINITY, f64::min);
-        let best = paths.iter().map(|p| p.slack).fold(f64::NEG_INFINITY, f64::max);
+        let best = paths
+            .iter()
+            .map(|p| p.slack)
+            .fold(f64::NEG_INFINITY, f64::max);
         let tns: f64 = paths
             .iter()
             .filter(|p| p.slack < 0.0)

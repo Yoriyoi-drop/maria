@@ -929,10 +929,10 @@ mod tests {
         let code = [
             i(-1, 0, 0, 5, ADDI),
             i(-1, 0, 0, 6, ADDI),
-            r(1, 6, 5, 1, 7, OP),   // MULH t2 = t0*t1 (signed -1 * -1)
-            r(1, 6, 5, 3, 8, OP),   // MULHU t3 = t0*t1 (unsigned 0xFFFFFFFF²)
-            i(2, 0, 0, 9, ADDI),    // t4 = 2
-            r(1, 9, 5, 2, 10, OP),  // MULHSU t5 = t0(-1) * t4(2) = -2
+            r(1, 6, 5, 1, 7, OP),  // MULH t2 = t0*t1 (signed -1 * -1)
+            r(1, 6, 5, 3, 8, OP),  // MULHU t3 = t0*t1 (unsigned 0xFFFFFFFF²)
+            i(2, 0, 0, 9, ADDI),   // t4 = 2
+            r(1, 9, 5, 2, 10, OP), // MULHSU t5 = t0(-1) * t4(2) = -2
         ];
         load_code(&mut cpu, &mut m, 0x420, &code);
         run(&mut cpu, &mut m, 6);

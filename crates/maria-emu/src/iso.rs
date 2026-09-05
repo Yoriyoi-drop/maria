@@ -121,12 +121,13 @@ pub fn parse_eltorito(file: &mut File) -> Result<ElToritoBoot, String> {
 /// Baca boot image (byte offset = image_lba * 2048) langsung dari file.
 /// Panjang = min(entry.len_512 * 512, cap). Cap menghindari alokasi raksasa
 /// bila catalog salah. Untuk no-emul, BIOS biasanya cukup 512 byte (cdboot).
-pub fn read_boot_image(file: &mut File, entry: &ElToritoBootEntry, cap: usize) -> Result<Vec<u8>, String> {
+pub fn read_boot_image(
+    file: &mut File,
+    entry: &ElToritoBootEntry,
+    cap: usize,
+) -> Result<Vec<u8>, String> {
     // Minimal 512 byte (BIOS muat 1 sektor boot), dibatasi `cap`.
-    let len = ((entry.len_512 as usize)
-        .saturating_mul(512)
-        .max(512))
-        .min(cap.max(512));
+    let len = ((entry.len_512 as usize).saturating_mul(512).max(512)).min(cap.max(512));
     let mut buf = vec![0u8; len];
     file.seek(SeekFrom::Start(entry.image_lba as u64 * CD_BLOCK))
         .map_err(|e| format!("seek boot image: {}", e))?;

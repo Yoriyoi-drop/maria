@@ -243,10 +243,21 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
         let pid = MicdDatabase::project_id(
             &std::env::current_dir().unwrap_or_default(),
             &all_files,
-            &args.incdirs.iter().map(std::path::PathBuf::from).collect::<Vec<_>>(),
-            &args.defines.iter().filter_map(|d| d.split_once('=')).map(|(k,v)| (k.to_string(), v.to_string())).collect::<Vec<_>>(),
+            &args
+                .incdirs
+                .iter()
+                .map(std::path::PathBuf::from)
+                .collect::<Vec<_>>(),
+            &args
+                .defines
+                .iter()
+                .filter_map(|d| d.split_once('='))
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>(),
         );
-        let pdb_root = micd_root.join(maria_compiler::micd::DIR_PRECOMPILED).join(&pid);
+        let pdb_root = micd_root
+            .join(maria_compiler::micd::DIR_PRECOMPILED)
+            .join(&pid);
         let pdb = maria_compiler::micd::PrecompiledDb::open(&pdb_root);
         let pst = pdb.stats();
         section("Precompiled Modules");
@@ -258,7 +269,10 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
         for (name, m) in pdb.modules.iter().take(12) {
             println!(
                 "    {:<24} hash={:016x} ports={} deps={}",
-                name, m.content_hash, m.ports.len(), m.depends_on.len()
+                name,
+                m.content_hash,
+                m.ports.len(),
+                m.depends_on.len()
             );
         }
         if pdb.len() > 12 {

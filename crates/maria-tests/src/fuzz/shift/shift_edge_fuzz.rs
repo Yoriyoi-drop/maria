@@ -8,13 +8,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")

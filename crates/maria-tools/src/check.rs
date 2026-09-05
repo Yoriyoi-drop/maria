@@ -701,7 +701,10 @@ fn run_sv_version_check(targets: &[String]) -> Result<(), SimError> {
     if !supported.is_empty() {
         println!("✅ Supported features used:");
         for (name, count, version) in &supported {
-            println!("  {:<25} {:>4} occurrences  (IEEE {})", name, count, version);
+            println!(
+                "  {:<25} {:>4} occurrences  (IEEE {})",
+                name, count, version
+            );
         }
         println!();
     }
@@ -709,7 +712,10 @@ fn run_sv_version_check(targets: &[String]) -> Result<(), SimError> {
     if !unsupported.is_empty() {
         println!("⚠️  Features NOT fully supported by Maria:");
         for (name, count, version) in &unsupported {
-            println!("  {:<25} {:>4} occurrences  (IEEE {})", name, count, version);
+            println!(
+                "  {:<25} {:>4} occurrences  (IEEE {})",
+                name, count, version
+            );
         }
         println!();
         println!("Note: These features may parse but have limited runtime support.");

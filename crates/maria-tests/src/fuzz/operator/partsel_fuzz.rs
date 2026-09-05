@@ -99,8 +99,7 @@ fn plan_case(seed: u64, w: u32, rng: &mut fastrand::Rng) -> CasePlan {
     // jauh di atas) agar kedua dunia tercakup.
     let offsets: [i64; 9] = [-8, -4, -2, -1, 0, 1, 2, 4, 8];
     let off = offsets[rng.usize(0..offsets.len())];
-    let base_const =
-        (w as i64 + off).clamp(0, u32::MAX as i64 - ws as i64 - 1) as u32;
+    let base_const = (w as i64 + off).clamp(0, u32::MAX as i64 - ws as i64 - 1) as u32;
     // Out-of-range konstan: hi di [w .. w+7], lo < hi.
     let oob_hi = w + rng.u32(0..8);
     let oob_lo = if kind == SelKind::PartSelOob && rng.bool() {
@@ -119,7 +118,13 @@ fn plan_case(seed: u64, w: u32, rng: &mut fastrand::Rng) -> CasePlan {
 
 fn source(input: &crate::fuzz::gen::GenInput, plan: &CasePlan) -> String {
     let w = input.w;
-    let expr_sv = select_sv(plan.kind, plan.base_const, plan.ws, plan.oob_hi, plan.oob_lo);
+    let expr_sv = select_sv(
+        plan.kind,
+        plan.base_const,
+        plan.ws,
+        plan.oob_hi,
+        plan.oob_lo,
+    );
     let yw = match plan.kind {
         SelKind::BitSelOob => 1,
         SelKind::PartSelOob => plan.oob_hi.saturating_sub(plan.oob_lo) + 1,
@@ -148,10 +153,7 @@ fn source(input: &crate::fuzz::gen::GenInput, plan: &CasePlan) -> String {
 }
 
 /// Emas per-bit: LogicVal sepanjang lebar hasil.
-fn golden_bits(
-    input: &crate::fuzz::gen::GenInput,
-    plan: &CasePlan,
-) -> (Vec<LogicVal>, u32) {
+fn golden_bits(input: &crate::fuzz::gen::GenInput, plan: &CasePlan) -> (Vec<LogicVal>, u32) {
     let w = input.w as u128;
     let (idxs, yw) = match plan.kind {
         SelKind::BitSelOob => (selected_indices(plan.kind, 0, 1, plan.oob_hi, 0), 1),
@@ -164,10 +166,7 @@ fn golden_bits(
                 SelKind::PlusConst | SelKind::MinusConst => plan.base_const as u64,
                 _ => dyn_base(input),
             };
-            (
-                selected_indices(plan.kind, base, plan.ws, 0, 0),
-                plan.ws,
-            )
+            (selected_indices(plan.kind, base, plan.ws, 0, 0), plan.ws)
         }
     };
     let mut out = Vec::with_capacity(idxs.len());
@@ -183,11 +182,7 @@ fn golden_bits(
             out.push(LogicVal::X);
             continue;
         }
-        let bit = if idx >= 64 {
-            0
-        } else {
-            (input.a >> idx) & 1
-        };
+        let bit = if idx >= 64 { 0 } else { (input.a >> idx) & 1 };
         out.push(if bit == 1 {
             LogicVal::One
         } else {
@@ -199,7 +194,9 @@ fn golden_bits(
 
 /// Apakah vektor memuat bit tak-diketahui (X/Z)?
 fn has_unknown(v: &LogicVec) -> bool {
-    v.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z))
+    v.bits
+        .iter()
+        .any(|b| matches!(b, LogicVal::X | LogicVal::Z))
 }
 
 fn sim_y(src: String) -> Option<LogicVec> {
@@ -270,7 +267,11 @@ fn partsel_indexed_and_oob_match_golden_per_bit() {
     assert!(checked > 60, "terlalu sedikit kasus (checked={})", checked);
     // Kedua dunia harus tercakup — guard agar test tak meluntur jadi
     // sepihak in-range saja atau X saja.
-    assert!(in_range_cases >= 15, "kasus in-range kurang ({})", in_range_cases);
+    assert!(
+        in_range_cases >= 15,
+        "kasus in-range kurang ({})",
+        in_range_cases
+    );
     assert!(x_cases >= 15, "kasus out-of-range kurang ({})", x_cases);
     assert!(
         mismatch.is_empty(),

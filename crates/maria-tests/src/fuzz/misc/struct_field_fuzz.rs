@@ -7,7 +7,11 @@
 //! - Packed struct operations
 
 fn mask_of(w: u32) -> u64 {
-    if w >= 64 { u64::MAX } else { (1u64 << w) - 1 }
+    if w >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << w) - 1
+    }
 }
 
 fn lit_sv(v: u64, w: u32) -> String {
@@ -20,13 +24,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")

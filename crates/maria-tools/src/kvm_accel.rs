@@ -69,9 +69,15 @@ pub fn detect_kvm() -> KvmStatus {
 
         // Check capabilities from /proc/cpuinfo
         if let Ok(content) = std::fs::read_to_string("/proc/cpuinfo") {
-            if content.contains("tsc") { status.has_tsc = true; }
-            if content.contains("msr") { status.has_msr = true; }
-            if content.contains("xsave") { status.has_xsave = true; }
+            if content.contains("tsc") {
+                status.has_tsc = true;
+            }
+            if content.contains("msr") {
+                status.has_msr = true;
+            }
+            if content.contains("xsave") {
+                status.has_xsave = true;
+            }
         }
 
         // Max vCPUs
@@ -87,8 +93,7 @@ pub fn detect_kvm() -> KvmStatus {
 pub fn generate_qemu_command(config: &VmConfig) -> String {
     let mut cmd = format!(
         "qemu-system-x86_64 -enable-kvm -smp {} -m {}",
-        config.vcpus,
-        config.memory_mb,
+        config.vcpus, config.memory_mb,
     );
 
     if config.enable_hugepages {
@@ -113,7 +118,11 @@ pub fn generate_qemu_command(config: &VmConfig) -> String {
 pub fn summary(status: &KvmStatus) -> String {
     format!(
         "KVM: {} (v{}), {} vCPUs, tsc={}, xsave={}",
-        if status.available { "available" } else { "not available" },
+        if status.available {
+            "available"
+        } else {
+            "not available"
+        },
         status.version.as_deref().unwrap_or("unknown"),
         status.max_vcpus,
         status.has_tsc,

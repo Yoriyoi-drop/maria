@@ -34,7 +34,10 @@ impl NumaTopology {
             NumaTopology {
                 nodes: vec![NumaNode {
                     id: 0,
-                    cpus: (0..std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(1)).collect(),
+                    cpus: (0..std::thread::available_parallelism()
+                        .map(|n| n.get() as u32)
+                        .unwrap_or(1))
+                        .collect(),
                     memory_mb: 0,
                     distance: HashMap::new(),
                 }],
@@ -101,7 +104,10 @@ fn detect_linux() -> NumaTopology {
     if nodes.is_empty() {
         nodes.push(NumaNode {
             id: 0,
-            cpus: (0..std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(1)).collect(),
+            cpus: (0..std::thread::available_parallelism()
+                .map(|n| n.get() as u32)
+                .unwrap_or(1))
+                .collect(),
             memory_mb: 0,
             distance: HashMap::new(),
         });
@@ -147,10 +153,7 @@ fn read_node_memory(node_id: u32) -> u64 {
 
 #[cfg(target_os = "linux")]
 fn read_node_distance(node_id: u32) -> HashMap<u32, u32> {
-    let path = format!(
-        "/sys/devices/system/node/node{}/distance",
-        node_id
-    );
+    let path = format!("/sys/devices/system/node/node{}/distance", node_id);
     let mut distances = HashMap::new();
     if let Ok(content) = std::fs::read_to_string(&path) {
         let vals: Vec<u32> = content

@@ -216,7 +216,10 @@ pub enum Expr {
     /// Literal 4-state: bit `m` dirender sebagai `x` (stimulus X/Z).
     /// Golden menandai has_x → oracle skip compare numerik; invariant
     /// panic/determinism tetap tereksekusi.
-    XLit { v: u64, m: u64 },
+    XLit {
+        v: u64,
+        m: u64,
+    },
     Var(char),
     Un(UnOp, Box<Expr>),
     Bin(BinOp, Box<Expr>, Box<Expr>),
@@ -365,8 +368,8 @@ impl Expr {
                 // menggeser dgn nilai 1-bit, bukan nilai yang di-extend ke
                 // lebar konteks.
                 let self_det_l = *op == BinOp::Concat;
-                let self_det_r =
-                    *op == BinOp::Concat || matches!(*op, BinOp::Shl | BinOp::Shr | BinOp::Sshl | BinOp::Sshr);
+                let self_det_r = *op == BinOp::Concat
+                    || matches!(*op, BinOp::Shl | BinOp::Shr | BinOp::Sshl | BinOp::Sshr);
                 let cl = if self_det_l { 0 } else { w };
                 let cr = if self_det_r { 0 } else { w };
                 let (x, lw, hx) = l.eval_w128(cl, W, a, b);
@@ -673,13 +676,8 @@ impl Expr {
         match self {
             Expr::Lit(_) | Expr::Var(_) | Expr::XLit { .. } => w,
             Expr::Un(_, e) => e.max_width(w),
-            Expr::Ternary(c, t, f) => c
-                .max_width(w)
-                .max(t.max_width(w))
-                .max(f.max_width(w)),
-            Expr::Repl(count, e) => {
-                (*count as u64).saturating_mul(e.max_width(w)).min(u64::MAX)
-            }
+            Expr::Ternary(c, t, f) => c.max_width(w).max(t.max_width(w)).max(f.max_width(w)),
+            Expr::Repl(count, e) => (*count as u64).saturating_mul(e.max_width(w)).min(u64::MAX),
             Expr::BitSel(..) => 1,
             Expr::PartSel(_, hi, lo) => hi.saturating_sub(*lo).saturating_add(1) as u64,
             Expr::Bin(op, l, r) => {
@@ -729,12 +727,9 @@ impl Expr {
             }
             Expr::Var(c) => c.to_string(),
             Expr::Un(op, e) => format!("{}({})", op.sym(), e.to_sv(w)),
-            Expr::Ternary(c, t, f) => format!(
-                "({} ? ({}) : ({}))",
-                c.to_sv(w),
-                t.to_sv(w),
-                f.to_sv(w)
-            ),
+            Expr::Ternary(c, t, f) => {
+                format!("({} ? ({}) : ({}))", c.to_sv(w), t.to_sv(w), f.to_sv(w))
+            }
             Expr::Repl(count, e) => format!("{{{}{{{}}}}}", count, e.to_sv(w)),
             Expr::BitSel(c, idx) => format!("{}[{}]", c, idx),
             Expr::PartSel(c, hi, lo) => format!("{}[{}:{}]", c, hi, lo),
@@ -837,7 +832,13 @@ impl Expr {
         match self {
             Expr::Lit(v) => {
                 // Boundary values from gen.rs BOUNDARY_VALUES
-                let boundaries = [0u64, 1, u64::MAX, 0x5555_5555_5555_5555, 0xAAAA_AAAA_AAAA_AAAA];
+                let boundaries = [
+                    0u64,
+                    1,
+                    u64::MAX,
+                    0x5555_5555_5555_5555,
+                    0xAAAA_AAAA_AAAA_AAAA,
+                ];
                 *v = if rng.bool() {
                     boundaries[rng.usize(0..boundaries.len())] & mask_of(w)
                 } else {
@@ -897,11 +898,22 @@ impl Expr {
                         choices[rng.usize(0..choices.len())]
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                        let choices = [BinOp::Eq, BinOp::Ne, BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge];
+                        let choices = [
+                            BinOp::Eq,
+                            BinOp::Ne,
+                            BinOp::Lt,
+                            BinOp::Le,
+                            BinOp::Gt,
+                            BinOp::Ge,
+                        ];
                         choices[rng.usize(0..choices.len())]
                     }
                     BinOp::LogicAnd | BinOp::LogicOr => {
-                        if *op == BinOp::LogicAnd { BinOp::LogicOr } else { BinOp::LogicAnd }
+                        if *op == BinOp::LogicAnd {
+                            BinOp::LogicOr
+                        } else {
+                            BinOp::LogicAnd
+                        }
                     }
                     _ => return, // Don't swap non-compatible ops
                 };
@@ -910,7 +922,11 @@ impl Expr {
             Expr::Un(op, _) => {
                 let new_op = match op {
                     UnOp::Not | UnOp::LogicNot => {
-                        if *op == UnOp::Not { UnOp::LogicNot } else { UnOp::Not }
+                        if *op == UnOp::Not {
+                            UnOp::LogicNot
+                        } else {
+                            UnOp::Not
+                        }
                     }
                     UnOp::RedAnd | UnOp::RedOr | UnOp::RedXor => {
                         let choices = [UnOp::RedAnd, UnOp::RedOr, UnOp::RedXor];
@@ -920,7 +936,7 @@ impl Expr {
                 };
                 *op = new_op;
             }
-            _ => {},
+            _ => {}
         }
     }
 
@@ -940,14 +956,12 @@ impl Expr {
                 }
             }
             Expr::Un(_, e) => e.inject_boundary_value(w, rng),
-            Expr::Ternary(c, t, f) => {
-                match rng.usize(0..3) {
-                    0 => c.inject_boundary_value(w, rng),
-                    1 => t.inject_boundary_value(w, rng),
-                    _ => f.inject_boundary_value(w, rng),
-                }
-            }
-            _ => {},
+            Expr::Ternary(c, t, f) => match rng.usize(0..3) {
+                0 => c.inject_boundary_value(w, rng),
+                1 => t.inject_boundary_value(w, rng),
+                _ => f.inject_boundary_value(w, rng),
+            },
+            _ => {}
         }
     }
 

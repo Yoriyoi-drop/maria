@@ -61,9 +61,21 @@ fn parse_sized_literal(
 fn sized_pattern(e: &Expr) -> Option<(u64, u32, bool)> {
     let (bits, radix, width, is_signed) = match e {
         Expr::Paren(inner) => return sized_pattern(inner),
-        Expr::Value(Value::Binary { bits, width, is_signed }) => (bits, 2u32, width, is_signed),
-        Expr::Value(Value::Hex { bits, width, is_signed }) => (bits, 16, width, is_signed),
-        Expr::Value(Value::Octal { bits, width, is_signed }) => (bits, 8, width, is_signed),
+        Expr::Value(Value::Binary {
+            bits,
+            width,
+            is_signed,
+        }) => (bits, 2u32, width, is_signed),
+        Expr::Value(Value::Hex {
+            bits,
+            width,
+            is_signed,
+        }) => (bits, 16, width, is_signed),
+        Expr::Value(Value::Octal {
+            bits,
+            width,
+            is_signed,
+        }) => (bits, 8, width, is_signed),
         _ => return None,
     };
     let u = u64::from_str_radix(&bits.replace(['x', 'z'], "0"), radix).ok()?;
@@ -90,11 +102,7 @@ fn interpret_pattern(p: u64, w: u32, is_signed: bool) -> i64 {
 
 /// Evaluasi Div/Mod dua literal sized dengan semantik lebar bersama.
 /// `None` bila ada operan unsized/non-literal (pemanggil pakai fallback).
-fn sized_divmod(
-    lhs: &Expr,
-    rhs: &Expr,
-    is_div: bool,
-) -> Option<Result<i64, String>> {
+fn sized_divmod(lhs: &Expr, rhs: &Expr, is_div: bool) -> Option<Result<i64, String>> {
     let (lp, lw, ls) = sized_pattern(lhs)?;
     let (rp, rw, rs) = sized_pattern(rhs)?;
     let w = lw.max(rw);
@@ -250,10 +258,14 @@ pub fn sized_width(e: &Expr) -> Option<u64> {
             .try_fold(0u64, |acc, w| w.map(|w| acc + w)),
         // Shift: hasil selebar LHS (LRM §11.8.1) — tanpa ini Sshr
         // const_fold tidak tahu lebar intermediate (shift_chain_fuzz).
-        Expr::BinaryOp { op, lhs, .. } if matches!(
-            op,
-            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr
-        ) => sized_width(lhs),
+        Expr::BinaryOp { op, lhs, .. }
+            if matches!(
+                op,
+                BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr
+            ) =>
+        {
+            sized_width(lhs)
+        }
         _ => None,
     }
 }
@@ -466,7 +478,9 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            Ok(const_cmp(lhs, rhs, l, r, |o| o == std::cmp::Ordering::Greater))
+            Ok(const_cmp(lhs, rhs, l, r, |o| {
+                o == std::cmp::Ordering::Greater
+            }))
         }
         Expr::BinaryOp {
             op: BinaryOp::Ge,
@@ -596,7 +610,11 @@ pub fn const_eval_with_params(
             } else {
                 // Arithmetic shift right: sign-fill高位.
                 if sign_set {
-                    let fill = if ow >= 64 { !0u64 } else { !0u64 << (ow - r as u32) };
+                    let fill = if ow >= 64 {
+                        !0u64
+                    } else {
+                        !0u64 << (ow - r as u32)
+                    };
                     Ok(((masked >> r as u32) | fill) as i64)
                 } else {
                     Ok((masked >> r as u32) as i64)

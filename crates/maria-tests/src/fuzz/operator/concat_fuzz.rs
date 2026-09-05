@@ -17,7 +17,11 @@ use crate::fuzz::gen::{generate, lit_sv, mask_of, WIDTH_CHOICES};
 const CONCAT_WIDTHS: [u32; 7] = [4, 8, 12, 16, 32, 48, 64];
 
 fn mask_of128(w: u32) -> u128 {
-    if w >= 128 { u128::MAX } else { (1u128 << w) - 1 }
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
 }
 
 /// Bangun source dari template concat.
@@ -66,7 +70,10 @@ fn concat_two_variables_matches_golden() {
         let b_lit = lit_sv(b, w);
         let src = concat_source(
             &format!("{{a[{}:0], b[{}:0]}}", aw - 1, bw - 1),
-            total_w, w, &a_lit, &b_lit,
+            total_w,
+            w,
+            &a_lit,
+            &b_lit,
         );
 
         let actual = std::thread::Builder::new()
@@ -75,9 +82,11 @@ fn concat_two_variables_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -128,7 +137,10 @@ fn replication_matches_golden() {
         let a_lit = lit_sv(pattern, w);
         let src = concat_source(
             &format!("{{{}{{{}}}}}", n, format!("a[{}:0]", m - 1)),
-            total_w, w, &a_lit, &"0".to_string(),
+            total_w,
+            w,
+            &a_lit,
+            &"0".to_string(),
         );
 
         let actual = std::thread::Builder::new()
@@ -137,9 +149,11 @@ fn replication_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -217,9 +231,11 @@ fn concat_plus_one_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -288,9 +304,11 @@ fn nested_concat_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")

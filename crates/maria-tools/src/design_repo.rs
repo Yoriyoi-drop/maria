@@ -54,12 +54,7 @@ impl DesignRepository {
     }
 
     /// Create a new commit.
-    pub fn commit(
-        &self,
-        author: &str,
-        message: &str,
-        files: Vec<DesignFileInfo>,
-    ) -> DesignCommit {
+    pub fn commit(&self, author: &str, message: &str, files: Vec<DesignFileInfo>) -> DesignCommit {
         let commits = self.commits.lock().unwrap();
         let parent = commits.last().map(|c| c.hash.clone());
         let hash = compute_hash(author, message, commits.len());
@@ -101,7 +96,12 @@ impl DesignRepository {
     }
 
     /// Create a tag.
-    pub fn tag(&self, name: &str, commit_hash: &str, description: &str) -> Result<DesignTag, String> {
+    pub fn tag(
+        &self,
+        name: &str,
+        commit_hash: &str,
+        description: &str,
+    ) -> Result<DesignTag, String> {
         let commits = self.commits.lock().unwrap();
         let commit = commits
             .iter()
@@ -239,16 +239,26 @@ mod tests {
         let c1 = repo.commit(
             "a",
             "init",
-            vec![
-                DesignFileInfo { path: "a.sv".into(), checksum: "1".into(), size: 10 },
-            ],
+            vec![DesignFileInfo {
+                path: "a.sv".into(),
+                checksum: "1".into(),
+                size: 10,
+            }],
         );
         let c2 = repo.commit(
             "a",
             "update",
             vec![
-                DesignFileInfo { path: "a.sv".into(), checksum: "2".into(), size: 12 },
-                DesignFileInfo { path: "b.sv".into(), checksum: "3".into(), size: 20 },
+                DesignFileInfo {
+                    path: "a.sv".into(),
+                    checksum: "2".into(),
+                    size: 12,
+                },
+                DesignFileInfo {
+                    path: "b.sv".into(),
+                    checksum: "3".into(),
+                    size: 20,
+                },
             ],
         );
         let diffs = repo.diff(&c1.hash, &c2.hash).unwrap();

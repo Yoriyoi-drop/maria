@@ -33,6 +33,34 @@ impl Parser {
                 }
                 Token::Eof => return Err(self.err("unexpected EOF in package")),
                 _ => {
+                    // Macro non-expand di package body: bare `Ident(`
+                    // (mis. `ASSERT_STATIC_IN_PACKAGE(...)` prim_assert).
+                    // Ident( di package-level TIDAK pernah valid — skip.
+                    if matches!(self.peek(), Token::Ident(_))
+                        && self.peek_ahead(1) == &Token::LParen
+                    {
+                        self.advance();
+                        let mut depth = 0i32;
+                        loop {
+                            match self.peek() {
+                                Token::Eof => break,
+                                Token::LParen => {
+                                    depth += 1;
+                                    self.advance();
+                                }
+                                Token::RParen => {
+                                    depth -= 1;
+                                    self.advance();
+                                    if depth <= 0 {
+                                        break;
+                                    }
+                                }
+                                _ => self.advance(),
+                            }
+                        }
+                        self.skip_semi();
+                        continue;
+                    }
                     match self.peek() {
                         Token::Param | Token::Parameter | Token::LocalParam => {
                             let is_localparam = self.peek() == &Token::LocalParam;
@@ -216,6 +244,13 @@ impl Parser {
                         Token::Task => {
                             items.push(PackageItem::Task(self.parse_task(false)?));
                         }
+                        Token::Covergroup => {
+                            // Covergroup di package level (pola DV umum).
+                            // Parsed untuk robustness lalu di-buang (PackageItem
+                            // tidak punya varian covergroup; hanya register nama).
+                            let cg = self.parse_covergroup()?;
+                            self.class_names.insert(cg.name);
+                        }
                         Token::Class => {
                             items.push(PackageItem::Class(self.parse_class()?));
                         }
@@ -282,10 +317,7 @@ impl Parser {
                             }
                             self.skip_semi();
                             for (pkg, item) in imported {
-                                items.push(PackageItem::Import {
-                                    package: pkg,
-                                    item,
-                                });
+                                items.push(PackageItem::Import { package: pkg, item });
                             }
                         }
                         Token::Export => {

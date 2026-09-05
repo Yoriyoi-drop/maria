@@ -14,13 +14,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -143,9 +141,17 @@ fn typedef_implicit_truncation_fuzz() {
         let mut rng = fastrand::Rng::with_seed(seed ^ 0xFF_03);
         let src_w = [8u32, 12, 16, 24, 32][rng.usize(0..5)];
         let dst_w = [4u32, 8, 12][rng.usize(0..3)];
-        let src_m = if src_w >= 64 { u64::MAX } else { (1u64 << src_w) - 1 };
+        let src_m = if src_w >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << src_w) - 1
+        };
         let val = rng.u64(0..) & src_m;
-        let dst_m = if dst_w >= 64 { u64::MAX } else { (1u64 << dst_w) - 1 };
+        let dst_m = if dst_w >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << dst_w) - 1
+        };
         let expected = val & dst_m;
 
         let src_code = format!(

@@ -127,8 +127,7 @@ impl FlamegraphProfiler {
     /// Save folded stacks ke file.
     pub fn save_folded(&self, path: &Path) -> Result<(), String> {
         let content = self.export_folded();
-        std::fs::write(path, &content)
-            .map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
+        std::fs::write(path, &content).map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
     }
 
     /// Save folded stacks + header comment ke file.
@@ -149,17 +148,13 @@ impl FlamegraphProfiler {
             let _ = writeln!(content, "{} {}", stack, count);
         }
 
-        std::fs::write(path, &content)
-            .map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
+        std::fs::write(path, &content).map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
     }
 
     /// Get sorted samples by count (descending).
     pub fn top_stacks(&self, n: usize) -> Vec<(String, u64)> {
         let samples = self.samples.lock().unwrap();
-        let mut sorted: Vec<(String, u64)> = samples
-            .iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
+        let mut sorted: Vec<(String, u64)> = samples.iter().map(|(k, v)| (k.clone(), *v)).collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
         sorted.truncate(n);
         sorted
@@ -185,7 +180,11 @@ impl std::fmt::Display for FlamegraphProfiler {
         writeln!(f, "Elapsed:   {:>8.2} s", elapsed.as_secs_f64())?;
         writeln!(f, "Interval:  {:>8} ms", self.interval.as_millis())?;
         if total > 0 {
-            writeln!(f, "Rate:      {:>8.0} samples/s", total as f64 / elapsed.as_secs_f64())?;
+            writeln!(
+                f,
+                "Rate:      {:>8.0} samples/s",
+                total as f64 / elapsed.as_secs_f64()
+            )?;
         }
         writeln!(f)?;
         writeln!(f, "Top stacks:")?;
@@ -201,11 +200,33 @@ impl std::fmt::Display for FlamegraphProfiler {
 pub fn demo_folded() -> String {
     let mut p = FlamegraphProfiler::new();
     p.start();
-    p.record(&["BlockingAssign", "Process::Sequential", "SimulationEngine::run"]);
-    p.record(&["BlockingAssign", "Process::Sequential", "SimulationEngine::run"]);
-    p.record(&["BlockingAssign", "Process::Sequential", "SimulationEngine::run"]);
-    p.record(&["evaluate_expr", "BlockingAssign", "Process::CombReactive", "SimulationEngine::run"]);
-    p.record(&["evaluate_expr", "BlockingAssign", "Process::CombReactive", "SimulationEngine::run"]);
+    p.record(&[
+        "BlockingAssign",
+        "Process::Sequential",
+        "SimulationEngine::run",
+    ]);
+    p.record(&[
+        "BlockingAssign",
+        "Process::Sequential",
+        "SimulationEngine::run",
+    ]);
+    p.record(&[
+        "BlockingAssign",
+        "Process::Sequential",
+        "SimulationEngine::run",
+    ]);
+    p.record(&[
+        "evaluate_expr",
+        "BlockingAssign",
+        "Process::CombReactive",
+        "SimulationEngine::run",
+    ]);
+    p.record(&[
+        "evaluate_expr",
+        "BlockingAssign",
+        "Process::CombReactive",
+        "SimulationEngine::run",
+    ]);
     p.record(&["push_event", "SimulationEngine::run"]);
     p.record(&["push_event", "SimulationEngine::run"]);
     p.record(&["push_event", "SimulationEngine::run"]);

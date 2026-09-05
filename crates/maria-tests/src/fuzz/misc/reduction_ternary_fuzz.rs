@@ -25,7 +25,11 @@ module red_ternary_and;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 0, "y should be 0 ( &(1'b01) = 0 ), got {}", y);
     }
 
@@ -44,7 +48,11 @@ module red_ternary_or;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // |(1'b0) = 0, but with 2-bit context: 2'b10 has bit 1 set
         // Actually ternary true branch is taken: 1'b0, |(0) = 0
         assert_eq!(y, 0, "y should be 0 ( |(1'b0) = 0 ), got {}", y);
@@ -65,7 +73,11 @@ module red_ternary_xor;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // ^(2'b11) = 1^1 = 0, then 2'b00
         assert_eq!(y, 0, "y should be 0 ( ^(2'b11) = 0 ), got {}", y);
     }
@@ -85,7 +97,11 @@ module red_ternary_and_wide;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // &(1'b1) = 1, but ternary width = max(1,4) = 4
         // true branch 1-bit zero-extended to 4-bit = 4'b0001
         // &(4'b0001) = 0
@@ -107,7 +123,11 @@ module red_ternary_not;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // !(1'b1) = 0, !(2'b01) = 0 (bitwise ! of non-zero = 0 for 1-bit)
         assert_eq!(y, 0, "y should be 0 ( !(1'b1) = 0 ), got {}", y);
     }
@@ -131,7 +151,11 @@ module red_ternary_ac;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 30).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // Always const-folded to 0 regardless of b
         assert_eq!(y, 0, "y should always be 0, got {}", y);
     }
@@ -149,7 +173,11 @@ module red_ternary_const;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // &(2'b11) = 1
         assert_eq!(y, 1, "y should be 1 ( &(2'b11) = 1 ), got {}", y);
     }
@@ -171,7 +199,11 @@ module red_ternary_nested;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // &(3'b111) = 1, |(3'b101) = 1, ^(1'b0) = 0
         // y = {1,1,0} = 3'b110 = 6
         assert_eq!(y, 6, "y should be 6 (110b), got {}", y);

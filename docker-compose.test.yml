@@ -18,8 +18,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: "4"
+          memory: 5G
+          cpus: "8"
     healthcheck:
       test: ["CMD", "cargo", "test", "--workspace", "--", "--list"]
       interval: 60s

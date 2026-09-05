@@ -105,8 +105,8 @@ impl WaveformServer {
             .extension()
             .map(|e| e.to_string_lossy().to_string())
             .unwrap_or_default();
-        let metadata = std::fs::metadata(path)
-            .map_err(|e| format!("failed to read metadata: {}", e))?;
+        let metadata =
+            std::fs::metadata(path).map_err(|e| format!("failed to read metadata: {}", e))?;
 
         let id = format!("wf_{}", name.replace('.', "_"));
         let file = WaveformFile {

@@ -1,7 +1,11 @@
 //! Fuzz differential unary reduction operators — `&a`, `|a`, `^a`, `~&a`, `~|a`, `~^a`.
 
 fn mask_of(w: u32) -> u64 {
-    if w >= 64 { u64::MAX } else { (1u64 << w) - 1 }
+    if w >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << w) - 1
+    }
 }
 
 fn lit_sv(v: u64, w: u32) -> String {
@@ -14,13 +18,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -49,16 +51,25 @@ fn reduction_and_matches_golden() {
              \x20       #1; $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, av = lit_sv(a, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} harap={} dapat={:?}", seed, w, a, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} harap={} dapat={:?}",
+                seed, w, a, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 /// Reduction OR: `|a` — 1 iff at least one bit is 1.
@@ -82,16 +93,25 @@ fn reduction_or_matches_golden() {
              \x20       #1; $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, av = lit_sv(a, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} harap={} dapat={:?}", seed, w, a, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} harap={} dapat={:?}",
+                seed, w, a, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 /// Reduction XOR: `^a` — 1 iff odd number of 1-bits.
@@ -115,16 +135,25 @@ fn reduction_xor_matches_golden() {
              \x20       #1; $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, av = lit_sv(a, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} harap={} dapat={:?}", seed, w, a, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} harap={} dapat={:?}",
+                seed, w, a, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 /// NAND reduction: `~&a`
@@ -148,16 +177,25 @@ fn reduction_nand_matches_golden() {
              \x20       #1; $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, av = lit_sv(a, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} harap={} dapat={:?}", seed, w, a, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} harap={} dapat={:?}",
+                seed, w, a, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 /// NOR reduction: `~|a`
@@ -181,16 +219,25 @@ fn reduction_nor_matches_golden() {
              \x20       #1; $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, av = lit_sv(a, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} harap={} dapat={:?}", seed, w, a, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} harap={} dapat={:?}",
+                seed, w, a, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 /// XNOR reduction: `~^a`
@@ -214,14 +261,23 @@ fn reduction_xnor_matches_golden() {
              \x20       #1; $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, av = lit_sv(a, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} harap={} dapat={:?}", seed, w, a, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} harap={} dapat={:?}",
+                seed, w, a, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }

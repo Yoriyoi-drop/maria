@@ -54,7 +54,8 @@ pub struct SeqCovStats {
 }
 
 /// Tracks a single attempt of a concurrent assertion sequence evaluation
-pub struct SequenceAttempt {    pub sequence: Box<IrSequence>,
+pub struct SequenceAttempt {
+    pub sequence: Box<IrSequence>,
     pub cycles: u64,
     pub pass_stmt: Vec<IrStmt>,
     pub fail_stmt: Vec<IrStmt>,

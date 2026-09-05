@@ -71,12 +71,7 @@ impl BugDatabase {
 
     /// Record a bug finding. Updates hotness scores for all features
     /// that were active when the bug was found.
-    pub fn record_bug(
-        &mut self,
-        input: &GenInput,
-        message: &str,
-        severity: BugSeverity,
-    ) {
+    pub fn record_bug(&mut self, input: &GenInput, message: &str, severity: BugSeverity) {
         let mut features = Vec::new();
         input.expr.features(&mut features);
         features.push(format!("W:{}", input.w));
@@ -122,7 +117,11 @@ impl BugDatabase {
             }
         }
         // Normalize to [0, 1] range using max possible hotness
-        let max_hotness: f64 = self.feature_hotness.values().copied().fold(0.0f64, f64::max);
+        let max_hotness: f64 = self
+            .feature_hotness
+            .values()
+            .copied()
+            .fold(0.0f64, f64::max);
         if max_hotness > 0.0 {
             (score / max_hotness).min(1.0)
         } else {
@@ -259,7 +258,10 @@ mod tests {
         };
 
         let priority = db.bug_priority(&features);
-        assert!(priority > 0.0, "bug priority should be > 0 for hot features");
+        assert!(
+            priority > 0.0,
+            "bug priority should be > 0 for hot features"
+        );
 
         let summary = db.summary();
         assert_eq!(summary.total, 1);

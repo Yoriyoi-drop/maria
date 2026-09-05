@@ -252,9 +252,7 @@ fn compute_layers(deps: &[HashSet<usize>], n: usize) -> Vec<Vec<usize>> {
     }
 
     let mut layers = Vec::new();
-    let mut queue: VecDeque<usize> = (0..n)
-        .filter(|&i| reverse_in_degree[i] == 0)
-        .collect();
+    let mut queue: VecDeque<usize> = (0..n).filter(|&i| reverse_in_degree[i] == 0).collect();
 
     while !queue.is_empty() {
         let mut layer = Vec::new();
@@ -420,9 +418,7 @@ fn topological_sort_partitions(partitions: &[CompilePartition]) -> Vec<usize> {
         }
     }
 
-    let mut queue: VecDeque<usize> = (0..n)
-        .filter(|&i| in_degree[i] == 0)
-        .collect();
+    let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
 
     let mut order = Vec::new();
     while let Some(id) = queue.pop_front() {
@@ -493,12 +489,36 @@ mod tests {
         // Should have 3 partitions in 3 layers
         assert_eq!(result.partitions.len(), 3);
         // Compile order: a → b → c
-        let a_idx = result.partitions.iter().position(|p| p.modules == vec!["a"]).unwrap();
-        let b_idx = result.partitions.iter().position(|p| p.modules == vec!["b"]).unwrap();
-        let c_idx = result.partitions.iter().position(|p| p.modules == vec!["c"]).unwrap();
-        let order_a = result.compile_order.iter().position(|&i| i == a_idx).unwrap();
-        let order_b = result.compile_order.iter().position(|&i| i == b_idx).unwrap();
-        let order_c = result.compile_order.iter().position(|&i| i == c_idx).unwrap();
+        let a_idx = result
+            .partitions
+            .iter()
+            .position(|p| p.modules == vec!["a"])
+            .unwrap();
+        let b_idx = result
+            .partitions
+            .iter()
+            .position(|p| p.modules == vec!["b"])
+            .unwrap();
+        let c_idx = result
+            .partitions
+            .iter()
+            .position(|p| p.modules == vec!["c"])
+            .unwrap();
+        let order_a = result
+            .compile_order
+            .iter()
+            .position(|&i| i == a_idx)
+            .unwrap();
+        let order_b = result
+            .compile_order
+            .iter()
+            .position(|&i| i == b_idx)
+            .unwrap();
+        let order_c = result
+            .compile_order
+            .iter()
+            .position(|&i| i == c_idx)
+            .unwrap();
         assert!(order_a < order_b);
         assert!(order_b < order_c);
     }
@@ -515,11 +535,27 @@ mod tests {
         let result = CompilePartitioner::partition(&modules, 4);
         assert!(result.partitions.len() >= 3);
         // d must compile before b and c
-        let d_part = result.partitions.iter().position(|p| p.modules == vec!["d"]).unwrap();
-        let order_d = result.compile_order.iter().position(|&i| i == d_part).unwrap();
+        let d_part = result
+            .partitions
+            .iter()
+            .position(|p| p.modules == vec!["d"])
+            .unwrap();
+        let order_d = result
+            .compile_order
+            .iter()
+            .position(|&i| i == d_part)
+            .unwrap();
         for name in &["b", "c"] {
-            let part = result.partitions.iter().position(|p| p.modules == vec![*name]).unwrap();
-            let order = result.compile_order.iter().position(|&i| i == part).unwrap();
+            let part = result
+                .partitions
+                .iter()
+                .position(|p| p.modules == vec![*name])
+                .unwrap();
+            let order = result
+                .compile_order
+                .iter()
+                .position(|&i| i == part)
+                .unwrap();
             assert!(order_d < order, "{} should compile before {}", name, "d");
         }
     }
@@ -527,10 +563,7 @@ mod tests {
     #[test]
     fn test_circular_dependency() {
         // a → b → a (SCC)
-        let modules = vec![
-            module("a", &["b"], 100),
-            module("b", &["a"], 100),
-        ];
+        let modules = vec![module("a", &["b"], 100), module("b", &["a"], 100)];
         let result = CompilePartitioner::partition(&modules, 4);
         // Both in same SCC → same partition or both in compile_order
         assert!(result.partitions.len() >= 1);
@@ -539,10 +572,7 @@ mod tests {
 
     #[test]
     fn test_cross_partition_deps() {
-        let modules = vec![
-            module("base", &[], 100),
-            module("top", &["base"], 200),
-        ];
+        let modules = vec![module("base", &[], 100), module("top", &["base"], 200)];
         let result = CompilePartitioner::partition(&modules, 4);
         assert_eq!(result.cross_partition_deps.len(), 1);
         assert_eq!(result.cross_partition_deps[0].0, "top");
@@ -551,10 +581,7 @@ mod tests {
 
     #[test]
     fn test_stats() {
-        let modules = vec![
-            module("a", &[], 100),
-            module("b", &["a"], 200),
-        ];
+        let modules = vec![module("a", &[], 100), module("b", &["a"], 200)];
         let result = CompilePartitioner::partition(&modules, 4);
         let stats = CompilePartitioner::stats(&result);
         assert!(stats.contains("partitions"));

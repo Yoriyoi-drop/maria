@@ -18,7 +18,11 @@ module inside_range;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 1, "5 is inside [3:7]");
     }
 
@@ -37,7 +41,11 @@ module inside_list;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 1, "3 is inside {{1}},{{3}},{{5}},{{7}}");
     }
 
@@ -56,7 +64,11 @@ module inside_not;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 1, "5 is NOT inside [0:3]");
     }
 
@@ -75,7 +87,11 @@ module inside_mixed;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 1, "20 is inside {{0-10, 20, 30, 100-200}}");
     }
 
@@ -94,7 +110,11 @@ module inside_wide;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 1, "128 is inside [0:255]");
     }
 
@@ -113,7 +133,11 @@ module inside_boundary;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 1, "3 is at lower boundary");
     }
 
@@ -132,7 +156,11 @@ module inside_outside;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 0, "4 is NOT inside [0:2] or [5:7]");
     }
 }

@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::svast::{self, SVAst, GenMode};
+use super::svast::{self, GenMode, SVAst};
 
 /// Pipeline stage yang di-track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,11 +34,21 @@ pub enum PipelineStage {
 impl PipelineStage {
     pub fn all() -> &'static [PipelineStage] {
         &[
-            Self::Combinational, Self::Sequential, Self::Posedge,
-            Self::NonBlocking, Self::IfInAlways, Self::CaseInAlways,
-            Self::LoopInAlways, Self::Concurrent, Self::ForkJoin,
-            Self::ForkJoinAny, Self::ForkJoinNone, Self::Class,
-            Self::Constraint, Self::GenerateFor, Self::GenerateIf,
+            Self::Combinational,
+            Self::Sequential,
+            Self::Posedge,
+            Self::NonBlocking,
+            Self::IfInAlways,
+            Self::CaseInAlways,
+            Self::LoopInAlways,
+            Self::Concurrent,
+            Self::ForkJoin,
+            Self::ForkJoinAny,
+            Self::ForkJoinNone,
+            Self::Class,
+            Self::Constraint,
+            Self::GenerateFor,
+            Self::GenerateIf,
         ]
     }
 
@@ -113,7 +123,9 @@ impl PipelineGuide {
             }
         }
 
-        if fresh { self.discovered += 1; }
+        if fresh {
+            self.discovered += 1;
+        }
         fresh
     }
 
@@ -144,29 +156,33 @@ impl PipelineGuide {
         let stage = self.uncovered_stages[rng.usize(0..self.uncovered_stages.len())];
         match stage {
             PipelineStage::Combinational => GenMode::Combinational,
-            PipelineStage::Sequential | PipelineStage::Posedge
-            | PipelineStage::NonBlocking | PipelineStage::IfInAlways
-            | PipelineStage::CaseInAlways | PipelineStage::LoopInAlways =>
-                GenMode::Sequential,
-            PipelineStage::Concurrent | PipelineStage::ForkJoin
-            | PipelineStage::ForkJoinAny | PipelineStage::ForkJoinNone =>
-                GenMode::ForkJoin,
-            PipelineStage::Class | PipelineStage::Constraint =>
-                GenMode::Class,
-            PipelineStage::GenerateFor | PipelineStage::GenerateIf =>
-                GenMode::Generate,
+            PipelineStage::Sequential
+            | PipelineStage::Posedge
+            | PipelineStage::NonBlocking
+            | PipelineStage::IfInAlways
+            | PipelineStage::CaseInAlways
+            | PipelineStage::LoopInAlways => GenMode::Sequential,
+            PipelineStage::Concurrent
+            | PipelineStage::ForkJoin
+            | PipelineStage::ForkJoinAny
+            | PipelineStage::ForkJoinNone => GenMode::ForkJoin,
+            PipelineStage::Class | PipelineStage::Constraint => GenMode::Class,
+            PipelineStage::GenerateFor | PipelineStage::GenerateIf => GenMode::Generate,
         }
     }
 
     /// Coverage score: rasio stage tercakup / total stage.
     pub fn coverage_score(&self) -> f64 {
         let total = PipelineStage::all().len() as f64;
-        if total == 0.0 { return 1.0; }
+        if total == 0.0 {
+            return 1.0;
+        }
         // Hanya hitung stage yang valid (tag == PipelineStage::tag), bukan
         // semua fitur expression (bin:*, un:*, W:*).
         let stage_tags: std::collections::HashSet<&'static str> =
             PipelineStage::all().iter().map(|s| s.tag()).collect();
-        let covered_stages = self.covered_stages
+        let covered_stages = self
+            .covered_stages
             .iter()
             .filter(|f| stage_tags.contains(f.as_str()))
             .count();
@@ -180,7 +196,9 @@ impl PipelineGuide {
 
     /// Stage frequency distribution (untuk debugging).
     pub fn stage_frequency_distribution(&self) -> Vec<(String, u64)> {
-        let mut dist: Vec<_> = self.stage_frequency.iter()
+        let mut dist: Vec<_> = self
+            .stage_frequency
+            .iter()
             .map(|(k, &v)| (k.clone(), v))
             .collect();
         dist.sort_by(|a, b| b.1.cmp(&a.1));
@@ -189,7 +207,9 @@ impl PipelineGuide {
 }
 
 impl Default for PipelineGuide {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

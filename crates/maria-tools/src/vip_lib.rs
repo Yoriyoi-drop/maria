@@ -82,7 +82,10 @@ impl VipTemplate {
 
         // Assertions
         for assertion in &self.assertions {
-            out.push_str(&format!("    // {}: {}\n", assertion.name, assertion.description));
+            out.push_str(&format!(
+                "    // {}: {}\n",
+                assertion.name, assertion.description
+            ));
             match assertion.severity.as_str() {
                 "error" => out.push_str(&format!(
                     "    assert property (@(posedge clk) {})\n",
@@ -116,13 +119,48 @@ pub fn apb3_vip() -> VipTemplate {
         version: "3.0".into(),
         description: "AMBA APB3 protocol checker".into(),
         ports: vec![
-            VipPort { name: "PCLK".into(), direction: "input".into(), width: 1, description: Some("Clock".into()) },
-            VipPort { name: "PRESETn".into(), direction: "input".into(), width: 1, description: Some("Active-low reset".into()) },
-            VipPort { name: "PSEL".into(), direction: "input".into(), width: 1, description: Some("Peripheral select".into()) },
-            VipPort { name: "PENABLE".into(), direction: "input".into(), width: 1, description: Some("Enable".into()) },
-            VipPort { name: "PWRITE".into(), direction: "input".into(), width: 1, description: Some("Write enable".into()) },
-            VipPort { name: "PREADY".into(), direction: "input".into(), width: 1, description: Some("Ready".into()) },
-            VipPort { name: "PSLVERR".into(), direction: "input".into(), width: 1, description: Some("Slave error".into()) },
+            VipPort {
+                name: "PCLK".into(),
+                direction: "input".into(),
+                width: 1,
+                description: Some("Clock".into()),
+            },
+            VipPort {
+                name: "PRESETn".into(),
+                direction: "input".into(),
+                width: 1,
+                description: Some("Active-low reset".into()),
+            },
+            VipPort {
+                name: "PSEL".into(),
+                direction: "input".into(),
+                width: 1,
+                description: Some("Peripheral select".into()),
+            },
+            VipPort {
+                name: "PENABLE".into(),
+                direction: "input".into(),
+                width: 1,
+                description: Some("Enable".into()),
+            },
+            VipPort {
+                name: "PWRITE".into(),
+                direction: "input".into(),
+                width: 1,
+                description: Some("Write enable".into()),
+            },
+            VipPort {
+                name: "PREADY".into(),
+                direction: "input".into(),
+                width: 1,
+                description: Some("Ready".into()),
+            },
+            VipPort {
+                name: "PSLVERR".into(),
+                direction: "input".into(),
+                width: 1,
+                description: Some("Slave error".into()),
+            },
         ],
         assertions: vec![
             VipAssertion {
@@ -173,18 +211,78 @@ pub fn axi4lite_vip() -> VipTemplate {
         version: "4.0".into(),
         description: "AXI4-Lite protocol checker (simplified)".into(),
         ports: vec![
-            VipPort { name: "ACLK".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "ARESETn".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "AWVALID".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "AWREADY".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "WVALID".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "WREADY".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "BVALID".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "BREADY".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "ARVALID".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "ARREADY".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "RVALID".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "RREADY".into(), direction: "input".into(), width: 1, description: None },
+            VipPort {
+                name: "ACLK".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "ARESETn".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "AWVALID".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "AWREADY".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "WVALID".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "WREADY".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "BVALID".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "BREADY".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "ARVALID".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "ARREADY".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "RVALID".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "RREADY".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
         ],
         assertions: vec![
             VipAssertion {
@@ -219,8 +317,16 @@ pub fn axi4lite_vip() -> VipTemplate {
             },
         ],
         parameters: vec![
-            VipParameter { name: "ADDR_WIDTH".into(), default: "32".into(), description: "Address width".into() },
-            VipParameter { name: "DATA_WIDTH".into(), default: "32".into(), description: "Data width".into() },
+            VipParameter {
+                name: "ADDR_WIDTH".into(),
+                default: "32".into(),
+                description: "Address width".into(),
+            },
+            VipParameter {
+                name: "DATA_WIDTH".into(),
+                default: "32".into(),
+                description: "Data width".into(),
+            },
         ],
     }
 }
@@ -233,11 +339,36 @@ pub fn ahblite_vip() -> VipTemplate {
         version: "5.0".into(),
         description: "AMBA AHB-Lite protocol checker".into(),
         ports: vec![
-            VipPort { name: "HCLK".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "HRESETn".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "HTRANS".into(), direction: "input".into(), width: 2, description: Some("Transfer type".into()) },
-            VipPort { name: "HREADY".into(), direction: "input".into(), width: 1, description: None },
-            VipPort { name: "HRESP".into(), direction: "input".into(), width: 2, description: Some("Response".into()) },
+            VipPort {
+                name: "HCLK".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "HRESETn".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "HTRANS".into(),
+                direction: "input".into(),
+                width: 2,
+                description: Some("Transfer type".into()),
+            },
+            VipPort {
+                name: "HREADY".into(),
+                direction: "input".into(),
+                width: 1,
+                description: None,
+            },
+            VipPort {
+                name: "HRESP".into(),
+                direction: "input".into(),
+                width: 2,
+                description: Some("Response".into()),
+            },
         ],
         assertions: vec![
             VipAssertion {
@@ -260,8 +391,16 @@ pub fn ahblite_vip() -> VipTemplate {
             },
         ],
         parameters: vec![
-            VipParameter { name: "ADDR_WIDTH".into(), default: "32".into(), description: "Address width".into() },
-            VipParameter { name: "DATA_WIDTH".into(), default: "32".into(), description: "Data width".into() },
+            VipParameter {
+                name: "ADDR_WIDTH".into(),
+                default: "32".into(),
+                description: "Address width".into(),
+            },
+            VipParameter {
+                name: "DATA_WIDTH".into(),
+                default: "32".into(),
+                description: "Data width".into(),
+            },
         ],
     }
 }

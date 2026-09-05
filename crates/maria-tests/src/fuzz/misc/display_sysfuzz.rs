@@ -16,14 +16,12 @@ fn run_sim(src: String) -> Option<String> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .map(|sigs| {
-                        sigs.iter()
-                            .map(|(n, v)| format!("{}={}", n, v))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
+                crate::simulate_signals(&src, 30).ok().map(|sigs| {
+                    sigs.iter()
+                        .map(|(n, v)| format!("{}={}", n, v))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
             }
         })
         .expect("spawn")
@@ -62,14 +60,16 @@ fn sysfunc_clog2_fuzz() {
         let result = std::thread::Builder::new()
             .name("clog2-fuzz-sim".to_string())
             .stack_size(256 * 1024 * 1024)
-            .spawn({
-                move || crate::compile_str(&src).is_ok()
-            })
+            .spawn({ move || crate::compile_str(&src).is_ok() })
             .expect("spawn")
             .join()
             .expect("sim panic");
 
-        assert!(result, "compile failed on $clog2 seed={} w={} val={}", seed, w, val);
+        assert!(
+            result,
+            "compile failed on $clog2 seed={} w={} val={}",
+            seed, w, val
+        );
         checked += 1;
     }
     assert!(checked > 40, "terlalu sedikit kasus (checked={})", checked);
@@ -99,9 +99,7 @@ fn sysfunc_bits_fuzz() {
         let result = std::thread::Builder::new()
             .name("bits-fuzz-sim".to_string())
             .stack_size(256 * 1024 * 1024)
-            .spawn({
-                move || crate::compile_str(&src).is_ok()
-            })
+            .spawn({ move || crate::compile_str(&src).is_ok() })
             .expect("spawn")
             .join()
             .expect("sim panic");
@@ -143,9 +141,7 @@ fn display_mixed_format_fuzz() {
         let result = std::thread::Builder::new()
             .name("display-mixed-sim".to_string())
             .stack_size(256 * 1024 * 1024)
-            .spawn({
-                move || crate::compile_str(&src).is_ok()
-            })
+            .spawn({ move || crate::compile_str(&src).is_ok() })
             .expect("spawn")
             .join()
             .expect("sim panic");
@@ -201,13 +197,11 @@ fn display_expr_args_fuzz() {
             .stack_size(256 * 1024 * 1024)
             .spawn({
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| {
-                            sigs.iter()
-                                .find(|(n, _)| *n == "y")
-                                .map(|(_, v)| v.to_u64())
-                        })
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -253,9 +247,7 @@ fn display_zero_pad_fuzz() {
         let result = std::thread::Builder::new()
             .name("zpad-fuzz-sim".to_string())
             .stack_size(256 * 1024 * 1024)
-            .spawn({
-                move || crate::compile_str(&src).is_ok()
-            })
+            .spawn({ move || crate::compile_str(&src).is_ok() })
             .expect("spawn")
             .join()
             .expect("sim panic");

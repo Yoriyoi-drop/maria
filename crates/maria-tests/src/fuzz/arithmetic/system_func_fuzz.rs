@@ -18,13 +18,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -72,10 +70,7 @@ fn sysfunc_clog2_matches_golden() {
         let actual = run_sim(src);
 
         if actual != Some(expected) {
-            mismatch.push(format!(
-                "val={} harap={} dapat={:?}",
-                val, expected, actual
-            ));
+            mismatch.push(format!("val={} harap={} dapat={:?}", val, expected, actual));
         }
         checked += 1;
     }
@@ -159,10 +154,7 @@ fn sysfunc_bits_matches_literal_width() {
         let expected = w as u64;
 
         if actual != Some(expected) {
-            mismatch.push(format!(
-                "w={} harap={} dapat={:?}",
-                w, expected, actual
-            ));
+            mismatch.push(format!("w={} harap={} dapat={:?}", w, expected, actual));
         }
         checked += 1;
     }
@@ -200,10 +192,7 @@ fn sysfunc_size_matches_signal_width() {
         let expected = w as u64;
 
         if actual != Some(expected) {
-            mismatch.push(format!(
-                "w={} harap={} dapat={:?}",
-                w, expected, actual
-            ));
+            mismatch.push(format!("w={} harap={} dapat={:?}", w, expected, actual));
         }
         checked += 1;
     }

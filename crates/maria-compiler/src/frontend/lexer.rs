@@ -733,7 +733,10 @@ impl<'a> FastLexer<'a> {
                 }
             }
             b'=' => {
-                if self.peek() == b'=' && self.peek_next() == b'=' {
+                if self.peek() == b'>' {
+                    self.skip_byte();
+                    Token::FatArrow // => (transition bin SVA / implicasi)
+                } else if self.peek() == b'=' && self.peek_next() == b'=' {
                     self.skip_byte();
                     self.skip_byte();
                     Token::Equiv
@@ -1112,6 +1115,21 @@ mod tests {
         assert_eq!(tokens[0].0, Token::Module);
         assert_eq!(tokens[1].0, Token::StringLit(Symbol::intern("hello")));
         assert_eq!(tokens[2].0, Token::Endmodule);
+    }
+
+    #[test]
+    fn test_fast_lexer_fatarrow_transition() {
+        // BUG (VERIF-32): `=>` tidak di-token sebagai FatArrow di FastLexer —
+        // menghasilkan BlockingAssign + Gt → covergroup transition bin
+        // `(0 => 1)` gagal "expected RParen, found BlockingAssign". Paritas
+        // dengan lexer legacy.
+        let tokens = fast_tokenize("(0 => 1), (1 => 0)");
+        let has_fat = tokens.iter().any(|t| t.0 == Token::FatArrow);
+        assert!(
+            has_fat,
+            "`=>` harus Token::FatArrow (paritas legacy), dapat: {:?}",
+            tokens
+        );
     }
 
     #[test]

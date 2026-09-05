@@ -7,25 +7,25 @@
 
 // ── Infrastructure (shared across all fuzz modules) ──────────────────────
 #[cfg(test)]
+pub(crate) mod differential;
+#[cfg(test)]
 pub(crate) mod expr;
 #[cfg(test)]
 pub(crate) mod gen;
 #[cfg(test)]
 pub(crate) mod guide;
 #[cfg(test)]
-pub(crate) mod oracle;
-#[cfg(test)]
-pub(crate) mod parallel;
+pub(crate) mod hierarchy_mutator;
 #[cfg(test)]
 pub(crate) mod mgte;
 #[cfg(test)]
 pub(crate) mod minimizer;
 #[cfg(test)]
+pub(crate) mod oracle;
+#[cfg(test)]
+pub(crate) mod parallel;
+#[cfg(test)]
 pub(crate) mod semantic_mutator;
-#[cfg(test)]
-pub(crate) mod hierarchy_mutator;
-#[cfg(test)]
-pub(crate) mod differential;
 // ── Paper-inspired enhancements ──────────────────────────────────────────
 // Paper #2 (ChipFuzzer): bug database + bug-guided prioritization
 #[cfg(test)]
@@ -53,13 +53,13 @@ pub(crate) mod guided_fuzz_v2;
 
 // ── Test modules per kategori ────────────────────────────────────────────
 mod arithmetic;
-mod operator;
-mod control;
-mod shift;
 mod assign;
-mod robustness;
-mod misc;
+mod control;
 mod infra;
+mod misc;
+mod operator;
+mod robustness;
+mod shift;
 
 use gen::GenInput;
 use guide::CoverageGuide;

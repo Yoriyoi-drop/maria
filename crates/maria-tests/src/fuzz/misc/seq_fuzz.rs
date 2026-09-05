@@ -133,8 +133,7 @@ fn sequential_nba_feedback_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || crate::simulate_signals(&src, ((CYCLES + 4) * 5) as u64)
-            })
-        {
+            }) {
             Ok(h) => match h.join() {
                 Ok(Ok(s)) => s,
                 _ => {

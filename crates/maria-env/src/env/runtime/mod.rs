@@ -2,13 +2,13 @@
 //! pool, scheduler, temp directory. Compiler cukup meminta
 //! `runtime.thread_pool.spawn(...)` tanpa tahu detail implementasi thread.
 
+pub mod affinity;
+pub mod cgroup;
 mod cpu;
 mod memory;
 mod runtime;
 mod scheduler;
 mod threadpool;
-pub mod affinity;
-pub mod cgroup;
 
 pub use cpu::CpuInfo;
 pub use memory::MemoryInfo;

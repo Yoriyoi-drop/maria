@@ -1654,4 +1654,3 @@ pub enum McovClosureCmd {
         input: String,
     },
 }
-

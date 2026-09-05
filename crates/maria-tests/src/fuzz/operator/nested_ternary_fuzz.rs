@@ -14,13 +14,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -307,17 +305,15 @@ fn triple_nested_ternary_matches_golden() {
         } else if b == 0 {
             2
         } else if c == 0 {
-            4  // c ? 3 : 4 → c==0 => 4
+            4 // c ? 3 : 4 → c==0 => 4
         } else {
-            3  // c ? 3 : 4 → c!=0 => 3
+            3 // c ? 3 : 4 → c!=0 => 3
         };
 
         let a_lit = format!("{}'h{:x}", w, a);
         let b_lit = format!("{}'h{:x}", w, b);
         let c_lit = format!("{}'h{:x}", w, c);
-        let expr = format!(
-            "{a} ? ({b} ? ({c} ? {w}'h3 : {w}'h4) : {w}'h2) : {w}'h1"
-        );
+        let expr = format!("{a} ? ({b} ? ({c} ? {w}'h3 : {w}'h4) : {w}'h2) : {w}'h1");
 
         let full_src = format!(
             "module t;\n\

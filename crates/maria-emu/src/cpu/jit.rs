@@ -5,11 +5,11 @@
 //! Uses basic-block translation with inline caching for hot paths.
 
 #[cfg(feature = "jit")]
+use crate::cpu::{CpuCore, CpuFault, CpuStep, Isa};
+#[cfg(feature = "jit")]
 use crate::mem::MemoryPort;
 #[cfg(feature = "jit")]
-use crate::cpu::{CpuCore, CpuStep, CpuFault, Isa};
-#[cfg(feature = "jit")]
-use maria_simulator::simulator::jit_cranelift::{CraneliftEngine, CraneliftCompiledFn, JitOp};
+use maria_simulator::simulator::jit_cranelift::{CraneliftCompiledFn, CraneliftEngine, JitOp};
 #[cfg(feature = "jit")]
 use std::collections::HashMap;
 #[cfg(feature = "jit")]
@@ -137,24 +137,24 @@ impl Rv64JitCpu {
     /// Read a CSR
     fn read_csr(&self, addr: u16) -> u64 {
         match addr {
-            0x300 => self.csrs.mstatus,    // mstatus
-            0x305 => self.csrs.mtvec,      // mtvec
-            0x341 => self.csrs.mepc,       // mepc
-            0x342 => self.csrs.mcause,     // mcause
-            0x343 => self.csrs.mtval,      // mtval
-            0x304 => self.csrs.mie,        // mie
-            0x344 => self.csrs.mip,        // mip
-            0x180 => self.csrs.satp,       // satp
-            0x340 => self.csrs.mscratch,   // mscratch
-            0x3aa => self.csrs.medeleg,    // medeleg
-            0x3ab => self.csrs.mideleg,    // mideleg
-            0x100 => self.csrs.sstatus,    // sstatus
-            0x105 => self.csrs.stvec,      // stvec
-            0x141 => self.csrs.sepc,       // sepc
-            0x142 => self.csrs.scause,     // scause
-            0x143 => self.csrs.stval,      // stval
-            0x144 => self.csrs.sip,        // sip
-            0x104 => self.csrs.sie,        // sie
+            0x300 => self.csrs.mstatus,  // mstatus
+            0x305 => self.csrs.mtvec,    // mtvec
+            0x341 => self.csrs.mepc,     // mepc
+            0x342 => self.csrs.mcause,   // mcause
+            0x343 => self.csrs.mtval,    // mtval
+            0x304 => self.csrs.mie,      // mie
+            0x344 => self.csrs.mip,      // mip
+            0x180 => self.csrs.satp,     // satp
+            0x340 => self.csrs.mscratch, // mscratch
+            0x3aa => self.csrs.medeleg,  // medeleg
+            0x3ab => self.csrs.mideleg,  // mideleg
+            0x100 => self.csrs.sstatus,  // sstatus
+            0x105 => self.csrs.stvec,    // stvec
+            0x141 => self.csrs.sepc,     // sepc
+            0x142 => self.csrs.scause,   // scause
+            0x143 => self.csrs.stval,    // stval
+            0x144 => self.csrs.sip,      // sip
+            0x104 => self.csrs.sie,      // sie
             _ => 0,
         }
     }
@@ -195,7 +195,7 @@ impl Rv64JitCpu {
             // Take interrupt
             self.csrs.mepc = self.pc;
             self.csrs.mcause = 0x8000_0000_0000_000Bu64; // MEI
-            // MPIE = MIE SEBELUM clear, lalu MIE=0 (urutan penting).
+                                                         // MPIE = MIE SEBELUM clear, lalu MIE=0 (urutan penting).
             self.csrs.mstatus |= ((self.csrs.mstatus >> 3) & 1) << 7;
             self.csrs.mstatus &= !(1 << 3);
             self.pc = self.csrs.mtvec;
@@ -239,12 +239,19 @@ impl Rv64JitCpu {
     fn fetch_instr(&mut self, mem: &mut dyn MemoryPort, pc: u64) -> Result<u32, CpuFault> {
         match mem.read(pc, 4) {
             Ok(val) => Ok(val as u32),
-            Err(_) => Err(CpuFault { pc, reason: "instruction fetch fault".into() }),
+            Err(_) => Err(CpuFault {
+                pc,
+                reason: "instruction fetch fault".into(),
+            }),
         }
     }
 
     /// Execute a single instruction in interpreter mode (fallback)
-    fn execute_interpreter(&mut self, mem: &mut dyn MemoryPort, instr: u32) -> Result<CpuStep, CpuFault> {
+    fn execute_interpreter(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        instr: u32,
+    ) -> Result<CpuStep, CpuFault> {
         // Delegate to the interpreter implementation
         // For now, return a trap to indicate unimplemented
         // In practice, we'd call the interpreter's decode/execute
@@ -296,7 +303,10 @@ impl Rv64JitCpu {
     }
 
     /// Execute using interpreter (fallback when JIT not ready)
-    fn execute_interpreter_fallback(&mut self, mem: &mut dyn MemoryPort) -> Result<CpuStep, CpuFault> {
+    fn execute_interpreter_fallback(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+    ) -> Result<CpuStep, CpuFault> {
         self.stats.interpreter_fallbacks += 1;
         let instr = self.fetch_instr(mem, self.pc)?;
         self.execute_interpreter(mem, instr)
@@ -386,14 +396,26 @@ impl Rv64JitCpu {
 #[cfg(not(feature = "jit"))]
 impl crate::cpu::CpuCore for Rv64JitCpu {
     fn reset(&mut self) {}
-    fn step(&mut self, _mem: &mut dyn crate::mem::MemoryPort) -> Result<crate::cpu::CpuStep, crate::cpu::CpuFault> {
-        Err(crate::cpu::CpuFault { pc: 0, reason: "JIT not enabled".into() })
+    fn step(
+        &mut self,
+        _mem: &mut dyn crate::mem::MemoryPort,
+    ) -> Result<crate::cpu::CpuStep, crate::cpu::CpuFault> {
+        Err(crate::cpu::CpuFault {
+            pc: 0,
+            reason: "JIT not enabled".into(),
+        })
     }
-    fn pc(&self) -> u64 { 0 }
+    fn pc(&self) -> u64 {
+        0
+    }
     fn set_pc(&mut self, _addr: u64) {}
     fn raise_interrupt(&mut self, _irq: u32, _level: bool) {}
-    fn read_reg(&self, _idx: usize) -> u64 { 0 }
-    fn isa(&self) -> crate::cpu::Isa { crate::cpu::Isa::RiscV64 }
+    fn read_reg(&self, _idx: usize) -> u64 {
+        0
+    }
+    fn isa(&self) -> crate::cpu::Isa {
+        crate::cpu::Isa::RiscV64
+    }
 }
 
 #[cfg(test)]

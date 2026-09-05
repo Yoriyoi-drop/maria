@@ -109,8 +109,16 @@ mod tests {
         DftReport {
             design_name: "top".into(),
             scan_chains: vec![
-                ScanChain { name: "chain0".into(), length: 100, flops: vec!["ff0".into()] },
-                ScanChain { name: "chain1".into(), length: 150, flops: vec!["ff1".into()] },
+                ScanChain {
+                    name: "chain0".into(),
+                    length: 100,
+                    flops: vec!["ff0".into()],
+                },
+                ScanChain {
+                    name: "chain1".into(),
+                    length: 150,
+                    flops: vec!["ff1".into()],
+                },
             ],
             atpg: AtpgReport {
                 total_patterns: 500,

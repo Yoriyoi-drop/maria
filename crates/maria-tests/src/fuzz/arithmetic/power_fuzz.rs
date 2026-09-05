@@ -18,7 +18,11 @@ use crate::fuzz::gen::{generate, lit_sv, mask_of, WIDTH_CHOICES};
 const POWER_WIDTHS: [u32; 8] = [2, 4, 8, 16, 31, 32, 63, 64];
 
 fn mask_of128(w: u32) -> u128 {
-    if w >= 128 { u128::MAX } else { (1u128 << w) - 1 }
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
 }
 
 /// Golden: square-and-multiply modular power (u128).
@@ -48,7 +52,13 @@ fn pick_val(w: u32, rng: &mut fastrand::Rng) -> u128 {
             0 => 0,
             1 => 1,
             2 => m,
-            3 => if w > 0 { 1u128 << (w - 1) } else { 0 }, // MSB set
+            3 => {
+                if w > 0 {
+                    1u128 << (w - 1)
+                } else {
+                    0
+                }
+            } // MSB set
             4 => m >> 1, // half
             _ => rng.u128(..) & m,
         }
@@ -114,9 +124,11 @@ fn power_special_cases_match_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn power-fuzz-sim")
@@ -190,9 +202,11 @@ fn power_with_signal_operands_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -258,9 +272,11 @@ fn power_chained_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")

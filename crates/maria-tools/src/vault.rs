@@ -71,8 +71,8 @@ impl SecureVault {
     pub fn register(&self, path: &Path, user: &str) -> Result<VaultEntry, String> {
         let metadata = std::fs::metadata(path)
             .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
-        let content = std::fs::read(path)
-            .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+        let content =
+            std::fs::read(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
         let checksum = compute_checksum(&content);
         let path_str = path.to_string_lossy().to_string();
         let now = now_secs();
@@ -151,8 +151,8 @@ impl SecureVault {
         let stored_checksum = entry.checksum.clone();
         drop(entries);
 
-        let content = std::fs::read(path)
-            .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+        let content =
+            std::fs::read(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
         let current = compute_checksum(&content);
         let ok = current == stored_checksum;
         self.audit("system", "verify", &path_str, Some(format!("ok={}", ok)));

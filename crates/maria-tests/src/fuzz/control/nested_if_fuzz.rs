@@ -1,7 +1,11 @@
 //! Fuzz differential nested if-else chains.
 
 fn mask_of(w: u32) -> u64 {
-    if w >= 64 { u64::MAX } else { (1u64 << w) - 1 }
+    if w >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << w) - 1
+    }
 }
 
 fn lit_sv(v: u64, w: u32) -> String {
@@ -14,13 +18,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -35,7 +37,15 @@ fn nested_if_4level_matches_golden() {
     for seed in 0..80u64 {
         let mut rng = fastrand::Rng::with_seed(seed ^ 0xF2_01);
         let a = rng.u64(0..20);
-        let expected = if a < 5 { 0u64 } else if a < 10 { 1 } else if a < 15 { 2 } else { 3 };
+        let expected = if a < 5 {
+            0u64
+        } else if a < 10 {
+            1
+        } else if a < 15 {
+            2
+        } else {
+            3
+        };
         let src = format!(
             r#"module test;
     reg [4:0] a;
@@ -58,12 +68,20 @@ endmodule"#,
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} a={} harap={} dapat={:?}", seed, a, expected, actual));
+            mismatch.push(format!(
+                "seed={} a={} harap={} dapat={:?}",
+                seed, a, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -91,16 +109,26 @@ fn if_without_else_matches_golden() {
         $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} b={:#x} harap={:#x} dapat={:?}", seed, w, a, b, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} b={:#x} harap={:#x} dapat={:?}",
+                seed, w, a, b, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -114,7 +142,11 @@ fn if_else_arithmetic_matches_golden() {
         let a = rng.u64(..) & m;
         let b = rng.u64(..) & m;
         let sel = rng.bool();
-        let expected = if sel { (a + b) & m } else { a.wrapping_sub(b) & m };
+        let expected = if sel {
+            (a + b) & m
+        } else {
+            a.wrapping_sub(b) & m
+        };
         let src = format!(
             r#"module test;
     reg [{hi}:0] a;
@@ -131,16 +163,27 @@ fn if_else_arithmetic_matches_golden() {
         $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w), sel = if sel { 1 } else { 0 },
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
+            sel = if sel { 1 } else { 0 },
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} b={:#x} sel={} harap={:#x} dapat={:?}", seed, w, a, b, sel, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} b={:#x} sel={} harap={:#x} dapat={:?}",
+                seed, w, a, b, sel, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -178,14 +221,25 @@ fn if_else_bitwise_matches_golden() {
         $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w), sel = sel,
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
+            sel = sel,
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} sel={} a={:#x} b={:#x} harap={:#x} dapat={:?}", seed, w, sel, a, b, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} sel={} a={:#x} b={:#x} harap={:#x} dapat={:?}",
+                seed, w, sel, a, b, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }

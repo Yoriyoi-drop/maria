@@ -82,13 +82,21 @@ impl IoUring {
         let mut results = Vec::new();
         while let Some(op) = self.pending.pop_front() {
             let result = match op {
-                IoOp::Read { fd: _, offset: _, len } => IoResult {
+                IoOp::Read {
+                    fd: _,
+                    offset: _,
+                    len,
+                } => IoResult {
                     op_id: self.next_id,
                     success: true,
                     bytes: len as i64,
                     error: None,
                 },
-                IoOp::Write { fd: _, offset: _, data } => IoResult {
+                IoOp::Write {
+                    fd: _,
+                    offset: _,
+                    data,
+                } => IoResult {
                     op_id: self.next_id,
                     success: true,
                     bytes: data.len() as i64,

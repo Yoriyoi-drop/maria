@@ -70,7 +70,9 @@ impl CgroupLimits {
             let parts: Vec<&str> = content.trim().split_whitespace().collect();
             if parts.len() == 2 {
                 if parts[0] != "max" {
-                    if let (Ok(quota), Ok(period)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
+                    if let (Ok(quota), Ok(period)) =
+                        (parts[0].parse::<u64>(), parts[1].parse::<u64>())
+                    {
                         limits.cpu_quota_us = Some(quota);
                         limits.cpu_period_us = Some(period);
                         if period > 0 {
@@ -163,10 +165,12 @@ impl CgroupLimits {
         if !self.in_cgroup {
             return "outside cgroup".into();
         }
-        let mem = self.memory_limit_mb()
+        let mem = self
+            .memory_limit_mb()
             .map(|m| format!("{}MB", m))
             .unwrap_or_else(|| "unlimited".into());
-        let cpu = self.cpu_cores
+        let cpu = self
+            .cpu_cores
             .map(|c| format!("{:.1} cores", c))
             .unwrap_or_else(|| "unlimited".into());
         format!("mem={} cpu={}", mem, cpu)
@@ -177,12 +181,20 @@ impl std::fmt::Display for CgroupLimits {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "═══ Cgroup Limits ═══")?;
         writeln!(f, "In cgroup:    {}", self.in_cgroup)?;
-        writeln!(f, "Memory:       {}", self.memory_limit_mb()
-            .map(|m| format!("{} MB", m))
-            .unwrap_or_else(|| "unlimited".into()))?;
-        writeln!(f, "CPU cores:    {}", self.cpu_cores
-            .map(|c| format!("{:.1}", c))
-            .unwrap_or_else(|| "unlimited".into()))?;
+        writeln!(
+            f,
+            "Memory:       {}",
+            self.memory_limit_mb()
+                .map(|m| format!("{} MB", m))
+                .unwrap_or_else(|| "unlimited".into())
+        )?;
+        writeln!(
+            f,
+            "CPU cores:    {}",
+            self.cpu_cores
+                .map(|c| format!("{:.1}", c))
+                .unwrap_or_else(|| "unlimited".into())
+        )?;
         if let Some(quota) = self.cpu_quota_us {
             writeln!(f, "CPU quota:    {} us", quota)?;
         }

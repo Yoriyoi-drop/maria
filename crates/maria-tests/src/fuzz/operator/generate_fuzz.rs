@@ -10,7 +10,11 @@
 //! - Generate yang menghasilkan 0 atau banyak instance
 
 fn mask_of128(w: u32) -> u128 {
-    if w >= 128 { u128::MAX } else { (1u128 << w) - 1 }
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
 }
 
 fn run_sim(src: String) -> Option<u64> {
@@ -21,11 +25,7 @@ fn run_sim(src: String) -> Option<u64> {
             move || {
                 crate::simulate_signals(&src, 30)
                     .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                    .and_then(|sigs| sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()))
             }
         })
         .expect("spawn")

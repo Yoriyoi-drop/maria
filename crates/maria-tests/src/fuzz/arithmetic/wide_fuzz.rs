@@ -180,7 +180,11 @@ impl WExpr {
                 let lv = l.eval(w, a, b, world_signed);
                 let rv = r.eval(w, a, b, world_signed);
                 if lv.undefined || rv.undefined {
-                    return WEval { val: 0, undefined: true, signed: false };
+                    return WEval {
+                        val: 0,
+                        undefined: true,
+                        signed: false,
+                    };
                 }
                 // Perbandingan bertanda hanya bila KEDUA operan signed;
                 // operand di-interpretasi pada lebar w masing-masing.
@@ -217,7 +221,11 @@ impl WExpr {
             WExpr::Cond(c, t, f) => {
                 let cv = c.eval(w, a, b, world_signed);
                 if cv.undefined {
-                    return WEval { val: 0, undefined: true, signed: false };
+                    return WEval {
+                        val: 0,
+                        undefined: true,
+                        signed: false,
+                    };
                 }
                 if cv.val & 1 == 1 {
                     t.eval(w, a, b, world_signed)
@@ -230,10 +238,17 @@ impl WExpr {
                 let rv = r.eval(w, a, b, world_signed);
                 let dbg = std::env::var("MARIA_DBG_WGOLD2").is_ok();
                 if dbg {
-                    eprintln!("[WG2] {:?} l={:x}({}) r={:x}({})", op, lv.val, lv.signed, rv.val, rv.signed);
+                    eprintln!(
+                        "[WG2] {:?} l={:x}({}) r={:x}({})",
+                        op, lv.val, lv.signed, rv.val, rv.signed
+                    );
                 }
                 if lv.undefined || rv.undefined {
-                    return WEval { val: 0, undefined: true, signed: false };
+                    return WEval {
+                        val: 0,
+                        undefined: true,
+                        signed: false,
+                    };
                 }
                 match op {
                     WArith::Sll | WArith::Srl | WArith::Sra => {
@@ -277,7 +292,11 @@ impl WExpr {
                             }
                         };
                         // Hasil shift mengikuti signedness OPERAN KIRI.
-                        WEval { val: res, undefined: false, signed: lv.signed }
+                        WEval {
+                            val: res,
+                            undefined: false,
+                            signed: lv.signed,
+                        }
                     }
                     _ => {
                         let op_signed = lv.signed && rv.signed;
@@ -286,14 +305,22 @@ impl WExpr {
                             interpret(rv.val, w, op_signed),
                         );
                         if matches!(op, WArith::Div | WArith::Mod) && ys == 0 {
-                            return WEval { val: 0, undefined: true, signed: op_signed };
+                            return WEval {
+                                val: 0,
+                                undefined: true,
+                                signed: op_signed,
+                            };
                         }
                         if matches!(op, WArith::Div | WArith::Mod)
                             && op_signed
                             && xs == i128::MIN
                             && ys == -1
                         {
-                            return WEval { val: 0, undefined: true, signed: op_signed };
+                            return WEval {
+                                val: 0,
+                                undefined: true,
+                                signed: op_signed,
+                            };
                         }
                         // Bitwise: level pola, sign-agnostic. Add/Sub/Mul:
                         // kongruen mod 2^w — pola sama. Div/Mod: HARUS pada
@@ -477,7 +504,10 @@ fn wide_arithmetic_matches_golden() {
 
         let r = root.eval(w, a, b, is_signed);
         if std::env::var("MARIA_DBG_WGOLD").is_ok() {
-            eprintln!("[DBG-WG] seed={} w={} val={:x} undef={}", seed, w, r.val, r.undefined);
+            eprintln!(
+                "[DBG-WG] seed={} w={} val={:x} undef={}",
+                seed, w, r.val, r.undefined
+            );
         }
         if r.undefined {
             continue;
@@ -494,9 +524,9 @@ fn wide_arithmetic_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.clone()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.clone())
+                    })
                 }
             })
             .expect("spawn wide-fuzz-sim")
@@ -515,11 +545,7 @@ fn wide_arithmetic_matches_golden() {
             .collect();
         let ok = match &actual {
             Some(v) => {
-                v.width as u32 == yw
-                    && v.bits
-                        .iter()
-                        .zip(expected_bits.iter())
-                        .all(|(g, e)| g == e)
+                v.width as u32 == yw && v.bits.iter().zip(expected_bits.iter()).all(|(g, e)| g == e)
             }
             None => false,
         };

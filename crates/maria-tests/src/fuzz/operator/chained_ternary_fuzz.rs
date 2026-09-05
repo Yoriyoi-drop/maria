@@ -8,13 +8,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -31,7 +29,15 @@ fn chained_ternary_basic() {
     for seed in 0..80u64 {
         let mut rng = fastrand::Rng::with_seed(seed ^ 0xC3_01);
         let a = rng.u64(0..20);
-        let expected = if a > 10 { 1u64 } else if a > 5 { 2 } else if a > 0 { 3 } else { 0 };
+        let expected = if a > 10 {
+            1u64
+        } else if a > 5 {
+            2
+        } else if a > 0 {
+            3
+        } else {
+            0
+        };
 
         let src = format!(
             "module test;\n\
@@ -80,7 +86,11 @@ fn nested_ternary_arithmetic() {
         let c = rng.u64(..) & m;
 
         // y = a > b ? (a - b) : (b - a) = |a - b|
-        let expected = if a > b { a.wrapping_sub(b) & m } else { b.wrapping_sub(a) & m };
+        let expected = if a > b {
+            a.wrapping_sub(b) & m
+        } else {
+            b.wrapping_sub(a) & m
+        };
 
         let a_lit = format!("{}'h{:x}", w, a);
         let b_lit = format!("{}'h{:x}", w, b);
@@ -133,9 +143,17 @@ fn ternary_bitwise() {
 
         // y = sel[1] ? (sel[0] ? (a & b) : (a | b)) : (sel[0] ? (a ^ b) : ~(a | b))
         let expected = if sel & 2 != 0 {
-            if sel & 1 != 0 { a & b } else { a | b }
+            if sel & 1 != 0 {
+                a & b
+            } else {
+                a | b
+            }
         } else {
-            if sel & 1 != 0 { a ^ b } else { !(a | b) & m }
+            if sel & 1 != 0 {
+                a ^ b
+            } else {
+                !(a | b) & m
+            }
         };
 
         let a_lit = format!("{}'h{:x}", w, a);

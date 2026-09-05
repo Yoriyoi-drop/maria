@@ -9,13 +9,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 100)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 100).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -99,11 +97,17 @@ fn complex_arbiter_fuzz() {
     for seed in 0..40u64 {
         let mut rng = fastrand::Rng::with_seed(seed ^ 0xAA_02);
         let req = rng.u32(0..15);
-        let expected = if req & 8 != 0 { 3 }
-        else if req & 4 != 0 { 2 }
-        else if req & 2 != 0 { 1 }
-        else if req & 1 != 0 { 0 }
-        else { 0 };
+        let expected = if req & 8 != 0 {
+            3
+        } else if req & 4 != 0 {
+            2
+        } else if req & 2 != 0 {
+            1
+        } else if req & 1 != 0 {
+            0
+        } else {
+            0
+        };
 
         let req_hex = format!("{:x}", req);
         let src = format!(
@@ -200,7 +204,13 @@ fn complex_counter_fuzz() {
         if actual != Some(val & m) {
             mismatch.push(format!(
                 "seed={} w={} init={:#x} max={:#x} steps={} harap={:#x} can={:?}",
-                seed, w, init, max_val, steps, val & m, actual
+                seed,
+                w,
+                init,
+                max_val,
+                steps,
+                val & m,
+                actual
             ));
         }
         checked += 1;
@@ -284,9 +294,27 @@ fn complex_fsm_fuzz() {
         let mut state: u32 = 0; // 0=IDLE, 1=RUN, 2=DONE
         for _ in 0..cycles {
             let next = match state {
-                0 => { if start { 1 } else { 0 } }
-                1 => { if stop { 0 } else { 2 } }
-                2 => { if stop { 0 } else { 2 } }
+                0 => {
+                    if start {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                1 => {
+                    if stop {
+                        0
+                    } else {
+                        2
+                    }
+                }
+                2 => {
+                    if stop {
+                        0
+                    } else {
+                        2
+                    }
+                }
                 _ => 0,
             };
             state = next;

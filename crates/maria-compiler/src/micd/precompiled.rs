@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cache::checksum::compute_checksum;
 use super::format::{MdbReader, MdbWriter, KIND_META};
+use crate::cache::checksum::compute_checksum;
 
 // ── Versi format precompiled module (Kritik 3 db.md: bump saat skema berubah) ──
 
@@ -44,7 +44,7 @@ pub const MANIFEST_FILE: &str = "manifest.mdb";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PortInfo {
     pub name: String,
-    pub dir: String,   // "input" / "output" / "inout" / "ref"
+    pub dir: String, // "input" / "output" / "inout" / "ref"
     pub width: usize,
     pub is_signed: bool,
 }
@@ -105,20 +105,18 @@ impl PrecompiledModule {
     /// Hitung checksum dari field-field utama.
     pub fn compute_checksum(&self) -> u64 {
         let mut h = 0u64;
-        h = h.wrapping_mul(31).wrapping_add(compute_checksum(self.name.as_bytes()));
+        h = h
+            .wrapping_mul(31)
+            .wrapping_add(compute_checksum(self.name.as_bytes()));
         h = h.wrapping_mul(31).wrapping_add(self.content_hash);
         h = h.wrapping_mul(31).wrapping_add(self.ast_hash);
         h = h.wrapping_mul(31).wrapping_add(self.type_signature);
-        h = h
-            .wrapping_mul(31)
-            .wrapping_add(compute_checksum(self.source_file.to_string_lossy().as_bytes()));
+        h = h.wrapping_mul(31).wrapping_add(compute_checksum(
+            self.source_file.to_string_lossy().as_bytes(),
+        ));
         h = h.wrapping_mul(31).wrapping_add(self.token_count);
-        h = h
-            .wrapping_mul(31)
-            .wrapping_add(self.process_count as u64);
-        h = h
-            .wrapping_mul(31)
-            .wrapping_add(self.signal_count as u64);
+        h = h.wrapping_mul(31).wrapping_add(self.process_count as u64);
+        h = h.wrapping_mul(31).wrapping_add(self.signal_count as u64);
         for p in &self.ports {
             h = h
                 .wrapping_mul(31)
@@ -177,8 +175,7 @@ impl PrecompiledDb {
 
     /// Path file CAS untuk satu module + hash.
     fn module_path(&self, name: &str, hash: u64) -> PathBuf {
-        self.module_dir(name)
-            .join(format!("{:016x}.mdb", hash))
+        self.module_dir(name).join(format!("{:016x}.mdb", hash))
     }
 
     /// Path manifest.
@@ -356,7 +353,11 @@ impl std::fmt::Display for PrecompiledStats {
         write!(
             f,
             "precompiled: {} modules ({} clean), {} tokens, {} errors, {} warnings",
-            self.modules, self.clean_modules, self.total_tokens, self.total_errors, self.total_warnings
+            self.modules,
+            self.clean_modules,
+            self.total_tokens,
+            self.total_errors,
+            self.total_warnings
         )
     }
 }
@@ -367,15 +368,9 @@ impl std::fmt::Display for PrecompiledStats {
 /// Digunakan untuk deteksi perubahan cepat tanpa deserialize AST penuh.
 pub fn module_fingerprint(content_hash: u64, ast_hash: u64, type_signature: u64) -> u64 {
     let mut h = 0u64;
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(content_hash);
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(ast_hash);
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(type_signature);
+    h = h.wrapping_mul(31).wrapping_add(content_hash);
+    h = h.wrapping_mul(31).wrapping_add(ast_hash);
+    h = h.wrapping_mul(31).wrapping_add(type_signature);
     h
 }
 
@@ -388,15 +383,12 @@ pub fn content_hash(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::verify::now_ns;
+    use super::*;
 
     fn test_root(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "maria_precompiled_{}_{}",
-            std::process::id(),
-            name
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("maria_precompiled_{}_{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

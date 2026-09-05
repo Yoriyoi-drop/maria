@@ -11,12 +11,12 @@
 //! 4. Coverage guide otomatis eksplorasi wilayah serupa
 
 use super::bug_db::BugSeverity;
+use super::expr::BinOp as EBinOp;
 use super::expr::Expr;
 use super::gen::GenInput;
 use super::guide::CoverageGuide;
-use super::svast::{self, GenMode, SVAst};
 use super::oracle::Verdict;
-use super::expr::BinOp as EBinOp;
+use super::svast::{self, GenMode, SVAst};
 
 /// Satu vari yang dihasilkan dari bug.
 #[derive(Debug, Clone)]
@@ -53,8 +53,9 @@ impl AutoExpander {
             E::Bin(_, l, r) => {
                 // Jika operator comparison → mungkin sequential (always_comb)
                 match l.as_ref() {
-                    E::Bin(EBinOp::Eq | EBinOp::Ne | EBinOp::Lt | EBinOp::Gt, _, _) =>
-                        GenMode::Sequential,
+                    E::Bin(EBinOp::Eq | EBinOp::Ne | EBinOp::Lt | EBinOp::Gt, _, _) => {
+                        GenMode::Sequential
+                    }
                     _ => GenMode::Combinational,
                 }
             }
@@ -65,12 +66,7 @@ impl AutoExpander {
     }
 
     /// Generate vari dari satu bug finding.
-    pub fn expand_bug(
-        &mut self,
-        input: &GenInput,
-        message: &str,
-        _severity: BugSeverity,
-    ) {
+    pub fn expand_bug(&mut self, input: &GenInput, message: &str, _severity: BugSeverity) {
         let mode = Self::infer_mode(input);
         let w = input.w;
         let mut rng = fastrand::Rng::with_seed(input.seed ^ 0xBEEF);
@@ -81,7 +77,9 @@ impl AutoExpander {
         //    pipeline (Combinational/Sequential/ForkJoin/Class/Generate) agar
         //    auto-expansion mengeksplorasi wilayah > ekspresi kombinasional.
         for &sv_mode in GenMode::all() {
-            if generated >= self.max_variants_per_bug { break; }
+            if generated >= self.max_variants_per_bug {
+                break;
+            }
             let _ast = svast::generate_svast_mode(rng.u64(..), sv_mode);
             let svast_input = GenInput {
                 w,
@@ -104,7 +102,9 @@ impl AutoExpander {
         if let super::expr::Expr::Bin(op, _, _) = &input.expr {
             let family = Self::operator_family(*op);
             for &fam_op in family.iter().take(3) {
-                if generated >= self.max_variants_per_bug { break; }
+                if generated >= self.max_variants_per_bug {
+                    break;
+                }
                 let mut mutated = input.clone();
                 mutated.seed = rng.u64(..);
                 mutated.expr = Self::replace_top_op(&mutated.expr, fam_op);
@@ -121,8 +121,12 @@ impl AutoExpander {
         // 2. Width boundary variants
         let boundaries = [1u32, 2, 4, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65];
         for &bw in boundaries.iter() {
-            if generated >= self.max_variants_per_bug { break; }
-            if bw == w { continue; }
+            if generated >= self.max_variants_per_bug {
+                break;
+            }
+            if bw == w {
+                continue;
+            }
             let mut mutated = input.clone();
             mutated.seed = rng.u64(..);
             mutated.w = bw;
@@ -142,9 +146,14 @@ impl AutoExpander {
 
         // 3. EMI transform variants (redundant parens, commute, dead code)
         for &emi_op in &[
-            "redundant_parens", "commute_assoc", "literal_form", "dead_code",
+            "redundant_parens",
+            "commute_assoc",
+            "literal_form",
+            "dead_code",
         ] {
-            if generated >= self.max_variants_per_bug { break; }
+            if generated >= self.max_variants_per_bug {
+                break;
+            }
             let mut mutated = input.clone();
             mutated.seed = rng.u64(..) ^ 0xE001;
             match emi_op {
@@ -153,7 +162,9 @@ impl AutoExpander {
                     if let super::expr::Expr::Bin(op, ref l, ref r) = mutated.expr {
                         if Self::is_commutative(op) {
                             mutated.expr = super::expr::Expr::Bin(
-                                op, Box::new((**r).clone()), Box::new((**l).clone()),
+                                op,
+                                Box::new((**r).clone()),
+                                Box::new((**l).clone()),
                             );
                         }
                     }
@@ -175,7 +186,9 @@ impl AutoExpander {
         // 4. Stimulus boundary — input ekstrem
         let extrema = [0u64, 1, !0u64 >> 1, !0u64];
         for &ext in extrema.iter() {
-            if generated >= self.max_variants_per_bug { break; }
+            if generated >= self.max_variants_per_bug {
+                break;
+            }
             let mut mutated = input.clone();
             mutated.seed = rng.u64(..);
             let m = super::gen::mask_of(w);
@@ -206,18 +219,14 @@ impl AutoExpander {
     fn operator_family(op: super::expr::BinOp) -> &'static [super::expr::BinOp] {
         use super::expr::BinOp as B;
         match op {
-            B::Add | B::Sub | B::Mul | B::Div | B::Mod =>
-                &[B::Add, B::Sub, B::Mul, B::Div, B::Mod],
-            B::And | B::Or | B::Xor | B::Xnor =>
-                &[B::And, B::Or, B::Xor, B::Xnor],
-            B::Shl | B::Shr | B::Sshl | B::Sshr =>
-                &[B::Shl, B::Shr, B::Sshl, B::Sshr],
-            B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge =>
-                &[B::Eq, B::Ne, B::Lt, B::Le, B::Gt, B::Ge],
-            B::LogicAnd | B::LogicOr =>
-                &[B::LogicAnd, B::LogicOr],
-            B::CaseEq | B::CaseNeq =>
-                &[B::CaseEq, B::CaseNeq, B::Eq, B::Ne],
+            B::Add | B::Sub | B::Mul | B::Div | B::Mod => &[B::Add, B::Sub, B::Mul, B::Div, B::Mod],
+            B::And | B::Or | B::Xor | B::Xnor => &[B::And, B::Or, B::Xor, B::Xnor],
+            B::Shl | B::Shr | B::Sshl | B::Sshr => &[B::Shl, B::Shr, B::Sshl, B::Sshr],
+            B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge => {
+                &[B::Eq, B::Ne, B::Lt, B::Le, B::Gt, B::Ge]
+            }
+            B::LogicAnd | B::LogicOr => &[B::LogicAnd, B::LogicOr],
+            B::CaseEq | B::CaseNeq => &[B::CaseEq, B::CaseNeq, B::Eq, B::Ne],
             B::Power => &[B::Power, B::Mul],
             B::Concat => &[B::Concat, B::Add],
             B::Inside => &[B::Inside, B::Eq, B::Ne],
@@ -226,21 +235,35 @@ impl AutoExpander {
 
     fn is_commutative(op: super::expr::BinOp) -> bool {
         use super::expr::BinOp as B;
-        matches!(op, B::Add | B::Mul | B::And | B::Or | B::Xor | B::Xnor
-            | B::Eq | B::Ne | B::LogicAnd | B::LogicOr | B::CaseEq | B::CaseNeq)
+        matches!(
+            op,
+            B::Add
+                | B::Mul
+                | B::And
+                | B::Or
+                | B::Xor
+                | B::Xnor
+                | B::Eq
+                | B::Ne
+                | B::LogicAnd
+                | B::LogicOr
+                | B::CaseEq
+                | B::CaseNeq
+        )
     }
 
     fn replace_top_op(expr: &super::expr::Expr, new_op: super::expr::BinOp) -> super::expr::Expr {
         match expr {
-            super::expr::Expr::Bin(_, l, r) =>
-                super::expr::Expr::Bin(new_op, l.clone(), r.clone()),
+            super::expr::Expr::Bin(_, l, r) => super::expr::Expr::Bin(new_op, l.clone(), r.clone()),
             other => other.clone(),
         }
     }
 }
 
 impl Default for AutoExpander {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Integrasikan auto-expand ke dalam fuzz loop.
@@ -285,14 +308,21 @@ mod tests {
         let variants = expander.drain_variants();
         let modes: std::collections::HashSet<_> = variants.iter().map(|v| v.mode).collect();
         // Should cover at least 2 different modes
-        assert!(modes.len() >= 2, "should cover multiple modes, got {:?}", modes);
+        assert!(
+            modes.len() >= 2,
+            "should cover multiple modes, got {:?}",
+            modes
+        );
     }
 
     #[test]
     fn auto_expand_infer_mode() {
-        use super::super::expr::{Expr as E, BinOp};
+        use super::super::expr::{BinOp, Expr as E};
         let input = GenInput {
-            w: 8, wb: 8, a: 5, b: 3,
+            w: 8,
+            wb: 8,
+            a: 5,
+            b: 3,
             expr: E::Bin(BinOp::Add, Box::new(E::Var('a')), Box::new(E::Var('b'))),
             seed: 1,
         };

@@ -14,9 +14,7 @@ fn run_sim_no_crash(src: String) -> bool {
     std::thread::Builder::new()
         .name("constraint-fuzz-sim".to_string())
         .stack_size(256 * 1024 * 1024)
-        .spawn({
-            move || crate::simulate_signals(&src, 30).ok().map(|s| s.len())
-        })
+        .spawn({ move || crate::simulate_signals(&src, 30).ok().map(|s| s.len()) })
         .expect("spawn")
         .join()
         .expect("sim panic")

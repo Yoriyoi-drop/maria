@@ -9,13 +9,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -78,7 +76,11 @@ fn signed_add_overflow_fuzz() {
     for seed in 0..40u64 {
         let mut rng = fastrand::Rng::with_seed(seed ^ 0xBB_02);
         let w = [4u32, 8, 12, 16][rng.usize(0..4)];
-        let max_pos = if w >= 64 { i64::MAX } else { (1i64 << (w - 1)) - 1 };
+        let max_pos = if w >= 64 {
+            i64::MAX
+        } else {
+            (1i64 << (w - 1)) - 1
+        };
         let a = rng.i64(-max_pos..=max_pos);
         let b = rng.i64(-max_pos..=max_pos);
         let result = a.wrapping_add(b);
@@ -148,9 +150,7 @@ fn signed_compare_fuzz() {
         let result = std::thread::Builder::new()
             .name("signed-cmp-fuzz".to_string())
             .stack_size(256 * 1024 * 1024)
-            .spawn({
-                move || crate::compile_str(&src).is_ok()
-            })
+            .spawn({ move || crate::compile_str(&src).is_ok() })
             .expect("spawn")
             .join()
             .expect("sim panic");

@@ -130,8 +130,7 @@ impl AuthStore {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        std::fs::write(path, &json)
-            .map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
+        std::fs::write(path, &json).map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
     }
 
     /// Generate API key baru.

@@ -50,9 +50,13 @@ impl Default for V2Config {
     fn default() -> Self {
         V2Config {
             iterations: std::env::var("MARIA_FUZZ_V2_N")
-                .ok().and_then(|s| s.parse().ok()).unwrap_or(300),
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(300),
             workers: std::env::var("MARIA_FUZZ_V2_WORKERS")
-                .ok().and_then(|s| s.parse().ok()).unwrap_or(parallel::DEFAULT_WORKERS),
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(parallel::DEFAULT_WORKERS),
         }
     }
 }
@@ -72,9 +76,11 @@ fn check_svast_source(src: &str, golden: Option<u64>) -> Verdict {
         }
         let run1 = crate::simulate_signals(&src_owned, 50).ok();
         let run2 = crate::simulate_signals(&src_owned, 50).ok();
-        let y1 = run1.as_ref()
+        let y1 = run1
+            .as_ref()
             .and_then(|s| s.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()));
-        let y2 = run2.as_ref()
+        let y2 = run2
+            .as_ref()
             .and_then(|s| s.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()));
         Some((true, y1, y2))
     };
@@ -85,27 +91,28 @@ fn check_svast_source(src: &str, golden: Option<u64>) -> Verdict {
         .spawn(move || std::panic::catch_unwind(std::panic::AssertUnwindSafe(runner)))
         .ok();
 
-    let res: Option<Result<Option<(bool, Option<u64>, Option<u64>)>, Box<dyn std::any::Any + Send>>> =
-        handle.and_then(|h| h.join().ok());
+    let res: Option<
+        Result<Option<(bool, Option<u64>, Option<u64>)>, Box<dyn std::any::Any + Send>>,
+    > = handle.and_then(|h| h.join().ok());
 
     match res {
         Some(Ok(Some((true, Some(a), Some(b))))) => {
             if a != b {
-                return Verdict::Bug(format!(
-                    "non-determinism: run1={:#x} run2={:#x}", a, b
-                ));
+                return Verdict::Bug(format!("non-determinism: run1={:#x} run2={:#x}", a, b));
             }
             match golden {
                 Some(exp) if a != exp => Verdict::Bug(format!(
-                    "differential mismatch: golden {:#x} maria {:#x}", exp, a
+                    "differential mismatch: golden {:#x} maria {:#x}",
+                    exp, a
                 )),
                 _ => Verdict::Pass,
             }
         }
         Some(Ok(Some((true, _, _)))) => Verdict::Bug("compiled but 'y' not readable".to_string()),
         Some(Ok(Some((false, _, _)))) => Verdict::CompileFail,
-        Some(Ok(None)) | Some(Err(_)) | None =>
-            Verdict::Bug("panic during compile/simulate".to_string()),
+        Some(Ok(None)) | Some(Err(_)) | None => {
+            Verdict::Bug("panic during compile/simulate".to_string())
+        }
     }
 }
 
@@ -178,7 +185,12 @@ fn run_v2_worker(
         i += workers as u64;
     }
 
-    stats.iterations = iterations / workers as u64 + if worker_id < (iterations % workers as u64) as usize { 1 } else { 0 };
+    stats.iterations = iterations / workers as u64
+        + if worker_id < (iterations % workers as u64) as usize {
+            1
+        } else {
+            0
+        };
     stats.pipeline_coverage = pipeline.coverage_score();
     stats.pipeline_stages_covered = PipelineStage::all().len() - pipeline.uncovered_count();
     stats.pipeline_stages_total = PipelineStage::all().len();
@@ -241,16 +253,19 @@ fn guided_fuzz_v2() {
     }
 
     // Pipeline coverage: jumlah PipelineStage yang tag-nya ada di union feature.
-    let covered_stage_tags: std::collections::HashSet<_> = union_features.iter()
+    let covered_stage_tags: std::collections::HashSet<_> = union_features
+        .iter()
         .filter(|f| f.starts_with("pipeline:"))
         .cloned()
         .collect();
-    let stages_covered = PipelineStage::all().iter()
+    let stages_covered = PipelineStage::all()
+        .iter()
         .filter(|s| covered_stage_tags.contains(s.tag()))
         .count();
     total_stats.pipeline_stages_total = PipelineStage::all().len();
     total_stats.pipeline_stages_covered = stages_covered;
-    total_stats.pipeline_coverage = stages_covered as f64 / total_stats.pipeline_stages_total.max(1) as f64;
+    total_stats.pipeline_coverage =
+        stages_covered as f64 / total_stats.pipeline_stages_total.max(1) as f64;
     total_stats.elapsed_ms = start.elapsed().as_millis() as u64;
 
     eprintln!(
@@ -264,7 +279,8 @@ fn guided_fuzz_v2() {
     );
 
     // Log uncovered stages
-    let uncovered: Vec<_> = PipelineStage::all().iter()
+    let uncovered: Vec<_> = PipelineStage::all()
+        .iter()
         .filter(|s| !covered_stage_tags.contains(s.tag()))
         .map(|s| s.tag())
         .collect();
@@ -282,9 +298,10 @@ fn guided_fuzz_v2() {
         let _ = std::fs::create_dir_all(&dir);
         for (i, b) in all_bugs.iter().enumerate() {
             let path = dir.join(format!("bug-{:03}-seed-{}.sv", i, b.seed));
-            let _ = std::fs::write(&path, format!(
-                "// bug: {}\n// seed={}\n{}", b.message, b.seed, b.source
-            ));
+            let _ = std::fs::write(
+                &path,
+                format!("// bug: {}\n// seed={}\n{}", b.message, b.seed, b.source),
+            );
             eprintln!("[guided_fuzz_v2] crash: {}", path.display());
         }
     }
@@ -293,10 +310,13 @@ fn guided_fuzz_v2() {
         all_bugs.is_empty(),
         "ditemukan {} anomali:\n{}",
         all_bugs.len(),
-        all_bugs.iter().map(|b| format!(
-            "  seed={} bug: {}\n  source:\n{}\n",
-            b.seed, b.message, b.source
-        )).collect::<String>()
+        all_bugs
+            .iter()
+            .map(|b| format!(
+                "  seed={} bug: {}\n  source:\n{}\n",
+                b.seed, b.message, b.source
+            ))
+            .collect::<String>()
     );
 }
 
@@ -333,7 +353,8 @@ fn guided_fuzz_v2_deterministic_regression() {
 
     eprintln!(
         "[regression-v2] 100 seeds: bugs={} pipeline_coverage={:.0}%",
-        bugs, pipeline.coverage_score() * 100.0
+        bugs,
+        pipeline.coverage_score() * 100.0
     );
 
     assert_eq!(bugs, 0, "regression: ada bug pada seed deterministik v2");
@@ -344,7 +365,8 @@ fn guided_fuzz_v2_deterministic_regression() {
 fn guided_fuzz_v2_all_stages_covered() {
     let mut pipeline = PipelineGuide::new();
     let mut covered_modes = std::collections::HashSet::new();
-    let mut compile_fail_by_mode: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut compile_fail_by_mode: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
 
     for seed in 0..500u64 {
         let mode = GenMode::all()[(seed % GenMode::all().len() as u64) as usize];
@@ -356,7 +378,9 @@ fn guided_fuzz_v2_all_stages_covered() {
         let src = ast.to_source();
         let compiled = crate::compile_str(&src).is_ok();
         if !compiled {
-            *compile_fail_by_mode.entry(format!("{:?}", mode)).or_insert(0) += 1;
+            *compile_fail_by_mode
+                .entry(format!("{:?}", mode))
+                .or_insert(0) += 1;
         }
     }
 
@@ -367,12 +391,19 @@ fn guided_fuzz_v2_all_stages_covered() {
         covered_modes
     );
     if !compile_fail_by_mode.is_empty() {
-        eprintln!("[stage-coverage] compile_fail by mode: {:?}", compile_fail_by_mode);
+        eprintln!(
+            "[stage-coverage] compile_fail by mode: {:?}",
+            compile_fail_by_mode
+        );
     }
 
     // Semua mode harus tercakup
-    assert_eq!(covered_modes.len(), GenMode::all().len(),
-        "not all modes covered: {:?}", covered_modes);
+    assert_eq!(
+        covered_modes.len(),
+        GenMode::all().len(),
+        "not all modes covered: {:?}",
+        covered_modes
+    );
 }
 
 /// Probe diagnostik: cetak contoh source per mode untuk cek compile.
@@ -381,12 +412,20 @@ fn guided_fuzz_v2_probe_sources() {
     let mut seen_mode = std::collections::HashSet::new();
     for seed in 0..200u64 {
         let mode = GenMode::all()[(seed % GenMode::all().len() as u64) as usize];
-        if seen_mode.contains(&mode) { continue; }
+        if seen_mode.contains(&mode) {
+            continue;
+        }
         seen_mode.insert(mode);
         let ast = svast::generate_svast_mode(seed, mode);
         let src = ast.to_source();
         let compiled = crate::compile_str(&src).is_ok();
-        eprintln!("[probe] mode={:?} seed={} compiled={} len={}\n----\n{}\n----",
-            mode, seed, compiled, src.len(), src);
+        eprintln!(
+            "[probe] mode={:?} seed={} compiled={} len={}\n----\n{}\n----",
+            mode,
+            seed,
+            compiled,
+            src.len(),
+            src
+        );
     }
 }

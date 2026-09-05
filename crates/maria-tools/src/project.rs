@@ -68,19 +68,17 @@ impl WorkspaceConfig {
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("gagal baca {}: {}", path.display(), e))?;
-        toml::from_str(&content)
-            .map_err(|e| format!("workspace config invalid: {}", e))
+        toml::from_str(&content).map_err(|e| format!("workspace config invalid: {}", e))
     }
 
     /// Save workspace config.
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| format!("gagal serialize: {}", e))?;
+        let content =
+            toml::to_string_pretty(self).map_err(|e| format!("gagal serialize: {}", e))?;
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        std::fs::write(path, &content)
-            .map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
+        std::fs::write(path, &content).map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
     }
 
     /// Create default workspace config.
@@ -121,7 +119,10 @@ impl WorkspaceConfig {
             if dir.exists() {
                 project_dirs.insert(proj.name.clone(), dir);
             } else {
-                errors.push(format!("project '{}' path not found: {}", proj.name, proj.path));
+                errors.push(format!(
+                    "project '{}' path not found: {}",
+                    proj.name, proj.path
+                ));
             }
         }
 
@@ -153,11 +154,15 @@ fn topological_sort(projects: &[ProjectEntry]) -> Result<Vec<String>, String> {
         for dep in &proj.depends {
             // proj depends on dep => proj has incoming edge => proj in_degree++
             *in_degree.entry(proj.name.as_str()).or_insert(0) += 1;
-            dependents.entry(dep.as_str()).or_default().push(proj.name.as_str());
+            dependents
+                .entry(dep.as_str())
+                .or_default()
+                .push(proj.name.as_str());
         }
     }
 
-    let mut queue: Vec<&str> = in_degree.iter()
+    let mut queue: Vec<&str> = in_degree
+        .iter()
         .filter(|(_, &d)| d == 0)
         .map(|(&name, _)| name)
         .collect();
@@ -178,7 +183,8 @@ fn topological_sort(projects: &[ProjectEntry]) -> Result<Vec<String>, String> {
 
     if order.len() != projects.len() {
         // Find the cycle
-        let remaining: Vec<String> = projects.iter()
+        let remaining: Vec<String> = projects
+            .iter()
             .filter(|p| !order.contains(&p.name))
             .map(|p| p.name.clone())
             .collect();
@@ -284,9 +290,33 @@ mod tests {
     #[test]
     fn test_topological_sort() {
         let projects = vec![
-            ProjectEntry { name: "c".into(), path: "".into(), top: None, depends: vec!["a".into(), "b".into()], incdirs: vec![], defines: vec![], features: vec![] },
-            ProjectEntry { name: "a".into(), path: "".into(), top: None, depends: vec![], incdirs: vec![], defines: vec![], features: vec![] },
-            ProjectEntry { name: "b".into(), path: "".into(), top: None, depends: vec!["a".into()], incdirs: vec![], defines: vec![], features: vec![] },
+            ProjectEntry {
+                name: "c".into(),
+                path: "".into(),
+                top: None,
+                depends: vec!["a".into(), "b".into()],
+                incdirs: vec![],
+                defines: vec![],
+                features: vec![],
+            },
+            ProjectEntry {
+                name: "a".into(),
+                path: "".into(),
+                top: None,
+                depends: vec![],
+                incdirs: vec![],
+                defines: vec![],
+                features: vec![],
+            },
+            ProjectEntry {
+                name: "b".into(),
+                path: "".into(),
+                top: None,
+                depends: vec!["a".into()],
+                incdirs: vec![],
+                defines: vec![],
+                features: vec![],
+            },
         ];
         let order = topological_sort(&projects).unwrap();
         assert_eq!(order.len(), 3);
@@ -302,8 +332,24 @@ mod tests {
     #[test]
     fn test_topological_sort_cycle() {
         let projects = vec![
-            ProjectEntry { name: "a".into(), path: "".into(), top: None, depends: vec!["b".into()], incdirs: vec![], defines: vec![], features: vec![] },
-            ProjectEntry { name: "b".into(), path: "".into(), top: None, depends: vec!["a".into()], incdirs: vec![], defines: vec![], features: vec![] },
+            ProjectEntry {
+                name: "a".into(),
+                path: "".into(),
+                top: None,
+                depends: vec!["b".into()],
+                incdirs: vec![],
+                defines: vec![],
+                features: vec![],
+            },
+            ProjectEntry {
+                name: "b".into(),
+                path: "".into(),
+                top: None,
+                depends: vec!["a".into()],
+                incdirs: vec![],
+                defines: vec![],
+                features: vec![],
+            },
         ];
         let result = topological_sort(&projects);
         assert!(result.is_err());
@@ -313,7 +359,13 @@ mod tests {
     fn test_workspace_remove_project() {
         let mut config = WorkspaceConfig::default_config();
         config.add_project(ProjectEntry {
-            name: "a".into(), path: "".into(), top: None, depends: vec![], incdirs: vec![], defines: vec![], features: vec![],
+            name: "a".into(),
+            path: "".into(),
+            top: None,
+            depends: vec![],
+            incdirs: vec![],
+            defines: vec![],
+            features: vec![],
         });
         assert!(config.remove_project("a"));
         assert!(!config.remove_project("nonexistent"));

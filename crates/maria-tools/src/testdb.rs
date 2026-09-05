@@ -68,12 +68,11 @@ impl TestResultDb {
 
     /// Simpan database ke file.
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("gagal serialize: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| format!("gagal serialize: {}", e))?;
         // Atomic write: tulis ke temp file, lalu rename
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, &json)
-            .map_err(|e| format!("gagal tulis {}: {}", tmp.display(), e))?;
+        std::fs::write(&tmp, &json).map_err(|e| format!("gagal tulis {}: {}", tmp.display(), e))?;
         std::fs::rename(&tmp, path)
             .map_err(|e| format!("gagal rename {} → {}: {}", tmp.display(), path.display(), e))
     }
@@ -89,10 +88,7 @@ impl TestResultDb {
     }
 
     /// Buat TestRun baru dari data mentah.
-    pub fn create_run(
-        results: Vec<TestResult>,
-        metadata: HashMap<String, String>,
-    ) -> TestRun {
+    pub fn create_run(results: Vec<TestResult>, metadata: HashMap<String, String>) -> TestRun {
         let total = results.len();
         let passed = results.iter().filter(|r| r.passed).count();
         let failed = results.iter().filter(|r| !r.passed).count();
@@ -119,7 +115,13 @@ impl TestResultDb {
     pub fn last_pass_rate(&self) -> f64 {
         self.runs
             .last()
-            .map(|r| if r.total > 0 { r.passed as f64 / r.total as f64 } else { 0.0 })
+            .map(|r| {
+                if r.total > 0 {
+                    r.passed as f64 / r.total as f64
+                } else {
+                    0.0
+                }
+            })
             .unwrap_or(0.0)
     }
 
@@ -200,8 +202,18 @@ mod tests {
         let (path, _dir) = tmp_db();
         let mut db = TestResultDb::default();
         let results = vec![
-            TestResult { name: "test_a".into(), passed: true, duration_ms: 10, message: None },
-            TestResult { name: "test_b".into(), passed: false, duration_ms: 5, message: Some("fail".into()) },
+            TestResult {
+                name: "test_a".into(),
+                passed: true,
+                duration_ms: 10,
+                message: None,
+            },
+            TestResult {
+                name: "test_b".into(),
+                passed: false,
+                duration_ms: 5,
+                message: Some("fail".into()),
+            },
         ];
         let run = TestResultDb::create_run(results, HashMap::new());
         db.add_run(run);
@@ -221,8 +233,18 @@ mod tests {
         // Run 1: test_a pass, test_b pass
         let run1 = TestResultDb::create_run(
             vec![
-                TestResult { name: "test_a".into(), passed: true, duration_ms: 10, message: None },
-                TestResult { name: "test_b".into(), passed: true, duration_ms: 5, message: None },
+                TestResult {
+                    name: "test_a".into(),
+                    passed: true,
+                    duration_ms: 10,
+                    message: None,
+                },
+                TestResult {
+                    name: "test_b".into(),
+                    passed: true,
+                    duration_ms: 5,
+                    message: None,
+                },
             ],
             HashMap::new(),
         );
@@ -231,8 +253,18 @@ mod tests {
         // Run 2: test_a pass, test_b FAIL (regression!)
         let run2 = TestResultDb::create_run(
             vec![
-                TestResult { name: "test_a".into(), passed: true, duration_ms: 10, message: None },
-                TestResult { name: "test_b".into(), passed: false, duration_ms: 5, message: Some("broken".into()) },
+                TestResult {
+                    name: "test_a".into(),
+                    passed: true,
+                    duration_ms: 10,
+                    message: None,
+                },
+                TestResult {
+                    name: "test_b".into(),
+                    passed: false,
+                    duration_ms: 5,
+                    message: Some("broken".into()),
+                },
             ],
             HashMap::new(),
         );
@@ -248,15 +280,34 @@ mod tests {
         let mut db = TestResultDb::default();
         let run = TestResultDb::create_run(
             vec![
-                TestResult { name: "t1".into(), passed: true, duration_ms: 1, message: None },
-                TestResult { name: "t2".into(), passed: true, duration_ms: 1, message: None },
-                TestResult { name: "t3".into(), passed: false, duration_ms: 1, message: None },
+                TestResult {
+                    name: "t1".into(),
+                    passed: true,
+                    duration_ms: 1,
+                    message: None,
+                },
+                TestResult {
+                    name: "t2".into(),
+                    passed: true,
+                    duration_ms: 1,
+                    message: None,
+                },
+                TestResult {
+                    name: "t3".into(),
+                    passed: false,
+                    duration_ms: 1,
+                    message: None,
+                },
             ],
             HashMap::new(),
         );
         db.add_run(run);
         let rate = db.last_pass_rate();
-        assert!((rate - 2.0 / 3.0).abs() < 0.001, "pass rate should be ~66.7%, got {}", rate);
+        assert!(
+            (rate - 2.0 / 3.0).abs() < 0.001,
+            "pass rate should be ~66.7%, got {}",
+            rate
+        );
     }
 
     #[test]
@@ -265,7 +316,12 @@ mod tests {
         db.max_runs = 3;
         for i in 0..5 {
             let run = TestResultDb::create_run(
-                vec![TestResult { name: format!("t{}", i), passed: true, duration_ms: 1, message: None }],
+                vec![TestResult {
+                    name: format!("t{}", i),
+                    passed: true,
+                    duration_ms: 1,
+                    message: None,
+                }],
                 HashMap::new(),
             );
             db.add_run(run);

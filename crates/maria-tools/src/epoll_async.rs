@@ -44,7 +44,13 @@ impl EventLoop {
     }
 
     /// Register a file descriptor for events.
-    pub fn register(&mut self, fd: i32, _event_type: EventType, _data: u64, handler: impl FnMut(Event) + Send + 'static) -> Result<(), String> {
+    pub fn register(
+        &mut self,
+        fd: i32,
+        _event_type: EventType,
+        _data: u64,
+        handler: impl FnMut(Event) + Send + 'static,
+    ) -> Result<(), String> {
         self.registered_fds.push(fd);
         self.handlers.insert(fd, Box::new(handler));
         Ok(())

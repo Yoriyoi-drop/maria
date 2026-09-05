@@ -451,9 +451,21 @@ impl CoverageReport {
     /// Hitung statistik coverage.
     pub fn stats(&self) -> CoverageStats {
         let total = self.features.len();
-        let full = self.features.iter().filter(|f| f.status == SupportStatus::Full).count();
-        let partial = self.features.iter().filter(|f| f.status == SupportStatus::Partial).count();
-        let not_supported = self.features.iter().filter(|f| f.status == SupportStatus::NotSupported).count();
+        let full = self
+            .features
+            .iter()
+            .filter(|f| f.status == SupportStatus::Full)
+            .count();
+        let partial = self
+            .features
+            .iter()
+            .filter(|f| f.status == SupportStatus::Partial)
+            .count();
+        let not_supported = self
+            .features
+            .iter()
+            .filter(|f| f.status == SupportStatus::NotSupported)
+            .count();
 
         CoverageStats {
             total,
@@ -540,9 +552,18 @@ mod tests {
     #[test]
     fn test_all_statuses_present() {
         let report = CoverageReport::generate();
-        let has_full = report.features.iter().any(|f| f.status == SupportStatus::Full);
-        let has_partial = report.features.iter().any(|f| f.status == SupportStatus::Partial);
-        let has_not = report.features.iter().any(|f| f.status == SupportStatus::NotSupported);
+        let has_full = report
+            .features
+            .iter()
+            .any(|f| f.status == SupportStatus::Full);
+        let has_partial = report
+            .features
+            .iter()
+            .any(|f| f.status == SupportStatus::Partial);
+        let has_not = report
+            .features
+            .iter()
+            .any(|f| f.status == SupportStatus::NotSupported);
         assert!(has_full);
         assert!(has_partial);
         assert!(has_not);

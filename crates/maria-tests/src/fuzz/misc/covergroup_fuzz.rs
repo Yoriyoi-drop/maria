@@ -120,8 +120,7 @@ fn covergroup_cross_fuzz() {
              \x20       $finish;\n\
              \x20   end\n\
              endmodule\n",
-            a,
-            b,
+            a, b,
         );
 
         assert!(

@@ -9,13 +9,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 50)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 50).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -112,9 +110,7 @@ fn force_release_wire_fuzz() {
         let result = std::thread::Builder::new()
             .name("force-wire-fuzz".to_string())
             .stack_size(256 * 1024 * 1024)
-            .spawn({
-                move || crate::compile_str(&src).is_ok()
-            })
+            .spawn({ move || crate::compile_str(&src).is_ok() })
             .expect("spawn")
             .join()
             .expect("sim panic");

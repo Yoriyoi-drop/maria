@@ -261,10 +261,7 @@ pub(crate) fn collect_signal_ids(expr: &IrExpr, ids: &mut Vec<usize>) -> bool {
             // Shifts need width masking that JIT doesn't provide
             if matches!(
                 op,
-                BinaryIrOp::Shl
-                    | BinaryIrOp::Shr
-                    | BinaryIrOp::Sshl
-                    | BinaryIrOp::Sshr
+                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr
             ) {
                 return false;
             }

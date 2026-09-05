@@ -450,7 +450,8 @@ impl Parser {
         // NOTE: gunakan display_line (file-relative), bukan line (cumulative lintas file).
         if display_line > 0 && display_line <= self.source_lines.len() {
             let source_line = &self.source_lines[display_line - 1];
-            let snippet = SourceSnippet::new(&display_file, display_line, col, source_line.trim_end());
+            let snippet =
+                SourceSnippet::new(&display_file, display_line, col, source_line.trim_end());
             diag = diag.with_source_snippet(snippet);
 
             // Generate fix-it for common warnings
@@ -912,6 +913,17 @@ impl Parser {
                 },
                 Token::Import => {
                     self.advance();
+                    // DPI-C import at file scope: `import "DPI-C" function ...;`
+                    // — skip ke ';' (DPI body tidak dipars untuk simulasi).
+                    if self.peek() == &Token::StringLit(Symbol::intern("DPI-C"))
+                        || self.peek() == &Token::StringLit(Symbol::intern("DPI"))
+                    {
+                        while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                            self.advance();
+                        }
+                        self.skip_semi();
+                        continue;
+                    }
                     // Dukung import multi-item dipisah koma:
                     //   `import pkg::a, pkg::b;` / `import pkg::a, pkg2::b;`
                     // (pola umum DV — sejumlah top/gen pkg mengimpornya).
@@ -981,11 +993,8 @@ impl Parser {
                     // (sebelumnya "skipping top-level construct: constraint" → file
                     // DV seperti alert_esc_seq_item kemudian cascade error).
                     self.advance(); // 'constraint'
-                    // Header opsional: `Class::name` atau `name`.
-                    while matches!(
-                        self.peek(),
-                        Token::Ident(_) | Token::Scope | Token::Hash
-                    ) {
+                                    // Header opsional: `Class::name` atau `name`.
+                    while matches!(self.peek(), Token::Ident(_) | Token::Scope | Token::Hash) {
                         self.advance();
                     }
                     match self.peek() {
@@ -1186,9 +1195,16 @@ impl Parser {
                             | Token::Struct
                             | Token::Union
                     ) {
-                        let err = self.err("declaration outside of module");
-                        self.errors.push(err.to_diagnostic());
-                        let _ = self.skip_until_semi_or_end();
+                        // File bebas-module (fragmen `include, mis.
+                        // `tb__xbar_connect.sv` / formal `mem.sv`): deklarasi
+                        // level-unit = body module implisit. Bungkus sisa token
+                        // ke module sintetik agar tidak error "declaration
+                        // outside of module" (fragmen ini memang untuk di-
+                        // include, bukan kompilasi mandiri).
+                        let mod_name = self.implicit_unit_module_name();
+                        if let Some(m) = self.parse_implicit_unit_module(mod_name) {
+                            modules.push(m);
+                        }
                     } else {
                         let line = self.peek_line();
                         let col = self.peek_col();
@@ -1445,6 +1461,18 @@ impl Parser {
                 let decl = self.parse_decl()?;
                 Ok(Some(ModuleItem::Decl(decl)))
             }
+            Token::Bind => {
+                // `bind target instance` di level module — verification-only,
+                // parse & buang (engine tidak menelusuri bind; instance bind
+                // di-materialisasi tools lain). Tanpa arm ini `bind` jatuh ke
+                // fallback Ident → "expected instance name" dan modul terpotong.
+                self.advance(); // 'bind'
+                let _target = self.expect_ident()?;
+                // Parse instance lalu buang. Instance bisa parametrik `#(...)`.
+                let _ = self.parse_instance();
+                self.skip_semi();
+                Ok(None)
+            }
             Token::Assert | Token::Assume | Token::Cover | Token::Restrict => {
                 // Concurrent assertion SVA module-level. Bentuk BOOLEAN
                 // `assert property (@(posedge clk) expr)` di-parse penuh menjadi
@@ -1568,17 +1596,73 @@ impl Parser {
                         if let Token::Ident(n) = self.peek() {
                             let vname = *n;
                             self.advance();
+                            // Dimensi unpacked setelah nama: queue `name[$]`,
+                            // dynamic `name[]`, size `name[N]`, associative
+                            // `name[int KEY]`/`name[string KEY]`.
+                            let mut is_dynamic = false;
+                            let mut is_queue = false;
+                            let mut is_associative = false;
+                            let mut assoc_key_type: Option<DataType> = None;
+                            let mut array_range: Option<Range> = None;
+                            let mut array_size_expr: Option<Expr> = None;
+                            if self.peek() == &Token::LBrack {
+                                if self.peek_ahead(1) == &Token::Dollar
+                                    && self.peek_ahead(2) == &Token::RBrack
+                                {
+                                    // `[$]` — unbounded queue
+                                    self.advance();
+                                    self.advance();
+                                    self.advance();
+                                    is_queue = true;
+                                } else if self.peek_ahead(1) == &Token::RBrack {
+                                    // `[]` — dynamic array
+                                    self.advance();
+                                    self.advance();
+                                    is_dynamic = true;
+                                } else if matches!(self.peek_ahead(1), Token::String) {
+                                    // `[string]` — string-key associative
+                                    self.advance();
+                                    self.advance();
+                                    self.expect(Token::RBrack)?;
+                                    is_associative = true;
+                                    assoc_key_type = Some(DataType::String);
+                                } else if matches!(self.peek_ahead(1), Token::Int) {
+                                    // `[int]` — int-key associative
+                                    self.advance();
+                                    self.advance();
+                                    if self.peek() == &Token::Unsigned {
+                                        self.advance();
+                                    }
+                                    self.expect(Token::RBrack)?;
+                                    is_associative = true;
+                                    assoc_key_type = Some(DataType::Int);
+                                } else {
+                                    // `[N]` — unpacked array size
+                                    self.advance();
+                                    let sz = self.parse_expr(0)?;
+                                    self.expect(Token::RBrack)?;
+                                    match const_eval_simple(&sz) {
+                                        Ok(n) if n > 0 => {
+                                            array_range = Some(Range {
+                                                msb: (n - 1) as usize,
+                                                lsb: 0,
+                                            });
+                                        }
+                                        _ => array_size_expr = Some(sz),
+                                    }
+                                }
+                            }
                             names.push(DeclVar {
                                 name: vname,
                                 range: None,
                                 expr_range: None,
-                                array_range: None,
-                                array_size_expr: None,
+                                array_range,
+                                array_size_expr,
                                 extra_packed_dims: vec![],
-                                is_dynamic: false,
-                                is_queue: false,
-                                is_associative: false,
-                                assoc_key_type: None,
+                                is_dynamic,
+                                is_queue,
+                                is_associative,
+                                assoc_key_type,
                                 is_rand: false,
                                 is_const: false,
                                 expr: None,
@@ -2225,6 +2309,136 @@ impl Parser {
         }
     }
 
+    /// Nama module implisit untuk fragmen file bebas-module (`` `include ``-only).
+    fn implicit_unit_module_name(&self) -> Symbol {
+        let stem = self
+            .source_file
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(&self.source_file);
+        Symbol::intern(&format!("__unit__{}", stem))
+    }
+
+    /// Parse fragmen file yang berisi body module TANPA deklarasi `module ...`.
+    /// Bungkus ke module sintetik agar deklarasi/instance/assign/always level-file
+    /// tidak error "declaration outside of module".
+    fn parse_implicit_unit_module(&mut self, mod_name: Symbol) -> Option<Module> {
+        let mut ports = Vec::new();
+        let mut params = Vec::new();
+        let mut decls = Vec::new();
+        let mut items = Vec::new();
+        let mut _guard = 0u32;
+        loop {
+            match self.peek() {
+                // Berhenti bila ketemu unit top-level lain yang valid.
+                Token::Module
+                | Token::Interface
+                | Token::Program
+                | Token::Package
+                | Token::EndPackage
+                | Token::Class
+                | Token::Eof => break,
+                Token::Wire
+                | Token::Wand
+                | Token::Wor
+                | Token::Tri
+                | Token::TriAnd
+                | Token::TriOr
+                | Token::Tri0
+                | Token::Tri1
+                | Token::Supply0
+                | Token::Supply1
+                | Token::Reg
+                | Token::Logic
+                | Token::Int
+                | Token::Integer
+                | Token::Bit
+                | Token::Byte
+                | Token::Shortint
+                | Token::Longint
+                | Token::Time
+                | Token::Real
+                | Token::WReal
+                | Token::RealTime
+                | Token::String
+                | Token::Param
+                | Token::Parameter
+                | Token::LocalParam
+                | Token::GenVar
+                | Token::Assign
+                | Token::Always
+                | Token::AlwaysComb
+                | Token::AlwaysFF
+                | Token::AlwaysLatch
+                | Token::Initial
+                | Token::Final => match self.parse_module_item() {
+                    Ok(Some(ModuleItem::Decl(d))) => decls.push(d),
+                    Ok(Some(ModuleItem::Param(p))) => params.push(p),
+                    Ok(Some(other)) => items.push(other),
+                    Ok(None) => {
+                        let before = self.pos.get();
+                        if self.pos.get() == before {
+                            self.advance();
+                        }
+                    }
+                    Err(e) => {
+                        self.errors.push(e.to_diagnostic());
+                        let _ = self.skip_until_semi_or_end();
+                    }
+                },
+                Token::Ident(_) => {
+                    // Instance / call di level fragmen.
+                    let before = self.pos.get();
+                    match self.parse_module_item() {
+                        Ok(Some(ModuleItem::Decl(d))) => decls.push(d),
+                        Ok(Some(ModuleItem::Param(p))) => params.push(p),
+                        Ok(Some(other)) => items.push(other),
+                        Ok(None) => {
+                            if self.pos.get() == before {
+                                self.advance();
+                            }
+                        }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            let _ = self.skip_until_semi_or_end();
+                        }
+                    }
+                }
+                _ => {
+                    let before = self.pos.get();
+                    match self.parse_module_item() {
+                        Ok(Some(ModuleItem::Decl(d))) => decls.push(d),
+                        Ok(Some(ModuleItem::Param(p))) => params.push(p),
+                        Ok(Some(other)) => items.push(other),
+                        Ok(None) => {
+                            if self.pos.get() == before {
+                                self.advance();
+                            }
+                        }
+                        Err(e) => {
+                            self.errors.push(e.to_diagnostic());
+                            let _ = self.skip_until_semi_or_end();
+                        }
+                    }
+                }
+            }
+            _guard += 1;
+            if _guard > 50_000 {
+                break;
+            }
+        }
+        if decls.is_empty() && items.is_empty() && params.is_empty() {
+            return None;
+        }
+        Some(Module {
+            name: mod_name,
+            ports,
+            params,
+            decls,
+            items,
+        })
+    }
+
     /// Skip tokens until the next top-level construct (module/class/interface/package/etc.).
     /// First advances past the current token (so we don't get stuck on the same construct).
     ///
@@ -2338,7 +2552,14 @@ impl Parser {
                     self.advance();
                 }
                 Token::End => {
-                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        // `end` di depth 0 menutup blok generate/always/block yang
+                        // sedang mengandung item ini — JANGAN konsume (konsumen
+                        // `parse_generate_block_body` menunggu `end` ini). Bila
+                        // masih di dalam begin...end (depth>0), decrement & lanjut.
+                        return Ok(());
+                    }
+                    depth -= 1;
                     self.advance();
                 }
                 _ => {

@@ -97,7 +97,12 @@ pub fn try_fold_const_at_width(
     if contains_shift_op(expr) {
         return None;
     }
-    let masked = (val as u64) & if ctx >= 64 { u64::MAX } else { (1u64 << ctx) - 1 };
+    let masked = (val as u64)
+        & if ctx >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << ctx) - 1
+        };
     // Preserve signedness: ekspresi signed menghasilkan IrExpr::Signed
     // (bukan Const) agar engine tahu `>>>` = arithmetic (sign-fill).
     // Tanpa ini `((4'sh4 << 1) >>> 4'hd)` salah jadi 0 padahal 0xf
@@ -119,17 +124,24 @@ fn expr_is_signed(e: &Expr) -> bool {
         | Expr::Value(Value::Octal { is_signed, .. }) => *is_signed,
         Expr::Paren(inner) => expr_is_signed(inner),
         Expr::UnaryOp { op, expr: inner } => match op {
-            UnaryOp::Not | UnaryOp::ReductionAnd | UnaryOp::ReductionNand
-            | UnaryOp::ReductionOr | UnaryOp::ReductionNor
-            | UnaryOp::ReductionXor | UnaryOp::ReductionXnor => false,
+            UnaryOp::Not
+            | UnaryOp::ReductionAnd
+            | UnaryOp::ReductionNand
+            | UnaryOp::ReductionOr
+            | UnaryOp::ReductionNor
+            | UnaryOp::ReductionXor
+            | UnaryOp::ReductionXnor => false,
             _ => expr_is_signed(inner),
         },
         Expr::BinaryOp { op, lhs, rhs } => match op {
-            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr => {
-                expr_is_signed(lhs)
-            }
-            BinaryOp::Eq | BinaryOp::Neq | BinaryOp::Lt | BinaryOp::Le
-            | BinaryOp::Gt | BinaryOp::Ge | BinaryOp::LogicalAnd
+            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr => expr_is_signed(lhs),
+            BinaryOp::Eq
+            | BinaryOp::Neq
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+            | BinaryOp::LogicalAnd
             | BinaryOp::LogicalOr => false,
             _ => expr_is_signed(lhs) && expr_is_signed(rhs),
         },
@@ -145,23 +157,16 @@ fn contains_sysfunc(e: &Expr) -> bool {
         Expr::FuncCall { args, .. } => args.iter().any(contains_sysfunc),
         Expr::Paren(inner) => contains_sysfunc(inner),
         Expr::UnaryOp { expr: inner, .. } => contains_sysfunc(inner),
-        Expr::BinaryOp { lhs, rhs, .. } => {
-            contains_sysfunc(lhs) || contains_sysfunc(rhs)
-        }
+        Expr::BinaryOp { lhs, rhs, .. } => contains_sysfunc(lhs) || contains_sysfunc(rhs),
         Expr::Concat(elems) => elems.iter().any(contains_sysfunc),
-        Expr::Replicate {
-            count,
-            expr: inner,
-        } => contains_sysfunc(count) || contains_sysfunc(inner),
+        Expr::Replicate { count, expr: inner } => {
+            contains_sysfunc(count) || contains_sysfunc(inner)
+        }
         Expr::TernaryOp {
             cond,
             true_expr,
             false_expr,
-        } => {
-            contains_sysfunc(cond)
-                || contains_sysfunc(true_expr)
-                || contains_sysfunc(false_expr)
-        }
+        } => contains_sysfunc(cond) || contains_sysfunc(true_expr) || contains_sysfunc(false_expr),
         _ => false,
     }
 }
@@ -169,7 +174,10 @@ fn contains_sysfunc(e: &Expr) -> bool {
 /// Deteksi literal based (Binary/Hex/Octal) yang memuat digit `x`/`z` —
 /// nilainya tidak bisa direpresentasikan sebagai i64.
 fn contains_xz_literal(e: &Expr) -> bool {
-    let lit_has_xz = |bits: &str| bits.chars().any(|c| matches!(c, 'x' | 'X' | 'z' | 'Z' | '?'));
+    let lit_has_xz = |bits: &str| {
+        bits.chars()
+            .any(|c| matches!(c, 'x' | 'X' | 'z' | 'Z' | '?'))
+    };
     match e {
         Expr::Value(Value::Binary { bits, .. }) | Expr::Value(Value::Octal { bits, .. }) => {
             lit_has_xz(bits)
@@ -178,9 +186,7 @@ fn contains_xz_literal(e: &Expr) -> bool {
         Expr::FillLit(_) => true,
         Expr::Paren(inner) => contains_xz_literal(inner),
         Expr::UnaryOp { expr: inner, .. } => contains_xz_literal(inner),
-        Expr::BinaryOp { lhs, rhs, .. } => {
-            contains_xz_literal(lhs) || contains_xz_literal(rhs)
-        }
+        Expr::BinaryOp { lhs, rhs, .. } => contains_xz_literal(lhs) || contains_xz_literal(rhs),
         Expr::Concat(elems) => elems.iter().any(contains_xz_literal),
         Expr::Replicate { expr: inner, .. } => contains_xz_literal(inner),
         Expr::TernaryOp {
@@ -208,9 +214,7 @@ fn contains_wide_literal(e: &Expr) -> bool {
         Expr::Value(Value::Hex { bits, .. }) => bits.len() * 4 > 64,
         Expr::Value(Value::Octal { bits, .. }) => bits.len() * 3 > 64,
         Expr::Paren(inner) => contains_wide_literal(inner),
-        Expr::BinaryOp { lhs, rhs, .. } => {
-            contains_wide_literal(lhs) || contains_wide_literal(rhs)
-        }
+        Expr::BinaryOp { lhs, rhs, .. } => contains_wide_literal(lhs) || contains_wide_literal(rhs),
         Expr::UnaryOp { expr: inner, .. } => contains_wide_literal(inner),
         Expr::TernaryOp {
             cond,
@@ -237,9 +241,7 @@ fn contains_shift_op(e: &Expr) -> bool {
             op: BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr,
             ..
         } => true,
-        Expr::BinaryOp { lhs, rhs, .. } => {
-            contains_shift_op(lhs) || contains_shift_op(rhs)
-        }
+        Expr::BinaryOp { lhs, rhs, .. } => contains_shift_op(lhs) || contains_shift_op(rhs),
         Expr::Paren(inner) => contains_shift_op(inner),
         Expr::UnaryOp { expr: inner, .. } => contains_shift_op(inner),
         Expr::TernaryOp {
@@ -247,9 +249,7 @@ fn contains_shift_op(e: &Expr) -> bool {
             true_expr,
             false_expr,
         } => {
-            contains_shift_op(cond)
-                || contains_shift_op(true_expr)
-                || contains_shift_op(false_expr)
+            contains_shift_op(cond) || contains_shift_op(true_expr) || contains_shift_op(false_expr)
         }
         Expr::Concat(elems) => elems.iter().any(contains_shift_op),
         Expr::Replicate { count, expr: inner } => {
@@ -261,20 +261,24 @@ fn contains_shift_op(e: &Expr) -> bool {
 
 fn contains_ctx_sensitive_unary(e: &Expr) -> bool {
     match e {
-        Expr::UnaryOp { op: UnaryOp::BitNot | UnaryOp::Minus, .. } => true,
+        Expr::UnaryOp {
+            op: UnaryOp::BitNot | UnaryOp::Minus,
+            ..
+        } => true,
         // Reduction & `!` juga context-sensitive pada lebar OPERAN: hasil
         // bergantung lebar self-determined operan yang mungkin tak-diketahui
         // struktur (TernaryOp/Ident). Fold di i64 penuh salah —
         // `&(2'b11)` = 1 pada 2 bit tapi 0 pada 64 (ditemukan guided_fuzz
         // seed=47753038; emas + Icarus: jalur runtime yang benar).
         Expr::UnaryOp {
-            op: UnaryOp::Not
-            | UnaryOp::ReductionAnd
-            | UnaryOp::ReductionNand
-            | UnaryOp::ReductionOr
-            | UnaryOp::ReductionNor
-            | UnaryOp::ReductionXor
-            | UnaryOp::ReductionXnor,
+            op:
+                UnaryOp::Not
+                | UnaryOp::ReductionAnd
+                | UnaryOp::ReductionNand
+                | UnaryOp::ReductionOr
+                | UnaryOp::ReductionNor
+                | UnaryOp::ReductionXor
+                | UnaryOp::ReductionXnor,
             ..
         } => true,
         Expr::UnaryOp { expr: inner, .. } | Expr::Paren(inner) => {

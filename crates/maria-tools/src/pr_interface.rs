@@ -43,20 +43,41 @@ impl PrReport {
     /// Generate ICC2-compatible report.
     pub fn to_icc2_report(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("ICC2 Place & Route Report: {}\n", self.design_name));
+        out.push_str(&format!(
+            "ICC2 Place & Route Report: {}\n",
+            self.design_name
+        ));
         out.push_str(&format!("Tool: {}\n\n", self.tool));
 
         out.push_str("Placement:\n");
-        out.push_str(&format!("  Total cells:   {}\n", self.placement.total_cells));
-        out.push_str(&format!("  Placed cells:  {}\n", self.placement.placed_cells));
-        out.push_str(&format!("  Utilisation:   {:.1}%\n", self.placement.utilisation * 100.0));
-        out.push_str(&format!("  Congestion:    {:.2}\n", self.placement.congestion));
+        out.push_str(&format!(
+            "  Total cells:   {}\n",
+            self.placement.total_cells
+        ));
+        out.push_str(&format!(
+            "  Placed cells:  {}\n",
+            self.placement.placed_cells
+        ));
+        out.push_str(&format!(
+            "  Utilisation:   {:.1}%\n",
+            self.placement.utilisation * 100.0
+        ));
+        out.push_str(&format!(
+            "  Congestion:    {:.2}\n",
+            self.placement.congestion
+        ));
 
         out.push_str("\nRouting:\n");
         out.push_str(&format!("  Total nets:    {}\n", self.routing.total_nets));
         out.push_str(&format!("  Routed nets:   {}\n", self.routing.routed_nets));
-        out.push_str(&format!("  Wire length:   {:.0}\n", self.routing.wire_length));
-        out.push_str(&format!("  Detour ratio:  {:.2}\n", self.routing.detour_ratio));
+        out.push_str(&format!(
+            "  Wire length:   {:.0}\n",
+            self.routing.wire_length
+        ));
+        out.push_str(&format!(
+            "  Detour ratio:  {:.2}\n",
+            self.routing.detour_ratio
+        ));
 
         out.push_str(&format!("\nDRC: {} violations\n", self.drc.violations));
         for (vtype, count) in &self.drc.violation_types {
@@ -69,7 +90,10 @@ impl PrReport {
     /// Generate Innovus-compatible report.
     pub fn to_innovus_report(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("=== Innovus P&R Report: {} ===\n\n", self.design_name));
+        out.push_str(&format!(
+            "=== Innovus P&R Report: {} ===\n\n",
+            self.design_name
+        ));
         out.push_str(&format!(
             "Utilization: {:.1}% | Congestion: {:.2} | DRC: {}\n",
             self.placement.utilisation * 100.0,

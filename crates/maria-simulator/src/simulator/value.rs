@@ -688,9 +688,9 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan bebas X (X ditangani di atas) → adder biner murni.
                     let mut carry = false;
                     for i in 0..w {
-                        let sum =
-                            (dst[i] == LogicVal::One) as u8 + (src[i] == LogicVal::One) as u8
-                                + u8::from(carry);
+                        let sum = (dst[i] == LogicVal::One) as u8
+                            + (src[i] == LogicVal::One) as u8
+                            + u8::from(carry);
                         dst[i] = if sum & 1 == 1 {
                             LogicVal::One
                         } else {
@@ -725,7 +725,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                         base = sq;
                     }
                 }
-                LogicVec { bits: acc, width: w }
+                LogicVec {
+                    bits: acc,
+                    width: w,
+                }
             }
         }
         BinaryIrOp::Eq | BinaryIrOp::CaseEq => {
@@ -941,9 +944,9 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan kiri di-zero-extend ke result_width (LRM
                     // §11.8.1 context-determined) — tanpa ini indexing
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
-                    result.bits.extend(
-                        std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width),
-                    );
+                    result
+                        .bits
+                        .extend(std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1000,9 +1003,9 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan kiri di-zero-extend ke result_width (LRM
                     // §11.8.1 context-determined) — tanpa ini indexing
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
-                    result.bits.extend(
-                        std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width),
-                    );
+                    result
+                        .bits
+                        .extend(std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1059,9 +1062,9 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan kiri di-zero-extend ke result_width (LRM
                     // §11.8.1 context-determined) — tanpa ini indexing
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
-                    result.bits.extend(
-                        std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width),
-                    );
+                    result
+                        .bits
+                        .extend(std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1125,9 +1128,9 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan kiri di-zero-extend ke result_width (LRM
                     // §11.8.1 context-determined) — tanpa ini indexing
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
-                    result.bits.extend(
-                        std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width),
-                    );
+                    result
+                        .bits
+                        .extend(std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {

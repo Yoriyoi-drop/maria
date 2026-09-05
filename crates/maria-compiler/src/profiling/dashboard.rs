@@ -157,12 +157,18 @@ pub struct CompileMetrics {
 }
 
 impl CompileMetrics {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Cache hit rate (0.0..=1.0).
     pub fn cache_hit_rate(&self) -> f64 {
         let total = self.cache_hits + self.cache_misses;
-        if total == 0 { 0.0 } else { self.cache_hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.cache_hits as f64 / total as f64
+        }
     }
 }
 
@@ -175,7 +181,13 @@ impl std::fmt::Display for CompileMetrics {
         writeln!(f, "Elab:      {:>8} ms", self.elaborate_time_ms)?;
         writeln!(f, "Optimize:  {:>8} ms", self.optimize_time_ms)?;
         writeln!(f, "Total:     {:>8} ms", self.total_time_ms)?;
-        writeln!(f, "Cache:     {:>5.1}% hit ({}/{})", self.cache_hit_rate() * 100.0, self.cache_hits, self.cache_hits + self.cache_misses)?;
+        writeln!(
+            f,
+            "Cache:     {:>5.1}% hit ({}/{})",
+            self.cache_hit_rate() * 100.0,
+            self.cache_hits,
+            self.cache_hits + self.cache_misses
+        )?;
         writeln!(f, "Errors:    {:>8}", self.errors)?;
         writeln!(f, "Warnings:  {:>8}", self.warnings)?;
         Ok(())
@@ -198,30 +210,66 @@ pub struct CoverageMetrics {
 }
 
 impl CoverageMetrics {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn line_percent(&self) -> f64 {
-        if self.line_total == 0 { 0.0 } else { self.line_hit as f64 / self.line_total as f64 * 100.0 }
+        if self.line_total == 0 {
+            0.0
+        } else {
+            self.line_hit as f64 / self.line_total as f64 * 100.0
+        }
     }
     pub fn toggle_percent(&self) -> f64 {
-        if self.toggle_total == 0 { 0.0 } else { self.toggle_hit as f64 / self.toggle_total as f64 * 100.0 }
+        if self.toggle_total == 0 {
+            0.0
+        } else {
+            self.toggle_hit as f64 / self.toggle_total as f64 * 100.0
+        }
     }
     pub fn branch_percent(&self) -> f64 {
-        if self.branch_total == 0 { 0.0 } else { self.branch_hit as f64 / self.branch_total as f64 * 100.0 }
+        if self.branch_total == 0 {
+            0.0
+        } else {
+            self.branch_hit as f64 / self.branch_total as f64 * 100.0
+        }
     }
     pub fn overall_percent(&self) -> f64 {
         let total = self.line_total + self.toggle_total + self.branch_total + self.fsm_total;
         let hit = self.line_hit + self.toggle_hit + self.branch_hit + self.fsm_hit;
-        if total == 0 { 0.0 } else { hit as f64 / total as f64 * 100.0 }
+        if total == 0 {
+            0.0
+        } else {
+            hit as f64 / total as f64 * 100.0
+        }
     }
 }
 
 impl std::fmt::Display for CoverageMetrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "═══ Coverage Metrics ═══")?;
-        writeln!(f, "Line:      {:>5.1}% ({}/{})", self.line_percent(), self.line_hit, self.line_total)?;
-        writeln!(f, "Toggle:    {:>5.1}% ({}/{})", self.toggle_percent(), self.toggle_hit, self.toggle_total)?;
-        writeln!(f, "Branch:    {:>5.1}% ({}/{})", self.branch_percent(), self.branch_hit, self.branch_total)?;
+        writeln!(
+            f,
+            "Line:      {:>5.1}% ({}/{})",
+            self.line_percent(),
+            self.line_hit,
+            self.line_total
+        )?;
+        writeln!(
+            f,
+            "Toggle:    {:>5.1}% ({}/{})",
+            self.toggle_percent(),
+            self.toggle_hit,
+            self.toggle_total
+        )?;
+        writeln!(
+            f,
+            "Branch:    {:>5.1}% ({}/{})",
+            self.branch_percent(),
+            self.branch_hit,
+            self.branch_total
+        )?;
         writeln!(f, "Overall:   {:>5.1}%", self.overall_percent())?;
         Ok(())
     }
@@ -236,7 +284,9 @@ pub struct MetricsReport {
 }
 
 impl MetricsReport {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Export sebagai JSON string.
     pub fn to_json(&self) -> String {
@@ -260,7 +310,8 @@ impl MetricsReport {
                 "branch_percent": self.coverage.branch_percent(),
                 "overall_percent": self.coverage.overall_percent(),
             },
-        }).to_string()
+        })
+        .to_string()
     }
 }
 

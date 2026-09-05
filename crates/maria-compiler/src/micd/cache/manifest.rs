@@ -7,8 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::super::verify::now_ns;
 use super::super::pipeline_revision;
+use super::super::verify::now_ns;
 
 /// Versi skema lapisan `cache/`. Naikkan bila struktur persistensi kategori
 /// berubah (field payload, layout index). Store dengan versi berbeda dianggap

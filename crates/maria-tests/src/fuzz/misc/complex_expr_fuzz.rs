@@ -20,7 +20,11 @@ module nested_tern;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // a=10 (true), b=5 (true), result=c=3
         assert_eq!(y, 3, "nested ternary");
     }
@@ -41,7 +45,11 @@ module mixed_arith;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // a+b=48 > a=16 (true) → a-b = 0x10-0x20 = 0xF0 (unsigned wrap)
         assert_eq!(y, 0xF0, "a-b unsigned wrap");
     }
@@ -62,7 +70,11 @@ module concat_arith;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         assert_eq!(y, 18, "15+3=18");
     }
 
@@ -82,7 +94,11 @@ module shift_cmp_tern;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // a<<1 = 0x20 > b=0x1F (true) → y=a=0x10
         assert_eq!(y, 0x10, "a<<1 > b");
     }
@@ -102,7 +118,11 @@ module bitnot_arith;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // ~0x0A = 0xF5, 0xF5 + 1 = 0xF6
         assert_eq!(y, 0xF6, "~a+1 two's complement");
     }
@@ -123,7 +143,11 @@ module signed_cmp;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // -1 < 3 (signed) → true → y=1
         assert_eq!(y, 1, "-1 < 3 signed");
     }
@@ -143,7 +167,11 @@ module replicate_arith;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // {2{4'h5}} = 8'h55, 85+1 = 86
         assert_eq!(y, 86, "replicated a + 1");
     }
@@ -164,7 +192,11 @@ module complex_combo;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // a>b=0, a==b=0, a<b=1 → {0,0,1,00000} = 8'h20
         // a^b = 0x10 ^ 0x20 = 0x30
         // 0x20 | 0x30 = 0x30
@@ -186,7 +218,11 @@ module wide_shift;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // 0x100000000 << 32 = 0x0 (shifted out)
         assert_eq!(y, 0, "shifted out");
     }
@@ -207,7 +243,11 @@ module reduction_chain;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // No-crash test for chained reductions with mixed operators
         // Exact value depends on width propagation — just verify non-zero
         assert!(y > 0 && y <= 0xFF, "reduction chain result: {}", y);

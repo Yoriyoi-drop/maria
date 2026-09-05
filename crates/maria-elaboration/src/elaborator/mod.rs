@@ -1348,7 +1348,6 @@ impl Elaborator {
             }
         }
 
-
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!(
                 "[DBG-ELAB] interfaces done in {}us",

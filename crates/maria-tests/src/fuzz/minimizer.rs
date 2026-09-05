@@ -167,7 +167,10 @@ impl TestcaseMinimizer {
                 // Lebar menyusut → count yang melebihi 128 bit tak valid;
                 // clamp ke batas aman.
                 let max_count = ((128 / new_w.max(1)) as u32).clamp(1, u32::MAX);
-                Expr::Repl((*count).min(max_count), Box::new(self.rescale_expr(e, old_w, new_w)))
+                Expr::Repl(
+                    (*count).min(max_count),
+                    Box::new(self.rescale_expr(e, old_w, new_w)),
+                )
             }
             Expr::BitSel(c, idx) => Expr::BitSel(*c, (*idx).min(new_w.saturating_sub(1))),
             Expr::PartSel(c, hi, lo) => {

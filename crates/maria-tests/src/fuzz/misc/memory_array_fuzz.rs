@@ -15,13 +15,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -190,23 +188,30 @@ fn array_literal_init_known_bug() {
         let sigs = std::thread::Builder::new()
             .name("array-lit-sim".to_string())
             .stack_size(256 * 1024 * 1024)
-            .spawn({
-                move || crate::simulate_signals(&src, 30).ok()
-            })
+            .spawn({ move || crate::simulate_signals(&src, 30).ok() })
             .expect("spawn")
             .join()
             .expect("sim panic");
 
         if let Some(sigs) = sigs {
-            let y0 = sigs.iter().find(|(n, _)| n == "y0").map(|(_, v)| v.to_u64());
-            let y3 = sigs.iter().find(|(n, _)| n == "y3").map(|(_, v)| v.to_u64());
+            let y0 = sigs
+                .iter()
+                .find(|(n, _)| n == "y0")
+                .map(|(_, v)| v.to_u64());
+            let y3 = sigs
+                .iter()
+                .find(|(n, _)| n == "y3")
+                .map(|(_, v)| v.to_u64());
             // IEEE 1800 expects: y0=vals[0], y3=vals[3]
             // Maria bug: y0=vals[3], y3=vals[0] (reversed)
             let ieee_y0 = Some(vals[0]);
             let ieee_y3 = Some(vals[3]);
             if y0 == ieee_y0 && y3 == ieee_y3 {
                 // Bug fixed! Update test to remove known_bug annotation
-                eprintln!("[BUG-FIXED] array literal init order now correct for seed={}", seed);
+                eprintln!(
+                    "[BUG-FIXED] array literal init order now correct for seed={}",
+                    seed
+                );
             }
             // For now, just verify it doesn't crash
             assert!(y0.is_some(), "array literal init panicked on seed={}", seed);

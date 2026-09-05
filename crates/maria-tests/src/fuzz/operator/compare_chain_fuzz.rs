@@ -14,7 +14,11 @@ use crate::fuzz::gen::{generate, lit_sv, mask_of};
 const CMP_CHAIN_WIDTHS: [u32; 5] = [4, 8, 16, 32, 64];
 
 fn mask_of128(w: u32) -> u128 {
-    if w >= 128 { u128::MAX } else { (1u128 << w) - 1 }
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
 }
 
 fn sign_ext(p: u128, w: u32) -> i128 {
@@ -77,7 +81,9 @@ fn range_check_matches_golden() {
         let hi_lit = format!("{}'h{:x}", w, hi);
         let src = cmp_chain_source(
             &format!("(({} <= {}) && ({} <= {}))", lo_lit, a_lit, a_lit, hi_lit),
-            w, "0", "0",
+            w,
+            "0",
+            "0",
         );
 
         let actual = std::thread::Builder::new()
@@ -86,9 +92,11 @@ fn range_check_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -134,7 +142,9 @@ fn chained_logical_ops_matches_golden() {
         let b_lit = format!("{}'h{:x}", w, b_val);
         let src = cmp_chain_source(
             &format!("(({} == {}) && ({} != 0))", a_lit, b_lit, a_lit),
-            w, "0", "0",
+            w,
+            "0",
+            "0",
         );
 
         let actual = std::thread::Builder::new()
@@ -143,9 +153,11 @@ fn chained_logical_ops_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")
@@ -190,7 +202,9 @@ fn xor_of_comparisons_matches_golden() {
         let b_lit = format!("{}'h{:x}", w, b_val);
         let src = cmp_chain_source(
             &format!("(({} < {}) ^ ({} > {}))", a_lit, b_lit, a_lit, b_lit),
-            w, "0", "0",
+            w,
+            "0",
+            "0",
         );
 
         let actual = std::thread::Builder::new()
@@ -199,9 +213,11 @@ fn xor_of_comparisons_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn")

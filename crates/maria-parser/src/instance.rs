@@ -776,6 +776,11 @@ impl Parser {
                     if self.peek() == &Token::Signed {
                         self.advance();
                     }
+                    // `int unsigned`, `byte unsigned` dll — unsigned = default,
+                    // konsumsi agar tidak ter-parse sebagai port name.
+                    if self.peek() == &Token::Unsigned {
+                        self.advance();
+                    }
 
                     let expr_range = if self.peek() == &Token::LBrack {
                         self.parse_range()?

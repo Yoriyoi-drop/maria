@@ -410,16 +410,20 @@ impl VcdWriter {
         }
 
         // Init last_values flat array
-        self.last_values = self.dump_targets.iter().map(|t| {
-            let sig = &design.top.signals[t.signal_idx];
-            let val = if let Some(elem) = t.elem_idx {
-                let e_val = self.elem_val(&sig.init_val, elem, t.elem_width);
-                vec_to_vcd(&e_val)
-            } else {
-                vec_to_vcd(&sig.init_val)
-            };
-            val
-        }).collect();
+        self.last_values = self
+            .dump_targets
+            .iter()
+            .map(|t| {
+                let sig = &design.top.signals[t.signal_idx];
+                let val = if let Some(elem) = t.elem_idx {
+                    let e_val = self.elem_val(&sig.init_val, elem, t.elem_width);
+                    vec_to_vcd(&e_val)
+                } else {
+                    vec_to_vcd(&sig.init_val)
+                };
+                val
+            })
+            .collect();
 
         self.write_raw(b"$end\n")
     }
@@ -560,12 +564,8 @@ impl VcdWriter {
     /// Flush file buffer to disk (for streaming mode).
     pub fn flush(&mut self) -> Result<(), String> {
         match &mut self.out {
-            Out::File(f) => f
-                .flush()
-                .map_err(|e| format!("VCD flush error: {}", e)),
-            Out::Compressed(enc) => enc
-                .flush()
-                .map_err(|e| format!("VCD flush error: {}", e)),
+            Out::File(f) => f.flush().map_err(|e| format!("VCD flush error: {}", e)),
+            Out::Compressed(enc) => enc.flush().map_err(|e| format!("VCD flush error: {}", e)),
             Out::Bg(bg) => {
                 if let Some(tx) = &bg.tx {
                     // Sinkron: tunggu ack dari writer thread sehingga
@@ -763,9 +763,18 @@ mod tests {
         let mut decoder = GzDecoder::new(&bytes[..]);
         let mut decompressed = String::new();
         decoder.read_to_string(&mut decompressed).unwrap();
-        assert!(decompressed.contains("$enddefinitions $end"), "decompressed VCD header valid");
-        assert!(decompressed.contains("b00101010"), "decompressed VCD data valid (42 = 00101010)");
-        assert!(decompressed.contains("#10"), "decompressed VCD time header valid");
+        assert!(
+            decompressed.contains("$enddefinitions $end"),
+            "decompressed VCD header valid"
+        );
+        assert!(
+            decompressed.contains("b00101010"),
+            "decompressed VCD data valid (42 = 00101010)"
+        );
+        assert!(
+            decompressed.contains("#10"),
+            "decompressed VCD time header valid"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

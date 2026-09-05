@@ -1385,7 +1385,7 @@ impl Lexer {
                                     is_signed: true,
                                 }
                             }
-                            _ => Token::Error("expected base after 's in literal".to_string()),
+                            _ => Token::Quote,
                         }
                     }
                     _ => Token::Quote,

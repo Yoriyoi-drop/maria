@@ -10,8 +10,8 @@
 //! Selain itu: nested ternary, ternary sebagai operand aritmetika, dan
 //! ternary dengan operand X/Z menguji propagasi di kedalaman.
 
-use crate::fuzz::gen::{generate, lit_sv, mask_of};
 use crate::fuzz::expr::Expr;
+use crate::fuzz::gen::{generate, lit_sv, mask_of};
 
 /// Lebar yang dipakai — kecil agar per-bandit eksak & tabel murah.
 const TERNARY_WIDTHS: [u32; 5] = [2, 4, 8, 16, 32];
@@ -38,24 +38,42 @@ enum TExpr {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum TCmp { Eq, Ne, Lt, Le, Gt, Ge }
+enum TCmp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
 
 #[derive(Clone, Copy, Debug)]
-enum TBitOp { And, Or, Xor }
+enum TBitOp {
+    And,
+    Or,
+    Xor,
+}
 
 impl TCmp {
     fn sym(self) -> &'static str {
         match self {
-            TCmp::Eq => "==", TCmp::Ne => "!=",
-            TCmp::Lt => "<", TCmp::Le => "<=",
-            TCmp::Gt => ">", TCmp::Ge => ">=",
+            TCmp::Eq => "==",
+            TCmp::Ne => "!=",
+            TCmp::Lt => "<",
+            TCmp::Le => "<=",
+            TCmp::Gt => ">",
+            TCmp::Ge => ">=",
         }
     }
 }
 
 impl TBitOp {
     fn sym(self) -> &'static str {
-        match self { TBitOp::And => "&", TBitOp::Or => "|", TBitOp::Xor => "^" }
+        match self {
+            TBitOp::And => "&",
+            TBitOp::Or => "|",
+            TBitOp::Xor => "^",
+        }
     }
 
     fn apply(self, a: u128, b: u128, w: u32) -> u128 {
@@ -69,7 +87,11 @@ impl TBitOp {
 }
 
 fn mask_of128(w: u32) -> u128 {
-    if w >= 128 { u128::MAX } else { (1u128 << w) - 1 }
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
 }
 
 fn sign_ext(p: u128, w: u32) -> i128 {
@@ -91,23 +113,45 @@ impl TExpr {
     fn eval(&self, w: u32, a: u128, b: u128) -> TEval {
         let m = mask_of128(w);
         match self {
-            TExpr::Lit(v) => TEval { val: (*v as u128) & m, undef: false },
-            TExpr::XLit { .. } => TEval { val: 0, undef: true },
+            TExpr::Lit(v) => TEval {
+                val: (*v as u128) & m,
+                undef: false,
+            },
+            TExpr::XLit { .. } => TEval {
+                val: 0,
+                undef: true,
+            },
             TExpr::Var(c) => {
                 let v = if *c == 'a' { a } else { b };
-                TEval { val: v & m, undef: false }
+                TEval {
+                    val: v & m,
+                    undef: false,
+                }
             }
             TExpr::Neg(e) => {
                 let r = e.eval(w, a, b);
-                if r.undef { return TEval { val: 0, undef: true }; }
+                if r.undef {
+                    return TEval {
+                        val: 0,
+                        undef: true,
+                    };
+                }
                 let sv = sign_ext(r.val, w);
                 let negated = sv.wrapping_neg();
-                TEval { val: (negated as u128) & m, undef: false }
+                TEval {
+                    val: (negated as u128) & m,
+                    undef: false,
+                }
             }
             TExpr::Cmp(op, l, r) => {
                 let lv = l.eval(w, a, b);
                 let rv = r.eval(w, a, b);
-                if lv.undef || rv.undef { return TEval { val: 0, undef: true }; }
+                if lv.undef || rv.undef {
+                    return TEval {
+                        val: 0,
+                        undef: true,
+                    };
+                }
                 let ok = match op {
                     TCmp::Eq => lv.val == rv.val,
                     TCmp::Ne => lv.val != rv.val,
@@ -116,13 +160,24 @@ impl TExpr {
                     TCmp::Gt => lv.val > rv.val,
                     TCmp::Ge => lv.val >= rv.val,
                 };
-                TEval { val: if ok { 1 } else { 0 }, undef: false }
+                TEval {
+                    val: if ok { 1 } else { 0 },
+                    undef: false,
+                }
             }
             TExpr::BitOp(op, l, r) => {
                 let lv = l.eval(w, a, b);
                 let rv = r.eval(w, a, b);
-                if lv.undef || rv.undef { return TEval { val: 0, undef: true }; }
-                TEval { val: op.apply(lv.val, rv.val, w), undef: false }
+                if lv.undef || rv.undef {
+                    return TEval {
+                        val: 0,
+                        undef: true,
+                    };
+                }
+                TEval {
+                    val: op.apply(lv.val, rv.val, w),
+                    undef: false,
+                }
             }
             TExpr::Ternary(cond, t, f) => {
                 let cv = cond.eval(w, a, b);
@@ -132,14 +187,26 @@ impl TExpr {
                     // Kondisi X: jika true_val == false_val → value,
                     // else → X (LRM §11.4.11).
                     if !tv.undef && !fv.undef && (tv.val & m) == (fv.val & m) {
-                        TEval { val: tv.val & m, undef: false }
+                        TEval {
+                            val: tv.val & m,
+                            undef: false,
+                        }
                     } else {
-                        TEval { val: 0, undef: true }
+                        TEval {
+                            val: 0,
+                            undef: true,
+                        }
                     }
                 } else if cv.val != 0 {
-                    TEval { val: tv.val & m, undef: tv.undef }
+                    TEval {
+                        val: tv.val & m,
+                        undef: tv.undef,
+                    }
                 } else {
-                    TEval { val: fv.val & m, undef: fv.undef }
+                    TEval {
+                        val: fv.val & m,
+                        undef: fv.undef,
+                    }
                 }
             }
         }
@@ -181,14 +248,20 @@ fn gen_texpr(w: u32, rng: &mut fastrand::Rng, depth: u32) -> TExpr {
         3..=4 => {
             let op = [TCmp::Eq, TCmp::Ne, TCmp::Lt, TCmp::Le, TCmp::Gt, TCmp::Ge];
             let o = op[rng.usize(0..op.len())];
-            TExpr::Cmp(o, Box::new(gen_texpr(w, rng, depth + 1)),
-                       Box::new(gen_texpr(w, rng, depth + 1)))
+            TExpr::Cmp(
+                o,
+                Box::new(gen_texpr(w, rng, depth + 1)),
+                Box::new(gen_texpr(w, rng, depth + 1)),
+            )
         }
         5..=6 => {
             let op = [TBitOp::And, TBitOp::Or, TBitOp::Xor];
             let o = op[rng.usize(0..op.len())];
-            TExpr::BitOp(o, Box::new(gen_texpr(w, rng, depth + 1)),
-                          Box::new(gen_texpr(w, rng, depth + 1)))
+            TExpr::BitOp(
+                o,
+                Box::new(gen_texpr(w, rng, depth + 1)),
+                Box::new(gen_texpr(w, rng, depth + 1)),
+            )
         }
         7 => TExpr::Neg(Box::new(gen_texpr(w, rng, depth + 1))),
         _ => TExpr::Ternary(
@@ -207,9 +280,14 @@ fn gen_tleaf(w: u32, rng: &mut fastrand::Rng) -> TExpr {
             let m = mask_of(w);
             let mask = loop {
                 let xm = rng.u64(0..) & m;
-                if xm != 0 { break xm; }
+                if xm != 0 {
+                    break xm;
+                }
             };
-            TExpr::XLit { v: rng.u64(0..) & m, m: mask }
+            TExpr::XLit {
+                v: rng.u64(0..) & m,
+                m: mask,
+            }
         }
         3 => TExpr::Lit(0),
         _ => TExpr::Lit(mask_of(w)),
@@ -256,20 +334,21 @@ fn ternary_x_condition_semantics_match_golden() {
             let m = mask_of(w);
             let xmask = loop {
                 let xm = rng.u64(0..) & m;
-                if xm != 0 { break xm; }
+                if xm != 0 {
+                    break xm;
+                }
             };
-            TExpr::XLit { v: rng.u64(0..) & m, m: xmask }
+            TExpr::XLit {
+                v: rng.u64(0..) & m,
+                m: xmask,
+            }
         } else {
             gen_texpr(w, &mut rng, 2)
         };
         let true_val = gen_texpr(w, &mut rng, 3);
         let false_val = gen_texpr(w, &mut rng, 3);
 
-        let root = TExpr::Ternary(
-            Box::new(cond),
-            Box::new(true_val),
-            Box::new(false_val),
-        );
+        let root = TExpr::Ternary(Box::new(cond), Box::new(true_val), Box::new(false_val));
 
         let mut apat = Vec::with_capacity(w as usize);
         let mut bpat = Vec::with_capacity(w as usize);
@@ -277,8 +356,14 @@ fn ternary_x_condition_semantics_match_golden() {
             apat.push(if rng.bool() { 1u128 } else { 0 });
             bpat.push(if rng.bool() { 1u128 } else { 0 });
         }
-        let a = apat.iter().enumerate().fold(0u128, |acc, (i, &v)| acc | (v << i));
-        let b = bpat.iter().enumerate().fold(0u128, |acc, (i, &v)| acc | (v << i));
+        let a = apat
+            .iter()
+            .enumerate()
+            .fold(0u128, |acc, (i, &v)| acc | (v << i));
+        let b = bpat
+            .iter()
+            .enumerate()
+            .fold(0u128, |acc, (i, &v)| acc | (v << i));
 
         let golden = root.eval(w, a, b);
         if golden.undef {
@@ -297,9 +382,11 @@ fn ternary_x_condition_semantics_match_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn ternary-fuzz-sim")
@@ -351,7 +438,9 @@ fn ternary_same_branch_xor_identity() {
              \x20       $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, a = a_lit, b = b_lit
+            hi = w - 1,
+            a = a_lit,
+            b = b_lit
         );
 
         let actual = std::thread::Builder::new()
@@ -360,7 +449,11 @@ fn ternary_same_branch_xor_identity() {
             .spawn(move || {
                 crate::simulate_signals(&src_same, 30)
                     .ok()
-                    .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    .and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
             })
             .expect("spawn")
             .join()
@@ -369,11 +462,17 @@ fn ternary_same_branch_xor_identity() {
         let expected = input.a & mask_of(w);
         if actual != Some(expected) {
             mismatch.push(format!(
-                "seed={} harap={:#x} dapat={:?}", seed, expected, actual
+                "seed={} harap={:#x} dapat={:?}",
+                seed, expected, actual
             ));
         }
         checked += 1;
     }
     assert!(checked > 30, "terlalu sedikit kasus (checked={})", checked);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }

@@ -171,9 +171,18 @@ impl DistributedCompiler {
     pub fn summary(&self) -> String {
         let workers = self.workers.lock().unwrap();
         let jobs = self.jobs.lock().unwrap();
-        let pending = jobs.values().filter(|j| matches!(j.status, JobStatus::Pending)).count();
-        let running = jobs.values().filter(|j| matches!(j.status, JobStatus::Running | JobStatus::Dispatched { .. })).count();
-        let completed = jobs.values().filter(|j| matches!(j.status, JobStatus::Completed)).count();
+        let pending = jobs
+            .values()
+            .filter(|j| matches!(j.status, JobStatus::Pending))
+            .count();
+        let running = jobs
+            .values()
+            .filter(|j| matches!(j.status, JobStatus::Running | JobStatus::Dispatched { .. }))
+            .count();
+        let completed = jobs
+            .values()
+            .filter(|j| matches!(j.status, JobStatus::Completed))
+            .count();
         format!(
             "DistributedCompiler: {} workers, {} jobs (pending={}, running={}, completed={})",
             workers.len(),

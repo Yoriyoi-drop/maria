@@ -238,9 +238,7 @@ impl Parser {
             "weak1", "highz1",
         ];
         match tok {
-            Token::Ident(name) => {
-                STRENGTHS.iter().any(|s| *name == Symbol::intern(s))
-            }
+            Token::Ident(name) => STRENGTHS.iter().any(|s| *name == Symbol::intern(s)),
             Token::Supply0 | Token::Supply1 => true,
             _ => false,
         }
@@ -367,6 +365,14 @@ impl Parser {
                 self.advance();
                 Some(Box::new(DataType::Time))
             }
+            Token::Real => {
+                self.advance();
+                Some(Box::new(DataType::Real))
+            }
+            Token::RealTime => {
+                self.advance();
+                Some(Box::new(DataType::Realtime))
+            }
             Token::Bit => {
                 self.advance();
                 Some(Box::new(DataType::Bit))
@@ -405,16 +411,22 @@ impl Parser {
                             // package-qualified; langsung `(` → class-method prefix,
                             // kembalikan posisi agar return type = None.
                             if matches!(self.peek(), Token::Ident(_) | Token::LBrack) {
-                                result = Some(Box::new(DataType::UserDefined(
-                                    Symbol::intern(&format!("{}::{}", first, second)),
-                                )));
+                                result = Some(Box::new(DataType::UserDefined(Symbol::intern(
+                                    &format!("{}::{}", first, second),
+                                ))));
                             } else if matches!(self.peek(), Token::LParen) {
                                 self.pos.set(saved);
                             } else {
-                                result = Some(Box::new(DataType::UserDefined(
-                                    Symbol::intern(&format!("{}::{}", first, second)),
-                                )));
+                                result = Some(Box::new(DataType::UserDefined(Symbol::intern(
+                                    &format!("{}::{}", first, second),
+                                ))));
                             }
+                        }
+                        // `ClassName::new(...)` — out-of-body constructor.
+                        // Jangan konsume `::` di return-type parser; kembalikan
+                        // posisi agar function-name parser menangani `::new`.
+                        Token::New => {
+                            self.pos.set(saved);
                         }
                         _ => result = Some(Box::new(DataType::UserDefined(first))),
                     }
@@ -817,7 +829,7 @@ impl Parser {
                     self.advance(); // consume 'endfunction'
                     if self.peek() == &Token::Colon {
                         self.advance();
-                        if matches!(self.peek(), Token::Ident(_)) {
+                        if matches!(self.peek(), Token::Ident(_) | Token::New) {
                             self.advance();
                         }
                     }
@@ -861,7 +873,7 @@ impl Parser {
         }
         if self.peek() == &Token::Colon {
             self.advance();
-            if matches!(self.peek(), Token::Ident(_)) {
+            if matches!(self.peek(), Token::Ident(_) | Token::New) {
                 self.advance();
             }
         }
@@ -1523,10 +1535,17 @@ impl Parser {
                     }
                     break;
                 }
+                let pos_before = self.pos.get();
                 match self.parse_module_item()? {
                     Some(mi) => items.push(mi),
                     None => {
-                        self.skip_until_semi_or_end()?;
+                        // Hanya skip apabila posisi TIDAK bergerak (item tidak
+                        // di-handle oleh parser). Sequence / Statement / Dollar
+                        // sudah konsumu content; skip akan menghancurkan item
+                        // berikutnya dalam generate block.
+                        if self.pos.get() == pos_before {
+                            self.skip_until_semi_or_end()?;
+                        }
                     }
                 }
             }

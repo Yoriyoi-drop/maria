@@ -29,13 +29,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -62,17 +60,10 @@ fn fill_zero_matches_golden() {
         let actual = run_sim(src);
         let expected = 0u128;
         if actual.map(|v| v as u128) != Some(expected) {
-            mismatch.push(format!(
-                "w={} harap=0x0 dapat={:?}",
-                w, actual
-            ));
+            mismatch.push(format!("w={} harap=0x0 dapat={:?}", w, actual));
         }
     }
-    assert!(
-        mismatch.is_empty(),
-        "'0 mismatch:\n{}",
-        mismatch.join("\n")
-    );
+    assert!(mismatch.is_empty(), "'0 mismatch:\n{}", mismatch.join("\n"));
 }
 
 #[test]
@@ -84,17 +75,10 @@ fn fill_ones_matches_golden() {
         let actual = run_sim(src);
         let expected = mask_of_big(w);
         if actual.map(|v| v as u128) != Some(expected) {
-            mismatch.push(format!(
-                "w={} harap={:#x} dapat={:?}",
-                w, expected, actual
-            ));
+            mismatch.push(format!("w={} harap={:#x} dapat={:?}", w, expected, actual));
         }
     }
-    assert!(
-        mismatch.is_empty(),
-        "'1 mismatch:\n{}",
-        mismatch.join("\n")
-    );
+    assert!(mismatch.is_empty(), "'1 mismatch:\n{}", mismatch.join("\n"));
 }
 
 #[test]
@@ -108,10 +92,7 @@ fn fill_x_matches_golden() {
         let r1 = run_sim(src.clone());
         let r2 = run_sim(src);
         if r1 != r2 {
-            mismatch.push(format!(
-                "w={} tidak deterministik: {:?} vs {:?}",
-                w, r1, r2
-            ));
+            mismatch.push(format!("w={} tidak deterministik: {:?} vs {:?}", w, r1, r2));
         }
     }
     assert!(
@@ -130,10 +111,7 @@ fn fill_z_matches_golden() {
         let r1 = run_sim(src.clone());
         let r2 = run_sim(src);
         if r1 != r2 {
-            mismatch.push(format!(
-                "w={} tidak deterministik: {:?} vs {:?}",
-                w, r1, r2
-            ));
+            mismatch.push(format!("w={} tidak deterministik: {:?} vs {:?}", w, r1, r2));
         }
     }
     assert!(

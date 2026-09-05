@@ -93,14 +93,19 @@ impl SimServer {
         let sessions = self.sessions.lock().unwrap();
         let user_sessions: usize = sessions
             .values()
-            .filter(|s| s.user == user && matches!(s.status, SessionStatus::Running | SessionStatus::Queued))
+            .filter(|s| {
+                s.user == user && matches!(s.status, SessionStatus::Running | SessionStatus::Queued)
+            })
             .count();
 
         // Check user quota
         let quota = self.config.user_quotas.get(user);
         let max_concurrent = quota.map(|q| q.max_concurrent_sessions).unwrap_or(4);
         if user_sessions >= max_concurrent {
-            return Err(format!("user {} has {} sessions (max {})", user, user_sessions, max_concurrent));
+            return Err(format!(
+                "user {} has {} sessions (max {})",
+                user, user_sessions, max_concurrent
+            ));
         }
 
         // Check total capacity
@@ -189,13 +194,26 @@ impl SimServer {
     /// Summary.
     pub fn summary(&self) -> String {
         let sessions = self.sessions.lock().unwrap();
-        let running = sessions.values().filter(|s| matches!(s.status, SessionStatus::Running)).count();
-        let queued = sessions.values().filter(|s| matches!(s.status, SessionStatus::Queued)).count();
-        let completed = sessions.values().filter(|s| matches!(s.status, SessionStatus::Completed)).count();
+        let running = sessions
+            .values()
+            .filter(|s| matches!(s.status, SessionStatus::Running))
+            .count();
+        let queued = sessions
+            .values()
+            .filter(|s| matches!(s.status, SessionStatus::Queued))
+            .count();
+        let completed = sessions
+            .values()
+            .filter(|s| matches!(s.status, SessionStatus::Completed))
+            .count();
         let uptime = self.start_time.elapsed().as_secs();
         format!(
             "SimServer: {} sessions ({} running, {} queued, {} completed), uptime {}s",
-            sessions.len(), running, queued, completed, uptime,
+            sessions.len(),
+            running,
+            queued,
+            completed,
+            uptime,
         )
     }
 
@@ -218,7 +236,9 @@ mod tests {
     #[test]
     fn test_submit_session() {
         let server = SimServer::new(ServerConfig::default());
-        let id = server.submit("alice", vec!["counter.sv".into()], 1000).unwrap();
+        let id = server
+            .submit("alice", vec!["counter.sv".into()], 1000)
+            .unwrap();
         assert!(id.starts_with("sim_alice_"));
         assert_eq!(server.list_active().len(), 1);
     }

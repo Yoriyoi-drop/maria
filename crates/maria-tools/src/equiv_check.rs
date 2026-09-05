@@ -73,12 +73,7 @@ impl EquivChecker {
     }
 
     /// Check sequential equivalence (stub — needs formal engine).
-    pub fn check_sequential(
-        &self,
-        _golden_ir: &str,
-        _impl_ir: &str,
-        _depth: u32,
-    ) -> EquivResult {
+    pub fn check_sequential(&self, _golden_ir: &str, _impl_ir: &str, _depth: u32) -> EquivResult {
         // Stub: returns inconclusive
         EquivResult {
             equivalent: false,

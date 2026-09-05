@@ -143,10 +143,7 @@ impl PluginRegistry {
             },
         );
 
-        Ok(format!(
-            "installed {} v{}",
-            manifest.name, manifest.version
-        ))
+        Ok(format!("installed {} v{}", manifest.name, manifest.version))
     }
 
     /// Uninstall plugin.
@@ -223,11 +220,7 @@ impl PluginRegistry {
 
 /// Compare version strings (semver-ish: major.minor.patch).
 fn version_ge(a: &str, b: &str) -> bool {
-    let parse = |s: &str| -> Vec<u32> {
-        s.split('.')
-            .filter_map(|p| p.parse().ok())
-            .collect()
-    };
+    let parse = |s: &str| -> Vec<u32> { s.split('.').filter_map(|p| p.parse().ok()).collect() };
     let va = parse(a);
     let vb = parse(b);
 

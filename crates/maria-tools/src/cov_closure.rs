@@ -79,7 +79,9 @@ impl CoverageClosure {
             }
         }
         for tc in &mut self.test_contributions {
-            tc.unique_points = tc.covered_points.iter()
+            tc.unique_points = tc
+                .covered_points
+                .iter()
                 .filter(|pid| point_count.get(pid.as_str()).copied().unwrap_or(0) == 1)
                 .cloned()
                 .collect();
@@ -88,8 +90,12 @@ impl CoverageClosure {
 
     /// Compute overall coverage.
     pub fn overall_coverage(&self) -> f64 {
-        if self.points.is_empty() { return 100.0; }
-        let covered: HashSet<&str> = self.test_contributions.iter()
+        if self.points.is_empty() {
+            return 100.0;
+        }
+        let covered: HashSet<&str> = self
+            .test_contributions
+            .iter()
             .flat_map(|tc| tc.covered_points.iter().map(|s| s.as_str()))
             .collect();
         covered.len() as f64 / self.points.len() as f64 * 100.0
@@ -97,24 +103,30 @@ impl CoverageClosure {
 
     /// Find uncovered points.
     pub fn find_uncovered(&self) -> Vec<&CoveragePoint> {
-        let covered: HashSet<&str> = self.test_contributions.iter()
+        let covered: HashSet<&str> = self
+            .test_contributions
+            .iter()
             .flat_map(|tc| tc.covered_points.iter().map(|s| s.as_str()))
             .collect();
-        self.points.iter()
+        self.points
+            .iter()
             .filter(|p| !covered.contains(p.id.as_str()))
             .collect()
     }
 
     /// Find "critical" tests (that cover unique points).
     pub fn critical_tests(&self) -> Vec<&TestContribution> {
-        self.test_contributions.iter()
+        self.test_contributions
+            .iter()
             .filter(|tc| !tc.unique_points.is_empty())
             .collect()
     }
 
     /// Coverage by type.
     pub fn coverage_by_type(&self) -> BTreeMap<String, f64> {
-        let covered: HashSet<&str> = self.test_contributions.iter()
+        let covered: HashSet<&str> = self
+            .test_contributions
+            .iter()
             .flat_map(|tc| tc.covered_points.iter().map(|s| s.as_str()))
             .collect();
         let mut by_type: HashMap<String, (usize, usize)> = HashMap::new();
@@ -126,7 +138,8 @@ impl CoverageClosure {
                 entry.1 += 1;
             }
         }
-        by_type.into_iter()
+        by_type
+            .into_iter()
             .map(|(k, (total, cov))| (k, cov as f64 / total as f64 * 100.0))
             .collect()
     }
@@ -138,7 +151,10 @@ impl CoverageClosure {
         let critical = self.critical_tests().len();
         format!(
             "CoverageClosure: {:.1}% overall, {} uncovered, {} critical tests, {} total points",
-            overall, uncovered, critical, self.points.len(),
+            overall,
+            uncovered,
+            critical,
+            self.points.len(),
         )
     }
 

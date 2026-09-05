@@ -93,12 +93,7 @@ impl CoverageGuide {
         // Average path frequency across all features
         let avg_freq: f64 = features
             .iter()
-            .map(|f| {
-                self.path_frequencies
-                    .get(f)
-                    .copied()
-                    .unwrap_or(1) as f64
-            })
+            .map(|f| self.path_frequencies.get(f).copied().unwrap_or(1) as f64)
             .sum::<f64>()
             / features.len() as f64;
 

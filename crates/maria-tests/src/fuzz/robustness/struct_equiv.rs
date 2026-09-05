@@ -40,10 +40,7 @@ fn variant_source(expr_sv: &str, w: u32, aval: &str, bval: &str, kind: usize) ->
         ),
         1 => (
             format!("    reg [{}:0] y;", w - 1),
-            format!(
-                "    always @(*) begin\n        y = {};\n    end\n",
-                expr_sv
-            ),
+            format!("    always @(*) begin\n        y = {};\n    end\n", expr_sv),
         ),
         _ => (
             format!("    reg [{}:0] y;", w - 1),

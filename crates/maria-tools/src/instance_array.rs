@@ -119,7 +119,10 @@ mod tests {
             instance_name: "u_arr".into(),
             low_index: 0,
             high_index: 7,
-            default_params: vec![ParamOverride { name: "WIDTH".into(), value: "8".into() }],
+            default_params: vec![ParamOverride {
+                name: "WIDTH".into(),
+                value: "8".into(),
+            }],
             per_element_overrides: vec![],
         };
         assert_eq!(arr.count(), 8);
@@ -133,13 +136,17 @@ mod tests {
             instance_name: "u_arr".into(),
             low_index: 0,
             high_index: 3,
-            default_params: vec![ParamOverride { name: "WIDTH".into(), value: "8".into() }],
-            per_element_overrides: vec![
-                ElementOverride {
-                    index: 2,
-                    overrides: vec![ParamOverride { name: "WIDTH".into(), value: "16".into() }],
-                },
-            ],
+            default_params: vec![ParamOverride {
+                name: "WIDTH".into(),
+                value: "8".into(),
+            }],
+            per_element_overrides: vec![ElementOverride {
+                index: 2,
+                overrides: vec![ParamOverride {
+                    name: "WIDTH".into(),
+                    value: "16".into(),
+                }],
+            }],
         };
 
         let p0 = arr.params_for(0);

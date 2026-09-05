@@ -8,13 +8,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -36,11 +34,21 @@ fn signed_div_basic() {
 
         let a_raw = rng.u64(..) & m;
         let b_raw = rng.u64(1..=m);
-        if b_raw == 0 { continue; }
+        if b_raw == 0 {
+            continue;
+        }
 
         // Interpret as signed
-        let a_s = if a_raw >= half { (a_raw as i64) - (1i64 << w) } else { a_raw as i64 };
-        let b_s = if b_raw >= half { (b_raw as i64) - (1i64 << w) } else { b_raw as i64 };
+        let a_s = if a_raw >= half {
+            (a_raw as i64) - (1i64 << w)
+        } else {
+            a_raw as i64
+        };
+        let b_s = if b_raw >= half {
+            (b_raw as i64) - (1i64 << w)
+        } else {
+            b_raw as i64
+        };
 
         // Signed division result, reinterpreted as unsigned w-bit
         let res_s = a_s.wrapping_div(b_s);
@@ -92,10 +100,20 @@ fn signed_mod_basic() {
 
         let a_raw = rng.u64(..) & m;
         let b_raw = rng.u64(1..=m);
-        if b_raw == 0 { continue; }
+        if b_raw == 0 {
+            continue;
+        }
 
-        let a_s = if a_raw >= half { (a_raw as i64) - (1i64 << w) } else { a_raw as i64 };
-        let b_s = if b_raw >= half { (b_raw as i64) - (1i64 << w) } else { b_raw as i64 };
+        let a_s = if a_raw >= half {
+            (a_raw as i64) - (1i64 << w)
+        } else {
+            a_raw as i64
+        };
+        let b_s = if b_raw >= half {
+            (b_raw as i64) - (1i64 << w)
+        } else {
+            b_raw as i64
+        };
 
         let res_s = a_s.wrapping_rem(b_s);
         let expected = (res_s as u64) & m;

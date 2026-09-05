@@ -48,11 +48,14 @@ impl LicenseServer {
 
     /// Register a license pool.
     pub fn register_pool(&mut self, feature: &str, count: u32) {
-        self.pools.insert(feature.to_string(), LicensePool {
-            total: count,
-            available: count,
-            feature: feature.to_string(),
-        });
+        self.pools.insert(
+            feature.to_string(),
+            LicensePool {
+                total: count,
+                available: count,
+                feature: feature.to_string(),
+            },
+        );
     }
 
     /// Checkout a license. Returns lease ID or error.
@@ -60,7 +63,9 @@ impl LicenseServer {
         // Expire stale leases first
         self.expire_stale();
 
-        let pool = self.pools.get_mut(feature)
+        let pool = self
+            .pools
+            .get_mut(feature)
             .ok_or_else(|| format!("unknown feature: {}", feature))?;
 
         if pool.available == 0 {
@@ -87,7 +92,10 @@ impl LicenseServer {
 
     /// Checkin (release) a license.
     pub fn checkin(&mut self, lease_id: &str) -> Result<(), String> {
-        let idx = self.leases.iter().position(|l| l.id == lease_id)
+        let idx = self
+            .leases
+            .iter()
+            .position(|l| l.id == lease_id)
             .ok_or_else(|| format!("lease {} not found", lease_id))?;
         let lease = self.leases.remove(idx);
         if let Some(pool) = self.pools.get_mut(&lease.feature) {
@@ -98,7 +106,10 @@ impl LicenseServer {
 
     /// Send heartbeat to keep lease alive.
     pub fn heartbeat(&mut self, lease_id: &str) -> Result<(), String> {
-        let lease = self.leases.iter_mut().find(|l| l.id == lease_id)
+        let lease = self
+            .leases
+            .iter_mut()
+            .find(|l| l.id == lease_id)
             .ok_or_else(|| format!("lease {} not found", lease_id))?;
         let now = now_secs();
         lease.heartbeat = now;
@@ -138,16 +149,24 @@ impl LicenseServer {
 
     /// Get pool status.
     pub fn pool_status(&self, feature: &str) -> Option<(u32, u32, u32)> {
-        self.pools.get(feature).map(|p| (p.total, p.available, p.total - p.available))
+        self.pools
+            .get(feature)
+            .map(|p| (p.total, p.available, p.total - p.available))
     }
 
     /// Summary.
     pub fn summary(&self) -> String {
-        let pools: Vec<String> = self.pools.iter().map(|(f, p)| {
-            format!("{}: {}/{} available", f, p.available, p.total)
-        }).collect();
-        format!("LicenseServer: {} pools, {} active leases [{}]", 
-            self.pools.len(), self.leases.len(), pools.join(", "))
+        let pools: Vec<String> = self
+            .pools
+            .iter()
+            .map(|(f, p)| format!("{}: {}/{} available", f, p.available, p.total))
+            .collect();
+        format!(
+            "LicenseServer: {} pools, {} active leases [{}]",
+            self.pools.len(),
+            self.leases.len(),
+            pools.join(", ")
+        )
     }
 }
 

@@ -855,10 +855,7 @@ mod tests {
         let design = mk_design(vec![Process::Combinational {
             name: Symbol::from("comb"),
             sensitivity: vec![],
-            body: vec![
-                assign_grant.clone(),
-                mk_assert(IrExpr::Signal(1, 0)),
-            ],
+            body: vec![assign_grant.clone(), mk_assert(IrExpr::Signal(1, 0))],
         }]);
         let results = engine.check_assertions_bmc(&design);
         assert!(
@@ -886,11 +883,7 @@ mod tests {
         let design2 = mk_design(vec![Process::Combinational {
             name: Symbol::from("comb"),
             sensitivity: vec![],
-            body: vec![
-                assign_grant,
-                assume_stmt,
-                mk_assert(IrExpr::Signal(1, 0)),
-            ],
+            body: vec![assign_grant, assume_stmt, mk_assert(IrExpr::Signal(1, 0))],
         }]);
         let results2 = engine2.check_assertions_bmc(&design2);
         assert!(
@@ -934,10 +927,26 @@ mod tests {
             top: IrModule {
                 name: Symbol::from("t"),
                 signals: vec![
-                    SignalInfo { name: Symbol::from("a"), width: 1, ..Default::default() },
-                    SignalInfo { name: Symbol::from("b"), width: 1, ..Default::default() },
-                    SignalInfo { name: Symbol::from("c"), width: 1, ..Default::default() },
-                    SignalInfo { name: Symbol::from("d"), width: 1, ..Default::default() },
+                    SignalInfo {
+                        name: Symbol::from("a"),
+                        width: 1,
+                        ..Default::default()
+                    },
+                    SignalInfo {
+                        name: Symbol::from("b"),
+                        width: 1,
+                        ..Default::default()
+                    },
+                    SignalInfo {
+                        name: Symbol::from("c"),
+                        width: 1,
+                        ..Default::default()
+                    },
+                    SignalInfo {
+                        name: Symbol::from("d"),
+                        width: 1,
+                        ..Default::default()
+                    },
                 ],
                 inputs: vec![],
                 outputs: vec![],
@@ -1312,8 +1321,14 @@ mod tests {
         let mut engine = test_engine();
         let results = engine.detect_unreachable_assertions(&design);
         assert_eq!(results.len(), 1);
-        assert!(!results[0].always_true, "unconstrained signal should not be always true");
-        assert!(results[0].can_violate, "unconstrained signal should be reachable");
+        assert!(
+            !results[0].always_true,
+            "unconstrained signal should not be always true"
+        );
+        assert!(
+            results[0].can_violate,
+            "unconstrained signal should be reachable"
+        );
     }
 
     #[test]

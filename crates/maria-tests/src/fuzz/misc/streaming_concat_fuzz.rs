@@ -18,7 +18,11 @@ module stream_right;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // {>>{8'b11001010}} reverses bits: 8'b01010011 = 0x53 = 83
         assert_eq!(y, 0b01010011, "bit-reversed a");
     }
@@ -40,7 +44,11 @@ module stream_byteswap;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // Maria: no-crash test — streaming concat may not implement byte-swap
         assert!(y <= 0xFFFF, "result fits in 16 bits: {}", y);
     }
@@ -60,7 +68,11 @@ module stream_nibble;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // {<<4{A5}} = nibble-swap: 8'h5A = 90
         assert_eq!(y, 0x5A, "nibble-reversed a");
     }
@@ -80,7 +92,11 @@ module stream_right_wide;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // {>>16{16'h1234}} — 16-bit slice on 16-bit value = identity
         assert_eq!(y, 0x1234, "identity slice");
     }
@@ -102,7 +118,11 @@ module stream_expr;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // Maria: no-crash test — streaming concat with expression operand
         assert!(y <= 0xFF, "result fits in 8 bits: {}", y);
     }
@@ -122,7 +142,11 @@ module stream_zero;
 endmodule
 "#;
         let sigs = crate::simulate_signals(src, 20).unwrap();
-        let y = sigs.iter().find(|(n, _)| n == "y").map(|(_, v)| v.to_u64()).unwrap();
+        let y = sigs
+            .iter()
+            .find(|(n, _)| n == "y")
+            .map(|(_, v)| v.to_u64())
+            .unwrap();
         // {<<1{a}} reverses bits like {>>{a}}
         assert_eq!(y, 0b01010011, "bit-reversed via <<1");
     }

@@ -1369,11 +1369,7 @@ fn save_lint_cache(args: &LintArgs, findings: &[Finding]) {
 /// 1. Redundant assignments: sinyal ditulis dua kali di always block yang sama
 /// 2. Unused outputs: output dideklarasikan tapi tidak pernah ditulis
 /// 3. Combinational feedback: sinyal dibaca dan ditulis di always_comb
-fn find_gate_opt_patterns(
-    scope: &str,
-    items: &[ModuleItem],
-    out: &mut Vec<Finding>,
-) {
+fn find_gate_opt_patterns(scope: &str, items: &[ModuleItem], out: &mut Vec<Finding>) {
     // Collect all process bodies
     for item in items {
         if let ModuleItem::Always(ab) = item {
@@ -1384,11 +1380,7 @@ fn find_gate_opt_patterns(
 
 /// Deteksi redundant assignments: sinyal yang ditulis lebih dari sekali
 /// di scope yang sama tanpa intervening delay/event (overwrite percuma).
-fn find_redundant_assigns(
-    scope: &str,
-    stmts: &[Stmt],
-    out: &mut Vec<Finding>,
-) {
+fn find_redundant_assigns(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
     use std::collections::HashMap as StdHashMap;
     let mut writes: StdHashMap<Symbol, usize> = StdHashMap::new(); // name → line count
     for stmt in stmts {

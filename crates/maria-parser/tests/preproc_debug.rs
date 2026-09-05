@@ -104,7 +104,12 @@ fn assert_no_parse_error(name: &str, src: &str) {
         name,
         design.as_ref().err()
     );
-    assert!(design.is_ok(), "parse '{}' harus sukses: {:?}", name, design);
+    assert!(
+        design.is_ok(),
+        "parse '{}' harus sukses: {:?}",
+        name,
+        design
+    );
 }
 
 // Macro NON-EXPAND sbg module item (`Ident(`) sbg buang — bukan instance.
@@ -144,3 +149,20 @@ endmodule
     );
 }
 
+// Cast-to-struct pattern `type'{member: value}` (OpenTitan RTL) harus parse.
+#[test]
+fn struct_pattern_cast_parses() {
+    assert_no_parse_error(
+        "t_struct_cast",
+        r##"module top;
+  typedef struct { logic [7:0] req; logic [7:0] cfg; } cfgreq_t;
+  cfgreq_t r;
+  initial r = cfgreq_t'{req: 8'h11, cfg: 8'h22};
+  logic [7:0] x;
+  initial begin
+    x = '{8'h1, 8'h2}; // struct literal posisional
+  end
+endmodule
+"##,
+    );
+}

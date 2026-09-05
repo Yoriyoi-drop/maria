@@ -49,13 +49,11 @@ fn run_sim(src: String) -> Option<u64> {
         .spawn({
             let src = src.clone();
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -290,11 +288,7 @@ fn assign_op_shl_matches_golden() {
         let a = rng.u128(..) & m;
         let b = rng.u128(..) % w as u128;
 
-        let expected = if b >= w as u128 {
-            0
-        } else {
-            (a << b) & m
-        };
+        let expected = if b >= w as u128 { 0 } else { (a << b) & m };
 
         let a_lit = format!("{}'h{:x}", w, a);
         let b_lit = format!("{}'h{:x}", w, b);
@@ -335,11 +329,7 @@ fn assign_op_shr_matches_golden() {
         let a = rng.u128(..) & m;
         let b = rng.u128(..) % w as u128;
 
-        let expected = if b >= w as u128 {
-            0
-        } else {
-            (a >> b) & m
-        };
+        let expected = if b >= w as u128 { 0 } else { (a >> b) & m };
 
         let a_lit = format!("{}'h{:x}", w, a);
         let b_lit = format!("{}'h{:x}", w, b);

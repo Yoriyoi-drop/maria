@@ -522,10 +522,7 @@ impl Elaborator {
                                 _ => Ok(IrExpr::ExprPartSelect(
                                     Box::new(inner_expr),
                                     Box::new(IrExpr::Const(LogicVec::from_u64(base_c as u64, 64))),
-                                    Box::new(IrExpr::Const(LogicVec::from_u64(
-                                        width_c as u64,
-                                        32,
-                                    ))),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(width_c as u64, 32))),
                                 )),
                             }
                         } else {
@@ -549,11 +546,9 @@ impl Elaborator {
                     if width > 0 {
                         // Anti-wrap seperti cabang signal di atas.
                         match base.checked_add(width - 1) {
-                            Some(msb) => Ok(IrExpr::ExprRangeSelect(
-                                Box::new(inner_expr),
-                                msb,
-                                base,
-                            )),
+                            Some(msb) => {
+                                Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb, base))
+                            }
                             None => Ok(IrExpr::ExprPartSelect(
                                 Box::new(inner_expr),
                                 Box::new(IrExpr::Const(LogicVec::from_u64(base_c as u64, 64))),
@@ -626,326 +621,332 @@ impl Elaborator {
         signals: &[SignalInfo],
     ) -> Result<IrExpr, SimError> {
         match name.as_str() {
-                "$signed" => {
-                    if args.len() != 1 {
-                        return Err(self.elab_diag(
-                            DiagCode::ParamMismatch,
-                            "$signed requires exactly one argument",
-                        ));
-                    }
-                    let inner = self.elaborate_expr(&args[0], signal_map, signals)?;
-                    Ok(IrExpr::Signed(Box::new(inner)))
+            "$signed" => {
+                if args.len() != 1 {
+                    return Err(self.elab_diag(
+                        DiagCode::ParamMismatch,
+                        "$signed requires exactly one argument",
+                    ));
                 }
-                "$unsigned" => {
-                    if args.len() != 1 {
-                        return Err(self.elab_diag(
-                            DiagCode::ParamMismatch,
-                            "$unsigned requires exactly one argument",
-                        ));
-                    }
-                    self.elaborate_expr(&args[0], signal_map, signals)
+                let inner = self.elaborate_expr(&args[0], signal_map, signals)?;
+                Ok(IrExpr::Signed(Box::new(inner)))
+            }
+            "$unsigned" => {
+                if args.len() != 1 {
+                    return Err(self.elab_diag(
+                        DiagCode::ParamMismatch,
+                        "$unsigned requires exactly one argument",
+                    ));
                 }
-                "$clog2" => {
-                    if let Some(arg) = args.first() {
-                        match const_eval_params(arg, &self.param_vals) {
-                            Ok(val) => {
-                                if val <= 1 {
-                                    return Ok(IrExpr::Const(LogicVec::from_u64(0, 32)));
-                                }
-                                let n = val as u64;
-                                let msb = (64 - n.leading_zeros()) as u64;
-                                let result = if n.is_power_of_two() { msb - 1 } else { msb };
-                                Ok(IrExpr::Const(LogicVec::from_u64(result, 32)))
+                self.elaborate_expr(&args[0], signal_map, signals)
+            }
+            "$clog2" => {
+                if let Some(arg) = args.first() {
+                    match const_eval_params(arg, &self.param_vals) {
+                        Ok(val) => {
+                            if val <= 1 {
+                                return Ok(IrExpr::Const(LogicVec::from_u64(0, 32)));
                             }
-                            Err(e) => {
-                                // F40: argumen $clog2 runtime (sinyal / ekspresi
-                                // non-konstan seperti `$countones(wstrb)`) — emit
-                                // SysFunc runtime, bukan hard error. Engine
-                                // mengevaluasi $clog2 di runtime.
-                                let (l, c) = expr_location(arg);
-                                let _ = e;
-                                let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
-                                Ok(IrExpr::SysFunc {
-                                    name: Symbol::intern("$clog2"),
-                                    args: vec![ir_arg],
-                                    line: l,
-                                    col: c,
-                                })
-                            }
+                            let n = val as u64;
+                            let msb = (64 - n.leading_zeros()) as u64;
+                            let result = if n.is_power_of_two() { msb - 1 } else { msb };
+                            Ok(IrExpr::Const(LogicVec::from_u64(result, 32)))
                         }
-                    } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$clog2 requires one argument"))
+                        Err(e) => {
+                            // F40: argumen $clog2 runtime (sinyal / ekspresi
+                            // non-konstan seperti `$countones(wstrb)`) — emit
+                            // SysFunc runtime, bukan hard error. Engine
+                            // mengevaluasi $clog2 di runtime.
+                            let (l, c) = expr_location(arg);
+                            let _ = e;
+                            let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                            Ok(IrExpr::SysFunc {
+                                name: Symbol::intern("$clog2"),
+                                args: vec![ir_arg],
+                                line: l,
+                                col: c,
+                            })
+                        }
                     }
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$clog2 requires one argument"))
                 }
-                "$bits" => {
-                    if let Some(arg) = args.first() {
-                        // Signal: SignalInfo.width ALREADY includes unpacked array
-                        // depth (total_width = elem_width * depth di-set saat elaborasi).
-                        // Jangan kalikan lagi dgn array_depth — itu double-count.
-                        let width = resolve_expr_signal(arg, signal_map)
-                                .map(|sig_id| {
-                                    let info = &signals[sig_id];
-                                    info.width
-                                })
-                                .or_else(|| self.try_array_param_bits(arg))
-                                .or_else(|| compute_expr_width(arg, signal_map, signals, &self.param_vals, &self.package_symbols).ok())
-                                .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "$bits argument must resolve to a signal or computable expression"))?;
-                        Ok(IrExpr::Const(LogicVec::from_u64(width as u64, 32)))
-                    } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$bits requires one argument"))
-                    }
-                }
-                "$high" => {
-                    if let Some(arg) = args.first() {
-                        let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(
-                                DiagCode::ModuleNotFound,
-                                "$high argument must resolve to a signal",
-                            )
-                        })?;
-                        let info = &signals[sig_id];
-                        let high = info.msb.max(info.lsb);
-                        Ok(IrExpr::Const(LogicVec::from_u64(high as u64, 32)))
-                    } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$high requires one argument"))
-                    }
-                }
-                "$low" => {
-                    if let Some(arg) = args.first() {
-                        let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(
-                                DiagCode::ModuleNotFound,
-                                "$low argument must resolve to a signal",
-                            )
-                        })?;
-                        let info = &signals[sig_id];
-                        let low = info.msb.min(info.lsb);
-                        Ok(IrExpr::Const(LogicVec::from_u64(low as u64, 32)))
-                    } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$low requires one argument"))
-                    }
-                }
-                "$left" => {
-                    if let Some(arg) = args.first() {
-                        let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(
-                                DiagCode::ModuleNotFound,
-                                "$left argument must resolve to a signal",
-                            )
-                        })?;
-                        let info = &signals[sig_id];
-                        Ok(IrExpr::Const(LogicVec::from_u64(info.msb as u64, 32)))
-                    } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$left requires one argument"))
-                    }
-                }
-                "$right" => {
-                    if let Some(arg) = args.first() {
-                        let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(
-                                DiagCode::ModuleNotFound,
-                                "$right argument must resolve to a signal",
-                            )
-                        })?;
-                        let info = &signals[sig_id];
-                        Ok(IrExpr::Const(LogicVec::from_u64(info.lsb as u64, 32)))
-                    } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$right requires one argument"))
-                    }
-                }
-                "$size" => {
-                    if let Some(arg) = args.first() {
-                        let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            self.elab_diag(
-                                DiagCode::ModuleNotFound,
-                                "$size argument must resolve to a signal",
-                            )
-                        })?;
-                        let info = &signals[sig_id];
-                        // $size mengembalikan jumlah elemen pada dimensi pertama.
-                        // Prioritas: unpacked array (array_depth) > packed
-                        // multi-dimensi (packed_dims[0]) > lebar total.
-                        let size = if info.array_depth > 1 {
-                            info.array_depth
-                        } else if info.packed_dims.len() > 1 {
-                            info.packed_dims[0]
-                        } else {
+            }
+            "$bits" => {
+                if let Some(arg) = args.first() {
+                    // Signal: SignalInfo.width ALREADY includes unpacked array
+                    // depth (total_width = elem_width * depth di-set saat elaborasi).
+                    // Jangan kalikan lagi dgn array_depth — itu double-count.
+                    let width = resolve_expr_signal(arg, signal_map)
+                        .map(|sig_id| {
+                            let info = &signals[sig_id];
                             info.width
-                        };
-                        Ok(IrExpr::Const(LogicVec::from_u64(size as u64, 32)))
-                    } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$size requires one argument"))
-                    }
+                        })
+                        .or_else(|| self.try_array_param_bits(arg))
+                        .or_else(|| {
+                            compute_expr_width(
+                                arg,
+                                signal_map,
+                                signals,
+                                &self.param_vals,
+                                &self.package_symbols,
+                            )
+                            .ok()
+                        })
+                        .ok_or_else(|| {
+                            self.elab_diag(
+                                DiagCode::ModuleNotFound,
+                                "$bits argument must resolve to a signal or computable expression",
+                            )
+                        })?;
+                    Ok(IrExpr::Const(LogicVec::from_u64(width as u64, 32)))
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$bits requires one argument"))
                 }
-                "$countones" => {
-                    if let Some(arg) = args.first() {
-                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
-                        if let Ok(val) = const_eval_params(arg, &self.param_vals) {
-                            let count = (0..64).filter(|i| (val >> i) & 1 == 1).count() as u64;
-                            Ok(IrExpr::Const(LogicVec::from_u64(count, 32)))
-                        } else {
-                            Ok(IrExpr::SysFunc {
-                                name: Symbol::intern("$countones"),
-                                args: vec![ir_arg],
-                                line: *line,
-                                col: *col,
-                            })
-                        }
-                    } else {
-                        Err(self
-                            .elab_diag(DiagCode::ParamMismatch, "$countones requires one argument"))
-                    }
+            }
+            "$high" => {
+                if let Some(arg) = args.first() {
+                    let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
+                        self.elab_diag(
+                            DiagCode::ModuleNotFound,
+                            "$high argument must resolve to a signal",
+                        )
+                    })?;
+                    let info = &signals[sig_id];
+                    let high = info.msb.max(info.lsb);
+                    Ok(IrExpr::Const(LogicVec::from_u64(high as u64, 32)))
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$high requires one argument"))
                 }
-                "$countbits" => {
-                    if let Some(arg) = args.first() {
-                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
-                        if let Ok(val) = const_eval_params(arg, &self.param_vals) {
-                            // $countbits counts non-zero bits (1, X, Z)
-                            let count = (0..64).filter(|i| ((val >> i) & 1) != 0).count() as u64;
-                            Ok(IrExpr::Const(LogicVec::from_u64(count, 32)))
-                        } else {
-                            Ok(IrExpr::SysFunc {
-                                name: Symbol::intern("$countbits"),
-                                args: vec![ir_arg],
-                                line: *line,
-                                col: *col,
-                            })
-                        }
-                    } else {
-                        Err(self
-                            .elab_diag(DiagCode::ParamMismatch, "$countbits requires one argument"))
-                    }
+            }
+            "$low" => {
+                if let Some(arg) = args.first() {
+                    let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
+                        self.elab_diag(
+                            DiagCode::ModuleNotFound,
+                            "$low argument must resolve to a signal",
+                        )
+                    })?;
+                    let info = &signals[sig_id];
+                    let low = info.msb.min(info.lsb);
+                    Ok(IrExpr::Const(LogicVec::from_u64(low as u64, 32)))
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$low requires one argument"))
                 }
-                "$dimensions" => {
-                    if let Some(arg) = args.first() {
-                        // $dimensions returns the number of dimensions of an array
-                        // For now, try to resolve from signal info at elaboration time
-                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
-                        if let Some(sig_id) = resolve_expr_signal(arg, signal_map) {
-                            let info = &signals[sig_id as usize];
-                            // Packed dimensions + unpacked dimensions
-                            let packed_dims = info.packed_dims.len();
-                            let unpacked_dims = info.array_dims.len();
-                            let dims = packed_dims + unpacked_dims;
-                            Ok(IrExpr::Const(LogicVec::from_u64(dims as u64, 32)))
-                        } else {
-                            Ok(IrExpr::SysFunc {
-                                name: Symbol::intern("$dimensions"),
-                                args: vec![ir_arg],
-                                line: *line,
-                                col: *col,
-                            })
-                        }
-                    } else {
-                        Err(self.elab_diag(
-                            DiagCode::ParamMismatch,
-                            "$dimensions requires one argument",
-                        ))
-                    }
+            }
+            "$left" => {
+                if let Some(arg) = args.first() {
+                    let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
+                        self.elab_diag(
+                            DiagCode::ModuleNotFound,
+                            "$left argument must resolve to a signal",
+                        )
+                    })?;
+                    let info = &signals[sig_id];
+                    Ok(IrExpr::Const(LogicVec::from_u64(info.msb as u64, 32)))
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$left requires one argument"))
                 }
-                "$onehot" => {
-                    if let Some(arg) = args.first() {
-                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
-                        if let Ok(val) = const_eval_params(arg, &self.param_vals) {
-                            let ones = (0..64).filter(|i| (val >> i) & 1 == 1).count();
-                            Ok(IrExpr::Const(LogicVec::from_u64(
-                                if ones == 1 { 1 } else { 0 },
-                                1,
-                            )))
-                        } else {
-                            Ok(IrExpr::SysFunc {
-                                name: Symbol::intern("$onehot"),
-                                args: vec![ir_arg],
-                                line: *line,
-                                col: *col,
-                            })
-                        }
-                    } else {
-                        Err(self
-                            .elab_diag(DiagCode::ParamMismatch, "$onehot requires one argument"))
-                    }
+            }
+            "$right" => {
+                if let Some(arg) = args.first() {
+                    let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
+                        self.elab_diag(
+                            DiagCode::ModuleNotFound,
+                            "$right argument must resolve to a signal",
+                        )
+                    })?;
+                    let info = &signals[sig_id];
+                    Ok(IrExpr::Const(LogicVec::from_u64(info.lsb as u64, 32)))
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$right requires one argument"))
                 }
-                "$isunknown" => {
-                    if let Some(arg) = args.first() {
-                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
-                        if let Ok(val) = const_eval_params(arg, &self.param_vals) {
-                            let has_xz = val as u8 >= 0xFE;
-                            Ok(IrExpr::Const(LogicVec::from_u64(
-                                if has_xz { 1 } else { 0 },
-                                1,
-                            )))
-                        } else {
-                            Ok(IrExpr::SysFunc {
-                                name: Symbol::intern("$isunknown"),
-                                args: vec![ir_arg],
-                                line: *line,
-                                col: *col,
-                            })
-                        }
+            }
+            "$size" => {
+                if let Some(arg) = args.first() {
+                    let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
+                        self.elab_diag(
+                            DiagCode::ModuleNotFound,
+                            "$size argument must resolve to a signal",
+                        )
+                    })?;
+                    let info = &signals[sig_id];
+                    // $size mengembalikan jumlah elemen pada dimensi pertama.
+                    // Prioritas: unpacked array (array_depth) > packed
+                    // multi-dimensi (packed_dims[0]) > lebar total.
+                    let size = if info.array_depth > 1 {
+                        info.array_depth
+                    } else if info.packed_dims.len() > 1 {
+                        info.packed_dims[0]
                     } else {
-                        Err(self
-                            .elab_diag(DiagCode::ParamMismatch, "$isunknown requires one argument"))
-                    }
+                        info.width
+                    };
+                    Ok(IrExpr::Const(LogicVec::from_u64(size as u64, 32)))
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$size requires one argument"))
                 }
-                "$onehot0" => {
-                    if let Some(arg) = args.first() {
-                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
-                        if let Ok(val) = const_eval_params(arg, &self.param_vals) {
-                            let ones = (0..64).filter(|i| (val >> i) & 1 == 1).count();
-                            Ok(IrExpr::Const(LogicVec::from_u64(
-                                if ones <= 1 { 1 } else { 0 },
-                                1,
-                            )))
-                        } else {
-                            Ok(IrExpr::SysFunc {
-                                name: Symbol::intern("$onehot0"),
-                                args: vec![ir_arg],
-                                line: *line,
-                                col: *col,
-                            })
-                        }
+            }
+            "$countones" => {
+                if let Some(arg) = args.first() {
+                    let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                    if let Ok(val) = const_eval_params(arg, &self.param_vals) {
+                        let count = (0..64).filter(|i| (val >> i) & 1 == 1).count() as u64;
+                        Ok(IrExpr::Const(LogicVec::from_u64(count, 32)))
                     } else {
-                        Err(self
-                            .elab_diag(DiagCode::ParamMismatch, "$onehot0 requires one argument"))
-                    }
-                }
-                "$cast" => {
-                    if args.len() >= 2 {
-                        let ir_dest = self.elaborate_expr(&args[0], signal_map, signals)?;
-                        let ir_src = self.elaborate_expr(&args[1], signal_map, signals)?;
                         Ok(IrExpr::SysFunc {
-                            name: Symbol::intern("$cast"),
-                            args: vec![ir_dest, ir_src],
+                            name: Symbol::intern("$countones"),
+                            args: vec![ir_arg],
                             line: *line,
                             col: *col,
                         })
-                    } else {
-                        Err(self.elab_diag(DiagCode::ParamMismatch, "$cast requires two arguments"))
                     }
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$countones requires one argument"))
                 }
-                "$typename" => {
-                    if let Some(arg) = args.first() {
-                        let type_name = self.resolve_typename_for_expr(arg, signal_map, signals);
-                        Ok(IrExpr::Const(LogicVec::from_string(&type_name)))
+            }
+            "$countbits" => {
+                if let Some(arg) = args.first() {
+                    let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                    if let Ok(val) = const_eval_params(arg, &self.param_vals) {
+                        // $countbits counts non-zero bits (1, X, Z)
+                        let count = (0..64).filter(|i| ((val >> i) & 1) != 0).count() as u64;
+                        Ok(IrExpr::Const(LogicVec::from_u64(count, 32)))
                     } else {
-                        Err(self
-                            .elab_diag(DiagCode::ParamMismatch, "$typename requires one argument"))
+                        Ok(IrExpr::SysFunc {
+                            name: Symbol::intern("$countbits"),
+                            args: vec![ir_arg],
+                            line: *line,
+                            col: *col,
+                        })
                     }
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$countbits requires one argument"))
                 }
-                _ => {
-                    let ir_args: Result<Vec<IrExpr>, SimError> = args
-                        .iter()
-                        .map(|a| self.elaborate_expr(a, signal_map, signals))
-                        .collect();
+            }
+            "$dimensions" => {
+                if let Some(arg) = args.first() {
+                    // $dimensions returns the number of dimensions of an array
+                    // For now, try to resolve from signal info at elaboration time
+                    let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                    if let Some(sig_id) = resolve_expr_signal(arg, signal_map) {
+                        let info = &signals[sig_id as usize];
+                        // Packed dimensions + unpacked dimensions
+                        let packed_dims = info.packed_dims.len();
+                        let unpacked_dims = info.array_dims.len();
+                        let dims = packed_dims + unpacked_dims;
+                        Ok(IrExpr::Const(LogicVec::from_u64(dims as u64, 32)))
+                    } else {
+                        Ok(IrExpr::SysFunc {
+                            name: Symbol::intern("$dimensions"),
+                            args: vec![ir_arg],
+                            line: *line,
+                            col: *col,
+                        })
+                    }
+                } else {
+                    Err(self
+                        .elab_diag(DiagCode::ParamMismatch, "$dimensions requires one argument"))
+                }
+            }
+            "$onehot" => {
+                if let Some(arg) = args.first() {
+                    let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                    if let Ok(val) = const_eval_params(arg, &self.param_vals) {
+                        let ones = (0..64).filter(|i| (val >> i) & 1 == 1).count();
+                        Ok(IrExpr::Const(LogicVec::from_u64(
+                            if ones == 1 { 1 } else { 0 },
+                            1,
+                        )))
+                    } else {
+                        Ok(IrExpr::SysFunc {
+                            name: Symbol::intern("$onehot"),
+                            args: vec![ir_arg],
+                            line: *line,
+                            col: *col,
+                        })
+                    }
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$onehot requires one argument"))
+                }
+            }
+            "$isunknown" => {
+                if let Some(arg) = args.first() {
+                    let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                    if let Ok(val) = const_eval_params(arg, &self.param_vals) {
+                        let has_xz = val as u8 >= 0xFE;
+                        Ok(IrExpr::Const(LogicVec::from_u64(
+                            if has_xz { 1 } else { 0 },
+                            1,
+                        )))
+                    } else {
+                        Ok(IrExpr::SysFunc {
+                            name: Symbol::intern("$isunknown"),
+                            args: vec![ir_arg],
+                            line: *line,
+                            col: *col,
+                        })
+                    }
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$isunknown requires one argument"))
+                }
+            }
+            "$onehot0" => {
+                if let Some(arg) = args.first() {
+                    let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                    if let Ok(val) = const_eval_params(arg, &self.param_vals) {
+                        let ones = (0..64).filter(|i| (val >> i) & 1 == 1).count();
+                        Ok(IrExpr::Const(LogicVec::from_u64(
+                            if ones <= 1 { 1 } else { 0 },
+                            1,
+                        )))
+                    } else {
+                        Ok(IrExpr::SysFunc {
+                            name: Symbol::intern("$onehot0"),
+                            args: vec![ir_arg],
+                            line: *line,
+                            col: *col,
+                        })
+                    }
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$onehot0 requires one argument"))
+                }
+            }
+            "$cast" => {
+                if args.len() >= 2 {
+                    let ir_dest = self.elaborate_expr(&args[0], signal_map, signals)?;
+                    let ir_src = self.elaborate_expr(&args[1], signal_map, signals)?;
                     Ok(IrExpr::SysFunc {
-                        name: *name,
-                        args: ir_args?,
+                        name: Symbol::intern("$cast"),
+                        args: vec![ir_dest, ir_src],
                         line: *line,
                         col: *col,
                     })
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$cast requires two arguments"))
                 }
             }
+            "$typename" => {
+                if let Some(arg) = args.first() {
+                    let type_name = self.resolve_typename_for_expr(arg, signal_map, signals);
+                    Ok(IrExpr::Const(LogicVec::from_string(&type_name)))
+                } else {
+                    Err(self.elab_diag(DiagCode::ParamMismatch, "$typename requires one argument"))
+                }
+            }
+            _ => {
+                let ir_args: Result<Vec<IrExpr>, SimError> = args
+                    .iter()
+                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                    .collect();
+                Ok(IrExpr::SysFunc {
+                    name: *name,
+                    args: ir_args?,
+                    line: *line,
+                    col: *col,
+                })
+            }
         }
+    }
 
     /// Sisa arm ekor `elaborate_expr`: FuncCall non-sistem ("new", method /
     /// user / DPI), String, MethodCall, MemberAccess, Null, Inside,

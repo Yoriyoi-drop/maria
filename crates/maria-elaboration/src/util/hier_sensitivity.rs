@@ -161,7 +161,10 @@ pub fn collect_hier_refs_stmt(stmt: &IrStmt) -> Vec<Symbol> {
             v
         }
         IrStmt::Case {
-            expr, items, default, ..
+            expr,
+            items,
+            default,
+            ..
         } => {
             let mut v = collect_hier_refs_expr(expr);
             for item in items {
@@ -282,11 +285,10 @@ fn collect_hier_refs_lvalue(lvalue: &IrLValue) -> Vec<Symbol> {
             v.extend(collect_hier_refs_expr(index));
             v
         }
-        IrLValue::ArrayIndex { index, .. }
-        | IrLValue::ArrayRangeSelect { index, .. } => collect_hier_refs_expr(index),
-        IrLValue::ArrayBitSelect {
-            index, bit, ..
-        } => {
+        IrLValue::ArrayIndex { index, .. } | IrLValue::ArrayRangeSelect { index, .. } => {
+            collect_hier_refs_expr(index)
+        }
+        IrLValue::ArrayBitSelect { index, bit, .. } => {
             let mut v = collect_hier_refs_expr(index);
             v.extend(collect_hier_refs_expr(bit));
             v
@@ -309,9 +311,7 @@ pub fn fix_hier_sensitivity(
 ) {
     for proc in processes.iter_mut() {
         if let Process::Combinational {
-            sensitivity,
-            body,
-            ..
+            sensitivity, body, ..
         } = proc
         {
             let mut hier_refs = Vec::new();

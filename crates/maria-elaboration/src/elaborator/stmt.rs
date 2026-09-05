@@ -201,9 +201,7 @@ pub(crate) fn expr_ir_is_signed(e: &IrExpr, signals: &[SignalInfo]) -> bool {
             expr_ir_is_signed(l, signals) && expr_ir_is_signed(r, signals)
         }
         IrExpr::UnaryOp(_, inner) => expr_ir_is_signed(inner, signals),
-        IrExpr::Cond(_, t, f) => {
-            expr_ir_is_signed(t, signals) || expr_ir_is_signed(f, signals)
-        }
+        IrExpr::Cond(_, t, f) => expr_ir_is_signed(t, signals) || expr_ir_is_signed(f, signals),
         _ => false,
     }
 }
@@ -270,7 +268,7 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
                     match inner.as_mut() {
                         IrExpr::FillLit(_) | IrExpr::Signed(_) => {}
                         _ => {
-                                let old = std::mem::replace(
+                            let old = std::mem::replace(
                                 inner.as_mut(),
                                 IrExpr::FillLit(maria_core::logic::LogicVal::X),
                             );
@@ -573,47 +571,49 @@ impl Elaborator {
         }
     }
 
-/// Ekstrak nilai konstanta dari IrExpr sederhana: `Const`/`Signed(Const)`
-/// langsung, atau operasi unary/binary aritmetika di atas konstanta
-/// (`-1`, `~5`, `(2*3-1)`, …). `None` bila ada sinyal/X/Z/op tak didukung.
-fn ir_const_value(e: &IrExpr) -> Option<i64> {
-    match e {
-        IrExpr::Const(lv) if lv.width <= 64 => {
-            let has_xz = lv
-                .bits
-                .iter()
-                .any(|b| matches!(b, maria_core::logic::LogicVal::X | maria_core::logic::LogicVal::Z));
-            if has_xz {
-                None
-            } else {
-                Some(lv.to_i64())
+    /// Ekstrak nilai konstanta dari IrExpr sederhana: `Const`/`Signed(Const)`
+    /// langsung, atau operasi unary/binary aritmetika di atas konstanta
+    /// (`-1`, `~5`, `(2*3-1)`, …). `None` bila ada sinyal/X/Z/op tak didukung.
+    fn ir_const_value(e: &IrExpr) -> Option<i64> {
+        match e {
+            IrExpr::Const(lv) if lv.width <= 64 => {
+                let has_xz = lv.bits.iter().any(|b| {
+                    matches!(
+                        b,
+                        maria_core::logic::LogicVal::X | maria_core::logic::LogicVal::Z
+                    )
+                });
+                if has_xz {
+                    None
+                } else {
+                    Some(lv.to_i64())
+                }
             }
-        }
-        // Konstanta negatif hasil fold ROUND 36 dibungkus Signed.
-        IrExpr::Signed(inner) => Self::ir_const_value(inner),
-        IrExpr::UnaryOp(op, inner) => match op {
-            UnaryIrOp::Minus => Self::ir_const_value(inner)?.checked_neg(),
-            UnaryIrOp::BitNot => {
-                let v = Self::ir_const_value(inner)?;
-                Some(!v)
-            }
-            UnaryIrOp::Plus => Self::ir_const_value(inner),
-            _ => None,
-        },
-        IrExpr::BinaryOp(op, a, b) => {
-            let (l, r) = (Self::ir_const_value(a)?, Self::ir_const_value(b)?);
-            match op {
-                BinaryIrOp::Add => l.checked_add(r),
-                BinaryIrOp::Sub => l.checked_sub(r),
-                BinaryIrOp::Mul => l.checked_mul(r),
-                BinaryIrOp::Div if r != 0 => l.checked_div(r),
-                BinaryIrOp::Mod if r != 0 => l.checked_rem(r),
+            // Konstanta negatif hasil fold ROUND 36 dibungkus Signed.
+            IrExpr::Signed(inner) => Self::ir_const_value(inner),
+            IrExpr::UnaryOp(op, inner) => match op {
+                UnaryIrOp::Minus => Self::ir_const_value(inner)?.checked_neg(),
+                UnaryIrOp::BitNot => {
+                    let v = Self::ir_const_value(inner)?;
+                    Some(!v)
+                }
+                UnaryIrOp::Plus => Self::ir_const_value(inner),
                 _ => None,
+            },
+            IrExpr::BinaryOp(op, a, b) => {
+                let (l, r) = (Self::ir_const_value(a)?, Self::ir_const_value(b)?);
+                match op {
+                    BinaryIrOp::Add => l.checked_add(r),
+                    BinaryIrOp::Sub => l.checked_sub(r),
+                    BinaryIrOp::Mul => l.checked_mul(r),
+                    BinaryIrOp::Div if r != 0 => l.checked_div(r),
+                    BinaryIrOp::Mod if r != 0 => l.checked_rem(r),
+                    _ => None,
+                }
             }
+            _ => None,
         }
-        _ => None,
     }
-}
 
     pub(crate) fn elaborate_stmt_block(
         &self,
@@ -799,10 +799,10 @@ fn ir_const_value(e: &IrExpr) -> Option<i64> {
                                 if elems.len() == sig.array_depth {
                                     let mut stmts: Vec<IrStmt> = Vec::new();
                                     for (i, elem) in elems.iter().enumerate() {
-                                        let ir_elem = self.elaborate_expr(elem, signal_map, signals)?;
-                                        let idx_expr = IrExpr::Const(
-                                            LogicVec::from_u64(i as u64, 32),
-                                        );
+                                        let ir_elem =
+                                            self.elaborate_expr(elem, signal_map, signals)?;
+                                        let idx_expr =
+                                            IrExpr::Const(LogicVec::from_u64(i as u64, 32));
                                         let elem_lvalue = IrLValue::ArrayIndex {
                                             sig_id: *sid,
                                             index: Box::new(idx_expr),

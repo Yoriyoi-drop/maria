@@ -76,8 +76,8 @@ impl TeamConfig {
 
     /// Save ke file.
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| format!("failed to serialize: {}", e))?;
+        let content =
+            toml::to_string_pretty(self).map_err(|e| format!("failed to serialize: {}", e))?;
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -222,17 +222,83 @@ impl CodeReview {
 /// Default design review checklist.
 fn default_checklist() -> Vec<ReviewChecklistItem> {
     vec![
-        ReviewChecklistItem { category: "Functionality".into(), item: "RTL matches design spec".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Functionality".into(), item: "Edge cases covered".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Lint".into(), item: "No lint warnings (mlint)".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Lint".into(), item: "No unused signals".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Timing".into(), item: "No combinational loops".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Timing".into(), item: "Critical path identified".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Coverage".into(), item: "Test coverage > 80%".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Coverage".into(), item: "Assertion coverage included".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Documentation".into(), item: "Module documentation present".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Documentation".into(), item: "Port descriptions complete".into(), checked: false, assignee: None, notes: None },
-        ReviewChecklistItem { category: "Review".into(), item: "At least 1 reviewer approved".into(), checked: false, assignee: None, notes: None },
+        ReviewChecklistItem {
+            category: "Functionality".into(),
+            item: "RTL matches design spec".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Functionality".into(),
+            item: "Edge cases covered".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Lint".into(),
+            item: "No lint warnings (mlint)".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Lint".into(),
+            item: "No unused signals".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Timing".into(),
+            item: "No combinational loops".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Timing".into(),
+            item: "Critical path identified".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Coverage".into(),
+            item: "Test coverage > 80%".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Coverage".into(),
+            item: "Assertion coverage included".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Documentation".into(),
+            item: "Module documentation present".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Documentation".into(),
+            item: "Port descriptions complete".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
+        ReviewChecklistItem {
+            category: "Review".into(),
+            item: "At least 1 reviewer approved".into(),
+            checked: false,
+            assignee: None,
+            notes: None,
+        },
     ]
 }
 

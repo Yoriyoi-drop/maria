@@ -556,10 +556,7 @@ impl SimulationEngine {
                     }
                 }
                 Process::Sequential {
-                    clock,
-                    reset,
-                    iff,
-                    ..
+                    clock, reset, iff, ..
                 } => {
                     let clock_trigger = match clock {
                         ClockEdge::PosEdge(_) | ClockEdge::PosEdgeHier(_) => {
@@ -588,11 +585,9 @@ impl SimulationEngine {
                             changed.iter().any(|(id, old, new)| {
                                 *id == sid
                                     && if active_high {
-                                        old.to_bool() != Some(true)
-                                            && new.to_bool() == Some(true)
+                                        old.to_bool() != Some(true) && new.to_bool() == Some(true)
                                     } else {
-                                        old.to_bool() != Some(false)
-                                            && new.to_bool() == Some(false)
+                                        old.to_bool() != Some(false) && new.to_bool() == Some(false)
                                     }
                             })
                         })
@@ -666,7 +661,8 @@ impl SimulationEngine {
                 let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
                     .par_iter()
                     .map(|&pid| {
-                        if let Process::Combinational { body, .. } = &self.design.top.processes[pid] {
+                        if let Process::Combinational { body, .. } = &self.design.top.processes[pid]
+                        {
                             crate::dbg_sim!(
                                 3,
                                 "t={} delta={} par-eval pid={}",
@@ -736,7 +732,8 @@ impl SimulationEngine {
                 let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
                     .par_iter()
                     .map(|&pid| {
-                        if let Process::Combinational { body, .. } = &self.design.top.processes[pid] {
+                        if let Process::Combinational { body, .. } = &self.design.top.processes[pid]
+                        {
                             crate::dbg_sim!(
                                 3,
                                 "t={} delta={} par-eval pid={}",
@@ -817,11 +814,9 @@ impl SimulationEngine {
                         changed.iter().any(|(id, old, new)| {
                             *id == sid
                                 && if active_high {
-                                    old.to_bool() != Some(true)
-                                        && new.to_bool() == Some(true)
+                                    old.to_bool() != Some(true) && new.to_bool() == Some(true)
                                 } else {
-                                    old.to_bool() != Some(false)
-                                        && new.to_bool() == Some(false)
+                                    old.to_bool() != Some(false) && new.to_bool() == Some(false)
                                 }
                         })
                     })

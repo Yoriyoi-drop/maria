@@ -15,7 +15,8 @@ use crate::lexer::*;
 use crate::util::dec_str_to_bits;
 use maria_ast::types::const_eval_simple;
 use maria_ast::*;
-use maria_core::error::SimError;use maria_core::intern::Symbol;
+use maria_core::error::SimError;
+use maria_core::intern::Symbol;
 
 impl Parser {
     pub(crate) fn is_type_token(&self) -> bool {
@@ -182,6 +183,26 @@ impl Parser {
                 Token::CaretTilde => Some((4, BinaryOp::BitXnor)),
                 Token::AmpAmp => Some((2, BinaryOp::LogicalAnd)),
                 Token::PipePipe => Some((1, BinaryOp::LogicalOr)),
+                // Logical implication `a -> b` (= `~a | b`) — umum di kode
+                // formal verification / constraint. Dikenali dari token Arrow
+                // di posisi ekspresi (statement-level `->event;` di-handle
+                // parse_stmt_impl lebih dulu). Di-lower ke `~a | b`.
+                Token::Arrow => {
+                    if 1 < min_prec {
+                        break;
+                    }
+                    self.advance();
+                    let rhs = self.parse_expr(2)?;
+                    lhs = Expr::BinaryOp {
+                        op: BinaryOp::LogicalOr,
+                        lhs: Box::new(Expr::UnaryOp {
+                            op: UnaryOp::Not,
+                            expr: Box::new(lhs),
+                        }),
+                        rhs: Box::new(rhs),
+                    };
+                    continue;
+                }
                 Token::Question => {
                     // Precedence ternary PALING RENDAH di SystemVerilog — di bawah
                     // `||` (tabel: 1). Tanpa guard min_prec ini, RHS dari operator
@@ -209,6 +230,21 @@ impl Parser {
                         break;
                     }
                     self.advance();
+                    // `inside` dengan macro yang tidak ter-expand: `inside `MACRO_NAME`
+                    // — macro hasilkan `{...}` tapi preprocessor tidak memiliki
+                    // definisinya. Hasilnya token Ident setelah `inside`, bukan LBrace.
+                    // Fallback: skip token Ident tersebut dan lanjut (return lhs as-is).
+                    if self.peek() != &Token::LBrace {
+                        // skip single ident (macro name) jika bukan LBrace
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                        lhs = Expr::Inside {
+                            expr: Box::new(lhs),
+                            range_list: vec![],
+                        };
+                        continue;
+                    }
                     self.expect(Token::LBrace)?;
                     let mut range_list = Vec::new();
                     if self.peek() != &Token::RBrace {
@@ -276,14 +312,22 @@ impl Parser {
                     self.advance();
                     let with_expr = if self.peek() == &Token::LBrace {
                         self.advance();
-                        let mut exprs: Vec<Expr> = Vec::new();
-                        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-                            let e = self.parse_expr(0)?;
-                            exprs.push(e);
-                            if self.peek() == &Token::Semi {
-                                self.advance();
-                            }
-                        }
+                        // Constraint items di body `with { }`: `if (...) {...}`,
+                        // `soft expr;`, `foreach (...) {...}` (pola umum UVM
+                        // randomize-with). ConstraintItem parser menangani
+                        // semuanya (termasuk If/Soft/foreach diekspresikan sbg
+                        // ConstraintItem). Kumpulkan ekspresi murni dan gabung
+                        // dgn `&&`; item non-ekspresi (If/Soft/foreach) hanya
+                        // di-skip agar parse tidak desync (body constraint
+                        // dibuang — parsing resilience semata).
+                        let items = self.parse_constraint_items()?;
+                        let exprs: Vec<Expr> = items
+                            .into_iter()
+                            .filter_map(|ci| match ci {
+                                ConstraintItem::Expr(e) => Some(e),
+                                _ => None,
+                            })
+                            .collect();
                         self.expect(Token::RBrace)?;
                         exprs
                             .into_iter()
@@ -451,6 +495,21 @@ impl Parser {
                     lhs = Expr::CastWidth {
                         width: Box::new(lhs),
                         expr: Box::new(expr),
+                    };
+                    continue;
+                }
+                // Post-increment / post-decrement: `expr++` / `expr--`
+                // (LRM 1800 §11.4.1) — representasikan sebagai
+                // BinaryOp Add/Sub dengan clone lhs, mirip prefix handler
+                // di parse_stmt_impl (Statement arm). Ini menangkap pola
+                // umum DV: `next_lsb++`, `address++`, `page_buffer_size++`.
+                Token::Increment | Token::Decrement => {
+                    let is_inc = matches!(self.peek(), Token::Increment);
+                    self.advance();
+                    lhs = Expr::BinaryOp {
+                        op: if is_inc { BinaryOp::Add } else { BinaryOp::Sub },
+                        lhs: Box::new(lhs.clone()),
+                        rhs: Box::new(Expr::Value(Value::Decimal(1))),
                     };
                     continue;
                 }
@@ -624,9 +683,13 @@ impl Parser {
                                 col: fc,
                             });
                         }
-                        // Type cast scoped: `pkg::type'(expr)`
+                        // Type cast scoped: `pkg::type'(expr)` atau `pkg::type'{...}` (struct pattern)
                         if self.peek() == &Token::Quote {
                             self.advance();
+                            if self.peek() == &Token::LBrace {
+                                self.advance();
+                                return self.parse_struct_pattern_body();
+                            }
                             self.expect(Token::LParen)?;
                             let expr = self.parse_expr(0)?;
                             self.expect(Token::RParen)?;
@@ -680,7 +743,8 @@ impl Parser {
                                 continue;
                             }
                             if self.peek() == &Token::LParen {
-                                if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen
+                                if self.peek() == &Token::Quote
+                                    && self.peek_ahead(1) == &Token::LParen
                                 {
                                     self.advance();
                                     self.advance();
@@ -717,9 +781,14 @@ impl Parser {
                         col,
                     });
                 }
-                // Type cast: type_name'(expr)
+                // Type cast: type_name'(expr) — atau cast-to-struct pattern
+                // `type'{member: value}` (OpenTitan `ram_1p_cfg_req_t'{req: x}`).
                 if self.peek() == &Token::Quote {
                     self.advance();
+                    if self.peek() == &Token::LBrace {
+                        self.advance();
+                        return self.parse_struct_pattern_body();
+                    }
                     self.expect(Token::LParen)?;
                     let expr = self.parse_expr(0)?;
                     self.expect(Token::RParen)?;
@@ -1071,122 +1140,7 @@ impl Parser {
                 self.advance();
                 if self.peek() == &Token::LBrace {
                     self.advance();
-                    let saved = self.pos.get();
-                    let mut members: Vec<StructLitMember> = Vec::new();
-                    let mut any_named = false;
-                    let mut ok = true;
-                    loop {
-                        if self.peek() == &Token::RBrace {
-                            self.advance();
-                            break;
-                        }
-                        if self.peek() == &Token::Eof {
-                            ok = false;
-                            break;
-                        }
-                        // `default: value` — keyword (bukan Ident), tangani dulu.
-                        if self.peek() == &Token::Default {
-                            self.advance();
-                            if self.peek() != &Token::Colon {
-                                ok = false;
-                                break;
-                            }
-                            self.advance();
-                            match self.parse_expr(0) {
-                                Ok(val) => {
-                                    any_named = true;
-                                    members.push(StructLitMember::Default(val));
-                                }
-                                Err(_) => {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        } else {
-                            match self.parse_expr(0) {
-                                Ok(first) => {
-                                    if self.peek() == &Token::Colon {
-                                        // Named-field assignment pattern:
-                                        // `name: value` — nama harus Ident.
-                                        self.advance();
-                                        match self.parse_expr(0) {
-                                            Ok(val) => match first {
-                                                Expr::Ident { name, .. } => {
-                                                    any_named = true;
-                                                    members.push(StructLitMember::Named(name, val));
-                                                }
-                                                _ => {
-                                                    ok = false;
-                                                    break;
-                                                }
-                                            },
-                                            Err(_) => {
-                                                ok = false;
-                                                break;
-                                            }
-                                        }
-                                    } else {
-                                        members.push(StructLitMember::Positional(first));
-                                    }
-                                }
-                                Err(_) => {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if self.peek() == &Token::Comma {
-                            self.advance();
-                        } else if self.peek() == &Token::RBrace {
-                            self.advance();
-                            break;
-                        } else {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if ok {
-                        if any_named {
-                            // Pola struct bernama — pertahankan nama field agar
-                            // member access bisa di-const-eval.
-                            return Ok(Expr::StructLit { members });
-                        }
-                        // Semua posisional — perilaku lama (array literal).
-                        let mut elements = Vec::new();
-                        for m in members {
-                            if let StructLitMember::Positional(e) = m {
-                                elements.push(e);
-                            }
-                        }
-                        if elements.len() == 1 {
-                            return Ok(elements.into_iter().next().unwrap());
-                        }
-                        return Ok(Expr::Concat(elements));
-                    }
-                    // Fallback: skip ke brace penutup (perilaku lama).
-                    self.pos.set(saved);
-                    let mut depth = 1usize;
-                    while depth > 0 && self.peek() != &Token::Eof {
-                        match self.peek() {
-                            Token::LBrace => {
-                                depth += 1;
-                                self.advance();
-                            }
-                            Token::RBrace => {
-                                depth -= 1;
-                                if depth > 0 {
-                                    self.advance();
-                                }
-                            }
-                            _ => {
-                                self.advance();
-                            }
-                        }
-                    }
-                    if self.peek() == &Token::RBrace {
-                        self.advance();
-                    }
-                    Ok(Expr::FillLit(maria_core::LogicVal::Zero))
+                    self.parse_struct_pattern_body()
                 } else {
                     Ok(Expr::FillLit(maria_core::LogicVal::Zero))
                 }
@@ -1257,16 +1211,134 @@ impl Parser {
                 }
             }
             ref other => {
-                let l = self.peek_line();
-                let c = self.peek_col();
-                let (sf, sfl) = self.resolve_source_file(l);
-                eprintln!(
-                    "DBG expected-expr: tok={:?} src={:?} line={} col={} ahead1={:?} ahead2={:?}",
-                    other, sf, sfl, c, self.peek_ahead(1), self.peek_ahead(2)
-                );
+                let line = self.peek_line();
+                let col = self.peek_col();
                 Err(self.err(format!("expected expression, found {:?}", other)))
             }
         }
+    }
+
+    /// Parse body struct pattern: preambilang pos di member PERTAMA (dopo `{`
+    /// di-konsumi). `{name: value, value, default: value, ...}` sampai `}`.
+    /// Dipakai untuk `'{...}` (struct literal) DAN cast-to-struct
+    /// `type'{member: value}` (OpenTitan `ram_1p_cfg_req_t'{req: x}`).
+    fn parse_struct_pattern_body(&mut self) -> Result<Expr, SimError> {
+        let saved = self.pos.get();
+        let mut members: Vec<StructLitMember> = Vec::new();
+        let mut any_named = false;
+        let mut ok = true;
+        loop {
+            if self.peek() == &Token::RBrace {
+                self.advance();
+                break;
+            }
+            if self.peek() == &Token::Eof {
+                ok = false;
+                break;
+            }
+            // `default: value` — keyword (bukan Ident), tangani dulu.
+            if self.peek() == &Token::Default {
+                self.advance();
+                if self.peek() != &Token::Colon {
+                    ok = false;
+                    break;
+                }
+                self.advance();
+                match self.parse_expr(0) {
+                    Ok(val) => {
+                        any_named = true;
+                        members.push(StructLitMember::Default(val));
+                    }
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
+            } else {
+                match self.parse_expr(0) {
+                    Ok(first) => {
+                        if self.peek() == &Token::Colon {
+                            // Named-field assignment pattern:
+                            // `name: value` — nama harus Ident.
+                            self.advance();
+                            match self.parse_expr(0) {
+                                Ok(val) => match first {
+                                    Expr::Ident { name, .. } => {
+                                        any_named = true;
+                                        members.push(StructLitMember::Named(name, val));
+                                    }
+                                    _ => {
+                                        ok = false;
+                                        break;
+                                    }
+                                },
+                                Err(_) => {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        } else {
+                            members.push(StructLitMember::Positional(first));
+                        }
+                    }
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if self.peek() == &Token::Comma {
+                self.advance();
+            } else if self.peek() == &Token::RBrace {
+                self.advance();
+                break;
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            if any_named {
+                // Pola struct bernama — pertahankan nama field agar
+                // member access bisa di-const-eval.
+                return Ok(Expr::StructLit { members });
+            }
+            // Semua posisional — perilaku lama (array literal).
+            let mut elements = Vec::new();
+            for m in members {
+                if let StructLitMember::Positional(e) = m {
+                    elements.push(e);
+                }
+            }
+            if elements.len() == 1 {
+                return Ok(elements.into_iter().next().unwrap());
+            }
+            return Ok(Expr::Concat(elements));
+        }
+        // Fallback: skip ke brace penutup (perilaku lama).
+        self.pos.set(saved);
+        let mut depth = 1usize;
+        while depth > 0 && self.peek() != &Token::Eof {
+            match self.peek() {
+                Token::LBrace => {
+                    depth += 1;
+                    self.advance();
+                }
+                Token::RBrace => {
+                    depth -= 1;
+                    if depth > 0 {
+                        self.advance();
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        if self.peek() == &Token::RBrace {
+            self.advance();
+        }
+        Ok(Expr::FillLit(maria_core::LogicVal::Zero))
     }
 }
 

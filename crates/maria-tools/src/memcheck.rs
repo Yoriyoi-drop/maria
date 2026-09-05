@@ -48,7 +48,8 @@ pub fn run_valgrind(
     cmd.args(args);
     cmd.args(tool_args);
 
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .map_err(|e| format!("gagal jalankan valgrind: {}", e))?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -174,15 +175,13 @@ fn parse_bytes(s: &str) -> u64 {
 }
 
 /// Run heaptrack pada binary.
-pub fn run_heaptrack(
-    binary: &str,
-    args: &[String],
-) -> Result<MemcheckResult, String> {
+pub fn run_heaptrack(binary: &str, args: &[String]) -> Result<MemcheckResult, String> {
     let mut cmd = Command::new("heaptrack");
     cmd.arg(binary);
     cmd.args(args);
 
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .map_err(|e| format!("gagal jalankan heaptrack: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);

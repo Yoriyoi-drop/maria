@@ -279,9 +279,7 @@ impl SemanticMutator {
                 Box::new(self.mutate_expr_structure(t)),
                 Box::new(self.mutate_expr_structure(f)),
             ),
-            Expr::Repl(count, e) => {
-                Expr::Repl(*count, Box::new(self.mutate_expr_structure(e)))
-            }
+            Expr::Repl(count, e) => Expr::Repl(*count, Box::new(self.mutate_expr_structure(e))),
             Expr::BitSel(..) | Expr::PartSel(..) => expr.clone(),
             Expr::XLit { v, m } => {
                 if self.rng.f32() < 0.3 {

@@ -337,7 +337,13 @@ impl X86Cpu {
             .map_err(|e| self.fault(format!("read32 0x{:x}: {}", a, e)))?;
         Ok(u32::from_le_bytes(b))
     }
-    fn write8(&mut self, mem: &mut dyn MemoryPort, seg: u16, off: u32, v: u8) -> Result<(), CpuFault> {
+    fn write8(
+        &mut self,
+        mem: &mut dyn MemoryPort,
+        seg: u16,
+        off: u32,
+        v: u8,
+    ) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
         if (VGA_TEXT_ADDR..VGA_TEXT_ADDR + VGA_TEXT_SIZE as u64).contains(&a) {
             self.vga[(a - VGA_TEXT_ADDR) as usize] = v;
@@ -409,7 +415,8 @@ impl X86Cpu {
                     // Region terpotong / keluar peta: baca 1 byte saja.
                     let b = mem
                         .read(a, 1)
-                        .map_err(|e| self.fault(format!("fetch @0x{a:x}: {}", e)))? as u8;
+                        .map_err(|e| self.fault(format!("fetch @0x{a:x}: {}", e)))?
+                        as u8;
                     self.pf_valid = true;
                     self.pf_cs = self.cs;
                     self.pf_base = self.ip;
@@ -561,8 +568,8 @@ impl X86Cpu {
         // Segmen default: BP-based → SS; sisanya DS. PENTING: mod=0, rm=6
         // (`[disp16]` absolut) BUKAN berbasis BP → harus DS, bukan SS.
         let base_ss = match modrm.rm {
-            2 | 3 => true,          // bp+si / bp+di → SS
-            6 => modrm.m != 0,      // [bp+d8/d16] → SS; mod=0 = disp16 absolut → DS
+            2 | 3 => true,     // bp+si / bp+di → SS
+            6 => modrm.m != 0, // [bp+d8/d16] → SS; mod=0 = disp16 absolut → DS
             _ => false,
         };
         let default_seg = if base_ss { self.ss } else { self.ds };
@@ -1318,7 +1325,7 @@ impl X86Cpu {
                     self.push16(mem, self.flags)?;
                 }
             }
-             0x9d => {
+            0x9d => {
                 if opsz == 32 {
                     self.flags = self.pop32(mem)? as u16;
                 } else {
@@ -2569,8 +2576,8 @@ impl X86Cpu {
             0x31 => {
                 // Timestamp berdasarkan instruction count (estimasi)
                 let ts = self.steps.wrapping_mul(1);
-                self.r32_set(0, ts as u32);          // EAX low
-                self.r32_set(2, (ts >> 32) as u32);   // EDX high
+                self.r32_set(0, ts as u32); // EAX low
+                self.r32_set(2, (ts >> 32) as u32); // EDX high
             }
             // ── bswap r32 (0f c8-cf): byte swap endian ──
             // Berguna untuk GRUB little-endian ↔ big-endian conversion.
@@ -3254,8 +3261,8 @@ impl CpuCore for X86Cpu {
             });
         }
         self.steps += 1;
-        let dbg_step = (8_623_590..=8_623_680).contains(&self.steps)
-            && std::env::var("MARIA_X86_DBG").is_ok();
+        let dbg_step =
+            (8_623_590..=8_623_680).contains(&self.steps) && std::env::var("MARIA_X86_DBG").is_ok();
         if dbg_step {
             // State sebelum instruksi (dipecahkan per-byte, tanpa akses memori
             // tambahan yang bisa salah saat mode campuran).
@@ -3539,9 +3546,9 @@ mod tests {
     fn test_cpuid_leaf0_vendor() {
         // CPUID leaf 0 → vendor string "GenuineIntel"
         let code = [
-            0x31, 0xc0,             // xor eax, eax  (eax = 0)
-            0x0f, 0xa2,             // cpuid
-            0x90,                   // nop (placeholder)
+            0x31, 0xc0, // xor eax, eax  (eax = 0)
+            0x0f, 0xa2, // cpuid
+            0x90, // nop (placeholder)
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3563,10 +3570,10 @@ mod tests {
         // CPUID leaf 1 → features + stepping
         // Real mode: xor eax, eax + mov al, 1 (set low byte saja, 0 extend ke 32-bit)
         let code = [
-            0x31, 0xc0,    // xor eax, eax
-            0xb0, 0x01,    // mov al, 1 → eax = 1
-            0x0f, 0xa2,    // cpuid
-            0x90,          // nop
+            0x31, 0xc0, // xor eax, eax
+            0xb0, 0x01, // mov al, 1 → eax = 1
+            0x0f, 0xa2, // cpuid
+            0x90, // nop
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3585,8 +3592,8 @@ mod tests {
         // Real mode: prefix 66 untuk 32-bit operand
         let code = [
             0x66, 0xb9, 0x78, 0x56, 0x34, 0x12, // mov ecx, 0x12345678
-            0x0f, 0xc9,                           // bswap ecx
-            0x90,                                 // nop
+            0x0f, 0xc9, // bswap ecx
+            0x90, // nop
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3599,8 +3606,8 @@ mod tests {
         // BSWAP EAX (0f c8): 0xAABBCCDD → 0xDDCCBBAA
         let code = [
             0x66, 0xb8, 0xDD, 0xCC, 0xBB, 0xAA, // mov eax, 0xAABBCCDD
-            0x0f, 0xc8,                           // bswap eax
-            0x90,                                 // nop
+            0x0f, 0xc8, // bswap eax
+            0x90, // nop
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3614,9 +3621,9 @@ mod tests {
         // ax = 0x1234, cx = 0xABCD → (0x1234>>4) | (0xABCD<<12) = 0x0123 | 0xD000 = 0xD123
         // Bahaya endian: shrd dest, src, x: dest.right(x) | src.left(16-x)
         let code = [
-            0xb8, 0x34, 0x12,             // mov ax, 0x1234
-            0xb9, 0xcd, 0xab,             // mov cx, 0xABCD
-            0x0f, 0xac, 0xc8, 0x04,       // shrd ax, cx, 4
+            0xb8, 0x34, 0x12, // mov ax, 0x1234
+            0xb9, 0xcd, 0xab, // mov cx, 0xABCD
+            0x0f, 0xac, 0xc8, 0x04, // shrd ax, cx, 4
             0x90,
         ];
         let mut m = mem();
@@ -3631,7 +3638,7 @@ mod tests {
         let code = [
             0x66, 0xb8, 0x78, 0x56, 0x34, 0x12, // mov eax, 0x12345678
             0x66, 0xb9, 0xaa, 0xaa, 0xaa, 0xaa, // mov ecx, 0xAAAAAAAA
-            0x66, 0x0f, 0xac, 0xc8, 0x08,       // shrd eax, ecx, 8
+            0x66, 0x0f, 0xac, 0xc8, 0x08, // shrd eax, ecx, 8
             0x90,
         ];
         let mut m = mem();
@@ -3641,9 +3648,9 @@ mod tests {
 
         // SHLD 16-bit: shld ax, cx, 4 → (0x1234<<4)|(0xABCD>>12) = 0x2340|0x000A = 0x234A
         let code = [
-            0xb8, 0x34, 0x12,             // mov ax, 0x1234
-            0xb9, 0xcd, 0xab,             // mov cx, 0xABCD
-            0x0f, 0xa4, 0xc8, 0x04,       // shld ax, cx, 4
+            0xb8, 0x34, 0x12, // mov ax, 0x1234
+            0xb9, 0xcd, 0xab, // mov cx, 0xABCD
+            0x0f, 0xa4, 0xc8, 0x04, // shld ax, cx, 4
             0x90,
         ];
         let mut m = mem();
@@ -3654,10 +3661,10 @@ mod tests {
         // SHRD by CL (0f ad): cl = 3 → shrd ax, dx, 3
         // ax = 0x1234, dx = 0xABCD → (0x1234>>3)|(0xABCD<<13) = 0x0246 | 0xA000 = 0xA246
         let code = [
-            0xb8, 0x34, 0x12,             // mov ax, 0x1234
-            0xba, 0xcd, 0xab,             // mov dx, 0xABCD (bukan CX — CL dipakai count)
-            0xb1, 0x03,                   // mov cl, 3
-            0x0f, 0xad, 0xd0,             // shrd ax, dx, cl  (modrm D0: rm=AX dest, reg=DX src)
+            0xb8, 0x34, 0x12, // mov ax, 0x1234
+            0xba, 0xcd, 0xab, // mov dx, 0xABCD (bukan CX — CL dipakai count)
+            0xb1, 0x03, // mov cl, 3
+            0x0f, 0xad, 0xd0, // shrd ax, dx, cl  (modrm D0: rm=AX dest, reg=DX src)
             0x90,
         ];
         let mut m = mem();
@@ -3671,7 +3678,7 @@ mod tests {
         // RDTSC (0f 31): harus return timestamp > 0 setelah beberapa instruksi
         let code = [
             0x0f, 0x31, // rdtsc → EDX:EAX
-            0x90,       // nop
+            0x90, // nop
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3685,8 +3692,8 @@ mod tests {
         // CPUID leaf 0x80000001 → extended features (LM bit)
         let code = [
             0x66, 0xb8, 0x01, 0x00, 0x00, 0x80, // mov eax, 0x80000001
-            0x0f, 0xa2,                           // cpuid
-            0x90,                                 // nop
+            0x0f, 0xa2, // cpuid
+            0x90, // nop
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3706,8 +3713,8 @@ mod tests {
         // mov ax, 0x7fff; inc ax; dec ax
         let code = [
             0xb8, 0xff, 0x7f, // mov ax, 0x7fff
-            0xff, 0xc0,       // inc ax → 0x8000 (overflow!)
-            0xff, 0xc8,       // dec ax → 0x7fff (back, overflow!)
+            0xff, 0xc0, // inc ax → 0x8000 (overflow!)
+            0xff, 0xc8, // dec ax → 0x7fff (back, overflow!)
         ];
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 3);
@@ -3716,13 +3723,17 @@ mod tests {
         // Dari 0x8000: inc → 0x8001 (TIDAK overflow), dec dari 0x8001 → 0x8000 (tidak)
         let code = [
             0xb8, 0x00, 0x80, // mov ax, 0x8000
-            0xff, 0xc0,       // inc ax → 0x8001 (tidak overflow)
-            0xff, 0xc8,       // dec ax → 0x8000 (tidak overflow)
+            0xff, 0xc0, // inc ax → 0x8001 (tidak overflow)
+            0xff, 0xc8, // dec ax → 0x8000 (tidak overflow)
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 3);
-        assert_eq!(cpu.flag(FLAG_OF), false, "inc/dec di sekitar 0x8000 (negatif) tak OF");
+        assert_eq!(
+            cpu.flag(FLAG_OF),
+            false,
+            "inc/dec di sekitar 0x8000 (negatif) tak OF"
+        );
 
         // 8-bit (fe): inc al 0x7f→0x80 overflow; dec al dari 0x00 → 0xff TIDAK overflow
         let code = [
@@ -3751,8 +3762,8 @@ mod tests {
             0xba, 0xff, 0xff, // mov dx, 0xffff
             0xb8, 0xeb, 0xff, // mov ax, 0xffeb
             0xb9, 0x07, 0x00, // mov cx, 7
-            0xf7, 0xf9,       // idiv cx
-            0x90,             // nop
+            0xf7, 0xf9, // idiv cx
+            0x90, // nop
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3768,7 +3779,7 @@ mod tests {
             0xba, 0x00, 0x00, // mov dx, 0
             0xb8, 0x07, 0x00, // mov ax, 7
             0xb9, 0x02, 0x00, // mov cx, 2
-            0xf7, 0xf9,       // idiv cx
+            0xf7, 0xf9, // idiv cx
             0x90,
         ];
         let mut m = mem();
@@ -3780,7 +3791,7 @@ mod tests {
         // idiv by zero → halted
         let code = [
             0xb9, 0x00, 0x00, // mov cx, 0
-            0xf7, 0xf9,       // idiv cx → by zero
+            0xf7, 0xf9, // idiv cx → by zero
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3792,8 +3803,8 @@ mod tests {
     fn test_lahf_sahf() {
         // lahf: 'lahf' opcode 0x9f — set flags lalu AH = FLAGS yg relevan.
         let code = [
-            0xf9,       // stc → CF=1
-            0x9f,       // lahf → AH = 0x03 (CF + bit1)
+            0xf9, // stc → CF=1
+            0x9f, // lahf → AH = 0x03 (CF + bit1)
             0xb4, 0x00, // mov ah, 0
         ];
         let mut m = mem();
@@ -3804,7 +3815,7 @@ mod tests {
         // sahf: muat AH ke flags → SF/ZF/CF (0xC1: SF+ZF+CF).
         let code = [
             0xb4, 0xc1, // mov ah, 0xc1 (SF+ZF+CF)
-            0x9e,       // sahf
+            0x9e, // sahf
         ];
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
@@ -3859,7 +3870,10 @@ mod tests {
         // Target baca cdboot: esc:bx = (DATA_ADDR-0x200)>>4 : 0 → 0x800:0 = linear 0x8000.
         // Sebaris data 0xEE dari read_bytes → menandakan read_cd_blocks dipakai.
         let b = m.read(0x8000, 1).unwrap();
-        assert_eq!(b, 0xEE, "cdboot AH=42 (CD) harus membaca via read_bytes (blok 2048)");
+        assert_eq!(
+            b, 0xEE,
+            "cdboot AH=42 (CD) harus membaca via read_bytes (blok 2048)"
+        );
         // Belum halt.
         assert!(!cpu.halted, "cdboot 40 step tanpa fault");
     }
@@ -3875,14 +3889,14 @@ mod tests {
         // done @0x7c0e: hlt. data "Hi!\0" @0x7c11.
         let code = [
             0xbe, 0x11, 0x7c, // 0x7c00: mov si, 0x7c11
-            0xac,             // 0x7c03: lodsb
-            0x3c, 0x00,       // 0x7c04: cmp al, 0
-            0x74, 0x06,       // 0x7c06: je +6 → 0x7c0e
-            0xb4, 0x0e,       // 0x7c08: mov ah, 0x0e
-            0xcd, 0x10,       // 0x7c0a: int 10h
-            0xeb, 0xf1,       // 0x7c0c: jmp -15 → 0x7c00
-            0xf4,             // 0x7c0e: hlt (done)
-            0x90, 0x90,       // 0x7c0f-0x7c10: pad
+            0xac, // 0x7c03: lodsb
+            0x3c, 0x00, // 0x7c04: cmp al, 0
+            0x74, 0x06, // 0x7c06: je +6 → 0x7c0e
+            0xb4, 0x0e, // 0x7c08: mov ah, 0x0e
+            0xcd, 0x10, // 0x7c0a: int 10h
+            0xeb, 0xf1, // 0x7c0c: jmp -15 → 0x7c00
+            0xf4, // 0x7c0e: hlt (done)
+            0x90, 0x90, // 0x7c0f-0x7c10: pad
             b'H', b'i', b'!', 0x00, // 0x7c11
         ];
         let mut m = mem();
@@ -3912,7 +3926,11 @@ mod tests {
         assert_eq!(cpu.vga[1], 0x07);
         assert_eq!(cpu.vga[2], b'i');
         let t = cpu.vga_text();
-        assert!(t.starts_with("Hi"), "vga_text harus 'Hi...', dapat: {:?}", t);
+        assert!(
+            t.starts_with("Hi"),
+            "vga_text harus 'Hi...', dapat: {:?}",
+            t
+        );
         // Memori guest juga menerima tulis (region RAM menutupi 0xB8000).
         assert_eq!(m.read(0xB8000, 2).unwrap(), 0x0748);
     }
@@ -3964,7 +3982,10 @@ mod tests {
         assert!(!cpu.cf(), "INT 13h AH=42 harus sukses");
         // Buffer 0x1000:0 berisi LBA 64-bit yang diminta disk (0x42_0000_0002).
         let lba = m.read(0x10000, 8).unwrap();
-        assert_eq!(lba, 0x42_0000_0002, "DAP LBA 64-bit harus ikut dword tinggi");
+        assert_eq!(
+            lba, 0x42_0000_0002,
+            "DAP LBA 64-bit harus ikut dword tinggi"
+        );
         let _ = cpu.disk.as_ref().unwrap().total_sectors();
     }
 }

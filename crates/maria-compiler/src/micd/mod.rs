@@ -61,7 +61,7 @@ pub use gc::{run_gc, GcConfig, GcStats};
 pub use graph::FileGraph;
 pub use lock::{acquire_write_lock, is_writer_locked, WriteLock};
 pub use metadata::{flags_hash, path_hash, FileMeta, FileStatus, MetadataManifest};
-pub use precompiled::{PrecompiledDb, PrecompiledModule, PrecompiledStats, PortInfo};
+pub use precompiled::{PortInfo, PrecompiledDb, PrecompiledModule, PrecompiledStats};
 pub use snapshot::{
     history_of, last_snapshot_id, list_snapshots, merge_base, parents_of, read_snapshot,
     snapshot_path, Snapshot,
@@ -968,8 +968,11 @@ impl MicdDatabase {
             let live_ast: std::collections::HashSet<u64> =
                 self.ast_cache.values().map(|(h, _)| *h).collect();
             let _ = sweep_objects(&self.objects_dir(), OBJ_AST, &live_ast);
-            let live_preproc: std::collections::HashSet<u64> =
-                self.preproc_cache.values().map(|e| e.content_hash).collect();
+            let live_preproc: std::collections::HashSet<u64> = self
+                .preproc_cache
+                .values()
+                .map(|e| e.content_hash)
+                .collect();
             let _ = sweep_objects(&self.objects_dir(), OBJ_PREPROC, &live_preproc);
         }
         self.dirty = true;
@@ -1121,7 +1124,10 @@ impl MicdDatabase {
                     bincode::serialize(meta).map_err(io::Error::other)?,
                 );
             }
-            pending.push((st.join(DB_METADATA), w.serialize().map_err(io::Error::other)?));
+            pending.push((
+                st.join(DB_METADATA),
+                w.serialize().map_err(io::Error::other)?,
+            ));
         }
 
         // graph.mdb — rebuild reverse index sebelum serialize (set_deps

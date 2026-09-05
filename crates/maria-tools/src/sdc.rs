@@ -366,11 +366,7 @@ fn parse_set_multicycle_path(tokens: &[String]) -> Option<SdcConstraint> {
         i += 1;
     }
 
-    Some(SdcConstraint::SetMulticyclePath {
-        setup,
-        from,
-        to,
-    })
+    Some(SdcConstraint::SetMulticyclePath { setup, from, to })
 }
 
 fn parse_group_path(tokens: &[String]) -> Option<SdcConstraint> {
@@ -418,7 +414,13 @@ create_clock -name clk -period 10.0 -waveform {0 5} [get_ports clk]
 "#;
         let doc = SdcDocument::parse(sdc).unwrap();
         assert_eq!(doc.constraints.len(), 1);
-        if let SdcConstraint::CreateClock { name, period, ports, .. } = &doc.constraints[0] {
+        if let SdcConstraint::CreateClock {
+            name,
+            period,
+            ports,
+            ..
+        } = &doc.constraints[0]
+        {
             assert_eq!(name, "clk");
             assert_eq!(*period, 10.0);
             assert!(!ports.is_empty());
@@ -432,7 +434,13 @@ create_clock -name clk -period 10.0 -waveform {0 5} [get_ports clk]
         let sdc = "set_input_delay 2.5 -clock clk [get_ports data_in]";
         let doc = SdcDocument::parse(sdc).unwrap();
         assert_eq!(doc.constraints.len(), 1);
-        if let SdcConstraint::SetInputDelay { delay, clock, ports, .. } = &doc.constraints[0] {
+        if let SdcConstraint::SetInputDelay {
+            delay,
+            clock,
+            ports,
+            ..
+        } = &doc.constraints[0]
+        {
             assert_eq!(*delay, 2.5);
             assert_eq!(clock, "clk");
             assert!(!ports.is_empty());
@@ -443,7 +451,10 @@ create_clock -name clk -period 10.0 -waveform {0 5} [get_ports clk]
     fn test_parse_false_path() {
         let sdc = "set_false_path -from [get_clocks clk_a] -to [get_clocks clk_b]";
         let doc = SdcDocument::parse(sdc).unwrap();
-        assert!(matches!(&doc.constraints[0], SdcConstraint::SetFalsePath { .. }));
+        assert!(matches!(
+            &doc.constraints[0],
+            SdcConstraint::SetFalsePath { .. }
+        ));
     }
 
     #[test]
@@ -465,7 +476,8 @@ create_clock -name clk -period 10.0 -waveform {0 5} [get_ports clk]
 
     #[test]
     fn test_comments_and_empty() {
-        let sdc = "# comment\n\n# another comment\ncreate_clock -name clk -period 5 [get_ports c]\n";
+        let sdc =
+            "# comment\n\n# another comment\ncreate_clock -name clk -period 5 [get_ports c]\n";
         let doc = SdcDocument::parse(sdc).unwrap();
         assert_eq!(doc.constraints.len(), 1);
     }

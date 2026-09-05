@@ -81,9 +81,7 @@ fn collect_nba_consts(stmts: &[IrStmt], sig_id: usize, out: &mut Vec<u64>) {
                 }
             }
             IrStmt::Block { stmts: inner } => collect_nba_consts(inner, sig_id, out),
-            IrStmt::NamedBlock { stmts: inner, .. } => {
-                collect_nba_consts(inner, sig_id, out)
-            }
+            IrStmt::NamedBlock { stmts: inner, .. } => collect_nba_consts(inner, sig_id, out),
             IrStmt::If {
                 true_branch,
                 false_branch,
@@ -129,9 +127,7 @@ fn has_nba_write_to(stmts: &[IrStmt], sig_id: usize) -> bool {
                 false_branch,
                 ..
             } => {
-                if has_nba_write_to(true_branch, sig_id)
-                    || has_nba_write_to(false_branch, sig_id)
-                {
+                if has_nba_write_to(true_branch, sig_id) || has_nba_write_to(false_branch, sig_id) {
                     return true;
                 }
             }
@@ -153,14 +149,22 @@ pub fn extract_fsms(design: &IrDesign) -> Vec<FsmInfo> {
 
         // Cari case tingkat atas yang selectornya sinyal.
         for stmt in body {
-            let IrStmt::Case { expr, items, default, .. } = stmt else {
+            let IrStmt::Case {
+                expr,
+                items,
+                default,
+                ..
+            } = stmt
+            else {
                 continue;
             };
             let IrExpr::Signal(sig_id, _) = expr else {
                 continue;
             };
             // Syarat FSM: selector juga ditulis NBA di proses ini.
-            let written = body.iter().any(|s| has_nba_write_to(std::slice::from_ref(s), *sig_id));
+            let written = body
+                .iter()
+                .any(|s| has_nba_write_to(std::slice::from_ref(s), *sig_id));
             if !written {
                 continue;
             }
@@ -198,7 +202,13 @@ pub fn extract_fsms(design: &IrDesign) -> Vec<FsmInfo> {
                     push_state(&mut info.states, from_v);
                     for to in &nexts {
                         push_state(&mut info.states, *to);
-                        push_trans(&mut info.transitions, FsmTransition { from: Some(from_v), to: *to });
+                        push_trans(
+                            &mut info.transitions,
+                            FsmTransition {
+                                from: Some(from_v),
+                                to: *to,
+                            },
+                        );
                     }
                 }
             }
@@ -210,13 +220,14 @@ pub fn extract_fsms(design: &IrDesign) -> Vec<FsmInfo> {
             for to in &default_nexts {
                 push_state(&mut info.states, *to);
                 for &from in info.states.clone().iter() {
-                    if from != *to
-                        && !info
-                            .transitions
-                            .iter()
-                            .any(|t| t.from == Some(from))
-                    {
-                        push_trans(&mut info.transitions, FsmTransition { from: Some(from), to: *to });
+                    if from != *to && !info.transitions.iter().any(|t| t.from == Some(from)) {
+                        push_trans(
+                            &mut info.transitions,
+                            FsmTransition {
+                                from: Some(from),
+                                to: *to,
+                            },
+                        );
                     }
                 }
             }
@@ -240,10 +251,7 @@ pub fn render_fsm_report(fsms: &[FsmInfo]) -> String {
         return out;
     }
     for f in fsms {
-        out.push_str(&format!(
-            "  {} [{}]\n",
-            f.process_name, f.state_signal
-        ));
+        out.push_str(&format!("  {} [{}]\n", f.process_name, f.state_signal));
         out.push_str(&format!(
             "    states ({}): {}\n",
             f.states.len(),
@@ -253,10 +261,7 @@ pub fn render_fsm_report(fsms: &[FsmInfo]) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
-        out.push_str(&format!(
-            "    transitions ({}):\n",
-            f.transitions.len()
-        ));
+        out.push_str(&format!("    transitions ({}):\n", f.transitions.len()));
         for t in &f.transitions {
             let from = match t.from {
                 Some(v) => v.to_string(),
@@ -329,9 +334,18 @@ mod tests {
         // Transisi eksplisit: 0→1, 1→2; default menambah keluar untuk
         // state yang belum punya (2→0).
         assert_eq!(f.transitions.len(), 3, "{:?}", f.transitions);
-        assert!(f.transitions.contains(&FsmTransition { from: Some(0), to: 1 }));
-        assert!(f.transitions.contains(&FsmTransition { from: Some(1), to: 2 }));
-        assert!(f.transitions.contains(&FsmTransition { from: Some(2), to: 0 }));
+        assert!(f.transitions.contains(&FsmTransition {
+            from: Some(0),
+            to: 1
+        }));
+        assert!(f.transitions.contains(&FsmTransition {
+            from: Some(1),
+            to: 2
+        }));
+        assert!(f.transitions.contains(&FsmTransition {
+            from: Some(2),
+            to: 0
+        }));
     }
 
     #[test]

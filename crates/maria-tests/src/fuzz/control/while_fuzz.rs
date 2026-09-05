@@ -1,7 +1,11 @@
 //! Fuzz differential while/do-while loops.
 
 fn mask_of(w: u32) -> u64 {
-    if w >= 64 { u64::MAX } else { (1u64 << w) - 1 }
+    if w >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << w) - 1
+    }
 }
 
 fn lit_sv(v: u64, w: u32) -> String {
@@ -14,9 +18,11 @@ fn run_sim_r(src: &str) -> Option<u64> {
         .name("while-fuzz-sim".to_string())
         .stack_size(256 * 1024 * 1024)
         .spawn(move || {
-            crate::simulate_signals(&src, 60)
-                .ok()
-                .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "r").map(|(_, v)| v.to_u64()))
+            crate::simulate_signals(&src, 60).ok().and_then(|sigs| {
+                sigs.iter()
+                    .find(|(n, _)| *n == "r")
+                    .map(|(_, v)| v.to_u64())
+            })
         })
         .expect("spawn");
     handle.join().expect("sim panic")
@@ -48,18 +54,29 @@ fn while_accumulate_matches_golden() {
         #10 $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), limit = limit, w = w,
+            hi = w - 1,
+            av = lit_sv(a, w),
+            limit = limit,
+            w = w,
         );
         let n = limit.min(w as u64);
         let expected: u64 = (0..n).map(|i| (a >> i) & 1).sum();
         let actual = run_sim_r(&src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} limit={} harap={} dapat={:?}", seed, w, a, limit, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} limit={} harap={} dapat={:?}",
+                seed, w, a, limit, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -88,18 +105,29 @@ fn do_while_accumulate_matches_golden() {
         #10 $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), n_iter = n_iter, w = w,
+            hi = w - 1,
+            av = lit_sv(a, w),
+            n_iter = n_iter,
+            w = w,
         );
         let actual_n = n_iter.min(w as u64);
         let expected: u64 = (0..actual_n).map(|i| (a >> i) & 1).sum();
         let actual = run_sim_r(&src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} n_iter={} harap={} dapat={:?}", seed, w, a, n_iter, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} n_iter={} harap={} dapat={:?}",
+                seed, w, a, n_iter, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -129,17 +157,28 @@ fn while_break_matches_golden() {
         #10 $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), w = w, break_at = break_at,
+            hi = w - 1,
+            av = lit_sv(a, w),
+            w = w,
+            break_at = break_at,
         );
         let expected: u64 = (0..break_at as u64).map(|i| (a >> i) & 1).sum();
         let actual = run_sim_r(&src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} break_at={} harap={} dapat={:?}", seed, w, a, break_at, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} break_at={} harap={} dapat={:?}",
+                seed, w, a, break_at, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -172,18 +211,29 @@ fn while_continue_matches_golden() {
         #10 $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), n = n, w = w,
+            hi = w - 1,
+            av = lit_sv(a, w),
+            n = n,
+            w = w,
         );
         let actual_n = n.min(w as u64);
         let expected: u64 = (0..actual_n).filter(|&i| (a >> i) & 1 == 1).count() as u64;
         let actual = run_sim_r(&src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} n={} harap={} dapat={:?}", seed, w, a, n, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} n={} harap={} dapat={:?}",
+                seed, w, a, n, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -219,15 +269,25 @@ fn while_nested_multiply_matches_golden() {
         #10 $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
         );
         let expected = (a * b) & m;
         let actual = run_sim_r(&src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={} b={} harap={} dapat={:?}", seed, w, a, b, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={} b={} harap={} dapat={:?}",
+                seed, w, a, b, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 30);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }

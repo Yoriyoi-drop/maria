@@ -69,7 +69,9 @@ fn scan_body(stmts: &[IrStmt], out: &mut BodyScan) {
                 }
                 scan_body(default, out);
             }
-            IrStmt::LoopFor { init, step, body, .. } => {
+            IrStmt::LoopFor {
+                init, step, body, ..
+            } => {
                 if let Some(st) = init {
                     scan_body(std::slice::from_ref(st), out);
                 }
@@ -103,9 +105,21 @@ fn scan_body(stmts: &[IrStmt], out: &mut BodyScan) {
                     scan_body(p, out);
                 }
             }
-            IrStmt::Assert { pass_stmt, fail_stmt, .. }
-            | IrStmt::Assume { pass_stmt, fail_stmt, .. }
-            | IrStmt::Expect { pass_stmt, fail_stmt, .. } => {
+            IrStmt::Assert {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Assume {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Expect {
+                pass_stmt,
+                fail_stmt,
+                ..
+            } => {
                 scan_body(pass_stmt, out);
                 scan_body(fail_stmt, out);
             }
@@ -165,8 +179,16 @@ pub(crate) fn analyze_plan(engine: &SimulationEngine) -> Result<CyclePlan, Strin
 
     for (pid, p) in procs.iter().enumerate() {
         match p {
-            Process::Combinational { name, sensitivity, body }
-            | Process::CombReactive { name, sensitivity, body } => {
+            Process::Combinational {
+                name,
+                sensitivity,
+                body,
+            }
+            | Process::CombReactive {
+                name,
+                sensitivity,
+                body,
+            } => {
                 let mut scan = BodyScan::default();
                 scan_body(body, &mut scan);
                 if scan.has_timed {
@@ -181,7 +203,9 @@ pub(crate) fn analyze_plan(engine: &SimulationEngine) -> Result<CyclePlan, Strin
                 let _ = sensitivity;
                 comb_pids.push(pid);
             }
-            Process::Sequential { name, clock, body, .. } => {
+            Process::Sequential {
+                name, clock, body, ..
+            } => {
                 let mut scan = BodyScan::default();
                 scan_body(body, &mut scan);
                 if scan.has_timed {
@@ -234,7 +258,9 @@ pub(crate) fn analyze_plan(engine: &SimulationEngine) -> Result<CyclePlan, Strin
     }
 
     if ff_count == 0 {
-        return Err("tidak ada proses Sequential (always_ff) — tidak ada clock untuk didrive".into());
+        return Err(
+            "tidak ada proses Sequential (always_ff) — tidak ada clock untuk didrive".into(),
+        );
     }
     let clock = clock_opt.ok_or_else(|| {
         "clock FF tidak terdeteksi (butuh @(posedge/negedge clk) eksplisit)".to_string()
@@ -377,7 +403,8 @@ pub(crate) fn run_cycle_based(engine: &mut SimulationEngine) -> Result<bool, Sim
             if idx >= engine.events.len() || engine.events[idx].is_empty() {
                 break;
             }
-            let evs: Vec<crate::simulator::types::RegionEvent> = engine.events[idx].drain(..).collect();
+            let evs: Vec<crate::simulator::types::RegionEvent> =
+                engine.events[idx].drain(..).collect();
             for re in evs {
                 engine.process_event(re.event, cur)?;
             }

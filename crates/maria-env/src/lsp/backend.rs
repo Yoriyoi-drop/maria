@@ -12,18 +12,16 @@ use std::collections::HashMap;
 use lsp_types::notification::PublishDiagnostics;
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse,
-    CodeLens, Command as LspCommand, CodeLensParams,
-    ColorInformation, ColorPresentation, ColorPresentationParams,
-    CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
-    Diagnostic, DiagnosticSeverity, DocumentSymbol, FoldingRange, FoldingRangeKind,
-    FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverContents, InitializeParams, InitializeResult, LanguageString, Location,
-    MarkedString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, RenameParams,
-    SemanticToken, SemanticTokens, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult, ServerCapabilities, ServerInfo,
-    LinkedEditingRanges, LinkedEditingRangeParams, SelectionRange, SelectionRangeParams, SymbolInformation, SymbolKind,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
-    WorkspaceEdit, WorkspaceSymbolParams,
+    CodeLens, CodeLensParams, ColorInformation, ColorPresentation, ColorPresentationParams,
+    Command as LspCommand, CompletionItem, CompletionItemKind, CompletionParams,
+    CompletionResponse, Diagnostic, DiagnosticSeverity, DocumentSymbol, FoldingRange,
+    FoldingRangeKind, FoldingRangeParams, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverContents, InitializeParams, InitializeResult, LanguageString, LinkedEditingRangeParams,
+    LinkedEditingRanges, Location, MarkedString, OneOf, Position, PublishDiagnosticsParams, Range,
+    ReferenceParams, RenameParams, SelectionRange, SelectionRangeParams, SemanticToken,
+    SemanticTokens, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use maria_parser::lexer::Lexer;
 use maria_parser::preprocessor::Preprocessor;
@@ -44,7 +42,8 @@ pub(crate) struct WsSymbolHit {
 /// Simbol dokumen versi lite (LSP-12) — dikonversi ke
 /// lsp_types::DocumentSymbol oleh handler.
 #[derive(Debug, Clone)]
-pub(crate) struct DocSymbol {    pub name: String,
+pub(crate) struct DocSymbol {
+    pub name: String,
     pub kind: u8,
     pub line: u32,
     pub col: u32,
@@ -392,8 +391,7 @@ impl LspBackend {
         let range = diag.range;
 
         // Quick-fix: missing semicolon (suggested: add ';')
-        if msg.to_lowercase().contains("expected ';'")
-            || msg.to_lowercase().contains("missing ';'")
+        if msg.to_lowercase().contains("expected ';'") || msg.to_lowercase().contains("missing ';'")
         {
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "Add missing semicolon".to_string(),
@@ -403,14 +401,8 @@ impl LspBackend {
                     uri.clone(),
                     vec![lsp_types::TextEdit {
                         range: Range {
-                            start: Position::new(
-                                range.end.line,
-                                range.end.character,
-                            ),
-                            end: Position::new(
-                                range.end.line,
-                                range.end.character,
-                            ),
+                            start: Position::new(range.end.line, range.end.character),
+                            end: Position::new(range.end.line, range.end.character),
                         },
                         new_text: ";".to_string(),
                     }],
@@ -426,12 +418,7 @@ impl LspBackend {
         if msg.to_lowercase().contains("expected 'endmodule'")
             || msg.to_lowercase().contains("unterminated module")
         {
-            let last_line = diag
-                .message
-                .lines()
-                .last()
-                .unwrap_or(&msg)
-                .to_string();
+            let last_line = diag.message.lines().last().unwrap_or(&msg).to_string();
             let _ = last_line;
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "Add missing endmodule".to_string(),
@@ -441,14 +428,8 @@ impl LspBackend {
                     uri.clone(),
                     vec![lsp_types::TextEdit {
                         range: Range {
-                            start: Position::new(
-                                range.end.line + 1,
-                                0,
-                            ),
-                            end: Position::new(
-                                range.end.line + 1,
-                                0,
-                            ),
+                            start: Position::new(range.end.line + 1, 0),
+                            end: Position::new(range.end.line + 1, 0),
                         },
                         new_text: "endmodule\n".to_string(),
                     }],
@@ -470,14 +451,8 @@ impl LspBackend {
                     uri.clone(),
                     vec![lsp_types::TextEdit {
                         range: Range {
-                            start: Position::new(
-                                range.end.line + 1,
-                                0,
-                            ),
-                            end: Position::new(
-                                range.end.line + 1,
-                                0,
-                            ),
+                            start: Position::new(range.end.line + 1, 0),
+                            end: Position::new(range.end.line + 1, 0),
                         },
                         new_text: "endfunction\n".to_string(),
                     }],
@@ -499,14 +474,8 @@ impl LspBackend {
                     uri.clone(),
                     vec![lsp_types::TextEdit {
                         range: Range {
-                            start: Position::new(
-                                range.end.line + 1,
-                                0,
-                            ),
-                            end: Position::new(
-                                range.end.line + 1,
-                                0,
-                            ),
+                            start: Position::new(range.end.line + 1, 0),
+                            end: Position::new(range.end.line + 1, 0),
                         },
                         new_text: "endclass\n".to_string(),
                     }],
@@ -620,8 +589,7 @@ impl LspBackend {
     fn word_at_position(line_text: &str, character: u32) -> Option<(String, u32, u32)> {
         let bytes = line_text.as_bytes();
         let ch = character as usize;
-        let is_ident =
-            |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+        let is_ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
 
         if ch > bytes.len() {
             return None;
@@ -639,11 +607,7 @@ impl LspBackend {
         if start == end {
             return None;
         }
-        Some((
-            line_text[start..end].to_string(),
-            start as u32,
-            end as u32,
-        ))
+        Some((line_text[start..end].to_string(), start as u32, end as u32))
     }
 
     /// Tokenize satu baris menjadi (word, col) — ident [A-Za-z0-9_$] atau
@@ -657,9 +621,7 @@ impl LspBackend {
             if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
                 let s = i;
                 while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric()
-                        || bytes[i] == b'_'
-                        || bytes[i] == b'$')
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
                 {
                     i += 1;
                 }
@@ -688,14 +650,23 @@ impl LspBackend {
     ///      berikutnya yang relevan — port/signal declaration.
     fn definition_col(line: &str, word: &str) -> Option<usize> {
         const SCOPE_KW: &[&str] = &[
-            "module", "macromodule", "interface", "package", "program", "class",
-            "checker", "function", "task", "property", "sequence",
+            "module",
+            "macromodule",
+            "interface",
+            "package",
+            "program",
+            "class",
+            "checker",
+            "function",
+            "task",
+            "property",
+            "sequence",
         ];
         const DECL_KW: &[&str] = &["parameter", "localparam", "typedef", "genvar"];
         const TYPE_DIR_KW: &[&str] = &[
-            "input", "output", "inout", "wire", "reg", "logic", "bit", "int",
-            "integer", "byte", "shortint", "longint", "real", "realtime",
-            "time", "nettype", "enum", "struct", "union", "string", "event",
+            "input", "output", "inout", "wire", "reg", "logic", "bit", "int", "integer", "byte",
+            "shortint", "longint", "real", "realtime", "time", "nettype", "enum", "struct",
+            "union", "string", "event",
         ];
 
         let toks = Self::line_tokens(line);
@@ -821,11 +792,7 @@ impl LspBackend {
         let (word, _, _) = Self::word_at_position(line_text, character)?;
 
         let (def_line, _, _) = Self::find_definition(source, line, character)?;
-        let decl_text = source
-            .lines()
-            .nth(def_line as usize)?
-            .trim()
-            .to_string();
+        let decl_text = source.lines().nth(def_line as usize)?.trim().to_string();
 
         // Tebak kind dari keyword di baris definisi.
         let toks = Self::line_tokens(&decl_text);
@@ -872,8 +839,8 @@ impl LspBackend {
         const FUNC_KW: &[&str] = &["function", "task"];
         const CONST_KW: &[&str] = &["parameter", "localparam"];
         const VAR_KW: &[&str] = &[
-            "input", "output", "inout", "wire", "reg", "logic", "bit", "int",
-            "integer", "byte", "shortint", "longint", "real", "time", "string",
+            "input", "output", "inout", "wire", "reg", "logic", "bit", "int", "integer", "byte",
+            "shortint", "longint", "real", "time", "string",
         ];
 
         struct Frame {
@@ -904,11 +871,7 @@ impl LspBackend {
                 if let Some(sym) = frame.sym.take() {
                     stack.last_mut().unwrap().children.push(sym);
                 } else {
-                    stack
-                        .last_mut()
-                        .unwrap()
-                        .children
-                        .extend(frame.children);
+                    stack.last_mut().unwrap().children.extend(frame.children);
                 }
                 continue;
             }
@@ -931,22 +894,22 @@ impl LspBackend {
                         // (`module m #(parameter WIDTH = 8) (`).
                         let frame = stack.last_mut().unwrap();
                         for i in 2..toks.len() {
-                            if matches!(
-                                toks[i].0.as_str(),
-                                "parameter" | "localparam"
-                            ) {
+                            if matches!(toks[i].0.as_str(), "parameter" | "localparam") {
                                 for (w, c) in toks.iter().skip(i + 1).cloned() {
                                     if Self::is_valid_identifier(&w)
                                         && !matches!(
                                             w.as_str(),
-                                            "logic" | "bit" | "int" | "integer"
-                                                | "signed" | "unsigned" | "real"
-                                                | "string" | "type"
+                                            "logic"
+                                                | "bit"
+                                                | "int"
+                                                | "integer"
+                                                | "signed"
+                                                | "unsigned"
+                                                | "real"
+                                                | "string"
+                                                | "type"
                                         )
-                                        && !frame
-                                            .children
-                                            .iter()
-                                            .any(|ch| ch.name == w)
+                                        && !frame.children.iter().any(|ch| ch.name == w)
                                     {
                                         frame.children.push(DocSymbol {
                                             name: w,
@@ -970,8 +933,15 @@ impl LspBackend {
                     if Self::is_valid_identifier(&w)
                         && !matches!(
                             w.as_str(),
-                            "logic" | "bit" | "int" | "integer" | "signed"
-                                | "unsigned" | "automatic" | "static" | "void"
+                            "logic"
+                                | "bit"
+                                | "int"
+                                | "integer"
+                                | "signed"
+                                | "unsigned"
+                                | "automatic"
+                                | "static"
+                                | "void"
                         )
                     {
                         stack.last_mut().unwrap().children.push(DocSymbol {
@@ -993,8 +963,15 @@ impl LspBackend {
                     if Self::is_valid_identifier(&w)
                         && !matches!(
                             w.as_str(),
-                            "logic" | "bit" | "int" | "integer" | "signed"
-                                | "unsigned" | "real" | "string" | "type"
+                            "logic"
+                                | "bit"
+                                | "int"
+                                | "integer"
+                                | "signed"
+                                | "unsigned"
+                                | "real"
+                                | "string"
+                                | "type"
                         )
                     {
                         stack.last_mut().unwrap().children.push(DocSymbol {
@@ -1015,9 +992,19 @@ impl LspBackend {
                     if Self::is_valid_identifier(&w)
                         && !matches!(
                             w.as_str(),
-                            "logic" | "reg" | "wire" | "bit" | "int" | "integer"
-                                | "signed" | "unsigned" | "real" | "string"
-                                | "input" | "output" | "inout"
+                            "logic"
+                                | "reg"
+                                | "wire"
+                                | "bit"
+                                | "int"
+                                | "integer"
+                                | "signed"
+                                | "unsigned"
+                                | "real"
+                                | "string"
+                                | "input"
+                                | "output"
+                                | "inout"
                         )
                     {
                         stack.last_mut().unwrap().children.push(DocSymbol {
@@ -1110,8 +1097,9 @@ impl LspBackend {
             // Penutup DULU (baris `end else begin` menutup lalu membuka):
             // endcase lalu end.
             if words.contains(&"endcase") {
-                if let Some(pos) =
-                    stack.iter().rposition(|(kw, _)| matches!(*kw, "case" | "casex" | "casez"))
+                if let Some(pos) = stack
+                    .iter()
+                    .rposition(|(kw, _)| matches!(*kw, "case" | "casex" | "casez"))
                 {
                     let (_, start) = stack.remove(pos);
                     out.push((start, idx as u32));
@@ -1150,24 +1138,87 @@ impl LspBackend {
     /// outline) + keyword SystemVerilog umum, difilter prefix identifier
     /// di kursor. Return (label, kind) dengan kind DocSymbol::KIND_*;
     /// keyword memakai KIND_KEYWORD.
-    pub(crate) fn compute_completions(source: &str, line: u32, character: u32) -> Vec<(String, u8)> {
+    pub(crate) fn compute_completions(
+        source: &str,
+        line: u32,
+        character: u32,
+    ) -> Vec<(String, u8)> {
         const KEYWORDS: &[&str] = &[
-            "always", "always_comb", "always_ff", "always_latch", "assign", "begin", "case",
-            "casex", "casez", "class", "clocking", "default", "disable", "else", "end",
-            "endcase", "endclass", "endfunction", "endgenerate", "endinterface", "endmodule",
-            "endpackage", "endtask", "enum", "for", "forever", "fork", "function", "generate",
-            "genvar", "if", "iff", "import", "initial", "inout", "input", "int", "integer",
-            "interface", "join", "logic", "localparam", "longint", "macromodule", "modport",
-            "module", "negedge", "or", "output", "package", "parameter", "posedge", "primitive",
-            "priority", "program", "property", "reg", "repeat", "return", "sequence", "shortint",
-            "signed", "string", "struct", "time", "typedef", "unique", "unsigned", "wait",
-            "while", "wire", "with",
+            "always",
+            "always_comb",
+            "always_ff",
+            "always_latch",
+            "assign",
+            "begin",
+            "case",
+            "casex",
+            "casez",
+            "class",
+            "clocking",
+            "default",
+            "disable",
+            "else",
+            "end",
+            "endcase",
+            "endclass",
+            "endfunction",
+            "endgenerate",
+            "endinterface",
+            "endmodule",
+            "endpackage",
+            "endtask",
+            "enum",
+            "for",
+            "forever",
+            "fork",
+            "function",
+            "generate",
+            "genvar",
+            "if",
+            "iff",
+            "import",
+            "initial",
+            "inout",
+            "input",
+            "int",
+            "integer",
+            "interface",
+            "join",
+            "logic",
+            "localparam",
+            "longint",
+            "macromodule",
+            "modport",
+            "module",
+            "negedge",
+            "or",
+            "output",
+            "package",
+            "parameter",
+            "posedge",
+            "primitive",
+            "priority",
+            "program",
+            "property",
+            "reg",
+            "repeat",
+            "return",
+            "sequence",
+            "shortint",
+            "signed",
+            "string",
+            "struct",
+            "time",
+            "typedef",
+            "unique",
+            "unsigned",
+            "wait",
+            "while",
+            "wire",
+            "with",
         ];
 
-        let line_text = source
-            .lines()
-            .nth(line as usize)
-            .unwrap_or("");
+        let line_text = source.lines().nth(line as usize).unwrap_or("");
         // Prefix = karakter identifier yang sudah diketik sebelum kursor.
         let bytes = line_text.as_bytes();
         let ch = (character as usize).min(bytes.len());
@@ -1188,7 +1239,12 @@ impl LspBackend {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         // Simbol dokumen dulu (lebih relevan).
-        fn walk(items: &[DocSymbol], prefix: &str, out: &mut Vec<(String, u8)>, seen: &mut std::collections::HashSet<String>) {
+        fn walk(
+            items: &[DocSymbol],
+            prefix: &str,
+            out: &mut Vec<(String, u8)>,
+            seen: &mut std::collections::HashSet<String>,
+        ) {
             for s in items {
                 if s.name.to_lowercase().starts_with(prefix) && seen.insert(s.name.clone()) {
                     out.push((s.name.clone(), s.kind));
@@ -1196,7 +1252,12 @@ impl LspBackend {
                 walk(&s.children, prefix, out, seen);
             }
         }
-        walk(&Self::document_symbols(source), &prefix, &mut out, &mut seen);
+        walk(
+            &Self::document_symbols(source),
+            &prefix,
+            &mut out,
+            &mut seen,
+        );
 
         // Keyword SystemVerilog.
         for kw in KEYWORDS {
@@ -1218,12 +1279,7 @@ impl LspBackend {
         let q = query.to_lowercase();
         let mut out: Vec<WsSymbolHit> = Vec::new();
 
-        fn walk(
-            items: &[DocSymbol],
-            uri: &str,
-            q: &str,
-            out: &mut Vec<WsSymbolHit>,
-        ) {
+        fn walk(items: &[DocSymbol], uri: &str, q: &str, out: &mut Vec<WsSymbolHit>) {
             for s in items {
                 if q.is_empty() || s.name.to_lowercase().contains(q) {
                     out.push(WsSymbolHit {
@@ -1241,9 +1297,7 @@ impl LspBackend {
         for (uri, text) in docs {
             walk(&Self::document_symbols(text), uri, &q, &mut out);
         }
-        out.sort_by(|a, b| {
-            (&a.uri, a.line, a.col).cmp(&(&b.uri, b.line, b.col))
-        });
+        out.sort_by(|a, b| (&a.uri, a.line, a.col).cmp(&(&b.uri, b.line, b.col)));
         out
     }
 
@@ -1276,11 +1330,38 @@ impl LspBackend {
 
         // Tambah keyword SV sebagai token type=7 (keyword).
         const KW: &[&str] = &[
-            "module", "endmodule", "always_comb", "always_ff", "assign",
-            "begin", "case", "default", "else", "end", "endcase", "if",
-            "input", "logic", "output", "parameter", "reg", "wire", "localparam",
-            "function", "task", "endfunction", "endtask", "interface", "endinterface",
-            "package", "endpackage", "typedef", "enum", "struct", "posedge", "negedge",
+            "module",
+            "endmodule",
+            "always_comb",
+            "always_ff",
+            "assign",
+            "begin",
+            "case",
+            "default",
+            "else",
+            "end",
+            "endcase",
+            "if",
+            "input",
+            "logic",
+            "output",
+            "parameter",
+            "reg",
+            "wire",
+            "localparam",
+            "function",
+            "task",
+            "endfunction",
+            "endtask",
+            "interface",
+            "endinterface",
+            "package",
+            "endpackage",
+            "typedef",
+            "enum",
+            "struct",
+            "posedge",
+            "negedge",
         ];
         for (idx, line) in source.lines().enumerate() {
             if line.trim_start().starts_with("//") {
@@ -1320,11 +1401,7 @@ impl LspBackend {
     /// semua kemunculan identifier (sebagai token mandiri) dalam dokumen,
     /// urut baris. `include_declaration` tetap dikembalikan penuh — caller
     /// (handler) yang memfilter bila diminta tanpa deklarasi.
-    pub(crate) fn find_references(
-        source: &str,
-        line: u32,
-        character: u32,
-    ) -> Vec<(u32, u32, u32)> {
+    pub(crate) fn find_references(source: &str, line: u32, character: u32) -> Vec<(u32, u32, u32)> {
         let Some(line_text) = source.lines().nth(line as usize) else {
             return Vec::new();
         };
@@ -1415,21 +1492,19 @@ impl LanguageServer for LspBackend {
                         },
                     ),
                 ),
-                folding_range_provider: Some(
-                    lsp_types::FoldingRangeProviderCapability::Simple(true),
-                ),
+                folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(
+                    true,
+                )),
                 // LSP-09: Inlay hints (type hints)
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 // LSP-13: Call hierarchy
-                call_hierarchy_provider: Some(
-                    lsp_types::CallHierarchyServerCapability::Simple(true),
-                ),
+                call_hierarchy_provider: Some(lsp_types::CallHierarchyServerCapability::Simple(
+                    true,
+                )),
                 // LSP-20: Document formatting
                 document_formatting_provider: Some(OneOf::Left(true)),
                 // LSP-10: Code actions (quick-fix)
-                code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(
-                    true,
-                )),
+                code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
                 // LSP-08: Code lens
                 code_lens_provider: Some(lsp_types::CodeLensOptions {
                     resolve_provider: Some(false),
@@ -1443,13 +1518,13 @@ impl LanguageServer for LspBackend {
                 // LSP-22: Color provider
                 color_provider: Some(lsp_types::ColorProviderCapability::Simple(true)),
                 // LSP-24: Selection range
-                selection_range_provider: Some(lsp_types::SelectionRangeProviderCapability::Simple(
-                    true,
-                )),
+                selection_range_provider: Some(
+                    lsp_types::SelectionRangeProviderCapability::Simple(true),
+                ),
                 // LSP-23: Linked editing range
-                linked_editing_range_provider: Some(lsp_types::LinkedEditingRangeServerCapabilities::Simple(
-                    true,
-                )),
+                linked_editing_range_provider: Some(
+                    lsp_types::LinkedEditingRangeServerCapabilities::Simple(true),
+                ),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -1590,10 +1665,7 @@ impl LanguageServer for LspBackend {
     }
 
     /// Rename (LSP-05 tahap 1): rename identifier di seluruh dokumen.
-    async fn rename(
-        &self,
-        params: RenameParams,
-    ) -> JsonRpcResult<Option<WorkspaceEdit>> {
+    async fn rename(&self, params: RenameParams) -> JsonRpcResult<Option<WorkspaceEdit>> {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
         let Some(text) = self.document_text(uri) else {
@@ -1601,28 +1673,26 @@ impl LanguageServer for LspBackend {
         };
         match Self::compute_rename_edits(&text, pos.line, pos.character, &params.new_name) {
             Ok(edits) => {
-                let changes: std::collections::HashMap<
-                    lsp_types::Url,
-                    Vec<lsp_types::TextEdit>,
-                > = std::collections::HashMap::from([(
-                    uri.clone(),
-                    edits
-                        .into_iter()
-                        .map(|(line, start, end)| lsp_types::TextEdit {
-                            range: Range {
-                                start: Position {
-                                    line,
-                                    character: start,
+                let changes: std::collections::HashMap<lsp_types::Url, Vec<lsp_types::TextEdit>> =
+                    std::collections::HashMap::from([(
+                        uri.clone(),
+                        edits
+                            .into_iter()
+                            .map(|(line, start, end)| lsp_types::TextEdit {
+                                range: Range {
+                                    start: Position {
+                                        line,
+                                        character: start,
+                                    },
+                                    end: Position {
+                                        line,
+                                        character: end,
+                                    },
                                 },
-                                end: Position {
-                                    line,
-                                    character: end,
-                                },
-                            },
-                            new_text: params.new_name.clone(),
-                        })
-                        .collect(),
-                )]);
+                                new_text: params.new_name.clone(),
+                            })
+                            .collect(),
+                    )]);
                 Ok(Some(WorkspaceEdit::new(changes)))
             }
             Err(msg) => Err(tower_lsp::jsonrpc::Error::invalid_params(msg)),
@@ -1638,12 +1708,10 @@ impl LanguageServer for LspBackend {
         };
         match Self::hover_info(&text, pos.line, pos.character) {
             Some(markdown) => Ok(Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::LanguageString(
-                    LanguageString {
-                        language: "markdown".into(),
-                        value: markdown,
-                    },
-                )),
+                contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
+                    language: "markdown".into(),
+                    value: markdown,
+                })),
                 range: None,
             })),
             None => Ok(None),
@@ -1697,49 +1765,34 @@ impl LanguageServer for LspBackend {
     }
 
     /// LSP-17: Completion resolve — add documentation/detail to a completion item.
-    async fn completion_resolve(
-        &self,
-        mut item: CompletionItem,
-    ) -> JsonRpcResult<CompletionItem> {
+    async fn completion_resolve(&self, mut item: CompletionItem) -> JsonRpcResult<CompletionItem> {
         // Add documentation based on kind.
-        let doc = match item.kind {
-            Some(CompletionItemKind::MODULE) => {
-                Some(lsp_types::Documentation::String(format!(
-                    "SystemVerilog module `{}`", item.label
-                )))
-            }
-            Some(CompletionItemKind::FUNCTION) => {
-                Some(lsp_types::Documentation::String(format!(
-                    "SystemVerilog function `{}`", item.label
-                )))
-            }
-            Some(CompletionItemKind::CLASS) => {
-                Some(lsp_types::Documentation::String(format!(
-                    "SystemVerilog class `{}`", item.label
-                )))
-            }
-            Some(CompletionItemKind::INTERFACE) => {
-                Some(lsp_types::Documentation::String(format!(
-                    "SystemVerilog interface `{}`", item.label
-                )))
-            }
-            Some(CompletionItemKind::KEYWORD) => {
-                Some(lsp_types::Documentation::String(format!(
-                    "SystemVerilog keyword `{}`", item.label
-                )))
-            }
-            Some(CompletionItemKind::VARIABLE) => {
-                Some(lsp_types::Documentation::String(format!(
-                    "Signal/variable `{}`", item.label
-                )))
-            }
-            Some(CompletionItemKind::CONSTANT) => {
-                Some(lsp_types::Documentation::String(format!(
-                    "Parameter `{}`", item.label
-                )))
-            }
-            _ => None,
-        };
+        let doc =
+            match item.kind {
+                Some(CompletionItemKind::MODULE) => Some(lsp_types::Documentation::String(
+                    format!("SystemVerilog module `{}`", item.label),
+                )),
+                Some(CompletionItemKind::FUNCTION) => Some(lsp_types::Documentation::String(
+                    format!("SystemVerilog function `{}`", item.label),
+                )),
+                Some(CompletionItemKind::CLASS) => Some(lsp_types::Documentation::String(format!(
+                    "SystemVerilog class `{}`",
+                    item.label
+                ))),
+                Some(CompletionItemKind::INTERFACE) => Some(lsp_types::Documentation::String(
+                    format!("SystemVerilog interface `{}`", item.label),
+                )),
+                Some(CompletionItemKind::KEYWORD) => Some(lsp_types::Documentation::String(
+                    format!("SystemVerilog keyword `{}`", item.label),
+                )),
+                Some(CompletionItemKind::VARIABLE) => Some(lsp_types::Documentation::String(
+                    format!("Signal/variable `{}`", item.label),
+                )),
+                Some(CompletionItemKind::CONSTANT) => Some(lsp_types::Documentation::String(
+                    format!("Parameter `{}`", item.label),
+                )),
+                _ => None,
+            };
         if doc.is_some() {
             item.documentation = doc;
         }
@@ -1781,8 +1834,8 @@ impl LanguageServer for LspBackend {
                             name_start -= 1;
                         }
                         if name_start < name_end {
-                            let func_name = std::str::from_utf8(&bytes[name_start..name_end])
-                                .unwrap_or("");
+                            let func_name =
+                                std::str::from_utf8(&bytes[name_start..name_end]).unwrap_or("");
                             // Build a simple signature from the function declaration.
                             let sig = Self::find_function_signature(&text, func_name);
                             if let Some((label, params_list)) = sig {
@@ -2069,8 +2122,7 @@ impl LanguageServer for LspBackend {
             while let Some(pos) = line[offset..].find(word) {
                 let abs_pos = offset + pos;
                 // Word boundary check.
-                let before_ok = abs_pos == 0
-                    || !is_ident(line.as_bytes()[abs_pos - 1]);
+                let before_ok = abs_pos == 0 || !is_ident(line.as_bytes()[abs_pos - 1]);
                 let after_ok = abs_pos + word.len() >= line.len()
                     || !is_ident(line.as_bytes()[abs_pos + word.len()]);
                 if before_ok && after_ok {
@@ -2170,10 +2222,16 @@ fn compute_selection_range(text: &str, line: u32, character: u32) -> SelectionRa
                 Position::new(line, end as u32),
             )
         } else {
-            Range::new(Position::new(line, character), Position::new(line, character + 1))
+            Range::new(
+                Position::new(line, character),
+                Position::new(line, character + 1),
+            )
         }
     } else {
-        Range::new(Position::new(line, character), Position::new(line, character + 1))
+        Range::new(
+            Position::new(line, character),
+            Position::new(line, character + 1),
+        )
     };
 
     // Middle: the entire line.
@@ -2186,11 +2244,10 @@ fn compute_selection_range(text: &str, line: u32, character: u32) -> SelectionRa
     );
 
     // Outermost: enclosing scope (module/class/function/end → start).
-    let scope_range = find_enclosing_scope(&lines, line_idx)
-        .unwrap_or(Range::new(
-            Position::new(0, 0),
-            Position::new(lines.len() as u32, 0),
-        ));
+    let scope_range = find_enclosing_scope(&lines, line_idx).unwrap_or(Range::new(
+        Position::new(0, 0),
+        Position::new(lines.len() as u32, 0),
+    ));
 
     // Build nested chain: word → line → scope.
     SelectionRange {
@@ -2208,12 +2265,25 @@ fn compute_selection_range(text: &str, line: u32, character: u32) -> SelectionRa
 /// Find the enclosing scope range for a given line.
 fn find_enclosing_scope(lines: &[&str], target_line: usize) -> Option<Range> {
     const OPEN_KW: &[&str] = &[
-        "module", "macromodule", "interface", "package", "class",
-        "checker", "function", "task", "program",
+        "module",
+        "macromodule",
+        "interface",
+        "package",
+        "class",
+        "checker",
+        "function",
+        "task",
+        "program",
     ];
     const CLOSE_KW: &[&str] = &[
-        "endmodule", "endinterface", "endpackage", "endclass",
-        "endchecker", "endfunction", "endtask", "endprogram",
+        "endmodule",
+        "endinterface",
+        "endpackage",
+        "endclass",
+        "endchecker",
+        "endfunction",
+        "endtask",
+        "endprogram",
     ];
 
     // Walk backward from target line to find opening keyword.
@@ -2237,10 +2307,7 @@ fn find_enclosing_scope(lines: &[&str], target_line: usize) -> Option<Range> {
                         if end_depth == 0 {
                             return Some(Range::new(
                                 Position::new(i as u32, 0),
-                                Position::new(
-                                    j as u32,
-                                    lines[j].len() as u32,
-                                ),
+                                Position::new(j as u32, lines[j].len() as u32),
                             ));
                         }
                     }
@@ -2321,7 +2388,12 @@ impl LspBackend {
         let start_line = range.map(|r| r.start.line as usize).unwrap_or(0);
         let end_line = range.map(|r| r.end.line as usize).unwrap_or(lines.len());
 
-        for (line_idx, line) in lines.iter().enumerate().skip(start_line).take(end_line - start_line) {
+        for (line_idx, line) in lines
+            .iter()
+            .enumerate()
+            .skip(start_line)
+            .take(end_line - start_line)
+        {
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with("//") {
                 continue;
@@ -2333,20 +2405,18 @@ impl LspBackend {
             if type_dirs.iter().any(|d| trimmed.starts_with(d)) {
                 if let Some((name, type_str)) = Self::parse_port_type_hint(trimmed) {
                     let col = Self::find_word_col(line, &name).unwrap_or(0) + name.len() as u32;
-                    hints.push(Self::make_type_hint(
-                        line_idx as u32, col, &type_str,
-                    ));
+                    hints.push(Self::make_type_hint(line_idx as u32, col, &type_str));
                 }
             }
 
             // 2. Internal declarations: `logic [7:0] cnt`, `reg [3:0] state`, `wire [15:0] bus`
-            let int_types = ["logic", "reg", "wire", "bit", "int", "integer", "byte", "shortint", "longint"];
+            let int_types = [
+                "logic", "reg", "wire", "bit", "int", "integer", "byte", "shortint", "longint",
+            ];
             if int_types.iter().any(|t| trimmed.starts_with(t)) {
                 if let Some((name, type_str)) = Self::parse_signal_type_hint(trimmed) {
                     let col = Self::find_word_col(line, &name).unwrap_or(0) + name.len() as u32;
-                    hints.push(Self::make_type_hint(
-                        line_idx as u32, col, &type_str,
-                    ));
+                    hints.push(Self::make_type_hint(line_idx as u32, col, &type_str));
                 }
             }
 
@@ -2355,9 +2425,7 @@ impl LspBackend {
             if trimmed.starts_with("function") {
                 if let Some((name, ret_type)) = Self::parse_function_return_hint(trimmed) {
                     let col = Self::find_word_col(line, &name).unwrap_or(0) + name.len() as u32;
-                    hints.push(Self::make_type_hint(
-                        line_idx as u32, col, &ret_type,
-                    ));
+                    hints.push(Self::make_type_hint(line_idx as u32, col, &ret_type));
                 }
             }
 
@@ -2365,9 +2433,7 @@ impl LspBackend {
             if trimmed.starts_with("parameter") || trimmed.starts_with("localparam") {
                 if let Some((name, type_str)) = Self::parse_param_type_hint(trimmed) {
                     let col = Self::find_word_col(line, &name).unwrap_or(0) + name.len() as u32;
-                    hints.push(Self::make_type_hint(
-                        line_idx as u32, col, &type_str,
-                    ));
+                    hints.push(Self::make_type_hint(line_idx as u32, col, &type_str));
                 }
             }
         }
@@ -2500,19 +2566,11 @@ impl LspBackend {
     /// Shows:
     /// - Above each module: "Run tests" action
     /// - Above each function/task: reference count
-    pub(crate) fn compute_code_lens(
-        text: &str,
-        uri: &Url,
-    ) -> Vec<CodeLens> {
+    pub(crate) fn compute_code_lens(text: &str, uri: &Url) -> Vec<CodeLens> {
         let mut lenses = Vec::new();
         let syms = Self::document_symbols(text);
 
-        fn walk(
-            items: &[DocSymbol],
-            text: &str,
-            uri: &Url,
-            lenses: &mut Vec<CodeLens>,
-        ) {
+        fn walk(items: &[DocSymbol], text: &str, uri: &Url, lenses: &mut Vec<CodeLens>) {
             for sym in items {
                 match sym.kind {
                     // Module → "Run tests" lens
@@ -2520,7 +2578,11 @@ impl LspBackend {
                         // Count tests (functions starting with "test_" in module body)
                         let test_count = count_tests_in_scope(text, sym);
                         let title = if test_count > 0 {
-                            format!("{} test{}", test_count, if test_count == 1 { "" } else { "s" })
+                            format!(
+                                "{} test{}",
+                                test_count,
+                                if test_count == 1 { "" } else { "s" }
+                            )
                         } else {
                             "Run tests".to_string()
                         };
@@ -2545,13 +2607,14 @@ impl LspBackend {
                             lenses.push(CodeLens {
                                 range: Range {
                                     start: Position::new(sym.line, sym.col),
-                                    end: Position::new(
-                                        sym.line,
-                                        sym.col + sym.name.len() as u32,
-                                    ),
+                                    end: Position::new(sym.line, sym.col + sym.name.len() as u32),
                                 },
                                 command: Some(LspCommand {
-                                    title: format!("{} reference{}", ref_count, if ref_count == 1 { "" } else { "s" }),
+                                    title: format!(
+                                        "{} reference{}",
+                                        ref_count,
+                                        if ref_count == 1 { "" } else { "s" }
+                                    ),
                                     command: format!("maria.showReferences.{}", sym.name),
                                     arguments: None,
                                 }),
@@ -2563,10 +2626,7 @@ impl LspBackend {
                             lenses.push(CodeLens {
                                 range: Range {
                                     start: Position::new(sym.line, sym.col),
-                                    end: Position::new(
-                                        sym.line,
-                                        sym.col + sym.name.len() as u32,
-                                    ),
+                                    end: Position::new(sym.line, sym.col + sym.name.len() as u32),
                                 },
                                 command: Some(LspCommand {
                                     title: "▶ Run test".to_string(),
@@ -2665,8 +2725,8 @@ fn count_word_occurrences(text: &str, word: &str) -> usize {
     for i in 0..bytes.len() {
         if i + wlen <= bytes.len() && &bytes[i..i + wlen] == wbytes {
             // Check word boundaries.
-            let before_ok = i == 0
-                || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+            let before_ok =
+                i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
             let after_ok = i + wlen >= bytes.len()
                 || !(bytes[i + wlen].is_ascii_alphanumeric() || bytes[i + wlen] == b'_');
             if before_ok && after_ok {
@@ -2685,7 +2745,10 @@ impl LspBackend {
     pub(crate) fn compute_call_hierarchy(
         text: &str,
         _name: &str,
-    ) -> (Vec<lsp_types::CallHierarchyItem>, Vec<lsp_types::CallHierarchyItem>) {
+    ) -> (
+        Vec<lsp_types::CallHierarchyItem>,
+        Vec<lsp_types::CallHierarchyItem>,
+    ) {
         let mut incoming = Vec::new();
         let mut outgoing = Vec::new();
 
@@ -2715,7 +2778,10 @@ impl LspBackend {
                 }
             }
             // Detect function/task calls
-            if trimmed.contains('(') && !trimmed.starts_with("function") && !trimmed.starts_with("task") {
+            if trimmed.contains('(')
+                && !trimmed.starts_with("function")
+                && !trimmed.starts_with("task")
+            {
                 if let Some(name) = Self::extract_call_name(trimmed) {
                     let item = lsp_types::CallHierarchyItem {
                         name,
@@ -2745,11 +2811,14 @@ impl LspBackend {
     /// Skips type keywords (int, logic, reg, etc.) to get the actual name.
     fn extract_symbol_name(line: &str) -> Option<String> {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        let type_keywords = ["int", "logic", "reg", "wire", "bit", "byte",
-            "integer", "shortint", "longint", "real", "realtime",
-            "time", "string", "signed", "unsigned", "void"];
+        let type_keywords = [
+            "int", "logic", "reg", "wire", "bit", "byte", "integer", "shortint", "longint", "real",
+            "realtime", "time", "string", "signed", "unsigned", "void",
+        ];
         for (i, part) in parts.iter().enumerate() {
-            if i == 0 { continue; }
+            if i == 0 {
+                continue;
+            }
             let name = part.trim_end_matches('(').trim_end_matches(')');
             if !type_keywords.contains(&name) && !name.is_empty() {
                 return Some(name.to_string());
@@ -2803,10 +2872,7 @@ endmodule
 
     /// Baris pertama yang memuat `needle` (untuk ekspektasi robust).
     fn line_of(needle: &str) -> u32 {
-        SAMPLE
-            .lines()
-            .position(|l| l.contains(needle))
-            .unwrap() as u32
+        SAMPLE.lines().position(|l| l.contains(needle)).unwrap() as u32
     }
 
     #[test]
@@ -2845,8 +2911,7 @@ endmodule
             .unwrap()
             .find("counter_aux")
             .unwrap() as u32;
-        let (line, col, _) =
-            LspBackend::find_definition(SAMPLE, use_line, aux_col + 3).unwrap();
+        let (line, col, _) = LspBackend::find_definition(SAMPLE, use_line, aux_col + 3).unwrap();
         assert_eq!(line, line_of("module counter_aux"));
         assert_eq!(
             SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("counter_aux"),
@@ -2858,9 +2923,13 @@ endmodule
     fn test_find_definition_signal_and_port() {
         // Pemakaian `enable` di always_ff → deklarasi `reg enable;`.
         let use_line = line_of("else if (enable)");
-        let enable_col = SAMPLE.lines().nth(use_line as usize).unwrap().find("enable").unwrap() as u32;
-        let (line, col, _) =
-            LspBackend::find_definition(SAMPLE, use_line, enable_col).unwrap();
+        let enable_col = SAMPLE
+            .lines()
+            .nth(use_line as usize)
+            .unwrap()
+            .find("enable")
+            .unwrap() as u32;
+        let (line, col, _) = LspBackend::find_definition(SAMPLE, use_line, enable_col).unwrap();
         assert_eq!(line, line_of("reg enable"));
         assert_eq!(
             SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("enable"),
@@ -2887,7 +2956,12 @@ endmodule
         // Signal `state` dipakai? Tidak ada pemakaian; deklarasinya sendiri
         // tetap ditemukan.
         let decl_line = line_of("logic [3:0] state;");
-        let st_col = SAMPLE.lines().nth(decl_line as usize).unwrap().find("state").unwrap() as u32;
+        let st_col = SAMPLE
+            .lines()
+            .nth(decl_line as usize)
+            .unwrap()
+            .find("state")
+            .unwrap() as u32;
         let (line, col, _) = LspBackend::find_definition(SAMPLE, decl_line, st_col).unwrap();
         assert_eq!(line, decl_line);
         assert_eq!(
@@ -2923,7 +2997,13 @@ endmodule
         let refs = LspBackend::find_references(SAMPLE, inst_line, 26);
         let refs = if refs.is_empty() {
             // fallback: kolom clk kedua di baris instance.
-            let col = SAMPLE.lines().nth(inst_line as usize).unwrap().rfind("(clk)").unwrap() as u32 + 1;
+            let col = SAMPLE
+                .lines()
+                .nth(inst_line as usize)
+                .unwrap()
+                .rfind("(clk)")
+                .unwrap() as u32
+                + 1;
             LspBackend::find_references(SAMPLE, inst_line, col)
         } else {
             refs
@@ -2952,7 +3032,12 @@ endmodule
 
         // Word boundary: `count` TIDAK match dengan `counter`/`count_aux`.
         let cnt_line = line_of("output logic [WIDTH-1:0] count");
-        let c_col = SAMPLE.lines().nth(cnt_line as usize).unwrap().rfind("count").unwrap() as u32;
+        let c_col = SAMPLE
+            .lines()
+            .nth(cnt_line as usize)
+            .unwrap()
+            .rfind("count")
+            .unwrap() as u32;
         let refs3 = LspBackend::find_references(SAMPLE, cnt_line, c_col);
         assert!(!refs3.is_empty(), "count harus ditemukan");
         for (l, s, e) in &refs3 {
@@ -2984,8 +3069,7 @@ endmodule
             .unwrap()
             .find("enable")
             .unwrap() as u32;
-        let edits =
-            LspBackend::compute_rename_edits(SAMPLE, use_line, col, "en").unwrap();
+        let edits = LspBackend::compute_rename_edits(SAMPLE, use_line, col, "en").unwrap();
         assert_eq!(edits.len(), 2, "enable di-rename 2 lokusi: {:?}", edits);
         let lines: Vec<u32> = edits.iter().map(|(l, _, _)| *l).collect();
         assert!(lines.contains(&decl_line));
@@ -2994,12 +3078,8 @@ endmodule
         let mut lines_mut: Vec<String> = SAMPLE.lines().map(|s| s.to_string()).collect();
         for (l, s, e) in edits.iter().rev() {
             let text = lines_mut[*l as usize].clone();
-            lines_mut[*l as usize] = format!(
-                "{}{}{}",
-                &text[..*s as usize],
-                "en",
-                &text[*e as usize..]
-            );
+            lines_mut[*l as usize] =
+                format!("{}{}{}", &text[..*s as usize], "en", &text[*e as usize..]);
         }
         assert!(lines_mut[decl_line as usize].contains("reg en;"));
         assert!(lines_mut[use_line as usize].contains("if (en)"));
@@ -3021,8 +3101,7 @@ endmodule
             .unwrap()
             .find("count")
             .unwrap() as u32;
-        let edits_cnt =
-            LspBackend::compute_rename_edits(SAMPLE, cnt_use, c_col, "cnt").unwrap();
+        let edits_cnt = LspBackend::compute_rename_edits(SAMPLE, cnt_use, c_col, "cnt").unwrap();
         assert_eq!(
             edits_cnt.len(),
             4,
@@ -3036,7 +3115,12 @@ endmodule
     fn test_hover_info() {
         // Hover di pemakaian `enable` → konteks deklarasi reg.
         let use_line = line_of("else if (enable)");
-        let col = SAMPLE.lines().nth(use_line as usize).unwrap().find("enable").unwrap() as u32;
+        let col = SAMPLE
+            .lines()
+            .nth(use_line as usize)
+            .unwrap()
+            .find("enable")
+            .unwrap() as u32;
         let info = LspBackend::hover_info(SAMPLE, use_line, col).unwrap();
         assert!(info.contains("enable"), "{}", info);
         assert!(info.contains("reg enable;"), "{}", info);
@@ -3060,7 +3144,12 @@ endmodule
     fn test_document_symbols_outline() {
         let syms = LspBackend::document_symbols(SAMPLE);
         // 2 module di root.
-        assert_eq!(syms.len(), 2, "root: {:?}", syms.iter().map(|s| &s.name).collect::<Vec<_>>());
+        assert_eq!(
+            syms.len(),
+            2,
+            "root: {:?}",
+            syms.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
         assert_eq!(syms[0].name, "counter");
         assert_eq!(syms[0].kind, DocSymbol::KIND_MODULE);
         assert_eq!(syms[0].line, line_of("module counter"));
@@ -3090,7 +3179,11 @@ endmodule
 
         // Konversi ke lsp_types: kind + selection range benar.
         let lsp = syms2[0].to_lsp(|l| {
-            broken.lines().nth(l as usize).map(|s| s.chars().count() as u32).unwrap_or(0)
+            broken
+                .lines()
+                .nth(l as usize)
+                .map(|s| s.chars().count() as u32)
+                .unwrap_or(0)
         });
         assert_eq!(lsp.kind, SymbolKind::MODULE);
     }
@@ -3147,10 +3240,7 @@ endmodule
 
     #[test]
     fn test_workspace_symbol_search() {
-        let doc_a = (
-            "file:///a.sv".to_string(),
-            SAMPLE.to_string(),
-        );
+        let doc_a = ("file:///a.sv".to_string(), SAMPLE.to_string());
         let doc_b = (
             "file:///b.sv".to_string(),
             "module alu;\n  wire carry;\nendmodule\n".to_string(),
@@ -3235,14 +3325,7 @@ endmodule
         // Identifier tanpa definisi (rst_n hanya ada di decl+usage... pakai
         // nama yang benar-benar tak ada).
         assert!(LspBackend::find_definition(SAMPLE, 0, 0).is_none()); // "module" bukan ident target? word="module" → def module <word>? tidak match
-        assert!(
-            LspBackend::find_definition(
-                "module m;\nendmodule\n",
-                1,
-                2
-            )
-            .is_none()
-        );
+        assert!(LspBackend::find_definition("module m;\nendmodule\n", 1, 2).is_none());
         // Baris di luar dokumen.
         assert!(LspBackend::find_definition(SAMPLE, 999, 0).is_none());
     }
@@ -3254,7 +3337,11 @@ endmodule
         // Should have nested ranges: word → line → scope.
         assert!(range.parent.is_some(), "should have parent: {:?}", range);
         let parent = range.parent.as_ref().unwrap();
-        assert!(parent.parent.is_some(), "should have grandparent: {:?}", parent);
+        assert!(
+            parent.parent.is_some(),
+            "should have grandparent: {:?}",
+            parent
+        );
         // Word range should be non-empty.
         let word = &parent.parent.as_ref().unwrap().range;
         assert!(word.start.line == 1, "word line: {:?}", word);
@@ -3295,7 +3382,11 @@ endmodule
             }
         }
         // 'counter' appears in 'counter' (line 0) and 'counter_aux' (not standalone).
-        assert!(ranges.len() >= 1, "at least 1 standalone occurrence: {:?}", ranges);
+        assert!(
+            ranges.len() >= 1,
+            "at least 1 standalone occurrence: {:?}",
+            ranges
+        );
     }
 
     #[test]
@@ -3352,9 +3443,15 @@ endmodule
         let lenses = LspBackend::compute_code_lens(src, &uri);
         // Module counter → 1 lens
         assert!(
-            lenses.iter().any(|l| l.command.as_ref().map_or(false, |c| c.title.contains("test"))),
+            lenses.iter().any(|l| l
+                .command
+                .as_ref()
+                .map_or(false, |c| c.title.contains("test"))),
             "module lens: {:?}",
-            lenses.iter().map(|l| l.command.as_ref().map(|c| c.title.as_str())).collect::<Vec<_>>()
+            lenses
+                .iter()
+                .map(|l| l.command.as_ref().map(|c| c.title.as_str()))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3386,7 +3483,11 @@ endmodule
             lsp_types::InlayHintLabel::String(s) => s.contains(": int"),
             _ => false,
         });
-        assert!(has_int, "should have function return type hint: {:?}", hints);
+        assert!(
+            has_int,
+            "should have function return type hint: {:?}",
+            hints
+        );
     }
 
     #[test]
@@ -3408,19 +3509,35 @@ endmodule
         let lenses = LspBackend::compute_code_lens(src, &uri);
         // Module counter -> test count lens
         assert!(
-            lenses.iter().any(|l| l.command.as_ref().map_or(false, |c| c.title.contains("test"))),
+            lenses.iter().any(|l| l
+                .command
+                .as_ref()
+                .map_or(false, |c| c.title.contains("test"))),
             "module lens: {:?}",
-            lenses.iter().map(|l| l.command.as_ref().map(|c| c.title.as_str())).collect::<Vec<_>>()
+            lenses
+                .iter()
+                .map(|l| l.command.as_ref().map(|c| c.title.as_str()))
+                .collect::<Vec<_>>()
         );
         // test_add -> 'Run test' lens (LSP-21)
         assert!(
-            lenses.iter().any(|l| l.command.as_ref().map_or(false, |c| c.command.contains("runTest") && c.command.contains("test_add"))),
+            lenses.iter().any(|l| l
+                .command
+                .as_ref()
+                .map_or(false, |c| c.command.contains("runTest")
+                    && c.command.contains("test_add"))),
             "test_add should have runTest lens: {:?}",
-            lenses.iter().map(|l| l.command.as_ref().map(|c| (&c.title, &c.command))).collect::<Vec<_>>()
+            lenses
+                .iter()
+                .map(|l| l.command.as_ref().map(|c| (&c.title, &c.command)))
+                .collect::<Vec<_>>()
         );
         // not_a_test -> NO runTest lens
         assert!(
-            !lenses.iter().any(|l| l.command.as_ref().map_or(false, |c| c.command.contains("not_a_test"))),
+            !lenses.iter().any(|l| l
+                .command
+                .as_ref()
+                .map_or(false, |c| c.command.contains("not_a_test"))),
             "not_a_test should NOT have runTest lens"
         );
     }
@@ -3439,9 +3556,18 @@ endmodule
 ";
         let (incoming, outgoing) = LspBackend::compute_call_hierarchy(src, "any");
         // outgoing = declarations found (helper, main)
-        assert_eq!(outgoing.len(), 2, "should find 2 declarations: {:?}", outgoing.iter().map(|i| i.name.as_str()).collect::<Vec<_>>());
+        assert_eq!(
+            outgoing.len(),
+            2,
+            "should find 2 declarations: {:?}",
+            outgoing.iter().map(|i| i.name.as_str()).collect::<Vec<_>>()
+        );
         // incoming = call sites (helper(a) call found)
-        assert!(!incoming.is_empty(), "should find call sites: {:?}", incoming);
+        assert!(
+            !incoming.is_empty(),
+            "should find call sites: {:?}",
+            incoming
+        );
     }
 
     #[test]
@@ -3464,7 +3590,11 @@ endmodule
         let formatted = LspBackend::format_source(src, 4);
         // Must contain key tokens.
         assert!(formatted.contains("module"), "has module: {}", formatted);
-        assert!(formatted.contains("endmodule"), "has endmodule: {}", formatted);
+        assert!(
+            formatted.contains("endmodule"),
+            "has endmodule: {}",
+            formatted
+        );
         assert!(formatted.contains("input"), "has input: {}", formatted);
         assert!(formatted.contains("logic"), "has logic: {}", formatted);
         assert!(formatted.contains("output"), "has output: {}", formatted);
@@ -3479,14 +3609,23 @@ endmodule
         // First line (module) — no indent.
         assert!(lines[0].starts_with("module"), "first: {}", lines[0]);
         // Last line (endmodule) — no indent (dedented).
-        assert!(lines.last().unwrap().starts_with("endmodule"), "last: {}", lines.last().unwrap());
+        assert!(
+            lines.last().unwrap().starts_with("endmodule"),
+            "last: {}",
+            lines.last().unwrap()
+        );
     }
 
     #[test]
     fn test_format_source_empty() {
         // Empty source → empty output.
         let formatted = LspBackend::format_source("", 4);
-        assert!(formatted.is_empty() || formatted.trim().is_empty(), "empty in: '{}', out: '{}'", "", formatted);
+        assert!(
+            formatted.is_empty() || formatted.trim().is_empty(),
+            "empty in: '{}', out: '{}'",
+            "",
+            formatted
+        );
     }
 
     #[test]
@@ -3499,11 +3638,10 @@ endmodule
         };
         // Simulate resolve by calling the static core logic.
         let doc = match item.kind {
-            Some(CompletionItemKind::MODULE) => {
-                Some(lsp_types::Documentation::String(format!(
-                    "SystemVerilog module `{}`", item.label
-                )))
-            }
+            Some(CompletionItemKind::MODULE) => Some(lsp_types::Documentation::String(format!(
+                "SystemVerilog module `{}`",
+                item.label
+            ))),
             _ => None,
         };
         assert!(doc.is_some(), "module should have documentation");
@@ -3540,7 +3678,11 @@ endmodule
         let actions = LspBackend::actions_from_diagnostic("", &diag, &uri).unwrap();
         assert_eq!(actions.len(), 1, "one action for missing semicolon");
         if let lsp_types::CodeActionOrCommand::CodeAction(action) = &actions[0] {
-            assert!(action.title.contains("semicolon"), "title: {}", action.title);
+            assert!(
+                action.title.contains("semicolon"),
+                "title: {}",
+                action.title
+            );
             assert!(action.edit.is_some(), "has edit");
         } else {
             panic!("expected CodeAction");
@@ -3564,7 +3706,11 @@ endmodule
         let actions = LspBackend::actions_from_diagnostic("", &diag, &uri).unwrap();
         assert_eq!(actions.len(), 1, "one action for missing endmodule");
         if let lsp_types::CodeActionOrCommand::CodeAction(action) = &actions[0] {
-            assert!(action.title.contains("endmodule"), "title: {}", action.title);
+            assert!(
+                action.title.contains("endmodule"),
+                "title: {}",
+                action.title
+            );
             assert!(action.edit.is_some(), "has edit");
         } else {
             panic!("expected CodeAction");

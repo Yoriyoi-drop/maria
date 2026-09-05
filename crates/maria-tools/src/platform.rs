@@ -20,15 +20,30 @@ impl Platform {
     /// Detect current platform at compile time.
     pub fn detect() -> Self {
         #[cfg(target_os = "linux")]
-        { Platform::Linux }
+        {
+            Platform::Linux
+        }
         #[cfg(target_os = "macos")]
-        { Platform::MacOs }
+        {
+            Platform::MacOs
+        }
         #[cfg(target_os = "windows")]
-        { Platform::Windows }
+        {
+            Platform::Windows
+        }
         #[cfg(target_arch = "wasm32")]
-        { Platform::Wasm }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_arch = "wasm32")))]
-        { Platform::Unknown }
+        {
+            Platform::Wasm
+        }
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows",
+            target_arch = "wasm32"
+        )))]
+        {
+            Platform::Unknown
+        }
     }
 
     pub fn name(&self) -> &'static str {

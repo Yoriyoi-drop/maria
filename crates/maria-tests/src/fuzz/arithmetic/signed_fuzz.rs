@@ -175,10 +175,7 @@ impl SExpr {
                 let (x, y) = if signed {
                     (sign_ext(lv.val, w), sign_ext(rv.val, w))
                 } else {
-                    (
-                        (lv.val & mask_of(w)) as i128,
-                        (rv.val & mask_of(w)) as i128,
-                    )
+                    ((lv.val & mask_of(w)) as i128, (rv.val & mask_of(w)) as i128)
                 };
                 let ok = match op {
                     SCmp::Lt => x < y,
@@ -236,10 +233,7 @@ impl SExpr {
                         let (x, y) = if signed {
                             (sign_ext(lv.val, w), sign_ext(rv.val, w))
                         } else {
-                            (
-                                (lv.val & mask_of(w)) as i128,
-                                (rv.val & mask_of(w)) as i128,
-                            )
+                            ((lv.val & mask_of(w)) as i128, (rv.val & mask_of(w)) as i128)
                         };
                         if matches!(op, SArith::Div | SArith::Mod) && y == 0 {
                             return SEval {
@@ -331,10 +325,7 @@ fn signed_source(expr_sv: &str, w: u32, aval: u64, bval: u64, cmp_root: bool) ->
     let (y_decl, expr_final) = if cmp_root {
         ("wire y;".to_string(), expr_sv.to_string())
     } else {
-        (
-            format!("wire [{}:0] y;", w - 1),
-            expr_sv.to_string(),
-        )
+        (format!("wire [{}:0] y;", w - 1), expr_sv.to_string())
     };
     format!(
         "module signed_fuzz_mod;\n\
@@ -412,9 +403,11 @@ fn signed_arithmetic_and_shifts_match_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn signed-fuzz-sim")

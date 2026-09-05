@@ -19,9 +19,11 @@ fn sim_r(src: &str) -> Option<u64> {
         .name("loop-fuzz-sim".to_string())
         .stack_size(256 * 1024 * 1024)
         .spawn(move || {
-            crate::simulate_signals(&src, 60)
-                .ok()
-                .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "r").map(|(_, v)| v.to_u64()))
+            crate::simulate_signals(&src, 60).ok().and_then(|sigs| {
+                sigs.iter()
+                    .find(|(n, _)| *n == "r")
+                    .map(|(_, v)| v.to_u64())
+            })
         })
         .expect("spawn loop-fuzz-sim");
     handle.join().expect("sim panic")
@@ -78,7 +80,10 @@ fn loop_for_accumulate_shift_break_continue_match_golden() {
     let mut mismatches = Vec::new();
     let mut checked = 0u32;
     for seed in 0..90u64 {
-        let mut rng = fastrand::Rng::with_seed(seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(11));
+        let mut rng = fastrand::Rng::with_seed(
+            seed.wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(11),
+        );
         let w = pick_w(&mut rng);
         let mask = mask_of(w);
         let a = rng.u64(0..) & mask;
@@ -98,7 +103,14 @@ fn loop_for_accumulate_shift_break_continue_match_golden() {
             );
             let expected: u64 = (0..n).map(|i| (a >> i) & 1).sum();
             let src = module_src(w, &a_lit, &b_lit, &body);
-            check_case(seed * 10, &src, expected, mask, &mut mismatches, &mut checked);
+            check_case(
+                seed * 10,
+                &src,
+                expected,
+                mask,
+                &mut mismatches,
+                &mut checked,
+            );
         }
 
         // ── Varian B: shift-in serial ──
@@ -119,7 +131,14 @@ fn loop_for_accumulate_shift_break_continue_match_golden() {
                 expected |= bit << (n - 1 - i);
             }
             let src = module_src(w, &a_lit, &b_lit, &body);
-            check_case(seed * 10 + 1, &src, expected, mask, &mut mismatches, &mut checked);
+            check_case(
+                seed * 10 + 1,
+                &src,
+                expected,
+                mask,
+                &mut mismatches,
+                &mut checked,
+            );
         }
 
         // ── Varian C: break — hitung leading-zero dari bit 0 ──
@@ -131,7 +150,14 @@ fn loop_for_accumulate_shift_break_continue_match_golden() {
             );
             let expected = (0..n).take_while(|&i| (a >> i) & 1 == 0).count() as u64;
             let src = module_src(w, &a_lit, &b_lit, &body);
-            check_case(seed * 10 + 2, &src, expected, mask, &mut mismatches, &mut checked);
+            check_case(
+                seed * 10 + 2,
+                &src,
+                expected,
+                mask,
+                &mut mismatches,
+                &mut checked,
+            );
         }
 
         // ── Varian D: continue — jumlah bit-nol × 2 ──
@@ -143,7 +169,14 @@ fn loop_for_accumulate_shift_break_continue_match_golden() {
             );
             let zeros = (0..n).filter(|&i| (b >> i) & 1 == 0).count() as u64;
             let src = module_src(w, &a_lit, &b_lit, &body);
-            check_case(seed * 10 + 3, &src, zeros * 2, mask, &mut mismatches, &mut checked);
+            check_case(
+                seed * 10 + 3,
+                &src,
+                zeros * 2,
+                mask,
+                &mut mismatches,
+                &mut checked,
+            );
         }
 
         // ── Varian E: loop bersarang — perkaliaan berulang ──
@@ -162,7 +195,14 @@ fn loop_for_accumulate_shift_break_continue_match_golden() {
             let ones_b = (0..n_inner).filter(|&j| (b >> j) & 1 == 1).count() as u64;
             let expected = ones_a * n_inner + ones_b * n_outer;
             let src = module_src(w, &a_lit, &b_lit, &body);
-            check_case(seed * 10 + 4, &src, expected, mask, &mut mismatches, &mut checked);
+            check_case(
+                seed * 10 + 4,
+                &src,
+                expected,
+                mask,
+                &mut mismatches,
+                &mut checked,
+            );
         }
     }
     assert!(checked > 200, "terlalu sedikit kasus (checked={})", checked);

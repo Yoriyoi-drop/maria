@@ -17,8 +17,8 @@
 //! cargo run -- --lsp
 //! ```
 
-mod backend;
 pub mod auth;
+mod backend;
 
 pub use backend::run_lsp_server;
 pub use backend::LspBackend;

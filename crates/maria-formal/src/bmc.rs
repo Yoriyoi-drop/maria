@@ -676,9 +676,7 @@ fn walk_assumptions(stmts: &[IrStmt], result: &mut Vec<IrExpr>) {
 /// Initial `decl_init_*` berisi BlockingAssign — dipakai sebagai constraint
 /// state awal BMC. Walk berhenti di statement pertama yang bukan assignment
 /// / block (setelah delay/event control, nilai tidak lagi "initial").
-pub(crate) fn collect_initial_state_assignments(
-    processes: &[Process],
-) -> Vec<(usize, IrExpr)> {
+pub(crate) fn collect_initial_state_assignments(processes: &[Process]) -> Vec<(usize, IrExpr)> {
     let mut out: Vec<(usize, IrExpr)> = Vec::new();
     for process in processes {
         if let Process::Initial { body, .. } = process {
@@ -706,7 +704,8 @@ fn walk_initial_state(stmts: &[IrStmt], out: &mut Vec<(usize, IrExpr)>) {
 
 /// Collect assertions from process bodies.
 /// Returns Vec<(module_name/process_name, condition)>.
-pub(crate) fn collect_assertions(processes: &[Process]) -> Vec<(String, IrExpr)> {    let mut result = Vec::new();
+pub(crate) fn collect_assertions(processes: &[Process]) -> Vec<(String, IrExpr)> {
+    let mut result = Vec::new();
     for process in processes {
         let (name, body) = match process {
             Process::Combinational { name, body, .. } => (name, body),
@@ -808,9 +807,10 @@ fn walk_assignments(
                 walk_assignments(false_branch, result, seen);
             }
             IrStmt::Case { items, default, .. } => {
-                for item in items {                walk_assignments(&item.body, result, seen);
-            }
-            walk_assignments(default, result, seen);
+                for item in items {
+                    walk_assignments(&item.body, result, seen);
+                }
+                walk_assignments(default, result, seen);
             }
             _ => {}
         }
@@ -898,15 +898,28 @@ impl FormalEngine {
             .signals
             .iter()
             .map(|s| {
-                let has_unknown = s.init_val.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z));
-                if has_unknown { None } else { Some(s.init_val.to_u64()) }
+                let has_unknown = s
+                    .init_val
+                    .bits
+                    .iter()
+                    .any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+                if has_unknown {
+                    None
+                } else {
+                    Some(s.init_val.to_u64())
+                }
             })
             .collect();
 
         for (cidx, (cover_name, cond)) in all_covers.iter().enumerate() {
             let result = self.cover_check_single(
-                bound, n_signals, &signal_widths, &init_vals,
-                &assignments, &init_assigns, cond,
+                bound,
+                n_signals,
+                &signal_widths,
+                &init_vals,
+                &assignments,
+                &init_assigns,
+                cond,
             );
             results.push((format!("{}.cover_{}", cover_name, cidx), result));
         }
@@ -916,9 +929,14 @@ impl FormalEngine {
     /// FORMAL-16: Check a single cover property with BMC.
     /// Cover BMC checks if P is SAT at any depth (reachability).
     fn cover_check_single(
-        &mut self, bound: u64, n_signals: usize, signal_widths: &[u32],
-        init_vals: &[Option<u64>], assignments: &[Vec<(usize, Box<IrExpr>)>],
-        init_assigns: &[(usize, IrExpr)], cond: &IrExpr,
+        &mut self,
+        bound: u64,
+        n_signals: usize,
+        signal_widths: &[u32],
+        init_vals: &[Option<u64>],
+        assignments: &[Vec<(usize, Box<IrExpr>)>],
+        init_assigns: &[(usize, IrExpr)],
+        cond: &IrExpr,
     ) -> FormalResult {
         self.reset();
         let solver = match self.solver.as_ref() {
@@ -952,13 +970,19 @@ impl FormalEngine {
             }
         }
 
-        let all_assigned: HashSet<usize> = assignments.first().map(|g| g.iter().map(|(id,_)| *id).collect()).unwrap_or_default();
+        let all_assigned: HashSet<usize> = assignments
+            .first()
+            .map(|g| g.iter().map(|(id, _)| *id).collect())
+            .unwrap_or_default();
         for d in 1..=bound {
             for assign_group in assignments.iter() {
                 for (sig_id, rhs) in assign_group.iter() {
                     if *sig_id < n_signals {
-                        if let Some(rhs_val) = self.expr_to_z3_int_at(rhs, d as isize - 1, &sig_vars) {
-                            let (a, b) = self.zero_extend_match(&sig_vars[d as usize][*sig_id], &rhs_val);
+                        if let Some(rhs_val) =
+                            self.expr_to_z3_int_at(rhs, d as isize - 1, &sig_vars)
+                        {
+                            let (a, b) =
+                                self.zero_extend_match(&sig_vars[d as usize][*sig_id], &rhs_val);
                             solver.assert(a.eq(&b));
                         }
                     }
@@ -966,7 +990,7 @@ impl FormalEngine {
             }
             for i in 0..n_signals {
                 if !all_assigned.contains(&i) {
-                    solver.assert(sig_vars[(d-1) as usize][i].eq(&sig_vars[d as usize][i]));
+                    solver.assert(sig_vars[(d - 1) as usize][i].eq(&sig_vars[d as usize][i]));
                 }
             }
         }
@@ -976,9 +1000,18 @@ impl FormalEngine {
             if let Some(cond_val) = self.expr_to_z3_bool_at(cond, d as isize, &sig_vars) {
                 solver.assert(&cond_val);
                 match solver.check() {
-                    z3::SatResult::Sat => { solver.pop(1); return FormalResult::Pass; }
-                    z3::SatResult::Unsat => { solver.pop(1); continue; }
-                    z3::SatResult::Unknown => { solver.pop(1); return FormalResult::Unknown; }
+                    z3::SatResult::Sat => {
+                        solver.pop(1);
+                        return FormalResult::Pass;
+                    }
+                    z3::SatResult::Unsat => {
+                        solver.pop(1);
+                        continue;
+                    }
+                    z3::SatResult::Unknown => {
+                        solver.pop(1);
+                        return FormalResult::Unknown;
+                    }
                 }
             } else {
                 solver.pop(1);
@@ -1033,17 +1066,27 @@ impl FormalEngine {
         let assumptions = collect_assumptions(&design.top.processes);
 
         let signal_widths: Vec<u32> = design
-            .top.signals
+            .top
+            .signals
             .iter()
             .map(|s| s.width.clamp(1, 64) as u32)
             .collect();
 
         let init_vals: Vec<Option<u64>> = design
-            .top.signals
+            .top
+            .signals
             .iter()
             .map(|s| {
-                let has_unknown = s.init_val.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z));
-                if has_unknown { None } else { Some(s.init_val.to_u64()) }
+                let has_unknown = s
+                    .init_val
+                    .bits
+                    .iter()
+                    .any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+                if has_unknown {
+                    None
+                } else {
+                    Some(s.init_val.to_u64())
+                }
             })
             .collect();
 
@@ -1074,7 +1117,8 @@ impl FormalEngine {
                 for i in 0..n_signals {
                     let width = signal_widths.get(i).copied().unwrap_or(64);
                     depth_vars.push(z3::ast::BV::new_const(
-                        format!("reach_sig_{}_{}", i, d), width,
+                        format!("reach_sig_{}_{}", i, d),
+                        width,
                     ));
                 }
                 sig_vars.push(depth_vars);
@@ -1097,15 +1141,19 @@ impl FormalEngine {
             }
 
             // Transition constraints
-            let all_assigned: HashSet<usize> = assignments.first()
+            let all_assigned: HashSet<usize> = assignments
+                .first()
                 .map(|g| g.iter().map(|(id, _)| *id).collect())
                 .unwrap_or_default();
             for d in 1..=check_bound {
                 for assign_group in &assignments {
                     for (sig_id, rhs) in assign_group.iter() {
                         if *sig_id < n_signals {
-                            if let Some(rhs_val) = self.expr_to_z3_int_at(rhs, d as isize - 1, &sig_vars) {
-                                let (a, b) = self.zero_extend_match(&sig_vars[d as usize][*sig_id], &rhs_val);
+                            if let Some(rhs_val) =
+                                self.expr_to_z3_int_at(rhs, d as isize - 1, &sig_vars)
+                            {
+                                let (a, b) = self
+                                    .zero_extend_match(&sig_vars[d as usize][*sig_id], &rhs_val);
                                 solver.assert(a.eq(&b));
                             }
                         }
@@ -1113,7 +1161,7 @@ impl FormalEngine {
                 }
                 for i in 0..n_signals {
                     if !all_assigned.contains(&i) {
-                        solver.assert(sig_vars[(d-1) as usize][i].eq(&sig_vars[d as usize][i]));
+                        solver.assert(sig_vars[(d - 1) as usize][i].eq(&sig_vars[d as usize][i]));
                     }
                 }
             }
@@ -1156,7 +1204,8 @@ impl FormalEngine {
             }
 
             let description = if always_true {
-                "assertion condition is always true (trivially satisfied — never violated)".to_string()
+                "assertion condition is always true (trivially satisfied — never violated)"
+                    .to_string()
             } else if !can_violate {
                 "assertion condition is unreachable in the transition system (never false at any depth)".to_string()
             } else {

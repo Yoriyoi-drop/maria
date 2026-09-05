@@ -110,24 +110,29 @@ impl JUnitTestSuite {
             }
 
             if tc.skipped.is_some() {
-                xml.push_str(r#"
-    <skipped/>"#);
+                xml.push_str(
+                    r#"
+    <skipped/>"#,
+                );
             }
 
-            xml.push_str(r#"
-  </testcase>"#);
+            xml.push_str(
+                r#"
+  </testcase>"#,
+            );
         }
 
-        xml.push_str(r#"
-</testsuite>"#);
+        xml.push_str(
+            r#"
+</testsuite>"#,
+        );
         xml
     }
 
     /// Save ke file.
     pub fn save_xml(&self, path: &Path) -> Result<(), String> {
         let xml = self.to_xml();
-        std::fs::write(path, &xml)
-            .map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
+        std::fs::write(path, &xml).map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
     }
 }
 
@@ -286,8 +291,7 @@ impl SarifLog {
     /// Save ke file.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let json = self.to_json();
-        std::fs::write(path, &json)
-            .map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
+        std::fs::write(path, &json).map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
     }
 }
 
@@ -380,8 +384,12 @@ impl BenchmarkDiff {
                     change > 5.0
                 };
 
-                if is_regression { regressions += 1; }
-                if is_improvement { improvements += 1; }
+                if is_regression {
+                    regressions += 1;
+                }
+                if is_improvement {
+                    improvements += 1;
+                }
 
                 entries.push(BenchmarkDiffEntry {
                     name: cur.name.clone(),
@@ -399,7 +407,11 @@ impl BenchmarkDiff {
             }
         }
 
-        BenchmarkDiff { results: entries, regressions, improvements }
+        BenchmarkDiff {
+            results: entries,
+            regressions,
+            improvements,
+        }
     }
 
     /// Export sebagai JSON.
@@ -411,7 +423,8 @@ impl BenchmarkDiff {
     pub fn summary(&self) -> String {
         format!(
             "benchmark: {} regressions, {} improvements, {} stable",
-            self.regressions, self.improvements,
+            self.regressions,
+            self.improvements,
             self.results.len() - self.regressions - self.improvements
         )
     }
@@ -442,7 +455,9 @@ pub fn export_jira_csv(findings: &[LintFinding]) -> String {
         let summary = format!("[{}] {} — {}", f.check, f.module, f.message);
         let description = format!(
             "Module: {}\nCheck: {}\nSeverity: {}\nFile: {}\nLine: {}",
-            f.module, f.check, f.severity,
+            f.module,
+            f.check,
+            f.severity,
             f.file.as_deref().unwrap_or("unknown"),
             f.line.map_or("N/A".into(), |l| l.to_string())
         );
@@ -560,12 +575,18 @@ mod tests {
 
     #[test]
     fn test_benchmark_diff() {
-        let baseline = vec![
-            BenchmarkResult { name: "compile".into(), value: 100.0, unit: "ms".into(), lower_is_better: true },
-        ];
-        let current = vec![
-            BenchmarkResult { name: "compile".into(), value: 120.0, unit: "ms".into(), lower_is_better: true },
-        ];
+        let baseline = vec![BenchmarkResult {
+            name: "compile".into(),
+            value: 100.0,
+            unit: "ms".into(),
+            lower_is_better: true,
+        }];
+        let current = vec![BenchmarkResult {
+            name: "compile".into(),
+            value: 120.0,
+            unit: "ms".into(),
+            lower_is_better: true,
+        }];
         let diff = BenchmarkDiff::compare(&baseline, &current);
         assert_eq!(diff.regressions, 1);
         assert!(diff.results[0].status == "regression");

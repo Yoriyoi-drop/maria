@@ -66,7 +66,9 @@ impl XPropState {
         }
         // Join with other's values
         for (id, val) in &other.values {
-            let joined = result.values.get(id)
+            let joined = result
+                .values
+                .get(id)
                 .map(|existing| existing.join(*val))
                 .unwrap_or(*val);
             result.values.insert(*id, joined);
@@ -155,18 +157,21 @@ impl XPropAnalyzer {
     /// Analyze a single statement for X-propagation.
     fn analyze_stmt(&self, stmt: &IrStmt, state: &mut XPropState) {
         match stmt {
-            IrStmt::Block { stmts } |
-            IrStmt::NamedBlock { stmts, .. } => {
+            IrStmt::Block { stmts } | IrStmt::NamedBlock { stmts, .. } => {
                 self.analyze_stmts(stmts, state);
             }
-            IrStmt::NonBlockingAssign { lhs, rhs, .. } |
-            IrStmt::BlockingAssign { lhs, rhs, .. } => {
+            IrStmt::NonBlockingAssign { lhs, rhs, .. }
+            | IrStmt::BlockingAssign { lhs, rhs, .. } => {
                 let rhs_val = self.eval_expr(rhs, state);
                 if let maria_ir::IrLValue::Signal(id, _) = lhs {
                     state.set(*id, rhs_val);
                 }
             }
-            IrStmt::If { cond, true_branch, false_branch } => {
+            IrStmt::If {
+                cond,
+                true_branch,
+                false_branch,
+            } => {
                 let cond_val = self.eval_expr(cond, state);
                 match cond_val {
                     Ternary::Zero => {
@@ -185,7 +190,12 @@ impl XPropAnalyzer {
                     }
                 }
             }
-            IrStmt::Case { expr, items, default, .. } => {
+            IrStmt::Case {
+                expr,
+                items,
+                default,
+                ..
+            } => {
                 let _ = self.eval_expr(expr, state);
                 // Conservative: join all branches
                 let mut joined = state.clone();
@@ -209,7 +219,10 @@ impl XPropAnalyzer {
     fn eval_expr(&self, expr: &IrExpr, state: &XPropState) -> Ternary {
         match expr {
             IrExpr::Const(v) => {
-                if v.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z)) {
+                if v.bits
+                    .iter()
+                    .any(|b| matches!(b, LogicVal::X | LogicVal::Z))
+                {
                     Ternary::Unknown
                 } else if v.bits.iter().all(|b| *b == LogicVal::Zero) {
                     Ternary::Zero
@@ -236,8 +249,11 @@ impl XPropAnalyzer {
         use maria_ir::BinaryIrOp;
         match op {
             // If any operand is X, result is X (conservative)
-            BinaryIrOp::Add | BinaryIrOp::Sub | BinaryIrOp::Mul |
-            BinaryIrOp::Div | BinaryIrOp::Mod => {
+            BinaryIrOp::Add
+            | BinaryIrOp::Sub
+            | BinaryIrOp::Mul
+            | BinaryIrOp::Div
+            | BinaryIrOp::Mod => {
                 if l.may_be_unknown() || r.may_be_unknown() {
                     Ternary::Unknown
                 } else {
@@ -249,33 +265,35 @@ impl XPropAnalyzer {
                 }
             }
             // Bitwise operations: X propagates per-bit
-            BinaryIrOp::BitAnd => {
-                match (l, r) {
-                    (Ternary::Zero, _) | (_, Ternary::Zero) => Ternary::Zero,
-                    (Ternary::One, Ternary::One) => Ternary::One,
-                    _ => Ternary::Unknown,
-                }
-            }
-            BinaryIrOp::BitOr => {
-                match (l, r) {
-                    (Ternary::One, _) | (_, Ternary::One) => Ternary::One,
-                    (Ternary::Zero, Ternary::Zero) => Ternary::Zero,
-                    _ => Ternary::Unknown,
-                }
-            }
+            BinaryIrOp::BitAnd => match (l, r) {
+                (Ternary::Zero, _) | (_, Ternary::Zero) => Ternary::Zero,
+                (Ternary::One, Ternary::One) => Ternary::One,
+                _ => Ternary::Unknown,
+            },
+            BinaryIrOp::BitOr => match (l, r) {
+                (Ternary::One, _) | (_, Ternary::One) => Ternary::One,
+                (Ternary::Zero, Ternary::Zero) => Ternary::Zero,
+                _ => Ternary::Unknown,
+            },
             BinaryIrOp::BitXor => {
                 if l.may_be_unknown() || r.may_be_unknown() {
                     Ternary::Unknown
                 } else {
                     match (l, r) {
-                        (Ternary::Zero, Ternary::Zero) | (Ternary::One, Ternary::One) => Ternary::Zero,
+                        (Ternary::Zero, Ternary::Zero) | (Ternary::One, Ternary::One) => {
+                            Ternary::Zero
+                        }
                         _ => Ternary::One,
                     }
                 }
             }
             // Comparison: X in comparison → X
-            BinaryIrOp::Eq | BinaryIrOp::Neq | BinaryIrOp::Lt |
-            BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge => {
+            BinaryIrOp::Eq
+            | BinaryIrOp::Neq
+            | BinaryIrOp::Lt
+            | BinaryIrOp::Le
+            | BinaryIrOp::Gt
+            | BinaryIrOp::Ge => {
                 if l.may_be_unknown() || r.may_be_unknown() {
                     Ternary::Unknown
                 } else {
@@ -310,13 +328,11 @@ impl XPropAnalyzer {
     fn eval_unop(&self, op: &maria_ir::UnaryIrOp, v: Ternary) -> Ternary {
         use maria_ir::UnaryIrOp;
         match op {
-            UnaryIrOp::Not => {
-                match v {
-                    Ternary::Zero => Ternary::One,
-                    Ternary::One => Ternary::Zero,
-                    Ternary::Unknown => Ternary::Unknown,
-                }
-            }
+            UnaryIrOp::Not => match v {
+                Ternary::Zero => Ternary::One,
+                Ternary::One => Ternary::Zero,
+                Ternary::Unknown => Ternary::Unknown,
+            },
             UnaryIrOp::BitNot => {
                 if v.may_be_unknown() {
                     Ternary::Unknown
@@ -347,12 +363,18 @@ impl XPropAnalyzer {
                 if let maria_ir::IrLValue::Signal(id, _) = lhs {
                     let val = state.get(*id);
                     if val.may_be_unknown() {
-                        let sig_name = design.top.signals.get(*id)
+                        let sig_name = design
+                            .top
+                            .signals
+                            .get(*id)
                             .map(|s| s.name.as_str())
                             .unwrap_or("?");
                         issues.push((
                             sig_name.to_string(),
-                            format!("combinational output '{}' in process '{}' may be X", sig_name, name),
+                            format!(
+                                "combinational output '{}' in process '{}' may be X",
+                                sig_name, name
+                            ),
                         ));
                     }
                 }
@@ -375,12 +397,18 @@ impl XPropAnalyzer {
                 if let maria_ir::IrLValue::Signal(id, _) = lhs {
                     let val = state.get(*id);
                     if val.may_be_unknown() {
-                        let sig_name = design.top.signals.get(*id)
+                        let sig_name = design
+                            .top
+                            .signals
+                            .get(*id)
                             .map(|s| s.name.as_str())
                             .unwrap_or("?");
                         issues.push((
                             sig_name.to_string(),
-                            format!("sequential output '{}' in process '{}' may be X", sig_name, name),
+                            format!(
+                                "sequential output '{}' in process '{}' may be X",
+                                sig_name, name
+                            ),
                         ));
                     }
                 }
@@ -440,32 +468,84 @@ mod tests {
     #[test]
     fn test_eval_binop_bitand() {
         let analyzer = XPropAnalyzer::new();
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::BitAnd, Ternary::Zero, Ternary::One), Ternary::Zero);
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::BitAnd, Ternary::One, Ternary::One), Ternary::One);
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::BitAnd, Ternary::Unknown, Ternary::One), Ternary::Unknown);
+        assert_eq!(
+            analyzer.eval_binop(&maria_ir::BinaryIrOp::BitAnd, Ternary::Zero, Ternary::One),
+            Ternary::Zero
+        );
+        assert_eq!(
+            analyzer.eval_binop(&maria_ir::BinaryIrOp::BitAnd, Ternary::One, Ternary::One),
+            Ternary::One
+        );
+        assert_eq!(
+            analyzer.eval_binop(
+                &maria_ir::BinaryIrOp::BitAnd,
+                Ternary::Unknown,
+                Ternary::One
+            ),
+            Ternary::Unknown
+        );
     }
 
     #[test]
     fn test_eval_binop_bitor() {
         let analyzer = XPropAnalyzer::new();
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::BitOr, Ternary::Zero, Ternary::One), Ternary::One);
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::BitOr, Ternary::Zero, Ternary::Zero), Ternary::Zero);
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::BitOr, Ternary::One, Ternary::Unknown), Ternary::One);
+        assert_eq!(
+            analyzer.eval_binop(&maria_ir::BinaryIrOp::BitOr, Ternary::Zero, Ternary::One),
+            Ternary::One
+        );
+        assert_eq!(
+            analyzer.eval_binop(&maria_ir::BinaryIrOp::BitOr, Ternary::Zero, Ternary::Zero),
+            Ternary::Zero
+        );
+        assert_eq!(
+            analyzer.eval_binop(&maria_ir::BinaryIrOp::BitOr, Ternary::One, Ternary::Unknown),
+            Ternary::One
+        );
     }
 
     #[test]
     fn test_eval_binop_logical_and() {
         let analyzer = XPropAnalyzer::new();
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::LogicalAnd, Ternary::Zero, Ternary::One), Ternary::Zero);
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::LogicalAnd, Ternary::One, Ternary::One), Ternary::One);
-        assert_eq!(analyzer.eval_binop(&maria_ir::BinaryIrOp::LogicalAnd, Ternary::Unknown, Ternary::One), Ternary::Unknown);
+        assert_eq!(
+            analyzer.eval_binop(
+                &maria_ir::BinaryIrOp::LogicalAnd,
+                Ternary::Zero,
+                Ternary::One
+            ),
+            Ternary::Zero
+        );
+        assert_eq!(
+            analyzer.eval_binop(
+                &maria_ir::BinaryIrOp::LogicalAnd,
+                Ternary::One,
+                Ternary::One
+            ),
+            Ternary::One
+        );
+        assert_eq!(
+            analyzer.eval_binop(
+                &maria_ir::BinaryIrOp::LogicalAnd,
+                Ternary::Unknown,
+                Ternary::One
+            ),
+            Ternary::Unknown
+        );
     }
 
     #[test]
     fn test_eval_unop_not() {
         let analyzer = XPropAnalyzer::new();
-        assert_eq!(analyzer.eval_unop(&maria_ir::UnaryIrOp::Not, Ternary::Zero), Ternary::One);
-        assert_eq!(analyzer.eval_unop(&maria_ir::UnaryIrOp::Not, Ternary::One), Ternary::Zero);
-        assert_eq!(analyzer.eval_unop(&maria_ir::UnaryIrOp::Not, Ternary::Unknown), Ternary::Unknown);
+        assert_eq!(
+            analyzer.eval_unop(&maria_ir::UnaryIrOp::Not, Ternary::Zero),
+            Ternary::One
+        );
+        assert_eq!(
+            analyzer.eval_unop(&maria_ir::UnaryIrOp::Not, Ternary::One),
+            Ternary::Zero
+        );
+        assert_eq!(
+            analyzer.eval_unop(&maria_ir::UnaryIrOp::Not, Ternary::Unknown),
+            Ternary::Unknown
+        );
     }
 }

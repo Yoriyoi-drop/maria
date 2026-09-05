@@ -67,9 +67,21 @@ pub fn generate_tb(config: &TbConfig, ports: &[PortInfo]) -> String {
     push(&mut tb, "module tb;\n\n");
 
     let half = config.clock_period / 2;
-    push(&mut tb, &format!("    // Clock generation ({}ns period)\n", config.clock_period));
+    push(
+        &mut tb,
+        &format!(
+            "    // Clock generation ({}ns period)\n",
+            config.clock_period
+        ),
+    );
     push(&mut tb, &format!("    reg {};\n", config.clock_name));
-    push(&mut tb, &format!("    always #{} {} = ~{};\n\n", half, config.clock_name, config.clock_name));
+    push(
+        &mut tb,
+        &format!(
+            "    always #{} {} = ~{};\n\n",
+            half, config.clock_name, config.clock_name
+        ),
+    );
 
     if let Some(rst) = &config.reset_name {
         push(&mut tb, "    // Reset\n");
@@ -92,15 +104,24 @@ pub fn generate_tb(config: &TbConfig, ports: &[PortInfo]) -> String {
             PortDir::Output => "wire",
             PortDir::InOut => "wire",
         };
-        push(&mut tb, &format!("    {}{} {};\n", type_name, width_str, port.name));
+        push(
+            &mut tb,
+            &format!("    {}{} {};\n", type_name, width_str, port.name),
+        );
     }
     push(&mut tb, "\n");
 
     push(&mut tb, &format!("    // DUT instantiation\n"));
-    push(&mut tb, &format!("    {} {} (\n", config.module_name, config.instance_name));
+    push(
+        &mut tb,
+        &format!("    {} {} (\n", config.module_name, config.instance_name),
+    );
     for (i, port) in ports.iter().enumerate() {
         let comma = if i < ports.len() - 1 { "," } else { "" };
-        push(&mut tb, &format!("        .{}({}){}\n", port.name, port.name, comma));
+        push(
+            &mut tb,
+            &format!("        .{}({}){}\n", port.name, port.name, comma),
+        );
     }
     push(&mut tb, "    );\n\n");
 
@@ -127,7 +148,10 @@ pub fn generate_tb(config: &TbConfig, ports: &[PortInfo]) -> String {
             push(&mut tb, &format!("        #{};\n", config.clock_period * 5));
             push(&mut tb, &format!("        {} = 1;\n", rst));
         }
-        push(&mut tb, &format!("        #{};\n\n", config.clock_period * 5));
+        push(
+            &mut tb,
+            &format!("        #{};\n\n", config.clock_period * 5),
+        );
     }
 
     for port in ports {
@@ -139,7 +163,10 @@ pub fn generate_tb(config: &TbConfig, ports: &[PortInfo]) -> String {
         }
     }
 
-    push(&mut tb, &format!("\n        #{};\n", config.simulation_time));
+    push(
+        &mut tb,
+        &format!("\n        #{};\n", config.simulation_time),
+    );
     push(&mut tb, "        $display(\"TESTBENCH COMPLETE\");\n");
     push(&mut tb, "        $finish;\n");
     push(&mut tb, "    end\n\n");
@@ -150,7 +177,10 @@ pub fn generate_tb(config: &TbConfig, ports: &[PortInfo]) -> String {
         push(&mut tb, "        repeat(100) @(posedge ");
         push(&mut tb, &config.clock_name);
         push(&mut tb, ");\n");
-        push(&mut tb, "        $display(\"Simulation ran for 100 cycles without hanging\");\n");
+        push(
+            &mut tb,
+            "        $display(\"Simulation ran for 100 cycles without hanging\");\n",
+        );
         push(&mut tb, "    end\n\n");
     }
 
@@ -166,7 +196,11 @@ pub fn quick_tb(module_name: &str, inputs: &[(&str, u32)], outputs: &[(&str, u32
             name: name.to_string(),
             dir: PortDir::Input,
             width: *width,
-            bus_range: if *width > 1 { Some((*width - 1, 0)) } else { None },
+            bus_range: if *width > 1 {
+                Some((*width - 1, 0))
+            } else {
+                None
+            },
         });
     }
     for (name, width) in outputs {
@@ -174,7 +208,11 @@ pub fn quick_tb(module_name: &str, inputs: &[(&str, u32)], outputs: &[(&str, u32
             name: name.to_string(),
             dir: PortDir::Output,
             width: *width,
-            bus_range: if *width > 1 { Some((*width - 1, 0)) } else { None },
+            bus_range: if *width > 1 {
+                Some((*width - 1, 0))
+            } else {
+                None
+            },
         });
     }
     let config = TbConfig {
@@ -204,10 +242,23 @@ mod tests {
     #[test]
     fn test_tb_with_bus() {
         let ports = vec![
-            PortInfo { name: "data".into(), dir: PortDir::Input, width: 32, bus_range: Some((31, 0)) },
-            PortInfo { name: "valid".into(), dir: PortDir::Input, width: 1, bus_range: None },
+            PortInfo {
+                name: "data".into(),
+                dir: PortDir::Input,
+                width: 32,
+                bus_range: Some((31, 0)),
+            },
+            PortInfo {
+                name: "valid".into(),
+                dir: PortDir::Input,
+                width: 1,
+                bus_range: None,
+            },
         ];
-        let config = TbConfig { module_name: "my_mod".into(), ..TbConfig::default() };
+        let config = TbConfig {
+            module_name: "my_mod".into(),
+            ..TbConfig::default()
+        };
         let tb = generate_tb(&config, &ports);
         assert!(tb.contains("[31:0]"));
         assert!(tb.contains("reg [31:0] data"));
@@ -215,7 +266,10 @@ mod tests {
 
     #[test]
     fn test_tb_no_vcd() {
-        let config = TbConfig { dump_vcd: false, ..TbConfig::default() };
+        let config = TbConfig {
+            dump_vcd: false,
+            ..TbConfig::default()
+        };
         let tb = generate_tb(&config, &[]);
         assert!(!tb.contains("$dumpfile"));
     }

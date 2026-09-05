@@ -70,10 +70,7 @@ pub struct EmiResult {
 
 /// Apply an EMI transform to a GenInput, producing a new source that
 /// should be semantically equivalent.
-pub fn apply_emi_transform(
-    input: &GenInput,
-    transform: EmiTransform,
-) -> Option<GenInput> {
+pub fn apply_emi_transform(input: &GenInput, transform: EmiTransform) -> Option<GenInput> {
     match transform {
         EmiTransform::AddRedundantParens => {
             // Wrap the expression in extra parentheses — no semantic change
@@ -90,7 +87,8 @@ pub fn apply_emi_transform(
             mutated.seed = input.seed ^ 0xE002;
             if let Expr::Bin(ref op, ref lhs, ref rhs) = input.expr {
                 if is_commutative(*op) {
-                    mutated.expr = Expr::Bin(*op, Box::new((**rhs).clone()), Box::new((**lhs).clone()));
+                    mutated.expr =
+                        Expr::Bin(*op, Box::new((**rhs).clone()), Box::new((**lhs).clone()));
                     return Some(mutated);
                 }
             }
@@ -165,7 +163,11 @@ mod tests {
                     .iter()
                     .filter(|(t, _)| *t == EmiTransform::CommuteAssociative)
                     .collect();
-                assert_eq!(commute_variants.len(), 1, "should produce exactly one commute variant");
+                assert_eq!(
+                    commute_variants.len(),
+                    1,
+                    "should produce exactly one commute variant"
+                );
             }
         }
     }

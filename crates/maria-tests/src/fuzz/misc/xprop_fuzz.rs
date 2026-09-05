@@ -224,9 +224,7 @@ impl XExpr {
                 let rv = r.eval(a, xb);
                 let eq = match op {
                     XCmp::Eq => {
-                        if lv.val.iter().any(|b| is_x(*b))
-                            || rv.val.iter().any(|b| is_x(*b))
-                        {
+                        if lv.val.iter().any(|b| is_x(*b)) || rv.val.iter().any(|b| is_x(*b)) {
                             return XEval {
                                 val: vec![LogicVal::X],
                                 one_bit: true,
@@ -333,11 +331,7 @@ impl XExpr {
             XExpr::VecBin(op, l, r) => format!("({} {} {})", l.to_sv(), op.sym(), r.to_sv()),
             XExpr::Sll(k, l) => format!("({} <<< {})", l.to_sv(), k),
             XExpr::Srl(k, l) => format!("({} >> {})", l.to_sv(), k),
-            XExpr::Sx(sll, l) => format!(
-                "({} {} xb)",
-                l.to_sv(),
-                if *sll { "<<<" } else { ">>" }
-            ),
+            XExpr::Sx(sll, l) => format!("({} {} xb)", l.to_sv(), if *sll { "<<<" } else { ">>" }),
             XExpr::Uminus(l) => format!("(-{})", l.to_sv()),
             XExpr::Cmp(op, l, r) => format!("({} {} {})", l.to_sv(), op.sym(), r.to_sv()),
             XExpr::LogAnd(l, r) => format!("({} && {})", l.to_sv(), r.to_sv()),
@@ -498,9 +492,9 @@ fn xprop_semantics_match_lrm_tables() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.clone()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.clone())
+                    })
                 }
             })
             .expect("spawn xprop-fuzz-sim")

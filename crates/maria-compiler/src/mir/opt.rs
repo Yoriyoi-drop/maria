@@ -256,8 +256,7 @@ fn common_subexpr_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
     fn is_commutative(op: &str) -> bool {
         matches!(
             op,
-            "Add" | "Mul" | "And" | "Or" | "Xor" | "Eq" | "Ne"
-                | "LogicalAnd" | "LogicalOr"
+            "Add" | "Mul" | "And" | "Or" | "Xor" | "Eq" | "Ne" | "LogicalAnd" | "LogicalOr"
         )
     }
 
@@ -278,7 +277,13 @@ fn common_subexpr_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
         }
 
         match &instrs[i] {
-            MirInstr::Binary { op, dest, lhs, rhs, width } => {
+            MirInstr::Binary {
+                op,
+                dest,
+                lhs,
+                rhs,
+                width,
+            } => {
                 let (a, b) = if is_commutative(&format!("{:?}", op)) {
                     (*lhs.min(rhs), *lhs.max(rhs))
                 } else {
@@ -288,10 +293,8 @@ fn common_subexpr_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
                 // Cek hit valid: operan tak berubah + dest cache belum
                 // ditulis ulang sejak def aslinya.
                 if let Some(e) = table.get(&key) {
-                    let operands_unchanged = e
-                        .operand_defs
-                        .iter()
-                        .all(|(r, d)| defs.get(r) == Some(d));
+                    let operands_unchanged =
+                        e.operand_defs.iter().all(|(r, d)| defs.get(r) == Some(d));
                     let dest_fresh = defs.get(&e.dest) == Some(&e.def_idx);
                     if operands_unchanged && dest_fresh {
                         let dest = *dest;
@@ -344,7 +347,12 @@ fn common_subexpr_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
                 // bila kemudian didefinisikan → konservatif benar.
                 defs.insert(*dest, i);
             }
-            MirInstr::Unary { op, dest, operand, width } => {
+            MirInstr::Unary {
+                op,
+                dest,
+                operand,
+                width,
+            } => {
                 let key = CseKey::Un(format!("{:?}", op), *operand, *width);
                 if let Some(e) = table.get(&key) {
                     let operands_unchanged =
@@ -375,13 +383,14 @@ fn common_subexpr_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
                         continue;
                     }
                 }
-                let od = vec![(
-                    *operand,
-                    defs.get(operand).copied().unwrap_or(usize::MAX),
-                )];
+                let od = vec![(*operand, defs.get(operand).copied().unwrap_or(usize::MAX))];
                 table.insert(
                     key,
-                    Entry { dest: *dest, def_idx: i, operand_defs: od },
+                    Entry {
+                        dest: *dest,
+                        def_idx: i,
+                        operand_defs: od,
+                    },
                 );
                 defs.insert(*dest, i);
             }
@@ -470,13 +479,23 @@ fn licm(instrs: &mut Vec<MirInstr>) -> bool {
     for i in 0..instrs.len() {
         match &instrs[i] {
             MirInstr::Jump { label } => {
-                if let Some(hdr) = instrs[..i].iter().position(|s| matches!(s, MirInstr::Label(l) if l == label)) {
+                if let Some(hdr) = instrs[..i]
+                    .iter()
+                    .position(|s| matches!(s, MirInstr::Label(l) if l == label))
+                {
                     loops.push((hdr, i));
                 }
             }
-            MirInstr::Branch { then_label, else_label, .. } => {
+            MirInstr::Branch {
+                then_label,
+                else_label,
+                ..
+            } => {
                 for lbl in [then_label, else_label] {
-                    if let Some(hdr) = instrs[..i].iter().position(|s| matches!(s, MirInstr::Label(l) if l == lbl)) {
+                    if let Some(hdr) = instrs[..i]
+                        .iter()
+                        .position(|s| matches!(s, MirInstr::Label(l) if l == lbl))
+                    {
                         if hdr < i {
                             loops.push((hdr, i));
                         }
@@ -885,9 +904,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                     while j < instrs.len() {
                         if matches!(
                             instrs[j],
-                            MirInstr::Branch { .. }
-                                | MirInstr::Jump { .. }
-                                | MirInstr::Label(_)
+                            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                         ) {
                             break;
                         }
@@ -907,9 +924,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                     while j < instrs.len() {
                         if matches!(
                             instrs[j],
-                            MirInstr::Branch { .. }
-                                | MirInstr::Jump { .. }
-                                | MirInstr::Label(_)
+                            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                         ) {
                             break;
                         }
@@ -933,9 +948,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                     while j < instrs.len() {
                         if matches!(
                             instrs[j],
-                            MirInstr::Branch { .. }
-                                | MirInstr::Jump { .. }
-                                | MirInstr::Label(_)
+                            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                         ) {
                             break;
                         }
@@ -955,9 +968,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                     while j < instrs.len() {
                         if matches!(
                             instrs[j],
-                            MirInstr::Branch { .. }
-                                | MirInstr::Jump { .. }
-                                | MirInstr::Label(_)
+                            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                         ) {
                             break;
                         }
@@ -991,9 +1002,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                     while j < instrs.len() {
                         if matches!(
                             instrs[j],
-                            MirInstr::Branch { .. }
-                                | MirInstr::Jump { .. }
-                                | MirInstr::Label(_)
+                            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                         ) {
                             break;
                         }
@@ -1013,9 +1022,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                     while j < instrs.len() {
                         if matches!(
                             instrs[j],
-                            MirInstr::Branch { .. }
-                                | MirInstr::Jump { .. }
-                                | MirInstr::Label(_)
+                            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                         ) {
                             break;
                         }
@@ -1039,9 +1046,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                     while j < instrs.len() {
                         if matches!(
                             instrs[j],
-                            MirInstr::Branch { .. }
-                                | MirInstr::Jump { .. }
-                                | MirInstr::Label(_)
+                            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                         ) {
                             break;
                         }
@@ -1061,9 +1066,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                     while j < instrs.len() {
                         if matches!(
                             instrs[j],
-                            MirInstr::Branch { .. }
-                                | MirInstr::Jump { .. }
-                                | MirInstr::Label(_)
+                            MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                         ) {
                             break;
                         }
@@ -1084,9 +1087,7 @@ fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
                 while j < instrs.len() {
                     if matches!(
                         instrs[j],
-                        MirInstr::Branch { .. }
-                            | MirInstr::Jump { .. }
-                            | MirInstr::Label(_)
+                        MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_)
                     ) {
                         break;
                     }
@@ -1118,22 +1119,49 @@ mod tests {
         // r3 = r2 + r1 ; r4 = r2 + r1 → duplikat; Store memakai r4
         // di-rewrite menjadi r3, Binary kedua jadi Nop.
         let mut instrs = vec![
-            MirInstr::Const { dest: 0, value: 5, width: 32 },
+            MirInstr::Const {
+                dest: 0,
+                value: 5,
+                width: 32,
+            },
             MirInstr::Load { dest: 1, signal: 0 },
-            MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 1, rhs: 0, width: 32 },
-            MirInstr::Binary { op: MirBinOp::Add, dest: 3, lhs: 1, rhs: 0, width: 32 },
+            MirInstr::Binary {
+                op: MirBinOp::Add,
+                dest: 2,
+                lhs: 1,
+                rhs: 0,
+                width: 32,
+            },
+            MirInstr::Binary {
+                op: MirBinOp::Add,
+                dest: 3,
+                lhs: 1,
+                rhs: 0,
+                width: 32,
+            },
             MirInstr::Store { signal: 1, src: 3 },
         ];
         assert!(common_subexpr_eliminate(&mut instrs));
         // Tepat SATU Add tersisa (yang pertama); duplikat jadi Nop+hapus.
         assert_eq!(
-            instrs.iter().filter(|i| matches!(i, MirInstr::Binary { op: MirBinOp::Add, .. })).count(),
+            instrs
+                .iter()
+                .filter(|i| matches!(
+                    i,
+                    MirInstr::Binary {
+                        op: MirBinOp::Add,
+                        ..
+                    }
+                ))
+                .count(),
             1,
             "hanya satu Add tersisa: {:?}",
             instrs
         );
         // Store sekarang membaca reg 2 (hasil CSE pertama).
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 2 })));
+        assert!(instrs
+            .iter()
+            .any(|i| matches!(i, MirInstr::Store { signal: 1, src: 2 })));
     }
 
     #[test]
@@ -1142,12 +1170,33 @@ mod tests {
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
             MirInstr::Load { dest: 1, signal: 1 },
-            MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 0, rhs: 1, width: 32 },
-            MirInstr::Binary { op: MirBinOp::Add, dest: 3, lhs: 1, rhs: 0, width: 32 },
+            MirInstr::Binary {
+                op: MirBinOp::Add,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 32,
+            },
+            MirInstr::Binary {
+                op: MirBinOp::Add,
+                dest: 3,
+                lhs: 1,
+                rhs: 0,
+                width: 32,
+            },
         ];
         assert!(common_subexpr_eliminate(&mut instrs));
         assert_eq!(
-            instrs.iter().filter(|i| matches!(i, MirInstr::Binary { op: MirBinOp::Add, .. })).count(),
+            instrs
+                .iter()
+                .filter(|i| matches!(
+                    i,
+                    MirInstr::Binary {
+                        op: MirBinOp::Add,
+                        ..
+                    }
+                ))
+                .count(),
             1,
             "Add komutatif ter-CSE"
         );
@@ -1159,19 +1208,49 @@ mod tests {
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
             MirInstr::Load { dest: 1, signal: 1 },
-            MirInstr::Binary { op: MirBinOp::Sub, dest: 2, lhs: 0, rhs: 1, width: 32 },
-            MirInstr::Binary { op: MirBinOp::Sub, dest: 3, lhs: 1, rhs: 0, width: 32 },
+            MirInstr::Binary {
+                op: MirBinOp::Sub,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 32,
+            },
+            MirInstr::Binary {
+                op: MirBinOp::Sub,
+                dest: 3,
+                lhs: 1,
+                rhs: 0,
+                width: 32,
+            },
         ];
-        assert!(!common_subexpr_eliminate(&mut instrs), "Sub tertukar bukan CSE");
+        assert!(
+            !common_subexpr_eliminate(&mut instrs),
+            "Sub tertukar bukan CSE"
+        );
 
         // Reset di Label: duplikat melintasi label tidak digabung.
         let mut cross = vec![
             MirInstr::Label(0),
-            MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 0, rhs: 1, width: 32 },
+            MirInstr::Binary {
+                op: MirBinOp::Add,
+                dest: 2,
+                lhs: 0,
+                rhs: 1,
+                width: 32,
+            },
             MirInstr::Label(1),
-            MirInstr::Binary { op: MirBinOp::Add, dest: 3, lhs: 0, rhs: 1, width: 32 },
+            MirInstr::Binary {
+                op: MirBinOp::Add,
+                dest: 3,
+                lhs: 0,
+                rhs: 1,
+                width: 32,
+            },
         ];
-        assert!(!common_subexpr_eliminate(&mut cross), "CSE tidak melintasi Label");
+        assert!(
+            !common_subexpr_eliminate(&mut cross),
+            "CSE tidak melintasi Label"
+        );
     }
 
     #[test]
@@ -1548,10 +1627,20 @@ mod tests {
         // Binary invariant (kedua operan didefinisikan di luar loop)
         // → hoist ke sebelum Label(0).
         let mut instrs = vec![
-            MirInstr::Const { dest: 2, value: 10, width: 32 },
+            MirInstr::Const {
+                dest: 2,
+                value: 10,
+                width: 32,
+            },
             MirInstr::Load { dest: 1, signal: 0 },
             MirInstr::Label(0),
-            MirInstr::Binary { op: MirBinOp::Add, dest: 3, lhs: 1, rhs: 2, width: 32 },
+            MirInstr::Binary {
+                op: MirBinOp::Add,
+                dest: 3,
+                lhs: 1,
+                rhs: 2,
+                width: 32,
+            },
             MirInstr::Load { dest: 4, signal: 1 },
             MirInstr::Store { signal: 1, src: 4 },
             MirInstr::Branch {
@@ -1562,9 +1651,19 @@ mod tests {
             MirInstr::Label(1),
         ];
         assert!(licm(&mut instrs));
-        let add_pos = instrs.iter().position(|i| matches!(i, MirInstr::Binary { .. })).unwrap();
-        let label_pos = instrs.iter().position(|i| matches!(i, MirInstr::Label(0))).unwrap();
-        assert!(add_pos < label_pos, "Add harus di-hoist keluar loop: {:?}", instrs);
+        let add_pos = instrs
+            .iter()
+            .position(|i| matches!(i, MirInstr::Binary { .. }))
+            .unwrap();
+        let label_pos = instrs
+            .iter()
+            .position(|i| matches!(i, MirInstr::Label(0)))
+            .unwrap();
+        assert!(
+            add_pos < label_pos,
+            "Add harus di-hoist keluar loop: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1574,12 +1673,23 @@ mod tests {
         let mut instrs = vec![
             MirInstr::Label(0),
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Unary { op: MirUnOp::Not, dest: 1, operand: 0, width: 32 },
+            MirInstr::Unary {
+                op: MirUnOp::Not,
+                dest: 1,
+                operand: 0,
+                width: 32,
+            },
             MirInstr::Jump { label: 0 },
         ];
         assert!(!licm(&mut instrs), "variant tidak boleh hoist");
-        let unary_pos = instrs.iter().position(|i| matches!(i, MirInstr::Unary { .. })).unwrap();
-        let label_pos = instrs.iter().position(|i| matches!(i, MirInstr::Label(0))).unwrap();
+        let unary_pos = instrs
+            .iter()
+            .position(|i| matches!(i, MirInstr::Unary { .. }))
+            .unwrap();
+        let label_pos = instrs
+            .iter()
+            .position(|i| matches!(i, MirInstr::Label(0)))
+            .unwrap();
         assert!(unary_pos > label_pos);
     }
 
@@ -1590,7 +1700,11 @@ mod tests {
         // Shr(x, 0) → identity: Store memakai x (reg 0), bukan hasil shift.
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 0,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::Shr,
                 dest: 2,
@@ -1600,10 +1714,18 @@ mod tests {
             },
             MirInstr::Store { signal: 1, src: 2 },
         ];
-        assert!(sign_ext_eliminate(&mut instrs), "Shr(x,0) harus di-eliminasi");
+        assert!(
+            sign_ext_eliminate(&mut instrs),
+            "Shr(x,0) harus di-eliminasi"
+        );
         // Store sekarang membaca reg 0 (lhs asli)
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
-            "Store harus membaca lhs: {:?}", instrs);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1611,7 +1733,11 @@ mod tests {
         // Shl(x, 0) → identity
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 0,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::Shl,
                 dest: 2,
@@ -1621,9 +1747,17 @@ mod tests {
             },
             MirInstr::Store { signal: 1, src: 2 },
         ];
-        assert!(sign_ext_eliminate(&mut instrs), "Shl(x,0) harus di-eliminasi");
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
-            "Store harus membaca lhs: {:?}", instrs);
+        assert!(
+            sign_ext_eliminate(&mut instrs),
+            "Shl(x,0) harus di-eliminasi"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1631,7 +1765,11 @@ mod tests {
         // Shl(x, 32) pada width 8 → Const 0 (shift melebihi lebar)
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 32, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 32,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::Shl,
                 dest: 2,
@@ -1642,8 +1780,13 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(sign_ext_eliminate(&mut instrs));
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Const { value: 0, .. })),
-            "Harus jadi Const 0: {:?}", instrs);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Const { value: 0, .. })),
+            "Harus jadi Const 0: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1651,7 +1794,11 @@ mod tests {
         // Shr(x, 32) pada width 8 → Const 0
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 32, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 32,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::Shr,
                 dest: 2,
@@ -1662,8 +1809,13 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(sign_ext_eliminate(&mut instrs));
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Const { value: 0, .. })),
-            "Harus jadi Const 0: {:?}", instrs);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Const { value: 0, .. })),
+            "Harus jadi Const 0: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1681,7 +1833,10 @@ mod tests {
             },
             MirInstr::Store { signal: 2, src: 2 },
         ];
-        assert!(!sign_ext_eliminate(&mut instrs), "non-constant shift tidak boleh fold");
+        assert!(
+            !sign_ext_eliminate(&mut instrs),
+            "non-constant shift tidak boleh fold"
+        );
     }
 
     // ── Tests: xz_propagate (COMP-09) ──
@@ -1691,7 +1846,11 @@ mod tests {
         // x & 0 → 0
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 0,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::And,
                 dest: 2,
@@ -1702,8 +1861,18 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(xz_propagate(&mut instrs), "x & 0 harus fold ke 0");
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Const { value: 0, dest: 2, .. })),
-            "dest 2 harus jadi Const 0: {:?}", instrs);
+        assert!(
+            instrs.iter().any(|i| matches!(
+                i,
+                MirInstr::Const {
+                    value: 0,
+                    dest: 2,
+                    ..
+                }
+            )),
+            "dest 2 harus jadi Const 0: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1711,7 +1880,11 @@ mod tests {
         // x & 0xFF (width=8, mask = all-ones) → x (identity)
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 0xFF, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 0xFF,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::And,
                 dest: 2,
@@ -1722,8 +1895,13 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(xz_propagate(&mut instrs), "x & all-ones harus identity");
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
-            "Store harus membaca lhs asli: {:?}", instrs);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs asli: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1731,7 +1909,11 @@ mod tests {
         // x | 0 → x
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 0,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::Or,
                 dest: 2,
@@ -1742,8 +1924,13 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(xz_propagate(&mut instrs), "x | 0 harus identity");
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
-            "Store harus membaca lhs: {:?}", instrs);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1751,7 +1938,11 @@ mod tests {
         // x * 0 → 0
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 0,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::Mul,
                 dest: 2,
@@ -1762,8 +1953,18 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(xz_propagate(&mut instrs), "x * 0 harus fold ke 0");
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Const { value: 0, dest: 2, .. })),
-            "dest 2 harus jadi Const 0: {:?}", instrs);
+        assert!(
+            instrs.iter().any(|i| matches!(
+                i,
+                MirInstr::Const {
+                    value: 0,
+                    dest: 2,
+                    ..
+                }
+            )),
+            "dest 2 harus jadi Const 0: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1771,7 +1972,11 @@ mod tests {
         // x * 1 → x
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 1, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 1,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::Mul,
                 dest: 2,
@@ -1782,15 +1987,24 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(xz_propagate(&mut instrs), "x * 1 harus identity");
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
-            "Store harus membaca lhs: {:?}", instrs);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}",
+            instrs
+        );
     }
 
     #[test]
     fn test_xz_propagate_add_zero() {
         // 0 + x → x
         let mut instrs = vec![
-            MirInstr::Const { dest: 0, value: 0, width: 8 },
+            MirInstr::Const {
+                dest: 0,
+                value: 0,
+                width: 8,
+            },
             MirInstr::Load { dest: 1, signal: 0 },
             MirInstr::Binary {
                 op: MirBinOp::Add,
@@ -1802,8 +2016,13 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(xz_propagate(&mut instrs), "0 + x harus identity");
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 1 })),
-            "Store harus membaca rhs: {:?}", instrs);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Store { signal: 1, src: 1 })),
+            "Store harus membaca rhs: {:?}",
+            instrs
+        );
     }
 
     #[test]
@@ -1811,7 +2030,11 @@ mod tests {
         // x - 0 → x
         let mut instrs = vec![
             MirInstr::Load { dest: 0, signal: 0 },
-            MirInstr::Const { dest: 1, value: 0, width: 8 },
+            MirInstr::Const {
+                dest: 1,
+                value: 0,
+                width: 8,
+            },
             MirInstr::Binary {
                 op: MirBinOp::Sub,
                 dest: 2,
@@ -1822,7 +2045,12 @@ mod tests {
             MirInstr::Store { signal: 1, src: 2 },
         ];
         assert!(xz_propagate(&mut instrs), "x - 0 harus identity");
-        assert!(instrs.iter().any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
-            "Store harus membaca lhs: {:?}", instrs);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, MirInstr::Store { signal: 1, src: 0 })),
+            "Store harus membaca lhs: {:?}",
+            instrs
+        );
     }
 }

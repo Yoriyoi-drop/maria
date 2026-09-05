@@ -1647,7 +1647,9 @@ impl CompileSession {
     /// Best-effort: kegagalan tidak fatal.
     pub fn populate_precompiled(&mut self) {
         let Some(db) = self.micd.as_mut() else { return };
-        let Some(pdb) = db.precompiled_db.as_mut() else { return };
+        let Some(pdb) = db.precompiled_db.as_mut() else {
+            return;
+        };
 
         // Legacy path: prev_designs kosong (source digabung, bukan per-file).
         if self.prev_designs.is_empty() {
@@ -1680,37 +1682,46 @@ impl CompileSession {
 
                 // Type signature.
                 let mut sig = 0u64;
-                sig = sig.wrapping_mul(31)
+                sig = sig
+                    .wrapping_mul(31)
                     .wrapping_add(crate::cache::compute_checksum(name.as_bytes()));
                 for p in &m.ports {
-                    sig = sig.wrapping_mul(31)
+                    sig = sig
+                        .wrapping_mul(31)
                         .wrapping_add(crate::cache::compute_checksum(p.name.as_str().as_bytes()));
                 }
                 for pr in &m.params {
-                    sig = sig.wrapping_mul(31)
+                    sig = sig
+                        .wrapping_mul(31)
                         .wrapping_add(crate::cache::compute_checksum(pr.name.as_str().as_bytes()));
                 }
 
                 // Port info.
                 use maria_ast::types::PortDirection;
-                let ports: Vec<crate::micd::precompiled::PortInfo> = m.ports.iter().map(|p| {
-                    let dir = match p.direction {
-                        PortDirection::Input => "input",
-                        PortDirection::Output => "output",
-                        PortDirection::Inout => "inout",
-                        PortDirection::Ref => "ref",
-                    };
-                    crate::micd::precompiled::PortInfo {
-                        name: p.name.to_string(),
-                        dir: dir.to_string(),
-                        width: p.range.as_ref().map(|r| r.width()).unwrap_or(1),
-                        is_signed: false,
-                    }
-                }).collect();
+                let ports: Vec<crate::micd::precompiled::PortInfo> = m
+                    .ports
+                    .iter()
+                    .map(|p| {
+                        let dir = match p.direction {
+                            PortDirection::Input => "input",
+                            PortDirection::Output => "output",
+                            PortDirection::Inout => "inout",
+                            PortDirection::Ref => "ref",
+                        };
+                        crate::micd::precompiled::PortInfo {
+                            name: p.name.to_string(),
+                            dir: dir.to_string(),
+                            width: p.range.as_ref().map(|r| r.width()).unwrap_or(1),
+                            is_signed: false,
+                        }
+                    })
+                    .collect();
 
                 // Dependensi: module lain yang diinstansiasi / di-import.
-                let depends_on: Vec<String> = m.items.iter().filter_map(|item| {
-                    match item {
+                let depends_on: Vec<String> = m
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
                         maria_ast::types::ModuleItem::Instance(inst) => {
                             Some(inst.module_name.to_string())
                         }
@@ -1718,17 +1729,22 @@ impl CompileSession {
                             Some(package.to_string())
                         }
                         _ => None,
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Process count.
-                let process_count = m.items.iter().filter(|item| {
-                    matches!(item,
-                        maria_ast::types::ModuleItem::Always(_)
-                        | maria_ast::types::ModuleItem::Initial(_)
-                        | maria_ast::types::ModuleItem::Final(_)
-                    )
-                }).count();
+                let process_count = m
+                    .items
+                    .iter()
+                    .filter(|item| {
+                        matches!(
+                            item,
+                            maria_ast::types::ModuleItem::Always(_)
+                                | maria_ast::types::ModuleItem::Initial(_)
+                                | maria_ast::types::ModuleItem::Final(_)
+                        )
+                    })
+                    .count();
 
                 // Error/warning dari design (bila ada parse error count).
                 let error_count = 0; // TODO: dari session.parse_errors
@@ -1767,10 +1783,7 @@ impl CompileSession {
     pub fn restore_precompiled(
         &self,
         path: &std::path::Path,
-    ) -> Option<(
-        Option<maria_ast::Design>,
-        Option<maria_ir::IrDesign>,
-    )> {
+    ) -> Option<(Option<maria_ast::Design>, Option<maria_ir::IrDesign>)> {
         let db = self.micd.as_ref()?;
         let pdb = db.precompiled_db.as_ref()?;
 

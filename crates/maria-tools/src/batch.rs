@@ -103,8 +103,7 @@ impl BatchRunner {
     }
 
     pub fn add_job(&mut self, job: Job) {
-        self.job_status
-            .insert(job.name.clone(), JobStatus::Pending);
+        self.job_status.insert(job.name.clone(), JobStatus::Pending);
         self.jobs.push(job);
     }
 
@@ -126,10 +125,7 @@ impl BatchRunner {
                 .enumerate()
                 .filter(|(_, job)| {
                     self.job_status[&job.name] == JobStatus::Pending
-                        && job
-                            .depends_on
-                            .iter()
-                            .all(|dep| completed.contains(dep))
+                        && job.depends_on.iter().all(|dep| completed.contains(dep))
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -165,8 +161,7 @@ impl BatchRunner {
             // Execute ready jobs (up to max_parallel)
             for &idx in ready.iter().take(self.max_parallel) {
                 let job = &self.jobs[idx];
-                self.job_status
-                    .insert(job.name.clone(), JobStatus::Running);
+                self.job_status.insert(job.name.clone(), JobStatus::Running);
 
                 let result = self.execute_job(job);
                 if result.status == JobStatus::Completed {
@@ -303,7 +298,11 @@ impl BatchConfig {
         for job_config in &self.jobs {
             let mut job = Job::new(
                 &job_config.name,
-                &job_config.sources.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                &job_config
+                    .sources
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>(),
             );
             for dep in &job_config.depends_on {
                 job = job.depends_on(dep);

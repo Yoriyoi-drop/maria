@@ -3695,7 +3695,6 @@ opentitan/hw/vendor/lowrisc_ibex/dv/uvm/core_ibex/fcov/core_ibex_pmp_fcov_if.sv
 opentitan/hw/vendor/lowrisc_ibex/dv/uvm/core_ibex/riscv_dv_extension/ibex_asm_program_gen.sv
 opentitan/hw/vendor/lowrisc_ibex/dv/uvm/core_ibex/riscv_dv_extension/ibex_debug_triggers_overrides.sv
 opentitan/hw/vendor/lowrisc_ibex/dv/uvm/core_ibex/riscv_dv_extension/ibex_directed_instr_lib.sv
-opentitan/hw/vendor/lowrisc_ibex/dv/uvm/core_ibex/riscv_dv_extension/riscv_core_setting.tpl.sv
 opentitan/hw/vendor/lowrisc_ibex/dv/uvm/core_ibex/riscv_dv_extension/user_extension.svh
 opentitan/hw/vendor/lowrisc_ibex/dv/uvm/core_ibex/tb/core_ibex_tb_top.sv
 opentitan/hw/vendor/lowrisc_ibex/dv/uvm/core_ibex/tests/core_ibex_base_test.sv

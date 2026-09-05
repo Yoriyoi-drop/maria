@@ -126,7 +126,10 @@ impl BpfMonitor {
 
     /// Summary report.
     pub fn summary(&self) -> String {
-        let mut out = format!("BpfMonitor ({}s):\n", (now_ns() - self.start_time) / 1_000_000_000);
+        let mut out = format!(
+            "BpfMonitor ({}s):\n",
+            (now_ns() - self.start_time) / 1_000_000_000
+        );
         let mut counters: Vec<_> = self.counters.iter().collect();
         counters.sort_by_key(|(_, c)| std::cmp::Reverse(c.count));
         for (name, counter) in counters {
@@ -136,7 +139,11 @@ impl BpfMonitor {
             out.push_str("\nMarkers:\n");
             for marker in &self.markers {
                 if let Some(end) = marker.end_ns {
-                    out.push_str(&format!("  {}: {}ms\n", marker.name, (end - marker.start_ns) / 1_000_000));
+                    out.push_str(&format!(
+                        "  {}: {}ms\n",
+                        marker.name,
+                        (end - marker.start_ns) / 1_000_000
+                    ));
                 }
             }
         }

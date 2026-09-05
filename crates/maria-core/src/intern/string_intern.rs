@@ -376,9 +376,7 @@ impl StringTable {
     /// Fast path (cache hit) avoids allocation by using `get()` first.
     fn intern(&self, s: &str) -> Symbol {
         // PERF-08: Thread-local cache hit (zero DashMap contention)
-        let result = TL_CACHE.with(|cache| {
-            cache.borrow().get(s).copied()
-        });
+        let result = TL_CACHE.with(|cache| cache.borrow().get(s).copied());
         if let Some(sym) = result {
             return sym;
         }

@@ -39,16 +39,26 @@ pub struct RegressionRun {
 
 impl RegressionRun {
     pub fn pass_count(&self) -> usize {
-        self.results.iter().filter(|r| r.status == TestStatus::Pass).count()
+        self.results
+            .iter()
+            .filter(|r| r.status == TestStatus::Pass)
+            .count()
     }
 
     pub fn fail_count(&self) -> usize {
-        self.results.iter().filter(|r| r.status == TestStatus::Fail).count()
+        self.results
+            .iter()
+            .filter(|r| r.status == TestStatus::Fail)
+            .count()
     }
 
     pub fn pass_rate(&self) -> f64 {
         let total = self.results.len();
-        if total == 0 { 0.0 } else { self.pass_count() as f64 / total as f64 * 100.0 }
+        if total == 0 {
+            0.0
+        } else {
+            self.pass_count() as f64 / total as f64 * 100.0
+        }
     }
 }
 
@@ -71,10 +81,14 @@ impl RegressionDb {
     pub fn record(&mut self, run: RegressionRun) {
         // Update flaky history
         for result in &run.results {
-            let history = self.flaky_history
+            let history = self
+                .flaky_history
                 .entry(result.name.clone())
                 .or_insert_with(Vec::new);
-            history.push(matches!(result.status, TestStatus::Pass | TestStatus::Flaky));
+            history.push(matches!(
+                result.status,
+                TestStatus::Pass | TestStatus::Flaky
+            ));
             // Keep last 50 results
             if history.len() > 50 {
                 history.remove(0);
@@ -91,7 +105,9 @@ impl RegressionDb {
     pub fn flaky_tests(&self) -> Vec<(String, f64)> {
         let mut flaky = Vec::new();
         for (name, history) in &self.flaky_history {
-            if history.len() < 3 { continue; }
+            if history.len() < 3 {
+                continue;
+            }
             let recent = &history[history.len().saturating_sub(10)..];
             let has_pass = recent.iter().any(|&p| p);
             let has_fail = recent.iter().any(|&p| !p);
@@ -118,7 +134,8 @@ impl RegressionDb {
         if recent.is_empty() || older.is_empty() {
             return RegressionTrend::Stable;
         }
-        let recent_rate: f64 = recent.iter().map(|r| r.pass_rate()).sum::<f64>() / recent.len() as f64;
+        let recent_rate: f64 =
+            recent.iter().map(|r| r.pass_rate()).sum::<f64>() / recent.len() as f64;
         let older_rate: f64 = older.iter().map(|r| r.pass_rate()).sum::<f64>() / older.len() as f64;
         if recent_rate > older_rate + 1.0 {
             RegressionTrend::Improving
@@ -185,12 +202,19 @@ mod tests {
             timestamp: now_secs(),
             branch: "main".into(),
             commit: "abc123".into(),
-            results: results.into_iter().map(|(name, pass)| TestResult {
-                name: name.into(),
-                status: if pass { TestStatus::Pass } else { TestStatus::Fail },
-                duration_ms: 100,
-                error_msg: None,
-            }).collect(),
+            results: results
+                .into_iter()
+                .map(|(name, pass)| TestResult {
+                    name: name.into(),
+                    status: if pass {
+                        TestStatus::Pass
+                    } else {
+                        TestStatus::Fail
+                    },
+                    duration_ms: 100,
+                    error_msg: None,
+                })
+                .collect(),
             total_duration_ms: 1000,
         }
     }

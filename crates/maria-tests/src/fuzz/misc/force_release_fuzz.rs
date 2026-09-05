@@ -23,13 +23,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -168,10 +166,7 @@ fn fr_force_value_zero_matches() {
         let actual = run_sim(src);
 
         if actual != Some(0) {
-            mismatch.push(format!(
-                "w={} harap=0x0 dapat={:?}",
-                w, actual
-            ));
+            mismatch.push(format!("w={} harap=0x0 dapat={:?}", w, actual));
         }
         checked += 1;
     }

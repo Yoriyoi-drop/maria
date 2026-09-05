@@ -114,7 +114,13 @@ impl SimFarm {
     }
 
     /// Submit a new job.
-    pub fn submit(&mut self, name: &str, files: Vec<String>, max_time: u64, priority: Priority) -> String {
+    pub fn submit(
+        &mut self,
+        name: &str,
+        files: Vec<String>,
+        max_time: u64,
+        priority: Priority,
+    ) -> String {
         let id = format!("job-{:06}", self.jobs.len() + 1);
         let job = SimJob {
             id: id.clone(),
@@ -140,15 +146,18 @@ impl SimFarm {
 
     /// Register a worker.
     pub fn register_worker(&mut self, id: &str, addr: &str, capacity: u32) {
-        self.workers.insert(id.to_string(), Worker {
-            id: id.to_string(),
-            addr: addr.to_string(),
-            status: WorkerStatus::Idle,
-            capacity,
-            current_load: 0,
-            max_memory_mb: 4096,
-            uptime_secs: 0,
-        });
+        self.workers.insert(
+            id.to_string(),
+            Worker {
+                id: id.to_string(),
+                addr: addr.to_string(),
+                status: WorkerStatus::Idle,
+                capacity,
+                current_load: 0,
+                max_memory_mb: 4096,
+                uptime_secs: 0,
+            },
+        );
     }
 
     /// Mark job as completed.
@@ -198,7 +207,10 @@ impl SimFarm {
     /// Cancel a job.
     pub fn cancel_job(&mut self, job_id: &str) -> bool {
         if let Some(job) = self.jobs.iter_mut().find(|j| j.id == job_id) {
-            matches!(job.status, JobStatus::Queued | JobStatus::Pending | JobStatus::Running)
+            matches!(
+                job.status,
+                JobStatus::Queued | JobStatus::Pending | JobStatus::Running
+            )
         } else {
             return false;
         };
@@ -210,7 +222,9 @@ impl SimFarm {
 
     /// Internal scheduler: assign queued jobs to idle workers.
     fn schedule(&mut self) {
-        let idle_workers: Vec<String> = self.workers.iter()
+        let idle_workers: Vec<String> = self
+            .workers
+            .iter()
             .filter(|(_, w)| w.status == WorkerStatus::Idle && w.current_load < w.capacity)
             .map(|(id, _)| id.clone())
             .collect();
@@ -244,12 +258,32 @@ impl SimFarm {
 
     /// Get farm summary.
     pub fn summary(&self) -> String {
-        let running = self.jobs.iter().filter(|j| matches!(j.status, JobStatus::Running)).count();
-        let queued = self.jobs.iter().filter(|j| matches!(j.status, JobStatus::Queued)).count();
-        let completed = self.jobs.iter().filter(|j| matches!(j.status, JobStatus::Completed)).count();
-        let failed = self.jobs.iter().filter(|j| matches!(j.status, JobStatus::Failed(_))).count();
+        let running = self
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, JobStatus::Running))
+            .count();
+        let queued = self
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, JobStatus::Queued))
+            .count();
+        let completed = self
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, JobStatus::Completed))
+            .count();
+        let failed = self
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.status, JobStatus::Failed(_)))
+            .count();
         let workers = self.workers.len();
-        let idle = self.workers.values().filter(|w| w.status == WorkerStatus::Idle).count();
+        let idle = self
+            .workers
+            .values()
+            .filter(|w| w.status == WorkerStatus::Idle)
+            .count();
         format!(
             "SimFarm: {} jobs ({} running, {} queued, {} completed, {} failed), {} workers ({} idle)",
             self.jobs.len(), running, queued, completed, failed, workers, idle,
@@ -258,7 +292,8 @@ impl SimFarm {
 
     /// List jobs by status.
     pub fn list_jobs(&self, status: Option<&JobStatus>) -> Vec<&SimJob> {
-        self.jobs.iter()
+        self.jobs
+            .iter()
             .filter(|j| match status {
                 Some(s) => &j.status == s,
                 None => true,
@@ -283,7 +318,11 @@ mod tests {
         let mut farm = SimFarm::new(FarmConfig::default());
         farm.register_worker("w1", "10.0.0.1:9000", 4);
         let id = farm.submit("test", vec!["test.sv".into()], 1000, Priority::Normal);
-        let job = farm.list_jobs(None).into_iter().find(|j| j.id == id).unwrap();
+        let job = farm
+            .list_jobs(None)
+            .into_iter()
+            .find(|j| j.id == id)
+            .unwrap();
         assert_eq!(job.status, JobStatus::Running);
         assert_eq!(job.assigned_worker.as_deref(), Some("w1"));
     }
@@ -294,17 +333,29 @@ mod tests {
         farm.register_worker("w1", "10.0.0.1:9000", 4);
         let id = farm.submit("test", vec![], 100, Priority::Normal);
         assert!(farm.complete_job(&id));
-        let job = farm.list_jobs(None).into_iter().find(|j| j.id == id).unwrap();
+        let job = farm
+            .list_jobs(None)
+            .into_iter()
+            .find(|j| j.id == id)
+            .unwrap();
         assert_eq!(job.status, JobStatus::Completed);
     }
 
     #[test]
     fn test_retry_on_failure() {
-        let mut farm = SimFarm::new(FarmConfig { enable_failover: true, default_max_retries: 2, ..FarmConfig::default() });
+        let mut farm = SimFarm::new(FarmConfig {
+            enable_failover: true,
+            default_max_retries: 2,
+            ..FarmConfig::default()
+        });
         farm.register_worker("w1", "10.0.0.1:9000", 4);
         let id = farm.submit("test", vec![], 100, Priority::Normal);
         farm.fail_job(&id, "segfault");
-        let job = farm.list_jobs(None).into_iter().find(|j| j.id == id).unwrap();
+        let job = farm
+            .list_jobs(None)
+            .into_iter()
+            .find(|j| j.id == id)
+            .unwrap();
         assert_eq!(job.retries, 1);
         assert!(matches!(job.status, JobStatus::Retry(_)));
     }
@@ -314,7 +365,11 @@ mod tests {
         let mut farm = SimFarm::new(FarmConfig::default());
         let id = farm.submit("test", vec![], 100, Priority::Normal);
         assert!(farm.cancel_job(&id));
-        let job = farm.list_jobs(None).into_iter().find(|j| j.id == id).unwrap();
+        let job = farm
+            .list_jobs(None)
+            .into_iter()
+            .find(|j| j.id == id)
+            .unwrap();
         assert_eq!(job.status, JobStatus::Cancelled);
     }
 

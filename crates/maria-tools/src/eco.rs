@@ -74,7 +74,13 @@ impl EcoDb {
     }
 
     /// Create a new ECO.
-    pub fn create(&mut self, title: &str, description: &str, severity: EcoSeverity, author: &str) -> String {
+    pub fn create(
+        &mut self,
+        title: &str,
+        description: &str,
+        severity: EcoSeverity,
+        author: &str,
+    ) -> String {
         let id = format!("ECO-{:04}", self.next_id);
         self.next_id += 1;
         let now = now_secs();
@@ -101,7 +107,10 @@ impl EcoDb {
 
     /// Transition ECO status.
     pub fn transition(&mut self, id: &str, new_status: EcoStatus) -> Result<(), String> {
-        let entry = self.entries.iter_mut().find(|e| e.id == id)
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|e| e.id == id)
             .ok_or_else(|| format!("ECO {} not found", id))?;
         let valid = match (&entry.status, &new_status) {
             (EcoStatus::Draft, EcoStatus::Submitted) => true,
@@ -114,7 +123,10 @@ impl EcoDb {
             _ => false,
         };
         if !valid {
-            return Err(format!("Invalid transition {:?} -> {:?}", entry.status, new_status));
+            return Err(format!(
+                "Invalid transition {:?} -> {:?}",
+                entry.status, new_status
+            ));
         }
         if new_status == EcoStatus::Closed {
             entry.closed_at = Some(now_secs());
@@ -126,7 +138,10 @@ impl EcoDb {
 
     /// Add a comment.
     pub fn comment(&mut self, id: &str, author: &str, text: &str) -> Result<(), String> {
-        let entry = self.entries.iter_mut().find(|e| e.id == id)
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|e| e.id == id)
             .ok_or_else(|| format!("ECO {} not found", id))?;
         entry.comments.push(EcoComment {
             author: author.to_string(),
@@ -139,7 +154,8 @@ impl EcoDb {
 
     /// List open ECOs.
     pub fn open_ecos(&self) -> Vec<&EcoEntry> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .filter(|e| !matches!(e.status, EcoStatus::Closed | EcoStatus::Rejected))
             .collect()
     }
@@ -153,10 +169,15 @@ impl EcoDb {
     pub fn summary(&self) -> String {
         let total = self.entries.len();
         let open = self.open_ecos().len();
-        let critical = self.by_severity(&EcoSeverity::Critical).iter()
+        let critical = self
+            .by_severity(&EcoSeverity::Critical)
+            .iter()
             .filter(|e| !matches!(e.status, EcoStatus::Closed | EcoStatus::Rejected))
             .count();
-        format!("ECO: {} total, {} open, {} critical open", total, open, critical)
+        format!(
+            "ECO: {} total, {} open, {} critical open",
+            total, open, critical
+        )
     }
 
     /// Save to JSON.
@@ -186,7 +207,12 @@ mod tests {
     #[test]
     fn test_create_eco() {
         let mut db = EcoDb::new();
-        let id = db.create("Fix counter overflow", "Counter wraps at max", EcoSeverity::Critical, "alice");
+        let id = db.create(
+            "Fix counter overflow",
+            "Counter wraps at max",
+            EcoSeverity::Critical,
+            "alice",
+        );
         assert_eq!(id, "ECO-0001");
         assert_eq!(db.entries.len(), 1);
     }

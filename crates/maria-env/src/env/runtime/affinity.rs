@@ -162,14 +162,21 @@ mod tests {
     #[test]
     fn test_current_affinity_default() {
         let affinity = current_affinity().unwrap();
-        assert!(!affinity.is_empty(), "default affinity harus ada minimal 1 core");
+        assert!(
+            !affinity.is_empty(),
+            "default affinity harus ada minimal 1 core"
+        );
     }
 
     #[test]
     fn test_pin_to_all_cores() {
         // Pin ke semua core — harus selalu berhasil
         let result = pin_to_all_cores();
-        assert!(result.is_ok(), "pin_to_all_cores harus berhasil: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "pin_to_all_cores harus berhasil: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -190,6 +197,10 @@ mod tests {
         // Reset ke semua core
         pin_to_all_cores().unwrap();
         let affinity = current_affinity().unwrap();
-        assert_eq!(affinity.len(), logical_cores(), "reset harus mengembalikan semua core");
+        assert_eq!(
+            affinity.len(),
+            logical_cores(),
+            "reset harus mengembalikan semua core"
+        );
     }
 }

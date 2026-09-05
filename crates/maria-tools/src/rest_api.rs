@@ -85,17 +85,25 @@ impl ApiResponse {
 
 impl RestServer {
     pub fn new(addr: &str) -> Self {
-        let mut routes: HashMap<String, Box<dyn Fn(&str, &str) -> String + Send + Sync>> = HashMap::new();
+        let mut routes: HashMap<String, Box<dyn Fn(&str, &str) -> String + Send + Sync>> =
+            HashMap::new();
 
         // Health check
-        routes.insert("GET /health".to_string(), Box::new(|_, _| {
-            ApiResponse::ok(r#"{"status":"healthy","version":"0.3.0"}"#).to_http_response()
-        }));
+        routes.insert(
+            "GET /health".to_string(),
+            Box::new(|_, _| {
+                ApiResponse::ok(r#"{"status":"healthy","version":"0.3.0"}"#).to_http_response()
+            }),
+        );
 
         // Server status
-        routes.insert("GET /api/v1/status".to_string(), Box::new(|_, _| {
-            ApiResponse::json(r#"{"server":"maria","status":"running","uptime":"unknown"}"#).to_http_response()
-        }));
+        routes.insert(
+            "GET /api/v1/status".to_string(),
+            Box::new(|_, _| {
+                ApiResponse::json(r#"{"server":"maria","status":"running","uptime":"unknown"}"#)
+                    .to_http_response()
+            }),
+        );
 
         RestServer {
             addr: addr.to_string(),
@@ -114,8 +122,7 @@ impl RestServer {
 
     /// Start the server (blocking).
     pub fn start(&self) -> Result<(), String> {
-        let listener = TcpListener::bind(&self.addr)
-            .map_err(|e| format!("bind failed: {}", e))?;
+        let listener = TcpListener::bind(&self.addr).map_err(|e| format!("bind failed: {}", e))?;
 
         for stream in listener.incoming() {
             match stream {
@@ -158,7 +165,9 @@ impl RestServer {
             ApiResponse::not_found().to_http_response()
         };
 
-        stream.write_all(response.as_bytes()).map_err(|e| e.to_string())?;
+        stream
+            .write_all(response.as_bytes())
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -178,7 +187,8 @@ pub fn parse_query(path: &str) -> HashMap<String, String> {
 
 /// Format JSON response.
 pub fn json_object(fields: &[(&str, &str)]) -> String {
-    let entries: Vec<String> = fields.iter()
+    let entries: Vec<String> = fields
+        .iter()
         .map(|(k, v)| format!("\"{}\":\"{}\"", k, v))
         .collect();
     format!("{{{}}}", entries.join(","))
@@ -234,7 +244,9 @@ mod tests {
     #[test]
     fn test_add_route() {
         let mut server = RestServer::new("127.0.0.1:0");
-        server.add_route("GET", "/test", |_, _| ApiResponse::ok("test").to_http_response());
+        server.add_route("GET", "/test", |_, _| {
+            ApiResponse::ok("test").to_http_response()
+        });
         let key = "GET /test".to_string();
         assert!(server.routes.contains_key(&key));
     }

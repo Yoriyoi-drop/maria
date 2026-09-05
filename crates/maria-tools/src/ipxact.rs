@@ -1,7 +1,7 @@
 //! ENT-37: IP Packaging - IP-XACT (IEEE 1685) XML component description.
 
-use std::path::Path;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpxactComponent {
@@ -35,11 +35,14 @@ impl IpxactComponent {
             vendor: "maria".into(),
             library: "rtl".into(),
             description: None,
-            ports: ports.iter().map(|(n, d, w)| IpxactPort {
-                name: n.clone(),
-                direction: d.clone(),
-                width: *w,
-            }).collect(),
+            ports: ports
+                .iter()
+                .map(|(n, d, w)| IpxactPort {
+                    name: n.clone(),
+                    direction: d.clone(),
+                    width: *w,
+                })
+                .collect(),
             parameters: Vec::new(),
         }
     }
@@ -50,7 +53,10 @@ impl IpxactComponent {
 <component xmlns=\"http://www.accellera.org/XMLSchema/IPXACT/1685\">\n\
   <vendor>{}</vendor>\n  <library>{}</library>\n\
   <name>{}</name>\n  <version>{}</version>\n",
-            esc(&self.vendor), esc(&self.library), esc(&self.name), esc(&self.version)
+            esc(&self.vendor),
+            esc(&self.library),
+            esc(&self.name),
+            esc(&self.version)
         );
         if let Some(ref d) = self.description {
             xml.push_str(&format!("  <description>{}</description>\n", esc(d)));
@@ -59,7 +65,10 @@ impl IpxactComponent {
         for p in &self.ports {
             xml.push_str(&format!("      <port>\n        <name>{}</name>\n        <wire>\n          <direction>{}</direction>\n", esc(&p.name), esc(&p.direction)));
             if let Some(w) = p.width {
-                xml.push_str(&format!("          <vector><left>{}</left><right>0</right></vector>\n", w - 1));
+                xml.push_str(&format!(
+                    "          <vector><left>{}</left><right>0</right></vector>\n",
+                    w - 1
+                ));
             }
             xml.push_str("        </wire>\n      </port>\n");
         }
@@ -72,12 +81,20 @@ impl IpxactComponent {
     }
 
     pub fn summary(&self) -> String {
-        format!("{}/{} v{} ({} ports)", self.vendor, self.name, self.version, self.ports.len())
+        format!(
+            "{}/{} v{} ({} ports)",
+            self.vendor,
+            self.name,
+            self.version,
+            self.ports.len()
+        )
     }
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(test)]
@@ -87,10 +104,13 @@ mod tests {
 
     #[test]
     fn test_ipxact_xml() {
-        let c = IpxactComponent::from_module("counter", &[
-            ("clk".into(), "in".into(), None),
-            ("cnt".into(), "out".into(), Some(8)),
-        ]);
+        let c = IpxactComponent::from_module(
+            "counter",
+            &[
+                ("clk".into(), "in".into(), None),
+                ("cnt".into(), "out".into(), Some(8)),
+            ],
+        );
         let xml = c.to_xml();
         assert!(xml.contains("<name>counter</name>"));
         assert!(xml.contains("<direction>in</direction>"));
@@ -103,7 +123,9 @@ mod tests {
         let path = dir.path().join("test.xml");
         let c = IpxactComponent::from_module("alu", &[]);
         c.save_xml(&path).unwrap();
-        assert!(std::fs::read_to_string(&path).unwrap().contains("component"));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("component"));
     }
 
     #[test]

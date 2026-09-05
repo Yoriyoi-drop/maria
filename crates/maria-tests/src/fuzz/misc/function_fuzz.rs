@@ -53,9 +53,7 @@ fn golden_blind_spot(expr: &crate::fuzz::expr::Expr, wb: u32) -> bool {
         Expr::PartSel('b', hi, _) => *hi >= wb,
         Expr::Un(_, e) => golden_blind_spot(e, wb),
         Expr::Ternary(c, t, f) => {
-            golden_blind_spot(c, wb)
-                || golden_blind_spot(t, wb)
-                || golden_blind_spot(f, wb)
+            golden_blind_spot(c, wb) || golden_blind_spot(t, wb) || golden_blind_spot(f, wb)
         }
         Expr::Repl(_, e) => golden_blind_spot(e, wb),
         Expr::Bin(_, l, r) => golden_blind_spot(l, wb) || golden_blind_spot(r, wb),
@@ -65,14 +63,7 @@ fn golden_blind_spot(expr: &crate::fuzz::expr::Expr, wb: u32) -> bool {
 
 /// Source modul dengan fungsi berisi ekspresi fuzz; `procedural` memilih
 /// konteks pemanggilan (continuous assign vs always @(*)).
-fn fn_source(
-    expr_sv: &str,
-    w: u32,
-    wb: u32,
-    aval: &str,
-    bval: &str,
-    procedural: bool,
-) -> String {
+fn fn_source(expr_sv: &str, w: u32, wb: u32, aval: &str, bval: &str, procedural: bool) -> String {
     let body_expr = rename_vars(expr_sv, &[("a", "x"), ("b", "z")]);
     let drive = if procedural {
         "    always @(*) y = f(a, b);\n"
@@ -134,11 +125,11 @@ fn function_call_is_transparent_vs_golden() {
                 .spawn({
                     let src = src.clone();
                     move || {
-                        crate::simulate_signals(&src, 30)
-                            .ok()
-                            .and_then(|sigs| {
-                                sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64())
-                            })
+                        crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                            sigs.iter()
+                                .find(|(n, _)| *n == "y")
+                                .map(|(_, v)| v.to_u64())
+                        })
                     }
                 })
                 .expect("spawn func-fuzz-sim")

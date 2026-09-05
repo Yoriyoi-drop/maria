@@ -28,9 +28,9 @@ pub struct RequirementMapping {
 /// Status coverage requirement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RequirementStatus {
-    Covered,       // Test pass
-    Failed,        // Test fail
-    NotCovered,    // Tidak ada test
+    Covered,        // Test pass
+    Failed,         // Test fail
+    NotCovered,     // Tidak ada test
     PartialCovered, // Ada test tapi ada fail
 }
 
@@ -76,14 +76,9 @@ pub struct RequirementDetail {
 
 impl RequirementsReport {
     /// Generate report dari mappings dan test results.
-    pub fn generate(
-        mappings: &[RequirementMapping],
-        results: &[TestResult],
-    ) -> Self {
-        let results_map: HashMap<&str, &TestResult> = results
-            .iter()
-            .map(|r| (r.name.as_str(), r))
-            .collect();
+    pub fn generate(mappings: &[RequirementMapping], results: &[TestResult]) -> Self {
+        let results_map: HashMap<&str, &TestResult> =
+            results.iter().map(|r| (r.name.as_str(), r)).collect();
 
         let mut details = Vec::new();
         let mut covered = 0;
@@ -154,8 +149,7 @@ impl RequirementsReport {
     /// Save CSV ke file.
     pub fn save_csv(&self, path: &Path) -> Result<(), String> {
         let csv = self.to_csv();
-        std::fs::write(path, &csv)
-            .map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
+        std::fs::write(path, &csv).map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
     }
 
     /// Summary text.
@@ -224,8 +218,18 @@ mod tests {
             },
         ];
         let results = vec![
-            TestResult { name: "test_a".into(), passed: true, duration_ms: 10, module: None },
-            TestResult { name: "test_b".into(), passed: false, duration_ms: 5, module: None },
+            TestResult {
+                name: "test_a".into(),
+                passed: true,
+                duration_ms: 10,
+                module: None,
+            },
+            TestResult {
+                name: "test_b".into(),
+                passed: false,
+                duration_ms: 5,
+                module: None,
+            },
             // test_c not in results → NotCovered
         ];
         let report = RequirementsReport::generate(&mappings, &results);
@@ -238,18 +242,19 @@ mod tests {
 
     #[test]
     fn test_requirements_csv() {
-        let mappings = vec![
-            RequirementMapping {
-                requirement_id: "REQ-1".into(),
-                test_name: "t1".into(),
-                module: None,
-                description: Some("desc".into()),
-                priority: None,
-            },
-        ];
-        let results = vec![
-            TestResult { name: "t1".into(), passed: true, duration_ms: 1, module: None },
-        ];
+        let mappings = vec![RequirementMapping {
+            requirement_id: "REQ-1".into(),
+            test_name: "t1".into(),
+            module: None,
+            description: Some("desc".into()),
+            priority: None,
+        }];
+        let results = vec![TestResult {
+            name: "t1".into(),
+            passed: true,
+            duration_ms: 1,
+            module: None,
+        }];
         let report = RequirementsReport::generate(&mappings, &results);
         let csv = report.to_csv();
         assert!(csv.contains("REQ-1"));
@@ -259,12 +264,27 @@ mod tests {
     #[test]
     fn test_requirements_summary() {
         let mappings = vec![
-            RequirementMapping { requirement_id: "R1".into(), test_name: "t1".into(), module: None, description: None, priority: None },
-            RequirementMapping { requirement_id: "R2".into(), test_name: "t2".into(), module: None, description: None, priority: None },
+            RequirementMapping {
+                requirement_id: "R1".into(),
+                test_name: "t1".into(),
+                module: None,
+                description: None,
+                priority: None,
+            },
+            RequirementMapping {
+                requirement_id: "R2".into(),
+                test_name: "t2".into(),
+                module: None,
+                description: None,
+                priority: None,
+            },
         ];
-        let results = vec![
-            TestResult { name: "t1".into(), passed: true, duration_ms: 1, module: None },
-        ];
+        let results = vec![TestResult {
+            name: "t1".into(),
+            passed: true,
+            duration_ms: 1,
+            module: None,
+        }];
         let report = RequirementsReport::generate(&mappings, &results);
         let s = report.summary();
         assert!(s.contains("1/2"));

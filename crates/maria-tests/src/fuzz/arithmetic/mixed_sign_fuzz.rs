@@ -18,7 +18,11 @@ use crate::fuzz::gen::{generate, lit_sv, mask_of};
 const MIX_WIDTHS: [u32; 5] = [4, 8, 16, 24, 32];
 
 fn mask_of128(w: u32) -> u128 {
-    if w >= 128 { u128::MAX } else { (1u128 << w) - 1 }
+    if w >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << w) - 1
+    }
 }
 
 fn sign_ext(p: u128, w: u32) -> i128 {
@@ -47,21 +51,44 @@ enum MExpr {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum MOp { Add, Sub, Mul, Div, Mod }
+enum MOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+}
 
 #[derive(Clone, Copy, Debug)]
-enum MCmp { Lt, Le, Gt, Ge, Eq, Ne }
+enum MCmp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+}
 
 impl MOp {
     fn sym(self) -> &'static str {
-        match self { MOp::Add => "+", MOp::Sub => "-", MOp::Mul => "*", MOp::Div => "/", MOp::Mod => "%" }
+        match self {
+            MOp::Add => "+",
+            MOp::Sub => "-",
+            MOp::Mul => "*",
+            MOp::Div => "/",
+            MOp::Mod => "%",
+        }
     }
 }
 impl MCmp {
     fn sym(self) -> &'static str {
         match self {
-            MCmp::Lt => "<", MCmp::Le => "<=", MCmp::Gt => ">", MCmp::Ge => ">=",
-            MCmp::Eq => "==", MCmp::Ne => "!=",
+            MCmp::Lt => "<",
+            MCmp::Le => "<=",
+            MCmp::Gt => ">",
+            MCmp::Ge => ">=",
+            MCmp::Eq => "==",
+            MCmp::Ne => "!=",
         }
     }
 }
@@ -85,24 +112,40 @@ impl MExpr {
         match self {
             MExpr::VarA(s) => {
                 let v = a as u128 & m;
-                if *s { (v, false) } else { (v, false) }
+                if *s {
+                    (v, false)
+                } else {
+                    (v, false)
+                }
             }
             MExpr::VarB(s) => {
                 let v = b as u128 & m;
-                if *s { (v, false) } else { (v, false) }
+                if *s {
+                    (v, false)
+                } else {
+                    (v, false)
+                }
             }
             MExpr::Lit(v, _) => (v & m, false),
             MExpr::Neg(e) => {
                 let (val, hx) = e.eval(w, a, b);
-                if hx { return (0, true); }
-                let sv = if e.is_signed() { sign_ext(val, w) } else { val as i128 };
+                if hx {
+                    return (0, true);
+                }
+                let sv = if e.is_signed() {
+                    sign_ext(val, w)
+                } else {
+                    val as i128
+                };
                 let neg = sv.wrapping_neg();
                 ((neg as u128) & m, false)
             }
             MExpr::Arith(op, l, r) => {
                 let (lv, hx) = l.eval(w, a, b);
                 let (rv, hy) = r.eval(w, a, b);
-                if hx || hy { return (0, true); }
+                if hx || hy {
+                    return (0, true);
+                }
                 let signed = l.is_signed() && r.is_signed();
                 let (x, y) = if signed {
                     (sign_ext(lv, w), sign_ext(rv, w))
@@ -112,8 +155,10 @@ impl MExpr {
                 if matches!(op, MOp::Div | MOp::Mod) && y == 0 {
                     return (0, true);
                 }
-                if matches!(op, MOp::Div | MOp::Mod) && signed
-                    && x == -(1i128 << (w - 1)) && y == -1
+                if matches!(op, MOp::Div | MOp::Mod)
+                    && signed
+                    && x == -(1i128 << (w - 1))
+                    && y == -1
                 {
                     return (0, true); // overflow
                 }
@@ -129,7 +174,9 @@ impl MExpr {
             MExpr::Cmp(op, l, r) => {
                 let (lv, hx) = l.eval(w, a, b);
                 let (rv, hy) = r.eval(w, a, b);
-                if hx || hy { return (0, true); }
+                if hx || hy {
+                    return (0, true);
+                }
                 // Comparison: signed IFF KEDUA operan signed (LRM §11.8.2)
                 let signed = l.is_signed() && r.is_signed();
                 let (x, y) = if signed {
@@ -150,13 +197,21 @@ impl MExpr {
             MExpr::Sshr(l, r) => {
                 let (lv, hx) = l.eval(w, a, b);
                 let (rv, hy) = r.eval(w, a, b);
-                if hx || hy { return (0, true); }
+                if hx || hy {
+                    return (0, true);
+                }
                 let amt = (rv.min(w as u128)) as u32;
                 if l.is_signed() {
                     let sv = sign_ext(lv, w);
                     let shifted = if amt >= w {
-                        if sv < 0 { -1i128 } else { 0 }
-                    } else { sv >> amt };
+                        if sv < 0 {
+                            -1i128
+                        } else {
+                            0
+                        }
+                    } else {
+                        sv >> amt
+                    };
                     ((shifted as u128) & m, false)
                 } else {
                     let shifted = if amt >= w { 0u128 } else { lv >> amt };
@@ -166,7 +221,9 @@ impl MExpr {
             MExpr::Shr(l, r) => {
                 let (lv, hx) = l.eval(w, a, b);
                 let (rv, hy) = r.eval(w, a, b);
-                if hx || hy { return (0, true); }
+                if hx || hy {
+                    return (0, true);
+                }
                 let amt = (rv.min(w as u128)) as u32;
                 let shifted = if amt >= w { 0u128 } else { lv >> amt };
                 (shifted & m, false)
@@ -174,7 +231,9 @@ impl MExpr {
             MExpr::Shl(l, r) => {
                 let (lv, hx) = l.eval(w, a, b);
                 let (rv, hy) = r.eval(w, a, b);
-                if hx || hy { return (0, true); }
+                if hx || hy {
+                    return (0, true);
+                }
                 let amt = (rv.min(w as u128)) as u32;
                 let shifted = if amt >= w { 0u128 } else { (lv << amt) & m };
                 (shifted & m, false)
@@ -209,32 +268,44 @@ fn gen_mixed_expr(w: u32, rng: &mut fastrand::Rng, depth: u32) -> MExpr {
         3 => {
             let op = [MOp::Add, MOp::Sub, MOp::Mul, MOp::Div, MOp::Mod];
             let o = op[rng.usize(0..op.len())];
-            MExpr::Arith(o, Box::new(gen_mixed_expr(w, rng, depth + 1)),
-                         Box::new(gen_mixed_expr(w, rng, depth + 1)))
+            MExpr::Arith(
+                o,
+                Box::new(gen_mixed_expr(w, rng, depth + 1)),
+                Box::new(gen_mixed_expr(w, rng, depth + 1)),
+            )
         }
         4..=5 => {
             let op = [MCmp::Lt, MCmp::Le, MCmp::Gt, MCmp::Ge, MCmp::Eq, MCmp::Ne];
             let o = op[rng.usize(0..op.len())];
-            MExpr::Cmp(o, Box::new(gen_mixed_expr(w, rng, depth + 1)),
-                        Box::new(gen_mixed_expr(w, rng, depth + 1)))
+            MExpr::Cmp(
+                o,
+                Box::new(gen_mixed_expr(w, rng, depth + 1)),
+                Box::new(gen_mixed_expr(w, rng, depth + 1)),
+            )
         }
         6 => MExpr::Neg(Box::new(gen_mixed_expr(w, rng, depth + 1))),
-        7 => MExpr::Sshr(Box::new(gen_mixed_expr(w, rng, depth + 1)),
-                          Box::new(gen_mixed_expr(w, rng, depth + 1))),
-        8 => MExpr::Shr(Box::new(gen_mixed_expr(w, rng, depth + 1)),
-                         Box::new(gen_mixed_expr(w, rng, depth + 1))),
-        _ => MExpr::Shl(Box::new(gen_mixed_expr(w, rng, depth + 1)),
-                         Box::new(gen_mixed_expr(w, rng, depth + 1))),
+        7 => MExpr::Sshr(
+            Box::new(gen_mixed_expr(w, rng, depth + 1)),
+            Box::new(gen_mixed_expr(w, rng, depth + 1)),
+        ),
+        8 => MExpr::Shr(
+            Box::new(gen_mixed_expr(w, rng, depth + 1)),
+            Box::new(gen_mixed_expr(w, rng, depth + 1)),
+        ),
+        _ => MExpr::Shl(
+            Box::new(gen_mixed_expr(w, rng, depth + 1)),
+            Box::new(gen_mixed_expr(w, rng, depth + 1)),
+        ),
     }
 }
 
 fn gen_mixed_leaf(w: u32, rng: &mut fastrand::Rng) -> MExpr {
     let m = mask_of128(w);
     match rng.usize(0..6) {
-        0 => MExpr::VarA(true),  // a selalu signed (reg signed di SV)
-        1 => MExpr::VarB(false), // b selalu unsigned (reg di SV)
-        2 => MExpr::Lit(rng.u128(..) & m, true),   // signed literal
-        3 => MExpr::Lit(rng.u128(..) & m, false),   // unsigned literal
+        0 => MExpr::VarA(true),                  // a selalu signed (reg signed di SV)
+        1 => MExpr::VarB(false),                 // b selalu unsigned (reg di SV)
+        2 => MExpr::Lit(rng.u128(..) & m, true), // signed literal
+        3 => MExpr::Lit(rng.u128(..) & m, false), // unsigned literal
         4 => MExpr::Lit(0, true),
         _ => MExpr::Lit(m, rng.bool()),
     }
@@ -282,7 +353,9 @@ fn mixed_signed_unsigned_arith_matches_golden() {
         let b = rng.u128(..) & m;
 
         let (expected, has_x) = root.eval(w, a as u64, b as u64);
-        if has_x { continue; }
+        if has_x {
+            continue;
+        }
 
         // Hasil comparison = 1 bit; lainnya = w bit.
         let is_cmp = matches!(&root, MExpr::Cmp(..));
@@ -300,9 +373,11 @@ fn mixed_signed_unsigned_arith_matches_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn mixed-sign-sim")
@@ -339,7 +414,11 @@ fn mixed_sign_shift_arithmetic_vs_logical() {
 
         let a = rng.u64(0..) & mask_of(w);
         // Paksa MSB set (negatif) ~50% waktu.
-        let a = if rng.bool() { a | (1u64 << (w - 1).min(63)) } else { a };
+        let a = if rng.bool() {
+            a | (1u64 << (w - 1).min(63))
+        } else {
+            a
+        };
         let shift_amt = rng.u32(0..w);
 
         let m = mask_of(w);
@@ -349,15 +428,25 @@ fn mixed_sign_shift_arithmetic_vs_logical() {
             let sv = sign_ext(a as u128, w);
             let amt = shift_amt.min(w);
             let shifted = if amt >= w {
-                if sv < 0 { -1i128 } else { 0 }
-            } else { sv >> amt };
+                if sv < 0 {
+                    -1i128
+                } else {
+                    0
+                }
+            } else {
+                sv >> amt
+            };
             (shifted as u128) & mask_of128(w)
         };
 
         // Golden `>>` (logical shift right, zero-fill)
         let expected_srl = {
             let amt = shift_amt.min(w);
-            if amt >= w { 0u128 } else { ((a as u128) >> amt) & mask_of128(w) }
+            if amt >= w {
+                0u128
+            } else {
+                ((a as u128) >> amt) & mask_of128(w)
+            }
         };
 
         let a_lit = lit_sv(a, w);
@@ -377,16 +466,20 @@ fn mixed_sign_shift_arithmetic_vs_logical() {
              \x20       $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, sh = sh_lit, a = a_lit
+            hi = w - 1,
+            sh = sh_lit,
+            a = a_lit
         );
 
         let actual_sar = std::thread::Builder::new()
             .name("mixed-sar-sim".to_string())
             .stack_size(256 * 1024 * 1024)
             .spawn(move || {
-                crate::simulate_signals(&src_sar, 30)
-                    .ok()
-                    .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                crate::simulate_signals(&src_sar, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             })
             .expect("spawn")
             .join()
@@ -413,16 +506,20 @@ fn mixed_sign_shift_arithmetic_vs_logical() {
              \x20       $finish;\n\
              \x20   end\n\
              endmodule\n",
-            hi = w - 1, sh = sh_lit, a = a_lit
+            hi = w - 1,
+            sh = sh_lit,
+            a = a_lit
         );
 
         let actual_srl = std::thread::Builder::new()
             .name("mixed-srl-sim".to_string())
             .stack_size(256 * 1024 * 1024)
             .spawn(move || {
-                crate::simulate_signals(&src_srl, 30)
-                    .ok()
-                    .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                crate::simulate_signals(&src_srl, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             })
             .expect("spawn")
             .join()

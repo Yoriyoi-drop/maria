@@ -77,9 +77,8 @@ impl std::fmt::Display for CdcViolationType {
             CdcViolationType::SingleFlopSynchronizer => write!(f, "Single-flop synchronizer"),
             CdcViolationType::MultiBitUnsynchronized => {
                 write!(f, "Multi-bit unsynchronized crossing")
-            }
-            // CdcViolationType::CombinationalPath => write!(f, "Combinational path crossing"),
-            // CdcViolationType::UnsynchronizedReset => write!(f, "Unsynchronized reset crossing"),
+            } // CdcViolationType::CombinationalPath => write!(f, "Combinational path crossing"),
+              // CdcViolationType::UnsynchronizedReset => write!(f, "Unsynchronized reset crossing"),
         }
     }
 }

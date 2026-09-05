@@ -11844,7 +11844,11 @@ endmodule
     let total_attempts: u64 = stats.iter().map(|s| s.attempts).sum();
     let total_matched: u64 = stats.iter().map(|s| s.matched).sum();
     let total_failed: u64 = stats.iter().map(|s| s.failed).sum();
-    assert!(total_attempts >= 2, ">=2 attempt dimulai: {}", total_attempts);
+    assert!(
+        total_attempts >= 2,
+        ">=2 attempt dimulai: {}",
+        total_attempts
+    );
     assert!(total_matched >= 1, "a##1 b match sekali: {}", total_matched);
     assert!(
         total_failed >= 1 || total_matched < total_attempts,
@@ -11877,11 +11881,13 @@ endmodule
         .filter(|(_, s)| s.matched == 0 && s.attempts > 0)
         .map(|(k, _)| k)
         .collect();
-    assert!(!holes.is_empty(), "sequence tanpa match terdeteksi sbg hole");
+    assert!(
+        !holes.is_empty(),
+        "sequence tanpa match terdeteksi sbg hole"
+    );
     let gaps = engine2.coverage_gaps();
     assert!(
-        gaps.iter()
-            .any(|g| g.contains("tidak pernah match")),
+        gaps.iter().any(|g| g.contains("tidak pernah match")),
         "coverage_gaps() memuat sequence hole: {:?}",
         gaps
     );
@@ -19905,7 +19911,9 @@ endmodule
                 .position(|s| s.name.as_str() == name)
                 .expect("signal ada");
             let w = engine.design.top.signals[idx].width.max(1);
-            engine.state.write_signal(idx, maria_ir::LogicVec::from_u64(v, w));
+            engine
+                .state
+                .write_signal(idx, maria_ir::LogicVec::from_u64(v, w));
         };
         set("rst_n", 0);
         set("en", 1);
@@ -19981,7 +19989,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "case `default;` gagal parse: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "case `default;` gagal parse: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -19996,7 +20008,11 @@ module tb(input logic in_io);
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "assign drive strength gagal parse: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "assign drive strength gagal parse: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20029,7 +20045,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "DPI export tanpa parens gagal parse: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "DPI export tanpa parens gagal parse: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20045,7 +20065,11 @@ module tb (
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "unpacked array port [N] gagal parse: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "unpacked array port [N] gagal parse: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20062,7 +20086,11 @@ module top_tb(input logic a);
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "double-backtick paste gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "double-backtick paste gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20085,7 +20113,11 @@ module top_tb(input logic a);
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "token-paste prefix+param gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "token-paste prefix+param gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20116,7 +20148,11 @@ endmodule
         "backtick bocor ke output preprocessed:\n{}",
         out
     );
-    assert!(out.contains("dv_error"), "token-paste dv_+SEV_ gagal:\n{}", out);
+    assert!(
+        out.contains("dv_error"),
+        "token-paste dv_+SEV_ gagal:\n{}",
+        out
+    );
 }
 
 #[test]
@@ -20132,7 +20168,11 @@ fn test_dv_check_eq_multiline_define() {
         "backtick bocor ke output preprocessed:\n{}",
         out
     );
-    assert!(out.contains("dv_error"), "token-paste dv_+SEV_ gagal:\n{}", out);
+    assert!(
+        out.contains("dv_error"),
+        "token-paste dv_+SEV_ gagal:\n{}",
+        out
+    );
 }
 
 #[test]
@@ -20148,7 +20188,11 @@ fn test_dv_check_eq_real_body() {
         "backtick bocor ke output preprocessed (real body):\n{}",
         out
     );
-    assert!(out.contains("dv_error"), "token-paste gagal (real body):\n{}", out);
+    assert!(
+        out.contains("dv_error"),
+        "token-paste gagal (real body):\n{}",
+        out
+    );
 }
 
 #[test]
@@ -20217,7 +20261,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "class #(parameter ...) gagal parse: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "class #(parameter ...) gagal parse: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20237,7 +20285,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "virtual class di package gagal parse: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "virtual class di package gagal parse: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20256,7 +20308,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "function auto pkg::type gagal parse: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "function auto pkg::type gagal parse: {:?}",
+        design.err()
+    );
 }
 
 // ── PARSER-REGRESSION 2 (FastLexer/preprocessor, OpenTitan filelist) ─────────
@@ -20279,7 +20335,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "undefined macro di case default gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "undefined macro di case default gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20295,7 +20355,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "stringify langsung gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "stringify langsung gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20311,7 +20375,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "macro param default paste gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "macro param default paste gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20328,7 +20396,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "paste antar digit gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "paste antar digit gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20347,7 +20419,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "instance array [N] gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "instance array [N] gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20363,7 +20439,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "force/release hierarkis gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "force/release hierarkis gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20400,7 +20480,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "extends pkg::class gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "extends pkg::class gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20418,7 +20502,11 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "uvm_config_db#(virtual iface) gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "uvm_config_db#(virtual iface) gagal: {:?}",
+        design.err()
+    );
 }
 
 #[test]
@@ -20438,5 +20526,9 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source);
-    assert!(design.is_ok(), "virtual class param gagal: {:?}", design.err());
+    assert!(
+        design.is_ok(),
+        "virtual class param gagal: {:?}",
+        design.err()
+    );
 }

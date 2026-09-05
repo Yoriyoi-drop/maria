@@ -42,18 +42,23 @@ impl AbsValue {
                 }
             }
             (AbsValue::Const(v), AbsValue::Interval { min, max })
-            | (AbsValue::Interval { min, max }, AbsValue::Const(v)) => {
+            | (AbsValue::Interval { min, max }, AbsValue::Const(v)) => AbsValue::Interval {
+                min: (*v).min(*min),
+                max: (*v).max(*max),
+            },
+            (
                 AbsValue::Interval {
-                    min: (*v).min(*min),
-                    max: (*v).max(*max),
-                }
-            }
-            (AbsValue::Interval { min: a_min, max: a_max }, AbsValue::Interval { min: b_min, max: b_max }) => {
+                    min: a_min,
+                    max: a_max,
+                },
                 AbsValue::Interval {
-                    min: (*a_min).min(*b_min),
-                    max: (*a_max).max(*b_max),
-                }
-            }
+                    min: b_min,
+                    max: b_max,
+                },
+            ) => AbsValue::Interval {
+                min: (*a_min).min(*b_min),
+                max: (*a_max).max(*b_max),
+            },
             (AbsValue::Bottom, x) | (x, AbsValue::Bottom) => x.clone(),
             _ => AbsValue::Top,
         }
@@ -62,7 +67,16 @@ impl AbsValue {
     /// Widening operator for convergence acceleration.
     pub fn widen(&self, other: &AbsValue) -> AbsValue {
         match (self, other) {
-            (AbsValue::Interval { min: a_min, max: a_max }, AbsValue::Interval { min: b_min, max: b_max }) => {
+            (
+                AbsValue::Interval {
+                    min: a_min,
+                    max: a_max,
+                },
+                AbsValue::Interval {
+                    min: b_min,
+                    max: b_max,
+                },
+            ) => {
                 if b_min < a_min || b_max > a_max {
                     // Unbounded widening (conservative)
                     AbsValue::Top
@@ -77,12 +91,19 @@ impl AbsValue {
     /// Narrowing operator for precision recovery.
     pub fn narrow(&self, other: &AbsValue) -> AbsValue {
         match (self, other) {
-            (AbsValue::Interval { min: a_min, max: a_max }, AbsValue::Interval { min: b_min, max: b_max }) => {
+            (
                 AbsValue::Interval {
-                    min: (*a_min).max(*b_min),
-                    max: (*a_max).min(*b_max),
-                }
-            }
+                    min: a_min,
+                    max: a_max,
+                },
+                AbsValue::Interval {
+                    min: b_min,
+                    max: b_max,
+                },
+            ) => AbsValue::Interval {
+                min: (*a_min).max(*b_min),
+                max: (*a_max).min(*b_max),
+            },
             _ => other.clone(),
         }
     }
@@ -130,7 +151,9 @@ impl AbsState {
         }
         // Join with other's values
         for (id, val) in &other.values {
-            let joined = result.values.get(id)
+            let joined = result
+                .values
+                .get(id)
                 .map(|existing| existing.join(val))
                 .unwrap_or_else(|| val.clone());
             result.values.insert(*id, joined);
@@ -181,10 +204,10 @@ impl AbstractInterpreter {
 
             // Analyze process body
             match process {
-                Process::Combinational { body, .. } |
-                Process::Sequential { body, .. } |
-                Process::Initial { body, .. } |
-                Process::CombReactive { body, .. } => {
+                Process::Combinational { body, .. }
+                | Process::Sequential { body, .. }
+                | Process::Initial { body, .. }
+                | Process::CombReactive { body, .. } => {
                     self.analyze_stmts(body, &mut state);
                 }
                 _ => {}
@@ -206,12 +229,11 @@ impl AbstractInterpreter {
     /// Analyze a single statement abstractly.
     fn analyze_stmt(&self, stmt: &IrStmt, state: &mut AbsState) {
         match stmt {
-            IrStmt::Block { stmts } |
-            IrStmt::NamedBlock { stmts, .. } => {
+            IrStmt::Block { stmts } | IrStmt::NamedBlock { stmts, .. } => {
                 self.analyze_stmts(stmts, state);
             }
-            IrStmt::NonBlockingAssign { lhs, rhs, .. } |
-            IrStmt::BlockingAssign { lhs, rhs, .. } => {
+            IrStmt::NonBlockingAssign { lhs, rhs, .. }
+            | IrStmt::BlockingAssign { lhs, rhs, .. } => {
                 // Evaluate RHS abstractly
                 let rhs_val = self.eval_expr(rhs, state);
                 // Update LHS signal
@@ -219,7 +241,11 @@ impl AbstractInterpreter {
                     state.set(*id, rhs_val);
                 }
             }
-            IrStmt::If { cond, true_branch, false_branch } => {
+            IrStmt::If {
+                cond,
+                true_branch,
+                false_branch,
+            } => {
                 // Abstract interpretation of condition
                 let cond_val = self.eval_expr(cond, state);
                 match cond_val {
@@ -241,7 +267,12 @@ impl AbstractInterpreter {
                     }
                 }
             }
-            IrStmt::Case { expr, items, default, .. } => {
+            IrStmt::Case {
+                expr,
+                items,
+                default,
+                ..
+            } => {
                 let _ = self.eval_expr(expr, state);
                 // Conservative: join all branches
                 let mut joined = state.clone();
@@ -306,19 +337,26 @@ impl AbstractInterpreter {
                 AbsValue::Const(result)
             }
             // Interval arithmetic (conservative)
-            (AbsValue::Interval { min: l_min, max: l_max }, AbsValue::Interval { min: r_min, max: r_max }) => {
-                match op {
-                    BinaryIrOp::Add => AbsValue::Interval {
-                        min: l_min.wrapping_add(*r_min),
-                        max: l_max.wrapping_add(*r_max),
-                    },
-                    BinaryIrOp::Sub => AbsValue::Interval {
-                        min: l_min.wrapping_sub(*r_max),
-                        max: l_max.wrapping_sub(*r_min),
-                    },
-                    _ => AbsValue::Top,
-                }
-            }
+            (
+                AbsValue::Interval {
+                    min: l_min,
+                    max: l_max,
+                },
+                AbsValue::Interval {
+                    min: r_min,
+                    max: r_max,
+                },
+            ) => match op {
+                BinaryIrOp::Add => AbsValue::Interval {
+                    min: l_min.wrapping_add(*r_min),
+                    max: l_max.wrapping_add(*r_max),
+                },
+                BinaryIrOp::Sub => AbsValue::Interval {
+                    min: l_min.wrapping_sub(*r_max),
+                    max: l_max.wrapping_sub(*r_min),
+                },
+                _ => AbsValue::Top,
+            },
             _ => AbsValue::Top,
         }
     }
@@ -405,11 +443,26 @@ mod tests {
         let interp = AbstractInterpreter::new();
         let a = AbsValue::Const(10);
         let b = AbsValue::Const(3);
-        assert_eq!(interp.eval_binop(&maria_ir::BinaryIrOp::Add, &a, &b), AbsValue::Const(13));
-        assert_eq!(interp.eval_binop(&maria_ir::BinaryIrOp::Sub, &a, &b), AbsValue::Const(7));
-        assert_eq!(interp.eval_binop(&maria_ir::BinaryIrOp::Mul, &a, &b), AbsValue::Const(30));
-        assert_eq!(interp.eval_binop(&maria_ir::BinaryIrOp::Eq, &a, &b), AbsValue::Const(0));
-        assert_eq!(interp.eval_binop(&maria_ir::BinaryIrOp::Eq, &a, &a), AbsValue::Const(1));
+        assert_eq!(
+            interp.eval_binop(&maria_ir::BinaryIrOp::Add, &a, &b),
+            AbsValue::Const(13)
+        );
+        assert_eq!(
+            interp.eval_binop(&maria_ir::BinaryIrOp::Sub, &a, &b),
+            AbsValue::Const(7)
+        );
+        assert_eq!(
+            interp.eval_binop(&maria_ir::BinaryIrOp::Mul, &a, &b),
+            AbsValue::Const(30)
+        );
+        assert_eq!(
+            interp.eval_binop(&maria_ir::BinaryIrOp::Eq, &a, &b),
+            AbsValue::Const(0)
+        );
+        assert_eq!(
+            interp.eval_binop(&maria_ir::BinaryIrOp::Eq, &a, &a),
+            AbsValue::Const(1)
+        );
     }
 
     #[test]
@@ -418,16 +471,28 @@ mod tests {
         let a = AbsValue::Interval { min: 1, max: 5 };
         let b = AbsValue::Interval { min: 2, max: 3 };
         // Addition: [1+2, 5+3] = [3, 8]
-        assert_eq!(interp.eval_binop(&maria_ir::BinaryIrOp::Add, &a, &b), AbsValue::Interval { min: 3, max: 8 });
+        assert_eq!(
+            interp.eval_binop(&maria_ir::BinaryIrOp::Add, &a, &b),
+            AbsValue::Interval { min: 3, max: 8 }
+        );
     }
 
     #[test]
     fn test_eval_unop_const() {
         let interp = AbstractInterpreter::new();
         let v = AbsValue::Const(0xFF);
-        assert_eq!(interp.eval_unop(&maria_ir::UnaryIrOp::BitNot, &v), AbsValue::Const(!0xFFu64));
-        assert_eq!(interp.eval_unop(&maria_ir::UnaryIrOp::Not, &v), AbsValue::Const(0));
-        assert_eq!(interp.eval_unop(&maria_ir::UnaryIrOp::Not, &AbsValue::Const(0)), AbsValue::Const(1));
+        assert_eq!(
+            interp.eval_unop(&maria_ir::UnaryIrOp::BitNot, &v),
+            AbsValue::Const(!0xFFu64)
+        );
+        assert_eq!(
+            interp.eval_unop(&maria_ir::UnaryIrOp::Not, &v),
+            AbsValue::Const(0)
+        );
+        assert_eq!(
+            interp.eval_unop(&maria_ir::UnaryIrOp::Not, &AbsValue::Const(0)),
+            AbsValue::Const(1)
+        );
     }
 
     #[test]

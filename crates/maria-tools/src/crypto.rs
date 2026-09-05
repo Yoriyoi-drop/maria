@@ -111,13 +111,9 @@ impl EncryptedIp {
     }
 
     /// Dekripsi file dari path, simpan ke output.
-    pub fn decrypt_file(
-        input: &Path,
-        output: &Path,
-        password: &str,
-    ) -> Result<(), String> {
-        let data = std::fs::read(input)
-            .map_err(|e| format!("gagal baca {}: {}", input.display(), e))?;
+    pub fn decrypt_file(input: &Path, output: &Path, password: &str) -> Result<(), String> {
+        let data =
+            std::fs::read(input).map_err(|e| format!("gagal baca {}: {}", input.display(), e))?;
         let encrypted = Self::from_bytes(&data)?;
         let plaintext = encrypted.decrypt(password)?;
         std::fs::write(output, &plaintext)
@@ -185,10 +181,7 @@ fn compute_hmac(data: &[u8], key: &[u8; 32]) -> [u8; 32] {
     }
     for (i, &b) in data.iter().enumerate() {
         let idx = i % 32;
-        hash[idx] = hash[idx]
-            .wrapping_add(b as u32)
-            .wrapping_mul(0x9E37_79B9)
-            ^ hash[(i + 1) % 32];
+        hash[idx] = hash[idx].wrapping_add(b as u32).wrapping_mul(0x9E37_79B9) ^ hash[(i + 1) % 32];
     }
     // Second pass for avalanche
     for i in 0..32 {

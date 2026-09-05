@@ -80,7 +80,10 @@ impl PerfProfiler {
 
     /// Get samples for an event.
     pub fn get_samples(&self, event: PerfEvent) -> &[PerfSample] {
-        self.samples.get(&event).map(|v| v.as_slice()).unwrap_or(&[])
+        self.samples
+            .get(&event)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Total count for an event.
@@ -102,7 +105,12 @@ impl PerfProfiler {
         for event in self.events() {
             let total = self.total_count(event);
             let count = self.samples[&event].len();
-            out.push_str(&format!("  {}: {} total ({} samples)\n", event.name(), total, count));
+            out.push_str(&format!(
+                "  {}: {} total ({} samples)\n",
+                event.name(),
+                total,
+                count
+            ));
         }
         out
     }

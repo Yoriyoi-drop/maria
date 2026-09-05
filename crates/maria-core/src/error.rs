@@ -324,7 +324,11 @@ impl std::fmt::Display for SimError {
                 // Sertakan file:line:col dari source_snippet jika ada
                 match &diag.source_snippet {
                     Some(ss) if ss.line > 0 => {
-                        write!(f, "{}[{}]: {}\n  --> {}:{}:{}", diag.level, diag.code, diag.message, ss.file, ss.line, ss.col)
+                        write!(
+                            f,
+                            "{}[{}]: {}\n  --> {}:{}:{}",
+                            diag.level, diag.code, diag.message, ss.file, ss.line, ss.col
+                        )
                     }
                     _ => write!(f, "{}[{}]: {}", diag.level, diag.code, diag.message),
                 }

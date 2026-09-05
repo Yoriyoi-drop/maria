@@ -802,7 +802,12 @@ struct GetEntry {
     values: Vec<(u64, String)>,
 }
 
-fn get(input: &str, patterns: &[String], at: Option<u64>, range: Option<(u64, u64)>) -> Result<(), SimError> {
+fn get(
+    input: &str,
+    patterns: &[String],
+    at: Option<u64>,
+    range: Option<(u64, u64)>,
+) -> Result<(), SimError> {
     let data = parse_vcd(input)?;
     let entries = get_data(&data, patterns, at, range)?;
 
@@ -816,7 +821,13 @@ fn get(input: &str, patterns: &[String], at: Option<u64>, range: Option<(u64, u6
         match (at, range) {
             (Some(t), _) => {
                 let v = e.values.first().map(|(_, v)| v.as_str()).unwrap_or("x");
-                println!("  {} [{}:0] @ {} = {}", e.name, e.width - 1, t, format_bits(v));
+                println!(
+                    "  {} [{}:0] @ {} = {}",
+                    e.name,
+                    e.width - 1,
+                    t,
+                    format_bits(v)
+                );
             }
             (None, Some((lo, hi))) => {
                 println!("  {} [{}:0] [{}:{}]", e.name, e.width - 1, lo, hi);
@@ -854,7 +865,9 @@ fn get_data(
         .filter(|p| !p.is_empty())
         .collect();
     if pats.is_empty() {
-        return Err(err("get membutuhkan minimal 1 pola sinyal (dukung * dan ?)"));
+        return Err(err(
+            "get membutuhkan minimal 1 pola sinyal (dukung * dan ?)",
+        ));
     }
 
     let mut entries: Vec<GetEntry> = Vec::new();
@@ -870,7 +883,10 @@ fn get_data(
         let values = match at {
             Some(t) => vec![(t, sample_at(&tl, t))],
             None => match range {
-                Some((lo, hi)) => tl.into_iter().filter(|(t, _)| *t >= lo && *t <= hi).collect(),
+                Some((lo, hi)) => tl
+                    .into_iter()
+                    .filter(|(t, _)| *t >= lo && *t <= hi)
+                    .collect(),
                 None => tl,
             },
         };
@@ -1574,8 +1590,7 @@ mod tests {
         .unwrap();
         let data = parse_vcd("/tmp/__get_range.vcd").unwrap();
         // cnt changes: 0, 5, 10, 15, 20 → range [5:15] = 3 perubahan.
-        let r =
-            get_data(&data, &["top.cnt".to_string()], None, Some((5, 15))).unwrap();
+        let r = get_data(&data, &["top.cnt".to_string()], None, Some((5, 15))).unwrap();
         assert_eq!(r.len(), 1);
         assert_eq!(
             r[0].values,
@@ -1587,19 +1602,14 @@ mod tests {
             "range [5:15] menyaring perubahan di luar window"
         );
         // Range kosong → 0 nilai (sinyal cocok tapi tak ada perubahan).
-        let re =
-            get_data(&data, &["cnt".to_string()], None, Some((100, 200))).unwrap();
+        let re = get_data(&data, &["cnt".to_string()], None, Some((100, 200))).unwrap();
         assert!(re[0].values.is_empty());
         let _ = std::fs::remove_file("/tmp/__get_range.vcd");
     }
 
     #[test]
     fn test_get_wildcard_multiple_and_full_timeline() {
-        std::fs::write(
-            "/tmp/__get_multi.vcd",
-            vcd(false, &["0010", "0011"]),
-        )
-        .unwrap();
+        std::fs::write("/tmp/__get_multi.vcd", vcd(false, &["0010", "0011"])).unwrap();
         let data = parse_vcd("/tmp/__get_multi.vcd").unwrap();
         // Pola "c*" cocok clk + cnt; timeline penuh (tanpa at/range).
         let r = get_data(&data, &["c*".to_string()], None, None).unwrap();
@@ -1607,7 +1617,11 @@ mod tests {
         let clk = r.iter().find(|e| e.name == "top.clk").unwrap();
         assert_eq!(
             clk.values,
-            vec![(0, "0".to_string()), (5, "1".to_string()), (10, "0".to_string())],
+            vec![
+                (0, "0".to_string()),
+                (5, "1".to_string()),
+                (10, "0".to_string())
+            ],
             "timeline penuh clk"
         );
         // Nama polos (tanpa scope) juga match.

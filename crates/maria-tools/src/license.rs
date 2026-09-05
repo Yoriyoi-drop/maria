@@ -62,21 +62,17 @@ pub enum LicenseTier {
 impl LicenseTier {
     pub fn features(&self) -> LicenseFeatures {
         match self {
-            LicenseTier::Community => {
-                LicenseFeatures(0)
-                    .with(LicenseFeatures::SIMULATION)
-                    .with(LicenseFeatures::LINT)
-            }
-            LicenseTier::Professional => {
-                LicenseFeatures::new()
-                    .with(LicenseFeatures::SIMULATION)
-                    .with(LicenseFeatures::FORMAL)
-                    .with(LicenseFeatures::COVERAGE)
-                    .with(LicenseFeatures::LINT)
-                    .with(LicenseFeatures::SYNTHESIS)
-                    .with(LicenseFeatures::WAVEFORM)
-                    .with(LicenseFeatures::UVM)
-            }
+            LicenseTier::Community => LicenseFeatures(0)
+                .with(LicenseFeatures::SIMULATION)
+                .with(LicenseFeatures::LINT),
+            LicenseTier::Professional => LicenseFeatures::new()
+                .with(LicenseFeatures::SIMULATION)
+                .with(LicenseFeatures::FORMAL)
+                .with(LicenseFeatures::COVERAGE)
+                .with(LicenseFeatures::LINT)
+                .with(LicenseFeatures::SYNTHESIS)
+                .with(LicenseFeatures::WAVEFORM)
+                .with(LicenseFeatures::UVM),
             LicenseTier::Enterprise => LicenseFeatures(LicenseFeatures::ALL),
         }
     }
@@ -167,11 +163,11 @@ impl LicenseManager {
         // Parse parts: MARIA-XXXXXXXX-XXXXXXXX-TTEEEE-FFFF
         let ts = u32::from_str_radix(parts[1], 16)
             .map_err(|_| "invalid timestamp segment".to_string())?;
-        let _random = u32::from_str_radix(parts[2], 16)
-            .map_err(|_| "invalid random segment".to_string())?;
+        let _random =
+            u32::from_str_radix(parts[2], 16).map_err(|_| "invalid random segment".to_string())?;
         let seg3 = parts[3];
-        let tier_code = u8::from_str_radix(&seg3[0..2], 16)
-            .map_err(|_| "invalid tier segment".to_string())?;
+        let tier_code =
+            u8::from_str_radix(&seg3[0..2], 16).map_err(|_| "invalid tier segment".to_string())?;
         let expiry_days = u32::from_str_radix(&seg3[2..], 16)
             .map_err(|_| "invalid expiry segment".to_string())?;
         let features_raw = u32::from_str_radix(parts[4], 16)
@@ -226,8 +222,7 @@ impl LicenseManager {
             ));
         }
         let content = lines.join("\n");
-        std::fs::write(path, content)
-            .map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
+        std::fs::write(path, content).map_err(|e| format!("gagal tulis {}: {}", path.display(), e))
     }
 
     /// Load licenses dari file.
@@ -357,7 +352,9 @@ mod tests {
     #[test]
     fn test_tier_features() {
         assert!(LicenseTier::Enterprise.features().has(LicenseFeatures::ALL));
-        assert!(!LicenseTier::Community.features().has(LicenseFeatures::FORMAL));
+        assert!(!LicenseTier::Community
+            .features()
+            .has(LicenseFeatures::FORMAL));
         assert!(LicenseTier::Professional
             .features()
             .has(LicenseFeatures::COVERAGE));

@@ -248,7 +248,7 @@ impl Parser {
 
     pub(crate) fn parse_class(&mut self) -> Result<ClassDecl, SimError> {
         self.advance(); // consume 'class'
-        // Bentuk non-standar: `class #(type T = int) Name;` (param list SEBELUM nama).
+                        // Bentuk non-standar: `class #(type T = int) Name;` (param list SEBELUM nama).
         let mut type_params = Vec::new();
         if self.peek() == &Token::Hash {
             type_params.extend(self.parse_class_param_list()?);
@@ -475,6 +475,36 @@ impl Parser {
                             }
                         }
                     }
+                }
+                Token::Ident(name) if self.peek_ahead(1) == &Token::LParen => {
+                    // Macro/fungsi CALL di body class yang TIDAK diikuti `;`
+                    // (hasil expand macro undefined seperti
+                    // `` `uvm_object_param_utils(rom_ctrl_prim_mem_rom_mem#(MemDepth)) ``).
+                    // `name(...)` di level class member TIDAK pernah deklarasi/
+                    // instance valid — itu call (UVM factory, registrasi, dll).
+                    // Konsumsi call balanced sampai `)` lalu `;` (jika ada);
+                    // jangan sampai skip melewati `endclass` karena call tidak
+                    // punya `;` (via skip_until_semi_or_end → bahaya EOF).
+                    if self.class_names.contains(name) || self.typedef_names.contains(name) {
+                        // Tipe user-defined → bisa jadi deklarasi class field
+                        // `Type obj;` — parse_decl menanganinya.
+                        match self.parse_decl() {
+                            Ok(mut decl) => {
+                                for n in &mut decl.names {
+                                    n.is_rand = false;
+                                }
+                                members.push(ClassMember::Decl(decl));
+                            }
+                            Err(_) => {
+                                let _ = self.skip_until_semi_or_end();
+                            }
+                        }
+                        continue;
+                    }
+                    self.advance(); // nama macro-call
+                    self.skip_balanced_call();
+                    self.skip_semi();
+                    continue;
                 }
                 Token::Ident(_) => {
                     // F18: field class bertipe user-defined (`my_env env;`).

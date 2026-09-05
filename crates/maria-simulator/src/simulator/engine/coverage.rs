@@ -8,8 +8,8 @@ use maria_core::Symbol;
 use maria_ir::*;
 use std::collections::{HashMap, HashSet};
 
-use super::SimulationEngine;
 use super::SeqCovStats;
+use super::SimulationEngine;
 
 /// Batas jumlah default bin per coverpoint/cross. Nilai unik di luar cap tetap
 /// dihitung sebagai sample (hits/total), tapi tidak membuat bin baru — mencegah
@@ -173,7 +173,10 @@ impl SimulationEngine {
         if line == 0 {
             return;
         }
-        self.sequence_coverage.entry((line, col)).or_default().attempts += 1;
+        self.sequence_coverage
+            .entry((line, col))
+            .or_default()
+            .attempts += 1;
     }
 
     /// VERIF-32: catat hasil completion sequence attempt — matched (property
@@ -678,7 +681,10 @@ impl SimulationEngine {
         } else {
             0.0
         };
-        stats.insert("sequence_tracked".to_string(), self.sequence_coverage.len() as f64);
+        stats.insert(
+            "sequence_tracked".to_string(),
+            self.sequence_coverage.len() as f64,
+        );
         stats.insert("sequence_attempts".to_string(), seq_attempts as f64);
         stats.insert("sequence_matched".to_string(), seq_matched as f64);
         stats.insert("sequence_failed".to_string(), seq_failed as f64);
@@ -768,9 +774,7 @@ impl SimulationEngine {
                 let mut normal_hit: Option<Symbol> = None;
 
                 // Build const bin map on first access (lazy cache).
-                if !cp.bins.is_empty()
-                    && !self.covergroup_const_bins.contains_key(&cp_key)
-                {
+                if !cp.bins.is_empty() && !self.covergroup_const_bins.contains_key(&cp_key) {
                     let (cmap, _has_non_const) = build_const_bin_map(&cp.bins);
                     self.covergroup_const_bins.insert(cp_key, cmap);
                 }

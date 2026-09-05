@@ -50,6 +50,34 @@ impl Parser {
         if self.peek() == &Token::Var {
             self.advance(); // consume 'var'
         }
+        // `virtual <iface_type>[.<modport>] <name> [= init];`
+        // Virtual interface variable di dalam task/function body, class body,
+        // atau module body. Tipe dipetakan ke UserDefined; semantik simulasi
+        // tidak berbeda (VIF tidak diexecute oleh engine).
+        if self.peek() == &Token::Virtual {
+            self.advance(); // consume 'virtual'
+            if let Token::Ident(iface_type) = self.peek().clone() {
+                let iface_sym = iface_type;
+                self.advance();
+                // Skip optional parametric: `virtual force_if#(.P(1),...)`
+                if self.peek() == &Token::Hash {
+                    let _ = self.parse_param_block();
+                }
+                // Skip optional modport `.modport_name`
+                if self.peek() == &Token::Dot {
+                    self.advance();
+                    let _ = self.expect_ident();
+                }
+                let names = self.parse_decl_names(None, vec![])?;
+                self.skip_semi();
+                return Ok(Decl {
+                    dtype: DataType::UserDefined(iface_sym),
+                    kind: DeclKind::Logic,
+                    names,
+                });
+            }
+            return Err(self.err("expected interface type after virtual"));
+        }
         let kind = match self.peek() {
             Token::Wire => DeclKind::Wire,
             Token::Wand => DeclKind::Wand,
@@ -481,12 +509,8 @@ impl Parser {
                                                 lhs: Box::new(er.msb.clone()),
                                                 rhs: Box::new(er.lsb.clone()),
                                             }),
-                                            true_expr: Box::new(plus_one(span(
-                                                &er.msb, &er.lsb,
-                                            ))),
-                                            false_expr: Box::new(plus_one(span(
-                                                &er.lsb, &er.msb,
-                                            ))),
+                                            true_expr: Box::new(plus_one(span(&er.msb, &er.lsb))),
+                                            false_expr: Box::new(plus_one(span(&er.lsb, &er.msb))),
                                         })
                                     }
                                     _ => None,
@@ -527,6 +551,35 @@ impl Parser {
                                 self.advance();
                                 self.advance();
                                 is_queue = true;
+                                (None, None, None)
+                            } else if self.peek_ahead(1) == &Token::Star
+                                && self.peek_ahead(2) == &Token::RBrack
+                            {
+                                // wildcard [*] associative array (tanpa packed range)
+                                self.advance(); // [
+                                self.advance(); // *
+                                self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Int);
+                                (None, None, None)
+                            } else if self.peek_ahead(1) == &Token::Int {
+                                // int-key associative array (tanpa packed range)
+                                self.advance(); // [
+                                self.advance(); // int
+                                if self.peek() == &Token::Unsigned {
+                                    self.advance();
+                                }
+                                self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Int);
+                                (None, None, None)
+                            } else if self.peek_ahead(1) == &Token::String {
+                                // string-key associative array (tanpa packed range)
+                                self.advance(); // [
+                                self.advance(); // string
+                                self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::String);
                                 (None, None, None)
                             } else if self.peek_ahead(1) != &Token::Colon
                                 && !self.peek_bracket_has_range_colon()
@@ -746,6 +799,16 @@ impl Parser {
                 self.advance();
                 return Ok(members);
             }
+            // `rand`/`randc` modifier sebelum tipe field (pola DV umum:
+            // `rand bit [7:0] len;` di struct env pkg). Rand tidak bermakna
+            // untuk struct non-class; skip.
+            if matches!(self.peek(), Token::Rand | Token::RandC) {
+                self.advance();
+            }
+            // `static`/`local` modifier (jarang di struct) — skip aman.
+            if matches!(self.peek(), Token::Static) {
+                self.advance();
+            }
             let member_type = match self.peek() {
                 Token::Logic => {
                     self.advance();
@@ -880,10 +943,23 @@ impl Parser {
             self.skip_extra_packed_dims()?;
             let name = self.expect_ident()?;
             // Unpacked array dims setelah nama: `bit [3:0] [31:0] plain_text[4]`
-            // (struktur data OpenTitan). Bisa beberapa dims: `name[4][8]`.
+            // (struktur data OpenTitan). Bisa beberapa dims: `name[4][8]`,
+            // dynamic `name[]`, queue `name[$]`.
             while self.peek() == &Token::LBrack {
                 if self.peek_is_packed_dim() {
                     let _ = self.parse_range()?;
+                } else if self.peek_ahead(1) == &Token::RBrack {
+                    // `[]` — dynamic array member (tipe argumen DV dgn
+                    // data dinamis; pola `arg_t arg[]` di struct).
+                    self.advance();
+                    self.advance();
+                } else if self.peek_ahead(1) == &Token::Dollar
+                    && self.peek_ahead(2) == &Token::RBrack
+                {
+                    // `[$]` — queue member.
+                    self.advance();
+                    self.advance();
+                    self.advance();
                 } else {
                     self.advance(); // '['
                     let _ = self.parse_expr(0)?;
@@ -1327,18 +1403,54 @@ impl Parser {
             return Err(self.err("expected interface type after virtual"));
         }
         let dt = match self.peek() {
-            Token::Bit => { self.advance(); DataType::Bit }
-            Token::Logic => { self.advance(); DataType::Logic }
-            Token::Int => { self.advance(); DataType::Int }
-            Token::Integer => { self.advance(); DataType::Integer }
-            Token::Byte => { self.advance(); DataType::Byte }
-            Token::Shortint => { self.advance(); DataType::Shortint }
-            Token::Longint => { self.advance(); DataType::Longint }
-            Token::Time => { self.advance(); DataType::Time }
-            Token::Reg => { self.advance(); DataType::Logic }
-            Token::Real => { self.advance(); DataType::Real }
-            Token::RealTime => { self.advance(); DataType::Realtime }
-            Token::String => { self.advance(); DataType::String }
+            Token::Bit => {
+                self.advance();
+                DataType::Bit
+            }
+            Token::Logic => {
+                self.advance();
+                DataType::Logic
+            }
+            Token::Int => {
+                self.advance();
+                DataType::Int
+            }
+            Token::Integer => {
+                self.advance();
+                DataType::Integer
+            }
+            Token::Byte => {
+                self.advance();
+                DataType::Byte
+            }
+            Token::Shortint => {
+                self.advance();
+                DataType::Shortint
+            }
+            Token::Longint => {
+                self.advance();
+                DataType::Longint
+            }
+            Token::Time => {
+                self.advance();
+                DataType::Time
+            }
+            Token::Reg => {
+                self.advance();
+                DataType::Logic
+            }
+            Token::Real => {
+                self.advance();
+                DataType::Real
+            }
+            Token::RealTime => {
+                self.advance();
+                DataType::Realtime
+            }
+            Token::String => {
+                self.advance();
+                DataType::String
+            }
             Token::Ident(_) => {
                 // PARSER-10: user-defined type, possibly scoped (pkg::type_name)
                 let name = self.expect_ident()?;
@@ -1360,6 +1472,10 @@ impl Parser {
         if self.peek() == &Token::Signed {
             self.advance();
             Ok(DataType::Signed(Box::new(dt)))
+        } else if self.peek() == &Token::Unsigned {
+            // `int unsigned` — unsigned = default, no-op.
+            self.advance();
+            Ok(dt)
         } else {
             Ok(dt)
         }
@@ -1557,6 +1673,18 @@ impl Parser {
     pub(crate) fn parse_range(&mut self) -> Result<Option<ExprRange>, SimError> {
         self.expect(Token::LBrack)?;
         let msb = self.parse_expr(0)?;
+        if self.peek() != &Token::Colon {
+            // `[N]` — size-only, bukan `[msb:lsb]`. Normalkan ke `[N-1:0]`.
+            self.expect(Token::RBrack)?;
+            return Ok(Some(ExprRange {
+                msb: Expr::BinaryOp {
+                    op: BinaryOp::Sub,
+                    lhs: Box::new(msb),
+                    rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                },
+                lsb: Expr::Value(Value::Decimal(0)),
+            }));
+        }
         self.expect(Token::Colon)?;
         let lsb = self.parse_expr(0)?;
         self.expect(Token::RBrack)?;

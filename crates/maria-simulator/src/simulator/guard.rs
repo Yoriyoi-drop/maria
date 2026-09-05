@@ -19,7 +19,7 @@
 //! paling tidak 512MB) supaya default tetap melindungi sekaligus tidak
 //! mengganggu tes kecil.
 
-use maria_core::diagnostics::{DiagCode, Diagnostic, DiagLevel};
+use maria_core::diagnostics::{DiagCode, DiagLevel, Diagnostic};
 use maria_core::error::SimError;
 
 /// Tipe payload yang dibawa guard saat memicu abort.

@@ -1,7 +1,11 @@
 //! Fuzz differential comparison operators with edge cases.
 
 fn mask_of(w: u32) -> u64 {
-    if w >= 64 { u64::MAX } else { (1u64 << w) - 1 }
+    if w >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << w) - 1
+    }
 }
 
 fn lit_sv(v: u64, w: u32) -> String {
@@ -14,13 +18,11 @@ fn run_sim(src: String) -> Option<u64> {
         .stack_size(256 * 1024 * 1024)
         .spawn({
             move || {
-                crate::simulate_signals(&src, 30)
-                    .ok()
-                    .and_then(|sigs| {
-                        sigs.iter()
-                            .find(|(n, _)| *n == "y")
-                            .map(|(_, v)| v.to_u64())
-                    })
+                crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                    sigs.iter()
+                        .find(|(n, _)| *n == "y")
+                        .map(|(_, v)| v.to_u64())
+                })
             }
         })
         .expect("spawn")
@@ -50,16 +52,26 @@ fn equality_matches_golden() {
         #1; $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} b={:#x} harap={} dapat={:?}", seed, w, a, b, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} b={:#x} harap={} dapat={:?}",
+                seed, w, a, b, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -84,16 +96,26 @@ fn inequality_matches_golden() {
         #1; $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} b={:#x} harap={} dapat={:?}", seed, w, a, b, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} b={:#x} harap={} dapat={:?}",
+                seed, w, a, b, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -118,16 +140,26 @@ fn less_than_matches_golden() {
         #1; $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} b={:#x} harap={} dapat={:?}", seed, w, a, b, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} b={:#x} harap={} dapat={:?}",
+                seed, w, a, b, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -152,16 +184,26 @@ fn greater_equal_matches_golden() {
         #1; $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} b={:#x} harap={} dapat={:?}", seed, w, a, b, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} b={:#x} harap={} dapat={:?}",
+                seed, w, a, b, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -188,16 +230,27 @@ fn chained_comparison_matches_golden() {
         #1; $finish;
     end
 endmodule"#,
-            hi = w - 1, av = lit_sv(a, w), bv = lit_sv(b, w), cv = lit_sv(c, w),
+            hi = w - 1,
+            av = lit_sv(a, w),
+            bv = lit_sv(b, w),
+            cv = lit_sv(c, w),
         );
         let actual = run_sim(src);
         if actual != Some(expected) {
-            mismatch.push(format!("seed={} w={} a={:#x} b={:#x} c={:#x} harap={} dapat={:?}", seed, w, a, b, c, expected, actual));
+            mismatch.push(format!(
+                "seed={} w={} a={:#x} b={:#x} c={:#x} harap={} dapat={:?}",
+                seed, w, a, b, c, expected, actual
+            ));
         }
         checked += 1;
     }
     assert!(checked > 40);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }
 
 #[test]
@@ -208,7 +261,15 @@ fn comparison_edge_cases_matches_golden() {
         let mut rng = fastrand::Rng::with_seed(seed ^ 0xA2_06);
         let w = [4u32, 8, 16][seed as usize % 3];
         let m = mask_of(w);
-        let pairs: Vec<(u64, u64)> = vec![(0, 0), (m, m), (0, m), (1, 0), (0, 1), (m - 1, m), (m, m - 1)];
+        let pairs: Vec<(u64, u64)> = vec![
+            (0, 0),
+            (m, m),
+            (0, m),
+            (1, 0),
+            (0, 1),
+            (m - 1, m),
+            (m, m - 1),
+        ];
         for (a, b) in &pairs {
             let expected_eq = if *a == *b { 1u64 } else { 0 };
             let src = format!(
@@ -222,11 +283,16 @@ fn comparison_edge_cases_matches_golden() {
         #1; $finish;
     end
 endmodule"#,
-                hi = w - 1, av = lit_sv(*a, w), bv = lit_sv(*b, w),
+                hi = w - 1,
+                av = lit_sv(*a, w),
+                bv = lit_sv(*b, w),
             );
             let actual = run_sim(src);
             if actual != Some(expected_eq) {
-                mismatch.push(format!("seed={} w={} == a={:#x} b={:#x} harap={} dapat={:?}", seed, w, a, b, expected_eq, actual));
+                mismatch.push(format!(
+                    "seed={} w={} == a={:#x} b={:#x} harap={} dapat={:?}",
+                    seed, w, a, b, expected_eq, actual
+                ));
             }
 
             let expected_lt = if *a < *b { 1u64 } else { 0 };
@@ -241,11 +307,16 @@ endmodule"#,
         #1; $finish;
     end
 endmodule"#,
-                hi = w - 1, av = lit_sv(*a, w), bv = lit_sv(*b, w),
+                hi = w - 1,
+                av = lit_sv(*a, w),
+                bv = lit_sv(*b, w),
             );
             let actual = run_sim(src);
             if actual != Some(expected_lt) {
-                mismatch.push(format!("seed={} w={} < a={:#x} b={:#x} harap={} dapat={:?}", seed, w, a, b, expected_lt, actual));
+                mismatch.push(format!(
+                    "seed={} w={} < a={:#x} b={:#x} harap={} dapat={:?}",
+                    seed, w, a, b, expected_lt, actual
+                ));
             }
 
             let expected_gt = if *a > *b { 1u64 } else { 0 };
@@ -260,15 +331,25 @@ endmodule"#,
         #1; $finish;
     end
 endmodule"#,
-                hi = w - 1, av = lit_sv(*a, w), bv = lit_sv(*b, w),
+                hi = w - 1,
+                av = lit_sv(*a, w),
+                bv = lit_sv(*b, w),
             );
             let actual = run_sim(src);
             if actual != Some(expected_gt) {
-                mismatch.push(format!("seed={} w={} > a={:#x} b={:#x} harap={} dapat={:?}", seed, w, a, b, expected_gt, actual));
+                mismatch.push(format!(
+                    "seed={} w={} > a={:#x} b={:#x} harap={} dapat={:?}",
+                    seed, w, a, b, expected_gt, actual
+                ));
             }
         }
         checked += 1;
     }
     assert!(checked > 30);
-    assert!(mismatch.is_empty(), "{} mismatch:\n{}", mismatch.len(), mismatch.join("\n"));
+    assert!(
+        mismatch.is_empty(),
+        "{} mismatch:\n{}",
+        mismatch.len(),
+        mismatch.join("\n")
+    );
 }

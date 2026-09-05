@@ -84,7 +84,15 @@ fn item_matches(sel: u64, it: &CaseItem, kind: CaseKind) -> bool {
     true
 }
 
-fn source(expr_sv: &str, w: u32, yw: u32, kind: CaseKind, items: &[CaseItem], aval: &str, bval: &str) -> String {
+fn source(
+    expr_sv: &str,
+    w: u32,
+    yw: u32,
+    kind: CaseKind,
+    items: &[CaseItem],
+    aval: &str,
+    bval: &str,
+) -> String {
     let mut body = format!("        {} ({})\n", kind.keyword(), expr_sv);
     for (i, it) in items.iter().enumerate() {
         body.push_str(&format!(
@@ -176,17 +184,9 @@ fn case_statement_priority_and_wildcards_match_golden() {
                         zm |= 1u64 << i;
                     }
                 }
-                items.push(CaseItem {
-                    val,
-                    xm,
-                    zm,
-                });
+                items.push(CaseItem { val, xm, zm });
             } else {
-                items.push(CaseItem {
-                    val,
-                    xm: 0,
-                    zm: 0,
-                });
+                items.push(CaseItem { val, xm: 0, zm: 0 });
             }
         }
         // Model emas: item pertama yang cocok menang; else default (y=0).
@@ -211,9 +211,11 @@ fn case_statement_priority_and_wildcards_match_golden() {
             .spawn({
                 let src = src.clone();
                 move || {
-                    crate::simulate_signals(&src, 30)
-                        .ok()
-                        .and_then(|sigs| sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64()))
+                    crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                        sigs.iter()
+                            .find(|(n, _)| *n == "y")
+                            .map(|(_, v)| v.to_u64())
+                    })
                 }
             })
             .expect("spawn case-fuzz-sim")
@@ -222,12 +224,7 @@ fn case_statement_priority_and_wildcards_match_golden() {
         if actual != Some(expected) {
             mismatch.push(format!(
                 "seed={} {:?} sel={:#x} exp={} act={:?}\n{}",
-                input.seed,
-                kind,
-                sel,
-                expected,
-                actual,
-                src
+                input.seed, kind, sel, expected, actual, src
             ));
         }
         checked += 1;
@@ -298,7 +295,11 @@ fn case_plain_equivalent_to_if_else_chain() {
             // Rantai: tiap cabang TIDAK menutup `end` sendiri — penutup jadi
             // prefiks cabang berikutnya (`end else if`), terakhir ditutup
             // oleh `end else`.
-            let head = if i == 0 { "        if" } else { "        end else if" };
+            let head = if i == 0 {
+                "        if"
+            } else {
+                "        end else if"
+            };
             if_body.push_str(&format!(
                 "{} ((({}) === ({}))) begin\n            y = {};\n",
                 head,
@@ -340,11 +341,11 @@ fn case_plain_equivalent_to_if_else_chain() {
                 .spawn({
                     let src = src.clone();
                     move || {
-                        crate::simulate_signals(&src, 30)
-                            .ok()
-                            .and_then(|sigs| {
-                                sigs.iter().find(|(n, _)| *n == "y").map(|(_, v)| v.to_u64())
-                            })
+                        crate::simulate_signals(&src, 30).ok().and_then(|sigs| {
+                            sigs.iter()
+                                .find(|(n, _)| *n == "y")
+                                .map(|(_, v)| v.to_u64())
+                        })
                     }
                 })
                 .expect("spawn case-equiv-sim")

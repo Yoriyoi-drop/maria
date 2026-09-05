@@ -53,9 +53,8 @@ fn init_warn_filter(cli: &Cli) {
 }
 
 fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
-    let (no_warn, allow_codes, max_warn) = unsafe {
-        (WARN_FILTER_NO_WARN, &WARN_FILTER_ALLOW, WARN_FILTER_MAX)
-    };
+    let (no_warn, allow_codes, max_warn) =
+        unsafe { (WARN_FILTER_NO_WARN, &WARN_FILTER_ALLOW, WARN_FILTER_MAX) };
     if diags.is_empty() {
         return;
     }
@@ -75,7 +74,11 @@ fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
         }
         // Deduplicate warnings by (code, file, line)
         if diag.level == maria_core::diagnostics::DiagLevel::Warning {
-            let file = diag.source_snippet.as_ref().map(|s| s.file.clone()).unwrap_or_default();
+            let file = diag
+                .source_snippet
+                .as_ref()
+                .map(|s| s.file.clone())
+                .unwrap_or_default();
             let line = diag.source_snippet.as_ref().map(|s| s.line).unwrap_or(0);
             let key = (format!("{}", diag.code), file, line);
             if !seen.insert(key) {
@@ -312,7 +315,11 @@ fn micd_save_and_print(session: &mut CompileSession, quiet: bool, suppress: bool
                     .unwrap_or_default();
                 eprintln!(
                     "[MICD] files={} restored={} changed={} snapshots={}{}",
-                    st.files, st.restored_designs, st.changed_files, st.snapshot_id, precompiled_info
+                    st.files,
+                    st.restored_designs,
+                    st.changed_files,
+                    st.snapshot_id,
+                    precompiled_info
                 );
             }
         }
@@ -412,7 +419,9 @@ fn run_formal(
                 Some((a.trim().to_string(), b.trim().to_string()))
             })
             .collect();
-        Some(maria_api::formal::connectivity::check_connectivity(ir_design, &pairs))
+        Some(maria_api::formal::connectivity::check_connectivity(
+            ir_design, &pairs,
+        ))
     } else {
         None
     };
@@ -442,7 +451,11 @@ fn run_formal(
                         Some(n) => {
                             println!(
                                 "  ✓ CONNECTED: {} → {} via {} hop{} ({})",
-                                r.src, r.dst, n, if n == 1 { "" } else { "s" }, path
+                                r.src,
+                                r.dst,
+                                n,
+                                if n == 1 { "" } else { "s" },
+                                path
                             )
                         }
                         None => println!("  ✗ NOT CONNECTED: {} → {}", r.src, r.dst),
@@ -473,7 +486,10 @@ fn run_formal(
             FormalResult::Unknown => println!("  ? UNKNOWN: {}", name),
             FormalResult::Error(e) => println!("  ! ERROR: {} — {}", name, e),
             FormalResult::InductiveProof(k) => {
-                println!("  ✓ INDUCTIVE PROOF (k={}): {} — holds for ALL depths", k, name)
+                println!(
+                    "  ✓ INDUCTIVE PROOF (k={}): {} — holds for ALL depths",
+                    k, name
+                )
             }
         }
     }
@@ -1159,7 +1175,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // ── MICD: cache lexer payload (tokens summary + stream) ──
     // Legacy path sebelumnya tidak menyimpan token data → lexer/ selalu 0.
     {
-        use maria_compiler::micd::cache::pipeline::{LexerPayload, LexerSummary, TokenRecord, token_family};
+        use maria_compiler::micd::cache::pipeline::{
+            token_family, LexerPayload, LexerSummary, TokenRecord,
+        };
         let mut summary = LexerSummary {
             token_count: tokens.len() as u64,
             identifiers: 0,
@@ -1180,12 +1198,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         // Cache ke pipeline: kunci = combined source path (fallback: first source).
         let key = sources.first().map(|s| s.to_string()).unwrap_or_default();
         if let Some(layer) = micd.cache_layer.as_mut() {
-            if let Ok(b) = bincode::serialize(&LexerPayload { summary, tokens: records }) {
-                let _ = layer.put(
-                    maria_compiler::micd::CacheCategory::Lexer,
-                    &key,
-                    &b,
-                );
+            if let Ok(b) = bincode::serialize(&LexerPayload {
+                summary,
+                tokens: records,
+            }) {
+                let _ = layer.put(maria_compiler::micd::CacheCategory::Lexer, &key, &b);
             }
         }
     }
@@ -1701,30 +1718,55 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     let has_elab_errors = elab_errs > 0;
 
     // Per-tahap validation
-    let sem_errs = elab_diags.iter().filter(|d| {
-        d.is_error() && matches!(d.code,
-            DiagCode::UndefinedSignal | DiagCode::TypeMismatch
-            | DiagCode::WidthMismatch | DiagCode::UndefinedVariable
-        )
-    }).count();
-    let hier_errs = elab_diags.iter().filter(|d| {
-        d.is_error() && matches!(d.code,
-            DiagCode::ModuleNotFound | DiagCode::CircularDependency
-            | DiagCode::CircularHierarchy | DiagCode::UnresolvedInstantiation
-            | DiagCode::InstanceNotFound
-        )
-    }).count();
-    let top_errs = elab_diags.iter().filter(|d| {
-        d.is_error() && matches!(d.code,
-            DiagCode::TopResolutionFailed | DiagCode::MultipleCandidateTops
-            | DiagCode::MissingRootModule
-        )
-    }).count();
-    let dpi_errs = elab_diags.iter().filter(|d| {
-        d.is_error() && matches!(d.code,
-            DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError
-        )
-    }).count();
+    let sem_errs = elab_diags
+        .iter()
+        .filter(|d| {
+            d.is_error()
+                && matches!(
+                    d.code,
+                    DiagCode::UndefinedSignal
+                        | DiagCode::TypeMismatch
+                        | DiagCode::WidthMismatch
+                        | DiagCode::UndefinedVariable
+                )
+        })
+        .count();
+    let hier_errs = elab_diags
+        .iter()
+        .filter(|d| {
+            d.is_error()
+                && matches!(
+                    d.code,
+                    DiagCode::ModuleNotFound
+                        | DiagCode::CircularDependency
+                        | DiagCode::CircularHierarchy
+                        | DiagCode::UnresolvedInstantiation
+                        | DiagCode::InstanceNotFound
+                )
+        })
+        .count();
+    let top_errs = elab_diags
+        .iter()
+        .filter(|d| {
+            d.is_error()
+                && matches!(
+                    d.code,
+                    DiagCode::TopResolutionFailed
+                        | DiagCode::MultipleCandidateTops
+                        | DiagCode::MissingRootModule
+                )
+        })
+        .count();
+    let dpi_errs = elab_diags
+        .iter()
+        .filter(|d| {
+            d.is_error()
+                && matches!(
+                    d.code,
+                    DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError
+                )
+        })
+        .count();
 
     // Cetak hasil pemeriksaan kesiapan
     if !cli.quiet {
@@ -1741,44 +1783,97 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             }
             None
         }
-        fn bl_print_cat(label: &str, count: usize, diags: &[&maria_core::diagnostics::diagnostic::Diagnostic], max: usize) {
-            if count == 0 { println!("✓ {}", label); return; }
+        fn bl_print_cat(
+            label: &str,
+            count: usize,
+            diags: &[&maria_core::diagnostics::diagnostic::Diagnostic],
+            max: usize,
+        ) {
+            if count == 0 {
+                println!("✓ {}", label);
+                return;
+            }
             println!("✗ {} ({} error)", label, count);
             let mut shown = 0;
             for d in diags {
-                if shown >= max { break; }
+                if shown >= max {
+                    break;
+                }
                 let loc = bl_diag_loc(d).unwrap_or_else(|| "?".into());
                 let msg = d.message.to_string();
-                let short = if msg.len() > 80 { format!("{}…", &msg[..77]) } else { msg };
+                let short = if msg.len() > 80 {
+                    format!("{}…", &msg[..77])
+                } else {
+                    msg
+                };
                 println!("  {} | {}", loc, short);
                 shown += 1;
             }
-            if count > max { println!("  ... dan {} error lainnya", count - max); }
+            if count > max {
+                println!("  ... dan {} error lainnya", count - max);
+            }
         }
 
         // Semantik
-        let sem_diags: Vec<_> = elab_diags.iter().filter(|d| {
-            d.is_error() && matches!(d.code, DiagCode::UndefinedSignal | DiagCode::TypeMismatch | DiagCode::WidthMismatch | DiagCode::UndefinedVariable)
-        }).collect();
+        let sem_diags: Vec<_> = elab_diags
+            .iter()
+            .filter(|d| {
+                d.is_error()
+                    && matches!(
+                        d.code,
+                        DiagCode::UndefinedSignal
+                            | DiagCode::TypeMismatch
+                            | DiagCode::WidthMismatch
+                            | DiagCode::UndefinedVariable
+                    )
+            })
+            .collect();
         bl_print_cat("Semantik", sem_errs, &sem_diags, 10);
         // Hierarki
-        let hier_diags: Vec<_> = elab_diags.iter().filter(|d| {
-            d.is_error() && matches!(d.code, DiagCode::ModuleNotFound | DiagCode::CircularDependency | DiagCode::CircularHierarchy | DiagCode::UnresolvedInstantiation | DiagCode::InstanceNotFound)
-        }).collect();
+        let hier_diags: Vec<_> = elab_diags
+            .iter()
+            .filter(|d| {
+                d.is_error()
+                    && matches!(
+                        d.code,
+                        DiagCode::ModuleNotFound
+                            | DiagCode::CircularDependency
+                            | DiagCode::CircularHierarchy
+                            | DiagCode::UnresolvedInstantiation
+                            | DiagCode::InstanceNotFound
+                    )
+            })
+            .collect();
         bl_print_cat("Hierarki", hier_errs, &hier_diags, 10);
         // Resolusi Top
         if has_elab_errors || recovered {
-            let top_diags: Vec<_> = elab_diags.iter().filter(|d| {
-                d.is_error() && matches!(d.code, DiagCode::TopResolutionFailed | DiagCode::MultipleCandidateTops | DiagCode::MissingRootModule)
-            }).collect();
+            let top_diags: Vec<_> = elab_diags
+                .iter()
+                .filter(|d| {
+                    d.is_error()
+                        && matches!(
+                            d.code,
+                            DiagCode::TopResolutionFailed
+                                | DiagCode::MultipleCandidateTops
+                                | DiagCode::MissingRootModule
+                        )
+                })
+                .collect();
             bl_print_cat("Resolusi Top", top_errs, &top_diags, 10);
         } else {
             println!("✓ Resolusi Top");
         }
         // Penghubung DPI
-        let dpi_diags: Vec<_> = elab_diags.iter().filter(|d| {
-            d.is_error() && matches!(d.code, DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError)
-        }).collect();
+        let dpi_diags: Vec<_> = elab_diags
+            .iter()
+            .filter(|d| {
+                d.is_error()
+                    && matches!(
+                        d.code,
+                        DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError
+                    )
+            })
+            .collect();
         bl_print_cat("Penghubung DPI", dpi_errs, &dpi_diags, 10);
         println!();
 
@@ -1812,7 +1907,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 eprintln!("⚠  Hierarki: {} error.", hier_errs);
             }
             if top_errs > 0 || recovered {
-                eprintln!("⚠  Resolusi Top: {} error, recovered={}.", top_errs, recovered);
+                eprintln!(
+                    "⚠  Resolusi Top: {} error, recovered={}.",
+                    top_errs, recovered
+                );
             }
             if dpi_errs > 0 {
                 eprintln!("⚠  Penghubung DPI: {} error.", dpi_errs);
@@ -1911,7 +2009,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // ── Formal Verification (runs before simulation, skips sim) ──
     #[cfg(feature = "formal")]
     if cli.formal || !cli.formal_connect.is_empty() {
-        return run_formal(&ir_design, cli.formal_bound, cli.quiet, cli.formal_induction, &cli.formal_connect);
+        return run_formal(
+            &ir_design,
+            cli.formal_bound,
+            cli.quiet,
+            cli.formal_induction,
+            &cli.formal_connect,
+        );
     }
     #[cfg(not(feature = "formal"))]
     if cli.formal {
@@ -1998,7 +2102,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     let sim_limit = cli
         .max_time
         .map(maria_api::simulator::SimulationLimit::Finite)
-        .unwrap_or(maria_api::simulator::SimulationLimit::Finite(DEFAULT_MAX_TIME_NS));
+        .unwrap_or(maria_api::simulator::SimulationLimit::Finite(
+            DEFAULT_MAX_TIME_NS,
+        ));
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
 
@@ -2930,39 +3036,59 @@ fn run_fast(
     let has_parse_errors = parse_errs > 0;
 
     // Per-tahap validation: hitung error per kategori dari elab_diags
-    let sem_errs = elab_diags.iter().filter(|d| {
-        d.is_error() && matches!(d.code,
-            DiagCode::UndefinedSignal
-            | DiagCode::TypeMismatch
-            | DiagCode::WidthMismatch
-            | DiagCode::UndefinedVariable
-        )
-    }).count();
-    let hier_errs = elab_diags.iter().filter(|d| {
-        d.is_error() && matches!(d.code,
-            DiagCode::ModuleNotFound
-            | DiagCode::CircularDependency
-            | DiagCode::CircularHierarchy
-            | DiagCode::UnresolvedInstantiation
-            | DiagCode::InstanceNotFound
-        )
-    }).count();
-    let top_errs = elab_diags.iter().filter(|d| {
-        d.is_error() && matches!(d.code,
-            DiagCode::TopResolutionFailed
-            | DiagCode::MultipleCandidateTops
-            | DiagCode::MissingRootModule
-        )
-    }).count();
-    let dpi_errs = elab_diags.iter().filter(|d| {
-        d.is_error() && matches!(d.code,
-            DiagCode::DpiImportNotFound
-            | DiagCode::DpiError
-            | DiagCode::DpiScopeError
-        )
-    }).count();
+    let sem_errs = elab_diags
+        .iter()
+        .filter(|d| {
+            d.is_error()
+                && matches!(
+                    d.code,
+                    DiagCode::UndefinedSignal
+                        | DiagCode::TypeMismatch
+                        | DiagCode::WidthMismatch
+                        | DiagCode::UndefinedVariable
+                )
+        })
+        .count();
+    let hier_errs = elab_diags
+        .iter()
+        .filter(|d| {
+            d.is_error()
+                && matches!(
+                    d.code,
+                    DiagCode::ModuleNotFound
+                        | DiagCode::CircularDependency
+                        | DiagCode::CircularHierarchy
+                        | DiagCode::UnresolvedInstantiation
+                        | DiagCode::InstanceNotFound
+                )
+        })
+        .count();
+    let top_errs = elab_diags
+        .iter()
+        .filter(|d| {
+            d.is_error()
+                && matches!(
+                    d.code,
+                    DiagCode::TopResolutionFailed
+                        | DiagCode::MultipleCandidateTops
+                        | DiagCode::MissingRootModule
+                )
+        })
+        .count();
+    let dpi_errs = elab_diags
+        .iter()
+        .filter(|d| {
+            d.is_error()
+                && matches!(
+                    d.code,
+                    DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError
+                )
+        })
+        .count();
 
-    use maria_core::diagnostics::diagnostic::{DiagCode as DCode, DiagLevel as DLevel, Diagnostic as DDiag};
+    use maria_core::diagnostics::diagnostic::{
+        DiagCode as DCode, DiagLevel as DLevel, Diagnostic as DDiag,
+    };
 
     /// Ekstrak lokasi error dari Diagnostic: source_snippet → spans → message parsing.
     fn diag_loc(d: &maria_core::diagnostics::diagnostic::Diagnostic) -> Option<String> {
@@ -2998,11 +3124,17 @@ fn run_fast(
         println!("✗ {} ({} error)", label, count);
         let mut shown = 0;
         for d in errors {
-            if shown >= max_show { break; }
+            if shown >= max_show {
+                break;
+            }
             let loc = diag_loc(d).unwrap_or_else(|| "?".into());
             // Potong message jika terlalu panjang
             let msg = d.message.to_string();
-            let msg_short = if msg.len() > 80 { format!("{}…", &msg[..77]) } else { msg };
+            let msg_short = if msg.len() > 80 {
+                format!("{}…", &msg[..77])
+            } else {
+                msg
+            };
             println!("  {} | {}", loc, msg_short);
             shown += 1;
         }
@@ -3015,31 +3147,60 @@ fn run_fast(
         println!("\nKesiapan Simulasi");
 
         // Kumpulkan error per kategori
-        let parse_err_diags: Vec<_> = session.parse_errors.iter().filter(|d| d.is_error()).collect();
-        let sem_err_diags: Vec<_> = elab_diags.iter().filter(|d| {
-            d.is_error() && matches!(d.code,
-                DiagCode::UndefinedSignal | DiagCode::TypeMismatch
-                | DiagCode::WidthMismatch | DiagCode::UndefinedVariable
-            )
-        }).collect();
-        let hier_err_diags: Vec<_> = elab_diags.iter().filter(|d| {
-            d.is_error() && matches!(d.code,
-                DiagCode::ModuleNotFound | DiagCode::CircularDependency
-                | DiagCode::CircularHierarchy | DiagCode::UnresolvedInstantiation
-                | DiagCode::InstanceNotFound
-            )
-        }).collect();
-        let top_err_diags: Vec<_> = elab_diags.iter().filter(|d| {
-            d.is_error() && matches!(d.code,
-                DiagCode::TopResolutionFailed | DiagCode::MultipleCandidateTops
-                | DiagCode::MissingRootModule
-            )
-        }).collect();
-        let dpi_err_diags: Vec<_> = elab_diags.iter().filter(|d| {
-            d.is_error() && matches!(d.code,
-                DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError
-            )
-        }).collect();
+        let parse_err_diags: Vec<_> = session
+            .parse_errors
+            .iter()
+            .filter(|d| d.is_error())
+            .collect();
+        let sem_err_diags: Vec<_> = elab_diags
+            .iter()
+            .filter(|d| {
+                d.is_error()
+                    && matches!(
+                        d.code,
+                        DiagCode::UndefinedSignal
+                            | DiagCode::TypeMismatch
+                            | DiagCode::WidthMismatch
+                            | DiagCode::UndefinedVariable
+                    )
+            })
+            .collect();
+        let hier_err_diags: Vec<_> = elab_diags
+            .iter()
+            .filter(|d| {
+                d.is_error()
+                    && matches!(
+                        d.code,
+                        DiagCode::ModuleNotFound
+                            | DiagCode::CircularDependency
+                            | DiagCode::CircularHierarchy
+                            | DiagCode::UnresolvedInstantiation
+                            | DiagCode::InstanceNotFound
+                    )
+            })
+            .collect();
+        let top_err_diags: Vec<_> = elab_diags
+            .iter()
+            .filter(|d| {
+                d.is_error()
+                    && matches!(
+                        d.code,
+                        DiagCode::TopResolutionFailed
+                            | DiagCode::MultipleCandidateTops
+                            | DiagCode::MissingRootModule
+                    )
+            })
+            .collect();
+        let dpi_err_diags: Vec<_> = elab_diags
+            .iter()
+            .filter(|d| {
+                d.is_error()
+                    && matches!(
+                        d.code,
+                        DiagCode::DpiImportNotFound | DiagCode::DpiError | DiagCode::DpiScopeError
+                    )
+            })
+            .collect();
 
         const MAX_SHOW: usize = 10;
 
@@ -3060,13 +3221,18 @@ fn run_fast(
         println!();
 
         // Kesiapan keseluruhan
-        let any_ready = has_parse_errors || sem_errs > 0 || hier_errs > 0
-            || has_elab_errors || recovered || dpi_errs > 0;
+        let any_ready = has_parse_errors
+            || sem_errs > 0
+            || hier_errs > 0
+            || has_elab_errors
+            || recovered
+            || dpi_errs > 0;
         if any_ready && !cli.force_sim {
             println!("Simulasi: TIDAK SIAP");
             println!("Simulasi dibatalkan.");
             let total_errs = parse_errs + elab_errs;
-            let first_err = parse_err_diags.first()
+            let first_err = parse_err_diags
+                .first()
                 .or_else(|| sem_err_diags.first())
                 .or_else(|| hier_err_diags.first())
                 .or_else(|| top_err_diags.first())
@@ -3111,7 +3277,10 @@ fn run_fast(
                 eprintln!("⚠  Hierarki: {} error.", hier_errs);
             }
             if top_errs > 0 || recovered {
-                eprintln!("⚠  Resolusi Top: {} error, recovered={}.", top_errs, recovered);
+                eprintln!(
+                    "⚠  Resolusi Top: {} error, recovered={}.",
+                    top_errs, recovered
+                );
             }
             if dpi_errs > 0 {
                 eprintln!("⚠  Penghubung DPI: {} error.", dpi_errs);
@@ -3121,10 +3290,14 @@ fn run_fast(
             );
         }
         let total_errs = parse_errs + elab_errs;
-        let first_err = session.parse_errors.iter().find(|d| d.is_error())
+        let first_err = session
+            .parse_errors
+            .iter()
+            .find(|d| d.is_error())
             .or_else(|| elab_diags.iter().find(|d| d.is_error()));
         let loc_str = first_err.and_then(|d| {
-            d.source_snippet.as_ref()
+            d.source_snippet
+                .as_ref()
                 .map(|ss| format!("{}:{}:{}", ss.file, ss.line, ss.col))
         });
         let msg = match &loc_str {
@@ -3248,7 +3421,13 @@ fn run_fast(
     // ── Formal Verification (runs before simulation, skips sim) ──
     #[cfg(feature = "formal")]
     if cli.formal || !cli.formal_connect.is_empty() {
-        return run_formal(&ir_design, cli.formal_bound, cli.quiet, cli.formal_induction, &cli.formal_connect);
+        return run_formal(
+            &ir_design,
+            cli.formal_bound,
+            cli.quiet,
+            cli.formal_induction,
+            &cli.formal_connect,
+        );
     }
     #[cfg(not(feature = "formal"))]
     if cli.formal {
@@ -3302,7 +3481,9 @@ fn run_fast(
     let sim_limit = cli
         .max_time
         .map(maria_api::simulator::SimulationLimit::Finite)
-        .unwrap_or(maria_api::simulator::SimulationLimit::Finite(DEFAULT_MAX_TIME_NS));
+        .unwrap_or(maria_api::simulator::SimulationLimit::Finite(
+            DEFAULT_MAX_TIME_NS,
+        ));
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
 
@@ -4119,9 +4300,8 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 let cfg = maria_api::emu::display::DisplayConfig::from_wh(win_arg)
                     .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
                 let mut disp = maria_api::emu::display::VgaDisplay::new(cfg);
-                disp.open_window().map_err(|e| {
-                    SimError::with_diag(DiagCode::InvalidSyntax, e)
-                })?;
+                disp.open_window()
+                    .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
                 // Render console output ke VGA display
                 let console_str = String::from_utf8_lossy(&result.console);
                 let mut col = 0;
@@ -4284,9 +4464,8 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                         let cfg = maria_api::emu::display::DisplayConfig::from_wh(win_arg)
                             .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
                         let mut disp = maria_api::emu::display::VgaDisplay::new(cfg);
-                        disp.open_window().map_err(|e| {
-                            SimError::with_diag(DiagCode::InvalidSyntax, e)
-                        })?;
+                        disp.open_window()
+                            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
                         // Render summary + console ke VGA display
                         let summary = result.summary();
                         let console_str = String::from_utf8_lossy(&result.console);
@@ -4314,7 +4493,9 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                             }
                         }
                         disp.update();
-                        eprintln!("[Maria] Window aktif. Tekan ESC atau tutup jendela untuk keluar.");
+                        eprintln!(
+                            "[Maria] Window aktif. Tekan ESC atau tutup jendela untuk keluar."
+                        );
                         loop {
                             if let Some(ch) = disp.poll_input() {
                                 if ch == '\x1b' {
@@ -4431,7 +4612,12 @@ fn dispatch_batch(a: &crate::cli::MbatchArgs) -> ! {
                         maria_api::tools::batch::JobStatus::Skipped => "⊘ SKIPPED".to_string(),
                         _ => "? PENDING".to_string(),
                     };
-                    println!("  {}: {} ({:.2}s)", r.name, status, r.duration.as_secs_f64());
+                    println!(
+                        "  {}: {} ({:.2}s)",
+                        r.name,
+                        status,
+                        r.duration.as_secs_f64()
+                    );
                 }
             }
             crate::cli::MbatchCmd::Status => {
@@ -4458,7 +4644,10 @@ fn dispatch_memcheck(a: &crate::cli::MmemcheckArgs) -> ! {
             _ => {
                 return Err(SimError::with_diag(
                     DiagCode::InvalidSyntax,
-                    format!("tool '{}' tidak dikenal (gunakan 'valgrind' atau 'heaptrack')", a.tool),
+                    format!(
+                        "tool '{}' tidak dikenal (gunakan 'valgrind' atau 'heaptrack')",
+                        a.tool
+                    ),
                 ))
             }
         };
@@ -4498,8 +4687,9 @@ fn dispatch_tbgen(a: &crate::cli::MtbgenArgs) -> ! {
         let module_name = a.module.as_deref().unwrap_or("dut");
         let tb = tbgen::quick_tb(module_name, &inputs, &outputs);
         if let Some(ref output) = a.output {
-            std::fs::write(output, &tb)
-                .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", output, e)))?;
+            std::fs::write(output, &tb).map_err(|e| {
+                SimError::with_diag(DiagCode::IoError, format!("{}: {}", output, e))
+            })?;
             println!("Testbench written to {}", output);
         } else {
             print!("{}", tb);
@@ -4519,14 +4709,22 @@ fn dispatch_waiver(a: &crate::cli::MwaiverArgs) -> ! {
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
         }
         match &a.cmd {
-            crate::cli::MwaiverCmd::Add { rule, file_pattern, reason, owner } => {
+            crate::cli::MwaiverCmd::Add {
+                rule,
+                file_pattern,
+                reason,
+                owner,
+            } => {
                 let id = store.add(rule, file_pattern.as_deref(), reason, owner);
-                store.save(db_path)
+                store
+                    .save(db_path)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 println!("Waiver {} added: {}", id, rule);
             }
             crate::cli::MwaiverCmd::List { rule, json } => {
-                let waivers: Vec<_> = store.waivers.iter()
+                let waivers: Vec<_> = store
+                    .waivers
+                    .iter()
                     .filter(|w| rule.as_ref().map(|r| w.rule == *r).unwrap_or(true))
                     .collect();
                 if *json {
@@ -4541,13 +4739,18 @@ fn dispatch_waiver(a: &crate::cli::MwaiverArgs) -> ! {
             }
             crate::cli::MwaiverCmd::Check { rule, file } => {
                 if let Some(m) = store.is_waived(rule, file.as_deref(), None) {
-                    println!("✓ Waived: {} (confidence: {:.0}%)", m.waiver.id, m.confidence * 100.0);
+                    println!(
+                        "✓ Waived: {} (confidence: {:.0}%)",
+                        m.waiver.id,
+                        m.confidence * 100.0
+                    );
                 } else {
                     println!("✗ Not waived: {}", rule);
                 }
             }
             crate::cli::MwaiverCmd::Export { output } => {
-                store.save(std::path::Path::new(output))
+                store
+                    .save(std::path::Path::new(output))
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 println!("Waivers exported to {}", output);
             }
@@ -4557,7 +4760,8 @@ fn dispatch_waiver(a: &crate::cli::MwaiverArgs) -> ! {
                 for w in imported.waivers {
                     store.add(&w.rule, w.file_pattern.as_deref(), &w.reason, &w.owner);
                 }
-                store.save(db_path)
+                store
+                    .save(db_path)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 println!("Waivers imported from {}", input);
             }
@@ -4573,22 +4777,29 @@ fn dispatch_vault(a: &crate::cli::MvaultArgs) -> ! {
         let vault = SecureVault::new();
         match &a.cmd {
             crate::cli::MvaultCmd::Register { file, user } => {
-                let entry = vault.register(std::path::Path::new(file), user)
+                let entry = vault
+                    .register(std::path::Path::new(file), user)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
-                println!("Registered: {} (owner: {})", entry.path, entry.permissions.owner);
+                println!(
+                    "Registered: {} (owner: {})",
+                    entry.path, entry.permissions.owner
+                );
             }
             crate::cli::MvaultCmd::Lock { file, user } => {
-                vault.lock(file, user)
+                vault
+                    .lock(file, user)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 println!("Locked: {} by {}", file, user);
             }
             crate::cli::MvaultCmd::Unlock { file, user } => {
-                vault.unlock(file, user)
+                vault
+                    .unlock(file, user)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 println!("Unlocked: {} by {}", file, user);
             }
             crate::cli::MvaultCmd::Verify { file } => {
-                let ok = vault.verify(std::path::Path::new(file))
+                let ok = vault
+                    .verify(std::path::Path::new(file))
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 if ok {
                     println!("✓ Integrity OK: {}", file);
@@ -4599,7 +4810,12 @@ fn dispatch_vault(a: &crate::cli::MvaultArgs) -> ! {
             crate::cli::MvaultCmd::List => {
                 let entries = vault.list();
                 for e in &entries {
-                    println!("{} (owner: {}, locked: {})", e.path, e.permissions.owner, e.locked_by.as_deref().unwrap_or("no"));
+                    println!(
+                        "{} (owner: {}, locked: {})",
+                        e.path,
+                        e.permissions.owner,
+                        e.locked_by.as_deref().unwrap_or("no")
+                    );
                 }
             }
             crate::cli::MvaultCmd::Summary => {
@@ -4615,19 +4831,35 @@ fn dispatch_ipxact(a: &crate::cli::MipxactArgs) -> ! {
     let result: Result<(), SimError> = (|| {
         use maria_api::tools::ipxact::IpxactComponent;
         match &a.cmd {
-            crate::cli::MipxactCmd::Generate { module, vendor, library, version, output, inputs, outputs } => {
+            crate::cli::MipxactCmd::Generate {
+                module,
+                vendor,
+                library,
+                version,
+                output,
+                inputs,
+                outputs,
+            } => {
                 let mut ports: Vec<(String, String, Option<u32>)> = Vec::new();
                 if let Some(ref input_str) = inputs {
                     for part in input_str.split(',') {
                         if let Some((name, width)) = part.split_once('=') {
-                            ports.push((name.trim().to_string(), "in".to_string(), width.trim().parse().ok()));
+                            ports.push((
+                                name.trim().to_string(),
+                                "in".to_string(),
+                                width.trim().parse().ok(),
+                            ));
                         }
                     }
                 }
                 if let Some(ref output_str) = outputs {
                     for part in output_str.split(',') {
                         if let Some((name, width)) = part.split_once('=') {
-                            ports.push((name.trim().to_string(), "out".to_string(), width.trim().parse().ok()));
+                            ports.push((
+                                name.trim().to_string(),
+                                "out".to_string(),
+                                width.trim().parse().ok(),
+                            ));
                         }
                     }
                 }
@@ -4655,19 +4887,26 @@ fn dispatch_ipxact(a: &crate::cli::MipxactArgs) -> ! {
 
 fn dispatch_design_repo(a: &crate::cli::MdesignRepoArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::design_repo::{DesignRepository, DesignFileInfo};
+        use maria_api::tools::design_repo::{DesignFileInfo, DesignRepository};
         match &a.cmd {
             crate::cli::MdesignRepoCmd::Init { root } => {
                 let _repo = DesignRepository::open(std::path::PathBuf::from(root));
                 println!("Design repository initialized at {}", root);
             }
-            crate::cli::MdesignRepoCmd::Commit { author, message, files } => {
+            crate::cli::MdesignRepoCmd::Commit {
+                author,
+                message,
+                files,
+            } => {
                 let repo = DesignRepository::open(std::path::PathBuf::from("."));
-                let file_infos: Vec<DesignFileInfo> = files.iter().map(|f| DesignFileInfo {
-                    path: f.clone(),
-                    checksum: "auto".to_string(),
-                    size: 0,
-                }).collect();
+                let file_infos: Vec<DesignFileInfo> = files
+                    .iter()
+                    .map(|f| DesignFileInfo {
+                        path: f.clone(),
+                        checksum: "auto".to_string(),
+                        size: 0,
+                    })
+                    .collect();
                 let commit = repo.commit(author, message, file_infos);
                 println!("Committed: {} by {}", commit.hash, commit.author);
             }
@@ -4678,9 +4917,14 @@ fn dispatch_design_repo(a: &crate::cli::MdesignRepoArgs) -> ! {
                     println!("{}: {} ({})", &c.hash[..12], c.message, c.author);
                 }
             }
-            crate::cli::MdesignRepoCmd::Tag { name, commit, description } => {
+            crate::cli::MdesignRepoCmd::Tag {
+                name,
+                commit,
+                description,
+            } => {
                 let repo = DesignRepository::open(std::path::PathBuf::from("."));
-                let tag = repo.tag(name, commit, description)
+                let tag = repo
+                    .tag(name, commit, description)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 println!("Tagged: {} -> {}", tag.name, tag.commit_hash);
             }
@@ -4706,7 +4950,7 @@ fn dispatch_design_repo(a: &crate::cli::MdesignRepoArgs) -> ! {
 
 fn dispatch_project(a: &crate::cli::MprojectArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::project::{WorkspaceConfig, ProjectEntry};
+        use maria_api::tools::project::{ProjectEntry, WorkspaceConfig};
         let config_path = std::path::Path::new(".maria/workspace.toml");
         let mut config = if config_path.exists() {
             WorkspaceConfig::load(config_path)
@@ -4717,12 +4961,19 @@ fn dispatch_project(a: &crate::cli::MprojectArgs) -> ! {
         match &a.cmd {
             crate::cli::MprojectCmd::Init { root } => {
                 let _ = std::fs::create_dir_all(format!("{}/.maria", root));
-                config.save(config_path)
+                config
+                    .save(config_path)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 println!("Workspace initialized at {}", root);
             }
-            crate::cli::MprojectCmd::Add { name, path, top, depends } => {
-                let deps: Vec<String> = depends.as_ref()
+            crate::cli::MprojectCmd::Add {
+                name,
+                path,
+                top,
+                depends,
+            } => {
+                let deps: Vec<String> = depends
+                    .as_ref()
                     .map(|d| d.split(',').map(|s| s.trim().to_string()).collect())
                     .unwrap_or_default();
                 config.add_project(ProjectEntry {
@@ -4734,13 +4985,15 @@ fn dispatch_project(a: &crate::cli::MprojectArgs) -> ! {
                     defines: Vec::new(),
                     features: Vec::new(),
                 });
-                config.save(config_path)
+                config
+                    .save(config_path)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 println!("Project '{}' added", name);
             }
             crate::cli::MprojectCmd::Remove { name } => {
                 if config.remove_project(name) {
-                    config.save(config_path)
+                    config
+                        .save(config_path)
                         .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                     println!("Project '{}' removed", name);
                 } else {
@@ -4749,7 +5002,12 @@ fn dispatch_project(a: &crate::cli::MprojectArgs) -> ! {
             }
             crate::cli::MprojectCmd::List => {
                 for p in &config.projects {
-                    println!("{}: {} (top: {})", p.name, p.path, p.top.as_deref().unwrap_or("-"));
+                    println!(
+                        "{}: {} (top: {})",
+                        p.name,
+                        p.path,
+                        p.top.as_deref().unwrap_or("-")
+                    );
                 }
             }
             crate::cli::MprojectCmd::Analyze => {
@@ -4802,8 +5060,9 @@ fn dispatch_equiv_check(a: &crate::cli::MequivCheckArgs) -> ! {
         // Load golden and impl from JSON files
         let golden_content = std::fs::read_to_string(&a.golden)
             .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", a.golden, e)))?;
-        let impl_content = std::fs::read_to_string(&a.impl_file)
-            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", a.impl_file, e)))?;
+        let impl_content = std::fs::read_to_string(&a.impl_file).map_err(|e| {
+            SimError::with_diag(DiagCode::IoError, format!("{}: {}", a.impl_file, e))
+        })?;
         let golden: Vec<(String, Vec<u64>)> = serde_json::from_str(&golden_content)
             .map_err(|e| SimError::with_diag(DiagCode::IoError, e.to_string()))?;
         let impl_vals: Vec<(String, Vec<u64>)> = serde_json::from_str(&impl_content)
@@ -4811,9 +5070,15 @@ fn dispatch_equiv_check(a: &crate::cli::MequivCheckArgs) -> ! {
         let mapping = Vec::new();
         let result = checker.check_combinational(&mapping, &golden, &impl_vals);
         if result.equivalent {
-            println!("✓ EQUIVALENT (method: {}, time: {}ms)", result.method, result.proof_time_ms);
+            println!(
+                "✓ EQUIVALENT (method: {}, time: {}ms)",
+                result.method, result.proof_time_ms
+            );
         } else {
-            println!("✗ NOT EQUIVALENT (method: {}, time: {}ms)", result.method, result.proof_time_ms);
+            println!(
+                "✗ NOT EQUIVALENT (method: {}, time: {}ms)",
+                result.method, result.proof_time_ms
+            );
             if let Some(ce) = &result.counter_example {
                 println!("  Counter-example at cycle {}", ce.cycle);
             }
@@ -4829,18 +5094,25 @@ fn dispatch_regression(a: &crate::cli::MregressionArgs) -> ! {
         use std::time::{SystemTime, UNIX_EPOCH};
         let db_path = std::path::Path::new(".maria/regression.json");
         let mut db = if db_path.exists() {
-            RegressionDb::load(db_path)
-                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
+            RegressionDb::load(db_path).map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
         } else {
             RegressionDb::new()
         };
         match &a.cmd {
-            crate::cli::MregressionCmd::Record { input, branch, commit } => {
-                let content = std::fs::read_to_string(input)
-                    .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", input, e)))?;
+            crate::cli::MregressionCmd::Record {
+                input,
+                branch,
+                commit,
+            } => {
+                let content = std::fs::read_to_string(input).map_err(|e| {
+                    SimError::with_diag(DiagCode::IoError, format!("{}: {}", input, e))
+                })?;
                 let results: Vec<TestResult> = serde_json::from_str(&content)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e.to_string()))?;
-                let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let ts = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
                 let run = RegressionRun {
                     id: format!("run-{}", ts),
                     timestamp: ts,
@@ -4882,13 +5154,17 @@ fn dispatch_eco(a: &crate::cli::MecoArgs) -> ! {
         use maria_api::tools::eco::{EcoDb, EcoSeverity, EcoStatus};
         let db_path = std::path::Path::new(".maria/eco.json");
         let mut db = if db_path.exists() {
-            EcoDb::load(db_path)
-                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
+            EcoDb::load(db_path).map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
         } else {
             EcoDb::new()
         };
         match &a.cmd {
-            crate::cli::MecoCmd::Create { title, description, severity, author } => {
+            crate::cli::MecoCmd::Create {
+                title,
+                description,
+                severity,
+                author,
+            } => {
                 let sev = match severity.as_str() {
                     "critical" => EcoSeverity::Critical,
                     "major" => EcoSeverity::Major,
@@ -4897,7 +5173,10 @@ fn dispatch_eco(a: &crate::cli::MecoArgs) -> ! {
                     _ => {
                         return Err(SimError::with_diag(
                             DiagCode::InvalidSyntax,
-                            format!("severity '{}' tidak dikenal (critical/major/minor/cosmetic)", severity),
+                            format!(
+                                "severity '{}' tidak dikenal (critical/major/minor/cosmetic)",
+                                severity
+                            ),
                         ))
                     }
                 };

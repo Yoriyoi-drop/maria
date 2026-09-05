@@ -163,12 +163,7 @@ impl AdaptiveMutationScheduler {
 
     /// Report the outcome of a mutation. Call this after running the
     /// mutated input through the oracle.
-    pub fn report_outcome(
-        &mut self,
-        op: MutationOp,
-        new_coverage: bool,
-        bug_found: bool,
-    ) {
+    pub fn report_outcome(&mut self, op: MutationOp, new_coverage: bool, bug_found: bool) {
         if let Some(stats) = self.stats.get_mut(&op) {
             if new_coverage {
                 stats.successes += 1;
@@ -229,7 +224,10 @@ impl AdaptiveMutationScheduler {
     /// Summary for logging.
     pub fn summary(&self) -> String {
         let probs = self.probabilities();
-        let mut result = format!("AdaptiveMutationScheduler ({} iterations):\n", self.total_iterations);
+        let mut result = format!(
+            "AdaptiveMutationScheduler ({} iterations):\n",
+            self.total_iterations
+        );
         for (op, prob) in &probs {
             let stats = &self.stats[op];
             result.push_str(&format!(
@@ -319,11 +317,7 @@ mod tests {
             scheduler.report_outcome(op, i % 3 == 0, i % 10 == 0);
         }
 
-        let total: f64 = scheduler
-            .probabilities()
-            .iter()
-            .map(|(_, p)| p)
-            .sum();
+        let total: f64 = scheduler.probabilities().iter().map(|(_, p)| p).sum();
         assert!(
             (total - 1.0).abs() < 0.001,
             "probabilities should sum to 1.0, got {}",

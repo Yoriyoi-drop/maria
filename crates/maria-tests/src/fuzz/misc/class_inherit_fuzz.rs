@@ -45,7 +45,12 @@ fn class_inherit_field_access_fuzz() {
 
         // Just verify compilation succeeds (no crash)
         let result = crate::compile_str(&src);
-        assert!(result.is_ok(), "compile failed on seed={}: {:?}", seed, result.err());
+        assert!(
+            result.is_ok(),
+            "compile failed on seed={}: {:?}",
+            seed,
+            result.err()
+        );
         checked += 1;
     }
     assert!(checked > 15, "terlalu sedikit kasus (checked={})", checked);
@@ -101,7 +106,12 @@ fn class_multilevel_inherit_fuzz() {
         );
 
         let result = crate::compile_str(&src);
-        assert!(result.is_ok(), "compile failed on seed={}: {:?}", seed, result.err());
+        assert!(
+            result.is_ok(),
+            "compile failed on seed={}: {:?}",
+            seed,
+            result.err()
+        );
         checked += 1;
     }
     assert!(checked > 15, "terlalu sedikit kasus (checked={})", checked);
@@ -144,7 +154,12 @@ fn class_method_override_fuzz() {
         );
 
         let result = crate::compile_str(&src);
-        assert!(result.is_ok(), "compile failed on seed={}: {:?}", seed, result.err());
+        assert!(
+            result.is_ok(),
+            "compile failed on seed={}: {:?}",
+            seed,
+            result.err()
+        );
         checked += 1;
     }
     assert!(checked > 15, "terlalu sedikit kasus (checked={})", checked);

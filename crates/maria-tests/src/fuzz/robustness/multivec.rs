@@ -105,7 +105,10 @@ fn multivec_sequential_stimulus_matches_oracle() {
         for (i, &(a, b)) in vecs.iter().enumerate() {
             let expected = input.expr.eval(input.w, a, b) & mask_of(input.w);
             let name = format!("m{}", i);
-            let actual = sigs.iter().find(|(n, _)| *n == name).map(|(_, v)| v.to_u64());
+            let actual = sigs
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v.to_u64());
             if actual != Some(expected) {
                 mismatch.push(format!(
                     "seed={} step={} a={:#x} b={:#x} expr=`{}` exp={:#x} act={:?}\n{}",

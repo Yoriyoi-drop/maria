@@ -53,7 +53,10 @@ impl SynthReport {
     /// Generate Yosys-compatible report.
     pub fn to_yosys_report(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("=== Yosys Synthesis Report: {} ===\n\n", self.module_name));
+        out.push_str(&format!(
+            "=== Yosys Synthesis Report: {} ===\n\n",
+            self.module_name
+        ));
         out.push_str(&format!("Target library: {}\n\n", self.target_library));
 
         out.push_str("Area:\n");
@@ -62,20 +65,35 @@ impl SynthReport {
         out.push_str(&format!("  Wire:   {:.2}\n", self.area.wire_area));
 
         out.push_str("\nTiming:\n");
-        out.push_str(&format!("  Clock: {} ({:.2}ns)\n", self.timing.clock_name, self.timing.clock_period));
+        out.push_str(&format!(
+            "  Clock: {} ({:.2}ns)\n",
+            self.timing.clock_name, self.timing.clock_period
+        ));
         out.push_str(&format!("  WNS:   {:.3}ns\n", self.timing.wns));
         out.push_str(&format!("  TNS:   {:.3}ns\n", self.timing.tns));
 
         out.push_str("\nPower:\n");
         out.push_str(&format!("  Total:     {:.3}mW\n", self.power.total_power));
-        out.push_str(&format!("  Internal:  {:.3}mW\n", self.power.internal_power));
-        out.push_str(&format!("  Switching: {:.3}mW\n", self.power.switching_power));
+        out.push_str(&format!(
+            "  Internal:  {:.3}mW\n",
+            self.power.internal_power
+        ));
+        out.push_str(&format!(
+            "  Switching: {:.3}mW\n",
+            self.power.switching_power
+        ));
         out.push_str(&format!("  Leakage:   {:.3}mW\n", self.power.leakage_power));
 
         out.push_str("\nCell Count:\n");
         out.push_str(&format!("  Total:         {}\n", self.cell_count.total));
-        out.push_str(&format!("  Combinational: {}\n", self.cell_count.combinational));
-        out.push_str(&format!("  Sequential:    {}\n", self.cell_count.sequential));
+        out.push_str(&format!(
+            "  Combinational: {}\n",
+            self.cell_count.combinational
+        ));
+        out.push_str(&format!(
+            "  Sequential:    {}\n",
+            self.cell_count.sequential
+        ));
 
         out
     }
@@ -101,9 +119,18 @@ impl SynthReport {
     pub fn to_genus_report(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("Genus Synthesis Report: {}\n", self.module_name));
-        out.push_str(&format!("WNS: {:.3} TNS: {:.3}\n", self.timing.wns, self.timing.tns));
-        out.push_str(&format!("Area: {:.2} Power: {:.3}mW\n", self.area.total_area, self.power.total_power));
-        out.push_str(&format!("Cells: {} (seq: {} comb: {})\n", self.cell_count.total, self.cell_count.sequential, self.cell_count.combinational));
+        out.push_str(&format!(
+            "WNS: {:.3} TNS: {:.3}\n",
+            self.timing.wns, self.timing.tns
+        ));
+        out.push_str(&format!(
+            "Area: {:.2} Power: {:.3}mW\n",
+            self.area.total_area, self.power.total_power
+        ));
+        out.push_str(&format!(
+            "Cells: {} (seq: {} comb: {})\n",
+            self.cell_count.total, self.cell_count.sequential, self.cell_count.combinational
+        ));
         out
     }
 

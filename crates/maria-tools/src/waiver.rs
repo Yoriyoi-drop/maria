@@ -65,7 +65,13 @@ impl WaiverStore {
     }
 
     /// Add a waiver.
-    pub fn add(&mut self, rule: &str, file_pattern: Option<&str>, reason: &str, owner: &str) -> String {
+    pub fn add(
+        &mut self,
+        rule: &str,
+        file_pattern: Option<&str>,
+        reason: &str,
+        owner: &str,
+    ) -> String {
         let id = format!("W-{:06}", self.waivers.len() + 1);
         let waiver = Waiver {
             id: id.clone(),
@@ -85,7 +91,12 @@ impl WaiverStore {
     }
 
     /// Check if a violation is waived.
-    pub fn is_waived(&self, rule: &str, file: Option<&str>, instance: Option<&str>) -> Option<WaiverMatch> {
+    pub fn is_waived(
+        &self,
+        rule: &str,
+        file: Option<&str>,
+        instance: Option<&str>,
+    ) -> Option<WaiverMatch> {
         let now = now_secs();
         for w in &self.waivers {
             if !w.active || w.rule != rule {
