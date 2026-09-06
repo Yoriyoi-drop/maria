@@ -14,6 +14,7 @@ impl SimulationEngine {
         args: &[LogicVec],
         method: &str,
     ) -> Result<LogicVec, SimError> {
+        eprintln!("METHOD {} task={} obj={:?}", method, method_def.is_task, obj_id);
         let old_this = self.current_this;
         if let Some(oid) = obj_id {
             self.current_this = Some(oid);

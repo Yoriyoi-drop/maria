@@ -187,8 +187,14 @@ impl Parser {
                 // formal verification / constraint. Dikenali dari token Arrow
                 // di posisi ekspresi (statement-level `->event;` di-handle
                 // parse_stmt_impl lebih dulu). Di-lower ke `~a | b`.
+                // Precedence 0 = PALING RENDAH (di bawah `||`): implikasi hanya
+                // dikonsumsi saat parse_expr(0) (level ekspresi penuh). Ini
+                // mencegah delay statement `#5 -> ev;` salah ter-parse sbg
+                // delay `~5 | ev` (delay di-parse dgn parse_expr(1) —
+                // lihat parse_stmt Token::Hash) — `->` harus jatuh ke
+                // statement EventTrigger, bukan operator ekspresi.
                 Token::Arrow => {
-                    if 1 < min_prec {
+                    if 0 < min_prec {
                         break;
                     }
                     self.advance();

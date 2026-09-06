@@ -2119,6 +2119,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "maria-fuzz"
+version = "0.1.0"
+dependencies = [
+ "maria-api",
+ "maria-ir",
+ "rand",
+]
+
+[[package]]
 name = "maria-gui"
 version = "0.3.0"
 dependencies = [

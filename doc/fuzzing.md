@@ -206,3 +206,49 @@ cargo test -p maria-fuzz --features dev
   Grammarinator A-TEST 2018, Ioannides & Eder TODAES 2012).
 - Perubahan daftar paper harus lewat revisi dokumen ini (versi naik), bukan lewat
   perubahan kode diam-diam.
+
+## 10. Status Implementasi
+
+**v1 selesai (2026-09-06)** — seluruh modul kode di `crates/maria-fuzz/` ada,
+41 unit test hijau (`cargo test -p maria-fuzz --features dev`), crate terdaftar
+sebagai anggota workspace (lib kosong tanpa feature `dev`; bin memakai
+`required-features = ["dev"]` sehingga tidak ikut build user).
+
+| Modul | Status | Catatan |
+|-------|--------|---------|
+| `lib.rs` (orkestrasi) | ✅ | loop fuzz + report + merge kampanye paralel |
+| `gen.rs` | ✅ | module acak valid + syntax acak (#1/#14/#15) |
+| `grammar.rs` | ✅ | keyword, decl/expr/body snippet (#9/#11) |
+| `ast_mutate.rs` | ✅ | op-replace, literal-flip, splice corpus, insert grammar, dup line (#10/#12) |
+| `corpus.rs` | ✅ | load `.sv` dari dir, fragment, minimizer baris (#12) |
+| `feature.rs` | ✅ | feature map op/konstruk/lebar + stage + err-code (#6/#7) |
+| `guide.rs` | ✅ | energy schedule AFLFast + rare boost + α adaptif (#4/#5/#8) |
+| `oracle.rs` | ✅ | compile/sim verdict + fingerprint sinyal (#2/#3) |
+| `harness.rs` | ✅ | isolasi thread, panic-catch, hang-timeout (#18) |
+| `differential.rs` | ✅ | determinism + EMI dead-code, compare sinyal common (#13/#19) |
+| `directed.rs` | ✅ | bias seed ke fitur target (#17) |
+| `cdg.rs` | ✅ | target = fitur unreached; progress report (#20) |
+| `main.rs` (bin) | ✅ | CLI --iters/--seed/--corpus-dir/--target/--emit-bugs + env |
+
+### Hasil smoke campaign pertama (seed 42, 200 iterasi)
+
+```
+iters=200 compile_ok=63 compile_err=137 sim_ok=63 sim_err=0
+panics=0 hangs=0 new_features=9 det_mismatch=0 emi_mismatch=3 covered=43
+```
+
+**Temuan terkonfirmasi (bug EMI nyata):** menambah `wire [7:0] _fuzz_dn;
+assign _fuzz_dn = 8'h00;` (dead-code) sebelum `endmodule` modul hierarki yang
+memakai part-select out-of-range (`a[3:0]` pada `a` 2-bit) mengubah hasil
+simulasi modul child: `y=10 → xx`, `__port_u_child_x=xx01 → xxxx`.
+Tereproduksi via CLI (`maria --print-state`). Dugaan: init/indexing sinyal
+port atau part-select terpengaruh keberadaan sinyal tambahan → **perlu triage
+di simulator** (bukan di fuzzer).
+
+### Roadmap lanjutan (belum dikerjakan)
+
+- Minimizer untuk bug differential (saat ini hanya panic yang di-minimize).
+- Database bug persisten (re-seed lintas kampanye, #18 FSM-aware).
+- Corpus paralel bersama antar worker (saat ini tiap kampanye punya corpus sendiri).
+- Fuzzing SVA/assertion + covergroup (property-oracle).
+- Fuzzing fitur mahal: interface/class/UVM/DPI melalui corpus opentitan/cva6.

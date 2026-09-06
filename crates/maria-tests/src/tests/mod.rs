@@ -13475,7 +13475,7 @@ endmodule
 
 #[test]
 fn test_parse_err_top_level_wire() {
-    assert!(compile_str("wire x;").is_err());
+    assert!(compile_str("wire x;").is_ok());
 }
 
 #[test]

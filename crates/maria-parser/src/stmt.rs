@@ -1583,8 +1583,14 @@ impl Parser {
             }
             Token::Hash => {
                 // Delay statement: #delay_stmt ... or #delay_val;
+                // Ekspresi delay di-parse dgn min_prec=1: berhenti sebelum
+                // `->` (implikasi, precedence 0) sehingga `#5 -> ev;` ter-parse
+                // dst. delay=5 + statement EventTrigger — bukan delay `~5 | ev`
+                // (sebelumnya `parse_expr(0)` menelan `->` sbg operator
+                // implikasi → delay non-konstan dievaluasi 1, event hilang).
+                // `||` (prec 1, guard `prec < min_prec`) tetap dikonsumsi.
                 self.advance();
-                let delay = self.parse_expr(0)?;
+                let delay = self.parse_expr(1)?;
                 let stmts = self.parse_stmt_block()?;
                 if stmts.len() == 1 {
                     Ok(Stmt::Delay {

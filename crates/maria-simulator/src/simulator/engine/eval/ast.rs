@@ -1605,6 +1605,7 @@ impl SimulationEngine {
                 }
                 while self.disable_pending.is_none()
                     && cond.as_ref().is_none_or(|c| {
+                        eprintln!("FOR cond {:?}", c);
                         self.evaluate_ast_expr(c)
                             .ok()
                             .map(|v| v.to_bool().unwrap_or(false))
@@ -1621,7 +1622,9 @@ impl SimulationEngine {
                         break;
                     }
                     if let Some(step_stmt) = step {
+                        eprintln!("FOR step {:?} before {:?}", step_stmt, self.get_local("i").map(|v| v.to_u64()));
                         self.evaluate_ast_stmt(step_stmt)?;
+                        eprintln!("FOR step after {:?}", self.get_local("i").map(|v| v.to_u64()));
                     }
                 }
                 Ok(())

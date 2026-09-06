@@ -1,0 +1,25 @@
+[package]
+name = "maria-fuzz"
+version = "0.1.0"
+edition = "2021"
+description = "maria fuzzer internal (dev-only) — bukan CLI user. Landasan: doc/fuzzing.md (20 jurnal/paper)"
+
+[lib]
+name = "maria_fuzz"
+path = "src/lib.rs"
+
+[[bin]]
+name = "maria-fuzz"
+path = "src/main.rs"
+required-features = ["dev"]
+
+[features]
+# Fitur `dev`: seluruh isi crate (lib) HANYA aktif saat feature ini diaktifkan.
+# `cargo build` di workspace default = crate kosong (tidak menarik maria-api).
+# `cargo run -p maria-fuzz --features dev` / `cargo test -p maria-fuzz --features dev`.
+dev = ["dep:maria-api", "dep:maria-ir", "dep:rand"]
+
+[dependencies]
+maria-api = { path = "../maria-api", optional = true }
+maria-ir = { path = "../maria-ir", optional = true }
+rand = { version = "0.8", optional = true }
