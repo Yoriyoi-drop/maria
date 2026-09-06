@@ -284,7 +284,10 @@ impl CompileSession {
                 // (99%+ file SV), tidak ada alokasi baru: hanya borrow mmap bytes.
                 // Sebelumnya .into_owned() SELALU mengalokasi String baru per file.
                 let src_cow = String::from_utf8_lossy(holder.as_bytes());
-                let preprocessed = pp.preprocess(&src_cow, None).map_err(|e| {
+                // current_dir = parent file (sama dgn legacy preprocess_file):
+                // include yang ada di direktori file sendiri diutamakan.
+                let src_dir = path.parent().map(|p| p.to_path_buf());
+                let preprocessed = pp.preprocess(&src_cow, src_dir.as_ref()).map_err(|e| {
                     SimError::with_diag(
                         DiagCode::InvalidSyntax,
                         format!("preprocessor {}: {}", path_str, e),
@@ -887,6 +890,23 @@ impl CompileSession {
         for dir in &self.config.incdirs {
             if let Some(s) = dir.to_str() {
                 pp.add_search_path(s);
+            }
+        }
+        // Fast-pipeline terpisah dari legacy: legacy men-scan ancestor dirs dan
+        // memasang semua parent dir file SV sebagai include search path
+        // (collect_sv_dirs di main.rs). run_fast TIDAK melakukannya → include
+        // lintas direktori (`dv_macros.svh` di dv_utils/, dsb.) gagal resolve →
+        // definisi macro hilang → parse error sisa pada file DV. Samakan
+        // perilakunya: selalu tambahkan parent dir setiap source sebagai search
+        // path (murah, linear; filelist openTitan = 592 dir unik).
+        let mut seen_dirs: HashSet<&std::path::Path> = HashSet::new();
+        for src in &self.config.sources {
+            if let Some(parent) = src.parent() {
+                if seen_dirs.insert(parent) {
+                    if let Some(s) = parent.to_str() {
+                        pp.add_search_path(s);
+                    }
+                }
             }
         }
         for (name, value) in &self.config.defines {

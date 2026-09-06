@@ -1609,7 +1609,7 @@ impl Parser {
                 self.advance();
                 let mut items = Vec::new();
                 loop {
-                    let weight = self.parse_primary_expr()?;
+                    let weight = self.parse_expr(0)?;
                     self.expect(Token::Colon)?;
                     let then_stmt = self.parse_stmt()?;
                     let w = const_eval_simple(&weight).unwrap_or(1) as u64;

@@ -166,3 +166,97 @@ endmodule
 "##,
     );
 }
+
+// Regression (OpenTitan clk_rst_if): koma di DALAM string literal argumen
+// macro tidak boleh dianggap pemisah argumen. Sebelumnya `uvm_fatal(msg_id,
+// "Since drive_clk is true, freq_mhz must be greater than zero.")` terpotong
+// pada koma di dalam string → string tak tertutup → parse error E1002.
+#[test]
+fn macro_args_split_respects_string_literals() {
+    let src = r##"`define uvm_fatal(ID_, MSG_) \
+  $fatal("UVM_FATAL %s: %s", ID_, MSG_)
+
+module top;
+  string msg_id = "m";
+  initial begin
+    `uvm_fatal(msg_id, "Since drive_clk is true, freq_mhz must be greater than zero.")
+    `uvm_fatal(msg_id, $sformatf("c=%0d, d=%0d", 1, 2))
+  end
+endmodule
+"##;
+    let mut pp = Preprocessor::new();
+    let out = pp.preprocess(src, None).unwrap();
+    assert!(
+        out.contains(
+            "\"Since drive_clk is true, freq_mhz must be greater than zero.\""
+        ),
+        "string argumen harus utuh, out:\n{}",
+        out
+    );
+    assert!(
+        out.contains("$sformatf(\"c=%0d, d=%0d\", 1, 2)"),
+        "nested sformatf string harus utuh, out:\n{}",
+        out
+    );
+    let out = format!("`line 1 \"/tmp/t_strargs.sv\"\n{}\n", out);
+    let mut lex = Lexer::new(&out);
+    let mut tokens = Vec::new();
+    loop {
+        let (tok, l, c) = lex.next_token();
+        if matches!(tok, maria_parser::lexer::Token::Eof) {
+            break;
+        }
+        tokens.push((tok, l, c));
+    }
+    let mut parser = Parser::new(tokens, &out);
+    assert!(
+        parser.parse_design().is_ok(),
+        "parse output harus sukses (string utuh)"
+    );
+}
+
+// Regression (OpenTitan cip_base_vseq): randcase weight boleh ekspresi penuh
+// (member access + perbandingan), bukan hanya primary expr.
+#[test]
+fn randcase_weight_full_expression() {
+    assert_no_parse_error(
+        "t_randcase_weight",
+        r##"module top;
+  int mem_exist_addr_q[$];
+  int ral_name;
+  initial begin
+    randcase
+      1: begin // write
+        $display("w");
+      end
+      mem_exist_addr_q[ral_name].size() > 0: begin // read
+        $display("r");
+      end
+    endcase
+  end
+endmodule
+"##,
+    );
+}
+
+// Daftar parameter `define juga tidak boleh terpotong oleh koma di dalam
+// string default (mis. `A="x,y"`).
+#[test]
+fn define_param_list_respects_string_default_commas() {
+    let src = r##"`define MSG_MACRO(ID_, MSG_ = "a, b") \
+  $display("%s %s", ID_, MSG_)
+
+module top;
+  initial begin
+    `MSG_MACRO(m)
+  end
+endmodule
+"##;
+    let mut pp = Preprocessor::new();
+    let out = pp.preprocess(src, None).unwrap();
+    assert!(
+        out.contains("\"a, b\""),
+        "default string memuat koma harus utuh, out:\n{}",
+        out
+    );
+}

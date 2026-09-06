@@ -531,7 +531,7 @@ impl Preprocessor {
             };
             let mut params: Vec<String> = Vec::new();
             let mut defaults: Vec<String> = Vec::new();
-            for p in params_str.split(',') {
+            for p in split_args_string_aware(params_str, 0) {
                 let p = p.trim();
                 if p.is_empty() {
                     continue;
@@ -791,6 +791,9 @@ impl Preprocessor {
                                     // langsung setelah param diikuti alpha/_ →
                                     // buang run, rekatkan ke teks berikutnya
                                     // (I2C_GET_MIN_PARAM: `PARAM_NAME_``_MINSTANDARD`).
+                                    // Dot juga: `PARAM``.member` (pola
+                                    // ASSERT_IBEX_CORE_ERROR_TRIGGER_ALERT di
+                                    // rv_core_ibex autogen) — paste ke dot.
                                     if pos < val_bytes.len() && val_bytes[pos] == b'`' {
                                         let mut r = pos;
                                         while r < val_bytes.len() && val_bytes[r] == b'`' {
@@ -798,7 +801,8 @@ impl Preprocessor {
                                         }
                                         if r < val_bytes.len()
                                             && (val_bytes[r].is_ascii_alphabetic()
-                                                || val_bytes[r] == b'_')
+                                                || val_bytes[r] == b'_'
+                                                || val_bytes[r] == b'.')
                                         {
                                             pos = r;
                                         }
@@ -964,34 +968,61 @@ impl Preprocessor {
     }
 
     fn split_macro_args(&self, args_str: &str, expected_count: usize) -> Vec<String> {
-        let mut args = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0usize;
-        for c in args_str.chars() {
-            match c {
-                '(' => {
-                    depth += 1;
-                    current.push(c);
-                }
-                ')' => {
-                    depth = depth.saturating_sub(1);
-                    current.push(c);
-                }
-                ',' if depth == 0 => {
-                    args.push(current.trim().to_string());
-                    current.clear();
-                }
-                _ => {
-                    current.push(c);
-                }
+        split_args_string_aware(args_str, expected_count)
+    }
+}
+
+/// String-aware top-level comma splitter, dipakai untuk memisahkan:
+/// - argumen invokasi macro (`` `MACRO(a, b, c) ``) — koma di dalam string
+///   literal (`"x, y"`) atau di dalam paren bersarang TIDAK memisahkan arg.
+/// - daftar parameter `define (LRM 1800 §22.5.1) — default bernilai string
+///   yang memuat koma (mis. `A="x,y"`) tetap satu param penuh.
+/// Koma yang TIDAK memisahkan juga tetap dipertahankan di token aslinya.
+fn split_args_string_aware(args_str: &str, expected_count: usize) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in args_str.chars() {
+        if in_string {
+            current.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                current.push(c);
+            }
+            '(' => {
+                depth += 1;
+                current.push(c);
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                current.push(c);
+            }
+            ',' if depth == 0 => {
+                args.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => {
+                current.push(c);
             }
         }
-        let last = current.trim().to_string();
-        if !last.is_empty() || args.len() < expected_count {
-            args.push(last);
-        }
-        args
     }
+    let last = current.trim().to_string();
+    if !last.is_empty() || args.len() < expected_count {
+        args.push(last);
+    }
+    args
 }
 
 /// True jika baris berisi invokasi macro (`` `name(...) ``) yang parennya belum
