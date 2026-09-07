@@ -3,15 +3,19 @@
 //! Paper #12 (Holler et al., "Fuzzing with Code Fragments"): mutasi efektif
 //! datang dari serpihan kode *nyata*, bukan literal acak. Corpus diambil
 //! dari direktori proyek (test/, opentitan/, cva6/, …) lewat `--corpus-dir`.
+//! Default: auto-detect SV files dari project root jika tidak ada corpus-dir.
 //! `minimize` = reduksi input bug ke bentuk minimal (OSS-Fuzz-style).
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use rand::rngs::StdRng;
+use serde::{Deserialize, Serialize};
+
 use rand::seq::SliceRandom;
 use rand::Rng;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Corpus {
     pub seeds: Vec<String>,
 }
@@ -21,12 +25,53 @@ impl Corpus {
         Corpus::default()
     }
 
+    /// Muat SV files dari direktori project otomatis jika tidak ada corpus-dir.
+    /// Cari di lokasi umum: test/, opentitan/, crates/*/.
+    fn auto_corpus_dirs() -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        // Project root-based paths
+        let candidates = [
+            Path::new("test"),
+            Path::new("examples"),
+            Path::new("fuzz"),
+            Path::new("opentitan"),
+            Path::new("cva6"),
+            Path::new("crates"),
+        ];
+        for c in &candidates {
+            if c.exists() {
+                dirs.push(c.to_path_buf());
+            }
+        }
+        dirs
+    }
+
     /// Muat semua file `.sv` dari direktori (rekursif). File besar (>64 KB)
     /// dilewati — fuzzer menyukai seed kecil (Paper #12: unit mutasi).
+    /// Jika dirs kosong, auto-detect dari project root.
     pub fn from_dirs(dirs: &[PathBuf]) -> Self {
         let mut seeds: Vec<String> = Vec::new();
-        for dir in dirs {
+        let effective_dirs: Vec<PathBuf> = if dirs.is_empty() {
+            Self::auto_corpus_dirs()
+        } else {
+            dirs.iter().map(|d| d.to_path_buf()).collect()
+        };
+        for dir in &effective_dirs {
             collect_sv(dir, &mut seeds);
+        }
+        // Sample awal: kumpulkan semua seed tapi batasi memori.
+        // Jika terlalu banyak, ambil sampel acak (fix seed untuk deterministik).
+        if seeds.len() > 500 {
+            let mut sampled = Vec::with_capacity(500);
+            let mut idx = 0usize;
+            let step = seeds.len() / 500;
+            for _ in 0..500 {
+                if idx < seeds.len() {
+                    sampled.push(seeds[idx].clone());
+                }
+                idx += step;
+            }
+            seeds = sampled;
         }
         Corpus { seeds }
     }

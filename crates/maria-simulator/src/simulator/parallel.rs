@@ -1,3 +1,5 @@
+use crate::simulator::packed::PackedLogicVec;
+use crate::simulator::packed_eval::{eval_binary_packed, is_packable_binary_op};
 use crate::simulator::util::{is_signed_expr, string_to_logicvec};
 use crate::simulator::value::*;
 use maria_core::error::SimError;
@@ -5,6 +7,30 @@ use maria_ir::{
     BinaryIrOp, CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec, SignalId, SignalInfo,
 };
 use std::sync::Arc;
+
+/// Semantik packed-eval untuk jalur paralel (BUG FIX fuZZ): evaluator paralel
+/// (SIM-28) memakai `eval_binary` (value.rs, pessimistic) sedangkan jalur
+/// serial memakai `eval_binary_packed` (tabel LRM) saat `use_packed_eval` —
+/// hasil beda utk X/Z (`x & 0`: packed=0, pessimistic=x). Menambah dead-code
+/// (EMI) bisa menggeser jumlah proses comb melewati ambang paralel →
+/// mismatch EMI palsu. Solusi: flag scoped thread-local — paralel meneruskan
+/// semantik `use_packed_eval` dari engine, konsisten dgn serial.
+thread_local! {
+    static PACKED_EVAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Jalankan `f` dengan semantik packed-eval aktif (scoped, thread-local).
+pub fn with_packed_eval<T>(use_packed: bool, f: impl FnOnce() -> T) -> T {
+    let prev = PACKED_EVAL.with(|c| c.replace(use_packed));
+    let r = f();
+    PACKED_EVAL.with(|c| c.set(prev));
+    r
+}
+
+#[inline]
+fn packed_eval_enabled() -> bool {
+    PACKED_EVAL.with(|c| c.get())
+}
 
 /// Pandangan sinyal untuk evaluasi paralel (SIM-28): base array + peta id
 /// global→lokal + overlay tulis per-process. Per-process setup = O(0) (tanpa
@@ -123,17 +149,22 @@ pub fn evaluate_expr_simple(
                 } else {
                     (*msb, *lsb)
                 };
-                // Guard OOB lengkap (start & end & bits.len) — selain panic,
-                // LogicVec dengan width>0 tapi bits kosong pernah muncul.
+                // LRM 1800 §11.5.1: bit luar batas → X, bit dalam batas
+                // tetap NILAI ASLI — identik dengan jalur serial eval/expr.rs.
+                // Dulu `end >= n` mem-X-kan SELURUH hasil sehingga part-select
+                // sebagian OOB (`a[3:0]` pada `a` 2-bit) = xxxx di jalur
+                // parallel vs xx01 di jalur serial → mismatch EMI fuzzer
+                // (dead-code menambah proses comb → jalur parallel aktif).
                 let n = val.bits.len();
-                if n == 0 || start >= n || end >= n || start > end {
+                if start > end || n == 0 {
                     return Ok(LogicVec::fill(LogicVal::X, (end - start + 1).max(1)));
                 }
-                let bits = val.bits[start..=end].to_vec();
-                Ok(LogicVec {
-                    width: bits.len(),
-                    bits,
-                })
+                let w = end - start + 1;
+                let mut bits = Vec::with_capacity(w);
+                for i in start..=end {
+                    bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
+                }
+                Ok(LogicVec { width: w, bits })
             } else {
                 Ok(LogicVec::new(1))
             }
@@ -156,15 +187,18 @@ pub fn evaluate_expr_simple(
             } else {
                 (*msb, *lsb)
             };
-            let n = val.bits.len();
-            if n == 0 || start >= n || end >= n || start > end {
+            // §11.5.1 per-bit, identik dengan jalur serial eval/expr.rs
+            // (ExprRangeSelect): guard hanya start>end; bit OOB → X, bit
+            // dalam batas tetap nilai asli.
+            if start > end {
                 return Ok(LogicVec::fill(LogicVal::X, (end - start + 1).max(1)));
             }
-            let bits = val.bits[start..=end].to_vec();
-            Ok(LogicVec {
-                width: bits.len(),
-                bits,
-            })
+            let w = end - start + 1;
+            let mut bits = Vec::with_capacity(w);
+            for i in start..=end {
+                bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
+            }
+            Ok(LogicVec { width: w, bits })
         }
         IrExpr::ExprBitSelect(inner, idx) => {
             let val = evaluate_expr_simple(inner, signals, sig_info)?;
@@ -287,6 +321,17 @@ pub fn evaluate_expr_simple(
                     Ok(eval_binary(BinaryIrOp::Shr, &lhs_val, &rhs_val))
                 }
             } else {
+                // BUG FIX (fuZZ): coba packed-eval dulu bila aktif (konsisten
+                // dgn jalur serial expr.rs:470) — packed memakai tabel LRM
+                // (0&X=0, 1|X=1) sementara eval_binary pessimistic memberi X
+                // → hasil paralel & serial berbeda utk input X/Z.
+                if packed_eval_enabled() && is_packable_binary_op(op) {
+                    let pl = PackedLogicVec::from_logicvec(&lhs_val);
+                    let pr = PackedLogicVec::from_logicvec(&rhs_val);
+                    if let Some(r) = eval_binary_packed(op, &pl, &pr) {
+                        return Ok(r.to_logicvec());
+                    }
+                }
                 Ok(eval_binary(op.clone(), &lhs_val, &rhs_val))
             }
         }

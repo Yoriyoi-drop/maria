@@ -509,7 +509,30 @@ impl SimulationEngine {
         Ok(any_done)
     }
 
-    pub(crate) fn trigger_sensitive_processes(
+    /// Terapkan write hasil evaluasi paralel ke state. Sama seperti jalur serial
+/// (`write_lvalue`, lvalue.rs:234): net Wire/Inout multi-driver di-RESOLVE
+/// terhadap nilai saat ini (resolve_bit), bukan last-write-wins — tanpa ini
+/// hasil paralel (dipakai saat ≥`min_processes_parallel` proses comb) bisa
+/// beda dari serial (ditemukan maria-fuzz: EMI dead-code menambah 1 proses →
+/// melewati ambang → multi-driver wire berubah nilai → mismatch EMI palsu).
+fn apply_parallel_writes(&mut self, writes: &[(SignalId, LogicVec)]) {
+    for (sig_id, val) in writes {
+        if let Some(info) = self.design.top.signals.get(*sig_id) {
+            if info.multi_driver
+                && (info.kind == SignalKind::Wire || info.kind == SignalKind::Inout)
+            {
+                let current = self.state.read_signal(*sig_id).clone();
+                let resolved =
+                    crate::simulator::util::resolve_net_values(info.net_type, &current, val);
+                self.state.write_signal(*sig_id, resolved);
+                continue;
+            }
+        }
+        self.state.write_signal(*sig_id, val.clone());
+    }
+}
+
+pub(crate) fn trigger_sensitive_processes(
         &mut self,
         changed: &[(usize, LogicVec, LogicVec)],
         _t: usize,
@@ -661,6 +684,7 @@ impl SimulationEngine {
                 let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
                     .par_iter()
                     .map(|&pid| {
+                        let use_packed = self.use_packed_eval;
                         if let Process::Combinational { body, .. } = &self.design.top.processes[pid]
                         {
                             crate::dbg_sim!(
@@ -674,12 +698,14 @@ impl SimulationEngine {
                             let mut view =
                                 parallel::SignalView::new(&snapshot, &identity, &mut overlay);
                             let mut writes = Vec::new();
-                            match parallel::evaluate_stmt_block_parallel(
-                                body,
-                                &mut view,
-                                &mut writes,
-                                &self.design.top.signals,
-                            ) {
+                            match parallel::with_packed_eval(use_packed, || {
+                                parallel::evaluate_stmt_block_parallel(
+                                    body,
+                                    &mut view,
+                                    &mut writes,
+                                    &self.design.top.signals,
+                                )
+                            }) {
                                 Ok(()) => Ok(writes),
                                 Err(e) => Err(SimError::with_diag(
                                     DiagCode::InternalError,
@@ -693,9 +719,7 @@ impl SimulationEngine {
                     .collect();
                 for result in results {
                     let writes = result?;
-                    for (sig_id, val) in writes {
-                        self.state.write_signal(sig_id, val);
-                    }
+                    self.apply_parallel_writes(&writes);
                 }
             } else {
                 // ── Mode SPARSE: base = union sinyal yang diakses ──
@@ -732,6 +756,7 @@ impl SimulationEngine {
                 let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
                     .par_iter()
                     .map(|&pid| {
+                        let use_packed = self.use_packed_eval;
                         if let Process::Combinational { body, .. } = &self.design.top.processes[pid]
                         {
                             crate::dbg_sim!(
@@ -744,12 +769,14 @@ impl SimulationEngine {
                             let mut overlay = std::collections::HashMap::new();
                             let mut view = parallel::SignalView::new(&base, &id_map, &mut overlay);
                             let mut writes = Vec::new();
-                            match parallel::evaluate_stmt_block_parallel(
-                                body,
-                                &mut view,
-                                &mut writes,
-                                &self.design.top.signals,
-                            ) {
+                            match parallel::with_packed_eval(use_packed, || {
+                                parallel::evaluate_stmt_block_parallel(
+                                    body,
+                                    &mut view,
+                                    &mut writes,
+                                    &self.design.top.signals,
+                                )
+                            }) {
                                 Ok(()) => Ok(writes),
                                 Err(e) => Err(SimError::with_diag(
                                     DiagCode::InternalError,
@@ -763,9 +790,7 @@ impl SimulationEngine {
                     .collect();
                 for result in results {
                     let writes = result?;
-                    for (sig_id, val) in writes {
-                        self.state.write_signal(sig_id, val);
-                    }
+                    self.apply_parallel_writes(&writes);
                 }
             }
         } else {

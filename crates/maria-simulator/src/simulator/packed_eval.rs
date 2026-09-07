@@ -207,14 +207,32 @@ mod tests {
 
     #[test]
     fn test_bitwise_and_x_0() {
-        // X & 0 = 0 (karena 0 mendominasi AND)
+        // X & 0 = X di mode pessimistic (default SIM-11: X dominan).
+        // (Sebelum fuZZ-fix kedua: packed selalu LRM `0 & X = 0` → hasil sim
+        // bergantung flag --packed; kini packed menghormati mode.)
+        let x_packed = PackedLogicVec::fill(LogicVal::X, 4);
+        let zero_packed = PackedLogicVec::fill(LogicVal::Zero, 4);
+        let r = x_packed.bitwise_and(&zero_packed);
+        assert!(
+            r.all_x(),
+            "pessimistic: X & 0 should be X, got {}",
+            r
+        );
+    }
+
+    #[test]
+    fn test_bitwise_and_x_0_optimistic() {
+        // Moda Optimistic memakai tabel LRM: 0 mendominasi AND → X & 0 = 0.
+        use crate::simulator::value::set_xprop_mode;
+        use crate::simulator::types::XPropagationMode;
+        set_xprop_mode(XPropagationMode::Optimistic);
         let x_packed = PackedLogicVec::fill(LogicVal::X, 4);
         let zero_packed = PackedLogicVec::fill(LogicVal::Zero, 4);
         let r = x_packed.bitwise_and(&zero_packed);
         let lv = r.to_logicvec();
         assert!(
             lv.bits.iter().all(|b| *b == LogicVal::Zero),
-            "X & 0 should be 0, got {}",
+            "optimistic: X & 0 should be 0, got {}",
             r
         );
     }
@@ -230,14 +248,30 @@ mod tests {
 
     #[test]
     fn test_bitwise_or_x_1() {
-        // X | 1 = 1 (karena 1 mendominasi OR)
+        // X | 1 = X di mode pessimistic (default SIM-11: X dominan).
+        let x_packed = PackedLogicVec::fill(LogicVal::X, 4);
+        let one_packed = PackedLogicVec::fill(LogicVal::One, 4);
+        let r = x_packed.bitwise_or(&one_packed);
+        assert!(
+            r.all_x(),
+            "pessimistic: X | 1 should be X, got {}",
+            r
+        );
+    }
+
+    #[test]
+    fn test_bitwise_or_x_1_optimistic() {
+        // Moda Optimistic memakai tabel LRM: 1 mendominasi OR → X | 1 = 1.
+        use crate::simulator::types::XPropagationMode;
+        use crate::simulator::value::set_xprop_mode;
+        set_xprop_mode(XPropagationMode::Optimistic);
         let x_packed = PackedLogicVec::fill(LogicVal::X, 4);
         let one_packed = PackedLogicVec::fill(LogicVal::One, 4);
         let r = x_packed.bitwise_or(&one_packed);
         let lv = r.to_logicvec();
         assert!(
             lv.bits.iter().all(|b| *b == LogicVal::One),
-            "X | 1 should be 1, got {}",
+            "optimistic: X | 1 should be 1, got {}",
             r
         );
     }
@@ -578,6 +612,58 @@ mod tests {
     #[test]
     fn test_cross_validate_bitwise_xnor() {
         cross_validate_binary(BinaryIrOp::BitXnor);
+    }
+
+    /// REGRESI (maria-fuzz EMI): packed (tabel LRM) dan value.rs pessimistic
+    /// tidak sepakat utk `x & 0` / `x | 1` — hasil sim tergantung flag
+    /// `--packed` (API default ON, CLI default OFF) → mismatch EMI palsu dan
+    /// hasil CLI ≠ API utk source sama. Packed kini menghormati
+    /// XPropagationMode; setiap mode harus identik dgn eval_binary.
+    #[test]
+    fn test_packed_xz_matches_value_across_modes() {
+        use crate::simulator::types::XPropagationMode;
+        use crate::simulator::value::{get_xprop_mode, set_xprop_mode};
+        let prev = get_xprop_mode();
+        let x = LogicVec::fill(LogicVal::X, 2);
+        let z = LogicVec::fill(LogicVal::Z, 2);
+        let ops = [
+            BinaryIrOp::BitAnd,
+            BinaryIrOp::BitOr,
+            BinaryIrOp::BitXor,
+        ];
+        let pairs = [
+            (LogicVec::from_u64(0, 2), x.clone()),
+            (x.clone(), LogicVec::from_u64(0, 2)),
+            (LogicVec::from_u64(1, 2), x.clone()),
+            (LogicVec::from_u64(0, 2), z.clone()),
+            (LogicVec::from_u64(1, 2), z.clone()),
+            (z.clone(), z.clone()),
+            (x.clone(), z.clone()),
+        ];
+        for mode in [
+            XPropagationMode::Optimistic,
+            XPropagationMode::Pessimistic,
+            XPropagationMode::XAnywhere,
+        ] {
+            set_xprop_mode(mode);
+            for (i, (a, b)) in pairs.iter().enumerate() {
+                for op in &ops {
+                    let lv = crate::simulator::value::eval_binary(op.clone(), a, b);
+                    let pv = eval_binary_packed_extended(
+                        op,
+                        &PackedLogicVec::from_logicvec(a),
+                        &PackedLogicVec::from_logicvec(b),
+                    )
+                    .to_logicvec();
+                    assert_eq!(
+                        lv, pv,
+                        "mismatch op={:?} mode={:?} pair={} (a={} b={})",
+                        op, mode, i, a, b
+                    );
+                }
+            }
+        }
+        set_xprop_mode(prev);
     }
 
     #[test]

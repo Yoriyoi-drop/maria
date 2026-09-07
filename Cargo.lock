@@ -2125,6 +2125,8 @@ dependencies = [
  "maria-api",
  "maria-ir",
  "rand",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

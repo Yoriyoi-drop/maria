@@ -61,7 +61,8 @@ impl Generator {
         match shape {
             0 => self.shape_arith(rng, w, op, with_param, with_clog2),
             1 => self.shape_case(rng, w, with_param),
-            _ => self.shape_child(rng, w, op, with_param),
+            2 => self.shape_child(rng, w, op, with_param),
+            _ => self.shape_loop(rng, w, with_param),
         }
     }
 
@@ -150,6 +151,34 @@ impl Generator {
         s.push_str("  assign y = r;\n");
         s.push_str("  assign flag = (a > b) ? 2'd1 : (a == b) ? 2'd2 : 2'd0;\n");
         s.push_str("  initial begin clk = 0; forever #5 clk = ~clk; end\n");
+        s.push_str("  initial begin rst_n = 0; a = 5; b = 3; #7 rst_n = 1; #3 a = 17; b = 9; #7 b = 4; end\n");
+        s.push_str("endmodule\n");
+        s
+    }
+
+    /// Shape 4: `always_comb` + `for` loop unroll + nested `if/else` + part-select
+    /// — stress statement-engine (loop unrolling, distribusi i, bit-select).
+    fn shape_loop(&self, rng: &mut StdRng, w: usize, param: bool) -> String {
+        let mut s = String::new();
+        if param {
+            s.push_str("module top #(parameter W = 8) (\n");
+        } else {
+            s.push_str("module top (\n");
+        }
+        s.push_str(&format!(
+            "  input  logic        clk,\n  input  logic        rst_n,\n  input  logic [{}-1:0] a,\n  input  logic [{}-1:0] b,\n  output logic [{}-1:0] y,\n  output logic [1:0]   flag\n);\n",
+            w, w, w
+        ));
+        s.push_str(&format!("  logic [{}-1:0] r;\n", w));
+        s.push_str("  integer i;\n");
+        s.push_str("  always_comb begin\n    r = a;\n");
+        s.push_str(&format!(
+            "    for (i = 0; i < {}; i = i + 1) begin\n      if (r[i]) r = r ^ b;\n      else r = r + b;\n    end\n",
+            w
+        ));
+        s.push_str("  end\n");
+        s.push_str(&format!("  assign y = r;\n"));
+        s.push_str("  assign flag = (a > b) ? 2'd1 : (a == b) ? 2'd2 : 2'd0;\n");
         s.push_str("  initial begin rst_n = 0; a = 5; b = 3; #7 rst_n = 1; #3 a = 17; b = 9; #7 b = 4; end\n");
         s.push_str("endmodule\n");
         s

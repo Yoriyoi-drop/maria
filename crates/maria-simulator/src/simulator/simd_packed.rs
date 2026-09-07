@@ -19,6 +19,18 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+use crate::simulator::types::XPropagationMode;
+use crate::simulator::value::get_xprop_mode;
+
+/// True bila mode berjalan X-dominan untuk bitwise AND/OR (SIM-11):
+/// `0 & X = X`, `1 | X = X` (deduksi nilai tak boleh menutup X).
+/// Optimistic/LRM: `0 & X = 0`, `1 | X = 1` (tabel 4-state standar).
+#[inline]
+fn x_dominant_bitwise() -> bool {
+    let m = get_xprop_mode();
+    m == XPropagationMode::Pessimistic || m == XPropagationMode::XAnywhere
+}
+
 // ─── Public API ───
 
 /// SIMD-accelerated 4-state AND untuk array chunks.
@@ -87,6 +99,20 @@ fn simd_dispatch_and(a: &[(u64, u64)], b: &[(u64, u64)], len: usize) -> Vec<(u64
         scalar_and_arrays(&ka, &va, &kb, &vb, &mut ok, &mut ov);
     }
 
+    // SIM-11: mode X-dominan → bit X operand mana pun membatalkan dominasi
+    // 0 hasil AND (`0 & X = X`). Z tetap non-dominan (`0 & Z = 0`, LRM).
+    // Selaras dgn jalur serial value.rs (Pessimistic/XAnywhere). Nilai juga
+    // di-nol-kan (bukan cuma known) agar `x` terkode known=0,value=0, bukan Z.
+    if x_dominant_bitwise() {
+        let xa: Vec<u64> = ka.iter().zip(&va).map(|(k, v)| !k & !v).collect();
+        let xb: Vec<u64> = kb.iter().zip(&vb).map(|(k, v)| !k & !v).collect();
+        for i in 0..len {
+            let xm = xa[i] | xb[i];
+            ok[i] &= !xm;
+            ov[i] &= !xm;
+        }
+    }
+
     interleave(&ok, &ov)
 }
 
@@ -113,6 +139,18 @@ fn simd_dispatch_or(a: &[(u64, u64)], b: &[(u64, u64)], len: usize) -> Vec<(u64,
     #[cfg(not(target_arch = "x86_64"))]
     {
         scalar_or_arrays(&ka, &va, &kb, &vb, &mut ok, &mut ov);
+    }
+
+    // SIM-11: mode X-dominan → `1 | X = X` (X membatalkan dominasi 1).
+    // Z tetap non-dominan (`1 | Z = 1`, LRM). Selaras dgn value.rs.
+    if x_dominant_bitwise() {
+        let xa: Vec<u64> = ka.iter().zip(&va).map(|(k, v)| !k & !v).collect();
+        let xb: Vec<u64> = kb.iter().zip(&vb).map(|(k, v)| !k & !v).collect();
+        for i in 0..len {
+            let xm = xa[i] | xb[i];
+            ok[i] &= !xm;
+            ov[i] &= !xm;
+        }
     }
 
     interleave(&ok, &ov)
@@ -446,6 +484,7 @@ unsafe fn avx2_not(ka: &[u64], va: &[u64], out_k: &mut [u64], out_v: &mut [u64])
 
 fn scalar_and(a: &[(u64, u64)], b: &[(u64, u64)]) -> Vec<(u64, u64)> {
     let len = a.len().max(b.len());
+    let pessimistic = x_dominant_bitwise();
     let mut out = Vec::with_capacity(len);
     for i in 0..len {
         let (ak, av) = a.get(i).copied().unwrap_or((0, 0));
@@ -454,13 +493,25 @@ fn scalar_and(a: &[(u64, u64)], b: &[(u64, u64)]) -> Vec<(u64, u64)> {
         let b0 = bk & !bv;
         let a1 = ak & av;
         let b1 = bk & bv;
-        out.push((a0 | b0 | (a1 & b1), a1 & b1));
+        let known = a0 | b0 | (a1 & b1);
+        // SIM-11: mode X-dominan → bit X operand membatalkan dominasi 0
+        // (`0 & X = X`). Z tetap non-dominan (`0 & Z = 0`, LRM) — xa/xb
+        // hanya true utk X (known=0, value=0), bukan Z (known=0, value=1).
+        // Nilai di-mask juga supaya X terkode known=0,value=0 (bukan Z).
+        let (known, val) = if pessimistic {
+            let xm = (!ak & !av) | (!bk & !bv);
+            (known & !xm, (a1 & b1) & !xm)
+        } else {
+            (known, a1 & b1)
+        };
+        out.push((known, val));
     }
     out
 }
 
 fn scalar_or(a: &[(u64, u64)], b: &[(u64, u64)]) -> Vec<(u64, u64)> {
     let len = a.len().max(b.len());
+    let pessimistic = x_dominant_bitwise();
     let mut out = Vec::with_capacity(len);
     for i in 0..len {
         let (ak, av) = a.get(i).copied().unwrap_or((0, 0));
@@ -469,7 +520,16 @@ fn scalar_or(a: &[(u64, u64)], b: &[(u64, u64)]) -> Vec<(u64, u64)> {
         let b0 = bk & !bv;
         let a1 = ak & av;
         let b1 = bk & bv;
-        out.push((a1 | b1 | (a0 & b0), a1 | b1));
+        let known = a1 | b1 | (a0 & b0);
+        // SIM-11: mode X-dominan → `1 | X = X` (X membatalkan dominasi 1).
+        // Nilai di-mask supaya X terkode known=0,value=0 (bukan Z).
+        let (known, val) = if pessimistic {
+            let xm = (!ak & !av) | (!bk & !bv);
+            (known & !xm, (a1 | b1) & !xm)
+        } else {
+            (known, a1 | b1)
+        };
+        out.push((known, val));
     }
     out
 }
@@ -613,7 +673,20 @@ mod tests {
         let a = make_chunks(&[(0xFF, 0x00)]); // 00000000
         let b = make_chunks(&[(0, 0)]); // XXXXXXXX
         let r = simd_and(&a, &b);
-        // 0 AND X = 0 → known=1, value=0
+        // Mode default pessimistic (SIM-11): X dominan → 0 AND X = X
+        // (known=0, value=0). Sebelum fuZZ-fix kedua: packed selalu LRM
+        // (0,0xFF) → mismatch dgn value.rs pessimistic → hasil sim beda
+        // antara --packed ON/OFF (API vs CLI) → EMI fuzzer false positive.
+        assert_eq!(r[0], (0, 0));
+    }
+
+    #[test]
+    fn test_simd_and_zero_dominates_optimistic() {
+        let a = make_chunks(&[(0xFF, 0x00)]); // 00000000
+        let b = make_chunks(&[(0, 0)]); // XXXXXXXX
+        crate::simulator::value::set_xprop_mode(crate::simulator::types::XPropagationMode::Optimistic);
+        let r = simd_and(&a, &b);
+        // Optimistic/LRM: 0 mendominasi AND → 0 AND X = 0
         assert_eq!(r[0], (0xFF, 0x00));
     }
 

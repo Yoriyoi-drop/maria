@@ -626,6 +626,31 @@ pub fn const_expr_is_signed(expr: &Expr) -> bool {
 }
 
 /// Konversi Value AST (Decimal, Binary, Hex, Octal, Real) ke LogicVec IR.
+/// LRM 1800-2017 §5.7.1: bila digit paling kiri (MSB) literal bertanda
+/// x/z/? — nilai diperluas ke atas dengan x/z (`2'bx` = 2'bxx, `4'hz` =
+/// 4'bzzzz) — bukan zero-extend. F30 zero-extend membuat `2'bx` → 2'b0x
+/// dan `1'bx` (lebar 1) hilang X-nya saat dilebarkan konteks assign
+/// (ditemukan maria-fuzz: literal X dalam multi-driver assign berubah
+/// jadi 0 → hasil sim beda antara jalur serial vs paralel).
+fn extend_leftmost_xz(vec: &mut LogicVec, digits: &str, bits_per_digit: usize) {
+    let Some(first) = digits.chars().next() else {
+        return;
+    };
+    let fill = match first {
+        'z' | 'Z' => LogicVal::Z,
+        'x' | 'X' | '?' => LogicVal::X,
+        _ => return, // MSB pasti 0/1 → zero-extend (F30, sudah benar)
+    };
+    let placed = digits.len().saturating_mul(bits_per_digit);
+    if placed >= vec.width {
+        return;
+    }
+    for b in vec.bits.iter_mut().skip(placed) {
+        *b = fill;
+    }
+}
+
+/// Konversi `Value` AST ke `LogicVec` IR.
 pub fn value_to_logicvec(val: &Value) -> LogicVec {
     match val {
         Value::Decimal(n) => {
@@ -690,6 +715,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                     _ => LogicVal::X,
                 };
             }
+            extend_leftmost_xz(&mut vec, &digits, 1);
             vec
         }
         Value::Hex { bits, width, .. } => {
@@ -727,6 +753,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                     vec.bits[bit_idx] = val;
                 }
             }
+            extend_leftmost_xz(&mut vec, &digits, 4);
             vec
         }
         Value::Octal { bits, width, .. } => {
@@ -763,6 +790,7 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                     vec.bits[bit_idx] = val;
                 }
             }
+            extend_leftmost_xz(&mut vec, &digits, 3);
             vec
         }
         Value::Real(r) => LogicVec::from_u64(r.to_bits(), 64),

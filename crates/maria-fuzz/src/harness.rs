@@ -14,6 +14,25 @@ use std::time::{Duration, Instant};
 
 use crate::oracle::{compile_verdict, sim_verdict, CompileVerdict, SimVerdict};
 
+/// Stack thread worker maria (byte). Parsing/elaborasi file besar dengan
+/// nesting dalam (file corpora nyata, mis. regtop OpenTitan) butuh stack
+/// jauh di atas default 2MB — main.rs sudah memakai 256MB utk thread utama
+/// (MARIA_STACK... helper di bawah). Stack overflow = abort proses tak
+/// tertangkap catch_unwind (fatal), jadi worker fuzzing W AjIB punya stack
+/// sebesar itu. Reserved virtual, ter-commit saat dipakai — aman walau
+/// thread hang di-leak.
+pub const WORKER_STACK_BYTES: usize = 256 * 1024 * 1024;
+
+fn spawn_isolated<F>(f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let _ = std::thread::Builder::new()
+        .name("maria-fuzz-worker".into())
+        .stack_size(WORKER_STACK_BYTES)
+        .spawn(f);
+}
+
 /// Status eksekusi satu input.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RunStatus {
@@ -38,7 +57,7 @@ pub struct RunOutcome {
 pub fn run_isolated(source: &str, max_time: u64, hang_ms: u64) -> RunOutcome {
     let (tx, rx) = mpsc::channel();
     let source = source.to_string();
-    std::thread::spawn(move || {
+    spawn_isolated(move || {
         let started = Instant::now();
         let result = run_inner(&source, max_time);
         let _ = tx.send((result, started.elapsed().as_millis() as u64));
@@ -69,7 +88,7 @@ pub fn run_isolated(source: &str, max_time: u64, hang_ms: u64) -> RunOutcome {
 pub fn fingerprint_isolated(source: &str, max_time: u64, hang_ms: u64) -> Option<String> {
     let (tx, rx) = mpsc::channel();
     let source = source.to_string();
-    std::thread::spawn(move || {
+    spawn_isolated(move || {
         let _ = tx.send(run_sim_fingerprint(&source, max_time));
     });
     rx.recv_timeout(Duration::from_millis(hang_ms)).ok().flatten()
@@ -80,7 +99,7 @@ pub fn fingerprint_isolated(source: &str, max_time: u64, hang_ms: u64) -> Option
 pub fn compile_only_isolated(source: &str, hang_ms: u64) -> Result<String, String> {
     let (tx, rx) = mpsc::channel();
     let source = source.to_string();
-    std::thread::spawn(move || {
+    spawn_isolated(move || {
         let r = catch_unwind(AssertUnwindSafe(|| {
             let v = compile_verdict(&source);
             (v.ok, v.message)

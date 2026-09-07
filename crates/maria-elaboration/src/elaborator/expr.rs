@@ -275,8 +275,8 @@ impl Elaborator {
                     const_eval_params(msb, &self.param_vals),
                     const_eval_params(lsb, &self.param_vals),
                 ) {
-                    let msb_c = msb_c as usize;
-                    let lsb_c = lsb_c as usize;
+                    let msb_c = msb_c.max(0) as usize;
+                    let lsb_c = lsb_c.max(0) as usize;
                     if let IrExpr::Signal(sid, _) = &inner_expr {
                         Ok(IrExpr::RangeSelect(*sid, msb_c, lsb_c))
                     } else {
@@ -301,7 +301,7 @@ impl Elaborator {
                     );
                     match (msb_v, lsb_v) {
                         (Some(m), Some(l)) => {
-                            let (msb_c, lsb_c) = (m as usize, l as usize);
+                            let (msb_c, lsb_c) = (m.max(0) as usize, l.max(0) as usize);
                             if let IrExpr::Signal(sid, _) = &inner_expr {
                                 Ok(IrExpr::RangeSelect(*sid, msb_c, lsb_c))
                             } else {
@@ -509,21 +509,23 @@ impl Elaborator {
                         let base = base_c as usize;
                         let width = width_c as usize;
                         if width > 0 {
-                            // Guard OOB + anti-wrap: bila msb melebihi lebar
-                            // sinyal ATAU aritmetika membungkus, lowering ke
-                            // ExprPartSelect konstan agar evaluator menerapkan
-                            // §11.5.1 (SELURUH hasil x selebar permintaan).
-                            // Dulu RangeSelect langsung dengan indeks wrap →
-                            // nilai/lebar salah diam-diam.
-                            match base.checked_add(width - 1) {
-                                Some(msb) if msb < sig_width => {
-                                    Ok(IrExpr::RangeSelect(*sid, msb, base))
-                                }
-                                _ => Ok(IrExpr::ExprPartSelect(
-                                    Box::new(inner_expr),
-                                    Box::new(IrExpr::Const(LogicVec::from_u64(base_c as u64, 64))),
-                                    Box::new(IrExpr::Const(LogicVec::from_u64(width_c as u64, 32))),
-                                )),
+                            // Arbitrary slice statis `sig[base+:width]` / `sig[msb:lsb]`:
+                            // bila dalam batas → RangeSelect biasa.
+                            // bila OOB → tetap RangeSelect (bukan ExprPartSelect).
+                            // RangeSelect evaluator sudah menerapkan §11.5.1 dengan benar:
+                            // bit dalam batas = nilai asli, bit di luar batas = X.
+                            // Dulu ExprPartSelect dipakai sebagai anti-wrap guard, tapi
+                            // evaluator ExprPartSelect menghitung index dari base ke atas
+                            // (bukan LSB→MSB), sehingga arbitrary slice statis seperti
+                            // `a[3:0]` pada a 2-bit menghasilkan XXXX alih-alih xx01.
+                            // Bug ditemukan fuzzer EMI (dead-code mempengaruhi hasil).
+                            let msb = base.checked_add(width - 1).unwrap_or(base);
+                            if msb < sig_width {
+                                Ok(IrExpr::RangeSelect(*sid, msb, base))
+                            } else {
+                                // Out-of-range: RangeSelect dengan msb OOB.
+                                // Evaluator akan isi bit dalam batas + X untuk OOB.
+                                Ok(IrExpr::RangeSelect(*sid, msb, base))
                             }
                         } else {
                             Ok(IrExpr::RangeSelect(*sid, base.min(sig_width), base))

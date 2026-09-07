@@ -15,6 +15,7 @@ pub mod ast_mutate;
 pub mod cdg;
 pub mod corpus;
 pub mod differential;
+pub mod bugdb;
 pub mod directed;
 pub mod feature;
 pub mod gen;
@@ -24,10 +25,11 @@ pub mod harness;
 pub mod oracle;
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::collections::HashSet;
 
 use gen::Generator;
 use harness::RunStatus;
@@ -55,6 +57,12 @@ pub struct FuzzConfig {
     /// Cetak progress tiap `verbose_every` iterasi ke stderr.
     pub verbose: bool,
     pub verbose_every: u64,
+    /// Corpus seed bersama (worker paralel): kalau diisi, worker paralel
+    /// pakai corpus ini alih-alih memuat ulang dari `corpus_dirs`.
+    pub corpus: Option<crate::corpus::Corpus>,
+    /// Activekan oracle nilai sinyal (#19) — injeksi input →
+    /// fprint awal vs akhir vs akhir-2 divalidasi konsistensi.
+    pub sim_sig_check: bool,
 }
 
 impl Default for FuzzConfig {
@@ -68,14 +76,16 @@ impl Default for FuzzConfig {
             target: None,
             workers: 1,
             emit_dir: None,
+            corpus: None,
             verbose: false,
             verbose_every: 100,
+            sim_sig_check: false,
         }
     }
 }
 
 /// Klasifikasi bug yang ditemukan fuzzer.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BugKind {
     /// Panic (catch_unwind) saat compile/simulasi — crash di pipeline maria.
     Panic,
@@ -106,6 +116,10 @@ pub struct FuzzReport {
     pub new_features: u64,
     pub determinism_mismatch: u64,
     pub emi_mismatch: u64,
+    pub sim_sig_anomalies: u64,
+    /// Property-oracle (Paper #2/#3/#14, oracle #5): mirror `lhs !== rhs`
+    /// bernilai 1 — hasil assign tidak konsisten dgn re-evaluasi.
+    pub property_violations: u64,
     pub covered_features: usize,
     pub bugs: Vec<BugRecord>,
 }
@@ -122,6 +136,8 @@ impl FuzzReport {
         self.new_features += other.new_features;
         self.determinism_mismatch += other.determinism_mismatch;
         self.emi_mismatch += other.emi_mismatch;
+        self.sim_sig_anomalies += other.sim_sig_anomalies;
+        self.property_violations += other.property_violations;
         self.covered_features = self.covered_features.max(other.covered_features);
         self.bugs.extend(other.bugs.clone());
     }
@@ -130,7 +146,7 @@ impl FuzzReport {
     pub fn summary(&self) -> String {
         format!(
             "iters={} compile_ok={} compile_err={} sim_ok={} sim_err={} panics={} hangs={} \
-             new_features={} det_mismatch={} emi_mismatch={} covered={} bugs={}",
+             new_features={} det_mismatch={} emi_mismatch={} sig_anom={} prop_viol={} covered={} bugs={}",
             self.total,
             self.compile_ok,
             self.compile_err,
@@ -141,10 +157,103 @@ impl FuzzReport {
             self.new_features,
             self.determinism_mismatch,
             self.emi_mismatch,
+            self.sim_sig_anomalies,
+            self.property_violations,
             self.covered_features,
             self.bugs.len(),
         )
     }
+}
+
+/// Property-oracle invariant (Paper #2/#3/#14, oracle #5): blok mirror
+/// `_fz_rtA_<id>`/`_fz_rtB_<id>` — dua temp yang mengevaluasi ekspresi SAMA —
+/// harus UTUH. Utuh = dua net ter-deklarasi `wire [W-1:0]` lebar sama, masing-
+/// masing TEPAT satu driver `assign`, rhs kedua assign identik, dan
+/// `_fz_viol_<id>` ter-deklarasi dengan `(A !== B)`.
+///
+/// Mengapa wajib utuh (bug maria-fuzz, bukan engine):
+/// 1. Minimizer baris bisa menghapus deklarasi `wire [W-1:0]` → temp jadi
+///    implicit net (lebar default 2 di maria) → `A !== B` = 1 walaupun
+///    ekspresi sama nilainya → viol=1 palsu berkelanjutan.
+/// 2. Mutasi `duplicate_line` bisa meng-drive temp dua kali → multi-driver →
+///    resolusi X → viol=1 palsu.
+/// Blok mirror yang rusak = artefak fuzzer, bukan bug engine → di-skip.
+fn mirror_intact(source: &str) -> bool {
+    let lines: Vec<&str> = source.lines().map(|l| l.trim()).collect();
+    let mut ids: Vec<String> = Vec::new();
+    for l in &lines {
+        if let Some(rest) = l.strip_prefix("assign _fz_viol_") {
+            let id: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let ok = !id.is_empty()
+                && rest.trim_start_matches(&id).starts_with(" = ")
+                && l.contains(&format!("_fz_rtA_{}", id))
+                && l.contains(&format!("_fz_rtB_{}", id))
+                && l.contains("!==");
+            if !ok {
+                return false;
+            }
+            ids.push(id);
+        }
+    }
+    if ids.is_empty() {
+        return false;
+    }
+    ids.iter().all(|id| mirror_pair_intact(&lines, id))
+}
+
+/// Validasi SATU blok mirror (lihat `mirror_intact`): deklarasi lebar sama,
+/// tepat satu driver per temp, rhs identik, viol ter-deklarasi.
+fn mirror_pair_intact(lines: &[&str], id: &str) -> bool {
+    let rt_a = format!("assign _fz_rtA_{}", id);
+    let rt_b = format!("assign _fz_rtB_{}", id);
+    let net_a = format!("_fz_rtA_{}", id);
+    let net_b = format!("_fz_rtB_{}", id);
+    let viol_net = format!("_fz_viol_{}", id);
+
+    let assigns_a: Vec<&str> = lines
+        .iter()
+        .filter(|l| l.starts_with(rt_a.as_str()) && l.ends_with(';'))
+        .copied()
+        .collect();
+    let assigns_b: Vec<&str> = lines
+        .iter()
+        .filter(|l| l.starts_with(rt_b.as_str()) && l.ends_with(';'))
+        .copied()
+        .collect();
+    if assigns_a.len() != 1 || assigns_b.len() != 1 {
+        return false;
+    }
+    let rhs_of = |assign: &str| assign.split_once('=').map(|(_, r)| r.trim().to_string());
+    match (rhs_of(assigns_a[0]), rhs_of(assigns_b[0])) {
+        (Some(a), Some(b)) if a == b && !a.is_empty() => {}
+        _ => return false,
+    }
+    // Deklarasi `wire [..-1:0] _fz_rtX_<id>;` tepat satu, spec lebar IDENTIK.
+    let decl_spec = |net: &str| -> Option<String> {
+        let hits: Vec<&str> = lines
+            .iter()
+            .filter(|l| l.starts_with("wire [") && l.contains(net) && l.ends_with(';') && l.contains("-1:0]"))
+            .copied()
+            .collect();
+        if hits.len() != 1 {
+            return None;
+        }
+        let l = hits[0];
+        let s = l.find('[')?;
+        let e = l[s..].find(']')? + s;
+        Some(l[s..=e].to_string())
+    };
+    let (da, db) = (decl_spec(&net_a), decl_spec(&net_b));
+    match (da, db) {
+        (Some(a), Some(b)) if a == b => {}
+        _ => return false,
+    }
+    // `wire _fz_viol_<id>;` ter-deklarasi tepat satu.
+    let viol_decls = lines
+        .iter()
+        .filter(|l| l.starts_with("wire ") && l.contains(viol_net.as_str()) && l.ends_with(';'))
+        .count();
+    viol_decls == 1
 }
 
 /// Jalankan satu kampanye fuzzing (deterministik utk seed diberikan).
@@ -157,11 +266,38 @@ impl FuzzReport {
 /// 5. update feature map (#6/#7) + adaptasi energy (#8)
 /// 6. differential sampling (#13/#19) + CDG (#20)
 pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
+    // Bug DB persisten (Paper #18): load bug dari kampanye sebelumnya → re-seed
+    // supaya regressi terus diexercise (jika DB ada).
+    let db_path = if let Some(ref dir) = cfg.emit_dir {
+        bugdb::db_path(dir)
+    } else {
+        PathBuf::from(".maria-fuzz-bugdb.json")
+    };
+    let mut bug_db = bugdb::BugDb::load(&db_path).unwrap_or_else(|| bugdb::BugDb::empty());
+
     let mut rng = StdRng::seed_from_u64(cfg.seed);
     let gen = Generator::new(cfg.seed);
     let mut guide = guide::CoverageGuide::new(cfg.seed);
-    let corpus = corpus::Corpus::from_dirs(&cfg.corpus_dirs);
-    let mut report = FuzzReport::default();
+    let mut corpus = if let Some(c) = cfg.corpus.clone() {
+        c
+    } else {
+        corpus::Corpus::from_dirs(&cfg.corpus_dirs)
+    };
+
+    // Re-seed bug lama (Paper #18: FSM-aware regressi): masukkan ke corpus
+    // SEKAliGUS ke guide sebagai parent mutasi (is_bug=true → energi tinggi,
+    // guide.rs #20 bug-boosted). Sebelumnya hanya masuk corpus.seeds
+    // (dipakai fragment) → bug db tidak pernah jadi parent aktif = regressi
+    // tidak benar-benar diexercise lintas kampanye.
+    for src in bug_db.reseed_sources() {
+        corpus.seeds.push(src.clone());
+        let feats = feature::FeatureMap::extract(&src);
+        guide.add(src, feats, true);
+    }
+    let mut report = FuzzReport {
+        sim_sig_anomalies: 0,
+        ..FuzzReport::default()
+    };
     let started = Instant::now();
 
     // ── Seed awal: modul generated (Paper #14/#15) + fragment corpus (#12) ──
@@ -196,6 +332,11 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         }
 
         // ── 4. eksekusi terisolasi + oracle ──
+        if let Ok(dump_path) = std::env::var("MARIA_FUZZ_DUMP") {
+            // Debug: tulis kandidat terakhir sebelum eksekusi — bila proses
+            // abort (mis. stack overflow) file ini = input penyebab.
+            std::fs::write(&dump_path, &src).ok();
+        }
         let out = harness::run_isolated(&src, cfg.max_time, cfg.hang_ms);
         report.total += 1;
 
@@ -210,20 +351,41 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                         Err(_) // masih panic
                     ) || cand.is_empty()
                 });
-                detail.push_str(&format!("\nminimized {} -> {} bytes", src.len(), minimized.len()));
-                report.bugs.push(BugRecord {
+                detail.push_str(&format!("\nminimized {} → {} bytes", src.len(), minimized.len()));
+                let bug = BugRecord {
                     kind: BugKind::Panic,
                     source: minimized,
                     detail,
-                });
+                };
+                report.bugs.push(bug.clone());
+                bug_db.push(&bug, cfg.seed, iter + 1);
             }
             RunStatus::Hang => {
                 report.hangs += 1;
-                report.bugs.push(BugRecord {
-                    kind: BugKind::Hang,
-                    source: src.clone(),
-                    detail: format!("hang > {} ms ({})", cfg.hang_ms, out.duration_ms),
+                // Minimizer hang (#18/#14): reduksi input sambil status tetap
+                // Hang. Ambang hang minimasi LEBIH pendek (≤800 ms) agar setiap
+                // kandidat yang masih hang tidak membakar seluruh hang_ms —
+                // kandidat non-hang selesai cepat, sehingga cost total wajar.
+                let min_ms = cfg.hang_ms.min(800).max(200);
+                let minimized = corpus::Corpus::minimize(&src, &mut |cand| {
+                    matches!(
+                        harness::run_isolated(cand, cfg.max_time, min_ms).status,
+                        RunStatus::Hang
+                    ) || cand.is_empty()
                 });
+                let bug = BugRecord {
+                    kind: BugKind::Hang,
+                    source: minimized.clone(),
+                    detail: format!(
+                        "hang > {} ms ({}); minimized {} → {} bytes",
+                        cfg.hang_ms,
+                        out.duration_ms,
+                        src.len(),
+                        minimized.len()
+                    ),
+                };
+                report.bugs.push(bug.clone());
+                bug_db.push(&bug, cfg.seed, iter + 1);
             }
             RunStatus::Done => {
                 if out.compile.ok {
@@ -240,10 +402,21 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                     differential::DiffVerdict::Same => {}
                                     differential::DiffVerdict::Mismatch(d) => {
                                         report.determinism_mismatch += 1;
+                                        // Minimizer determinism: kandidat masih harus
+                                        // menghasilkan determinism mismatch yang sama.
+                                        let minimized = corpus::Corpus::minimize(
+                                            &src,
+                                            &mut |cand| match differential::determinism_check(cand, cfg) {
+                                                differential::DiffVerdict::Mismatch(_) => true,
+                                                _ => false,
+                                            },
+                                        );
+                                        let mlen = minimized.len();
                                         report.bugs.push(BugRecord {
                                             kind: BugKind::Differential,
-                                            source: src.clone(),
-                                            detail: format!("determinism: {}", d),
+                                            source: minimized,
+                                            detail: format!("determinism: {}; minimized {}→{} bytes",
+                                                d, src.len(), mlen),
                                         });
                                     }
                                     differential::DiffVerdict::Skip => {}
@@ -255,13 +428,79 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                     differential::DiffVerdict::Same => {}
                                     differential::DiffVerdict::Mismatch(d) => {
                                         report.emi_mismatch += 1;
+                                        // Minimizer EMI (#13): kandidat masih harus
+                                        // menghasilkan mismatch vs dead-code variant.
+                                        let minimized = corpus::Corpus::minimize(
+                                            &src,
+                                            &mut |cand| match differential::emi_check(cand, cfg) {
+                                                differential::DiffVerdict::Mismatch(_) => true,
+                                                _ => false,
+                                            },
+                                        );
+                                        let mlen = minimized.len();
                                         report.bugs.push(BugRecord {
                                             kind: BugKind::Differential,
-                                            source: src.clone(),
-                                            detail: format!("emi: {}", d),
+                                            source: minimized,
+                                            detail: format!("emi: {}; minimized {}→{} bytes",
+                                                d, src.len(), mlen),
                                         });
                                     }
                                     differential::DiffVerdict::Skip => {}
+                                }
+                            }
+                            // ── 6c. oracle nilai sinyal (#19): injeksi input →
+                            //      fprint awal vs akhir berbeda-beda → anomali internal.
+                            if cfg.sim_sig_check {
+                                if let Some(info) = oracle::sim_signal_check(&src, cfg.max_time) {
+                                    report.sim_sig_anomalies += 1;
+                                    let minimized = corpus::Corpus::minimize(
+                                        &src,
+                                        &mut |cand| oracle::sim_signal_check(cand, cfg.max_time).is_some(),
+                                    );
+                                    let mlen = minimized.len();
+                                    report.bugs.push(BugRecord {
+                                        kind: BugKind::Differential,
+                                        source: minimized,
+                                        detail: format!("sim-sig: {}; minimized {}→{} bytes",
+                                            info, src.len(), mlen),
+                                    });
+                                }
+                            }
+                        // ── 6d. property-oracle (#2/#3/#14, oracle #5):
+                            //      dua temp mirror (`_fz_rtA`/`_fz_rtB`) yang
+                            //      mengevaluasi ekspresi SAMA memberi hasil
+                            //      beda → `_fz_viol = 1` = bug evaluasi.
+                            if mirror_intact(&src) {
+                                if let Some(viol) = oracle::property_violation(&sim.fingerprint) {
+                                    report.property_violations += 1;
+                                    let minimized = corpus::Corpus::minimize(
+                                        &src,
+                                        &mut |cand| {
+                                            // Invariant: blok mirror masih utuh
+                                            // (deklarasi+driver+rhs; viol==1).
+                                            mirror_intact(cand)
+                                                && harness::fingerprint_isolated(
+                                                    cand,
+                                                    cfg.max_time,
+                                                    cfg.hang_ms,
+                                                )
+                                                .map(|fp| {
+                                                    oracle::property_violation(&fp).is_some()
+                                                })
+                                                .unwrap_or(false)
+                                        },
+                                    );
+                                    let mlen = minimized.len();
+                                    report.bugs.push(BugRecord {
+                                        kind: BugKind::Differential,
+                                        source: minimized,
+                                        detail: format!(
+                                            "property: {}; minimized {}→{} bytes",
+                                            viol,
+                                            src.len(),
+                                            mlen
+                                        ),
+                                    });
                                 }
                             }
                         } else {
@@ -301,6 +540,13 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
     }
 
     report.covered_features = guide.coverage().covered();
+
+    // Simpan bug DB persisten (Paper #18) — sebelum emit_bugs supaya
+    // entri baru tercatat di disk.
+    if let Err(e) = bug_db.save(&db_path) {
+        eprintln!("[fuzz] warning: gagal simpan bug DB: {}", e);
+    }
+
     if let Some(dir) = &cfg.emit_dir {
         emit_bugs(dir, &report);
     }
@@ -360,5 +606,74 @@ mod tests {
         let rep = run_fuzz(&cfg);
         assert_eq!(rep.total, 40);
         assert!(rep.compile_ok > 0, "seed generated harus banyak yg compile ok");
+    }
+
+    #[test]
+    fn mirror_intact_accepts_full_block() {
+        let src = concat!(
+            "module top;\n  logic [2-1:0] r;\n  assign r = 0;\n",
+            "  wire [2-1:0] _fz_rtA_7;\n  assign _fz_rtA_7 = (r);\n",
+            "  wire [2-1:0] _fz_rtB_7;\n  assign _fz_rtB_7 = (r);\n",
+            "  wire _fz_viol_7;\n  assign _fz_viol_7 = (_fz_rtA_7 !== _fz_rtB_7);\nendmodule\n"
+        );
+        assert!(mirror_intact(src), "blok mirror utuh harus diterima");
+    }
+
+    #[test]
+    fn mirror_intact_rejects_missing_wire_decl() {
+        // Artefak minimizer: deklarasi `wire [W-1:0] _fz_rtB` hilang → implicit
+        // net (lebar default) → width-mismatch → viol=1 palsu berkelanjutan.
+        let src = concat!(
+            "module top;\n  logic [2-1:0] r;\n",
+            "  wire [2-1:0] _fz_rtA_7;\n  assign _fz_rtA_7 = (r);\n",
+            "  assign _fz_rtB_7 = (r);\n",
+            "  wire _fz_viol_7;\n  assign _fz_viol_7 = (_fz_rtA_7 !== _fz_rtB_7);\nendmodule\n"
+        );
+        assert!(!mirror_intact(src), "deklarasi temp hilang = artefak, bukan bug engine");
+    }
+
+    #[test]
+    fn mirror_intact_rejects_duplicate_driver() {
+        // Artefak dup-line: temp di-drive 2x → multi-driver → X → viol=1 palsu.
+        let src = concat!(
+            "module top;\n  logic [2-1:0] r;\n",
+            "  wire [2-1:0] _fz_rtA_7;\n  assign _fz_rtA_7 = (r);\n  assign _fz_rtA_7 = (r);\n",
+            "  wire [2-1:0] _fz_rtB_7;\n  assign _fz_rtB_7 = (r);\n",
+            "  wire _fz_viol_7;\n  assign _fz_viol_7 = (_fz_rtA_7 !== _fz_rtB_7);\nendmodule\n"
+        );
+        assert!(!mirror_intact(src), "multi-driver temp = artefak fuzzer, bukan bug engine");
+    }
+
+    #[test]
+    fn mirror_intact_rejects_width_mismatch() {
+        let src = concat!(
+            "module top;\n  logic [2-1:0] r;\n",
+            "  wire [2-1:0] _fz_rtA_7;\n  assign _fz_rtA_7 = (r);\n",
+            "  wire [1-1:0] _fz_rtB_7;\n  assign _fz_rtB_7 = (r);\n",
+            "  wire _fz_viol_7;\n  assign _fz_viol_7 = (_fz_rtA_7 !== _fz_rtB_7);\nendmodule\n"
+        );
+        assert!(!mirror_intact(src), "lebar temp beda = invariant rusak");
+    }
+
+    #[test]
+    fn mirror_intact_rejects_rhs_split() {
+        let src = concat!(
+            "module top;\n  logic [2-1:0] r;\n",
+            "  wire [2-1:0] _fz_rtA_7;\n  assign _fz_rtA_7 = (r);\n",
+            "  wire [2-1:0] _fz_rtB_7;\n  assign _fz_rtB_7 = (r + 1);\n",
+            "  wire _fz_viol_7;\n  assign _fz_viol_7 = (_fz_rtA_7 !== _fz_rtB_7);\nendmodule\n"
+        );
+        assert!(!mirror_intact(src), "rhs berbeda = invariant rusak");
+    }
+
+    #[test]
+    fn mirror_intact_rejects_no_viol_decl() {
+        let src = concat!(
+            "module top;\n  logic [2-1:0] r;\n",
+            "  wire [2-1:0] _fz_rtA_7;\n  assign _fz_rtA_7 = (r);\n",
+            "  wire [2-1:0] _fz_rtB_7;\n  assign _fz_rtB_7 = (r);\n",
+            "  assign _fz_viol_7 = (_fz_rtA_7 !== _fz_rtB_7);\nendmodule\n"
+        );
+        assert!(!mirror_intact(src), "deklarasi viol hilang = artefak minimizer");
     }
 }

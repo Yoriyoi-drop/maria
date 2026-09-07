@@ -5,6 +5,7 @@
 //! Paper #2 (Liang 2018) & #3 (Manès 2019): klasifikasi verdict terstruktur —
 //! fuzzer butuh tahu *kenapa* input ditolak (code) bukan hanya ya/tidak.
 
+use std::collections::BTreeSet;
 use maria_ir::LogicVec;
 
 /// Hasil kompilasi (preprocessor→lexer→parser→elaborasi).
@@ -24,6 +25,9 @@ pub struct SimVerdict {
     pub fingerprint: String,
     pub code: String,
     pub message: String,
+    /// True bila simulasi berhenti karena assertion/SVA violation (property-oracle,
+    /// Paper #14/#2/#3: assertion fail = bug engine atau properti broken).
+    pub assertion: bool,
 }
 
 /// Compile oracle (Paper #2/#3): input valid → ok; input invalid → err code.
@@ -50,12 +54,14 @@ pub fn sim_verdict(source: &str, max_time: u64) -> SimVerdict {
             fingerprint: fingerprint(&sigs),
             code: String::new(),
             message: String::new(),
+            assertion: false,
         },
         Err(e) => SimVerdict {
             ok: false,
             fingerprint: String::new(),
             code: e.error_code().to_string(),
             message: e.to_string(),
+            assertion: e.to_string().to_lowercase().contains("assert"),
         },
     }
 }
@@ -75,6 +81,96 @@ pub fn fingerprint(sigs: &[(String, LogicVec)]) -> String {
 /// nondeterministik secara sah (fitur bahasa, bukan bug engine).
 pub fn has_nondeterministic_src(source: &str) -> bool {
     source.contains("$urandom") || source.contains("$random")
+}
+
+/// Property-oracle (Paper #2/#3/#14, oracle #5): cari sinyal `_fz_viol_*`
+/// bernilai **1 persis** di fingerprint (`name=val@width`, val Display).
+/// Blok mirror `_fz_viol = (_fz_rtA !== _fz_rtB)` dengan dua evaluasi ekspresi
+/// yang sama: engine konsisten → 0; evaluasi beda (bug eval/lebar/order) →
+/// 1. NILAI X TIDAK dihitung: `x !== x` identik = 0, dan X muncul legit saat
+/// minimizer menghapus temp → net implicit (z) → artefak false positive.
+pub fn property_violation(fp: &str) -> Option<String> {
+    for row in fp.split('|') {
+        if row.starts_with("_fz_viol_") && row.ends_with("=1@1") {
+            return Some(row.to_string());
+        }
+    }
+    None
+}
+
+/// Oracle nilai sinyal (#19, DifuzzRTL): jalankan design 3x — input awal,
+/// setelah `initial`-block sequence, dan di akhir — lalu bandingkan fingerprint.
+/// Jika ada perbedaan di sinyal yang *tidak berubah* di source-input itu
+/// mengindikasikan nilai internal tidak konsisten lintas eksekusi (bug engine).
+pub fn sim_signal_check(source: &str, max_time: u64) -> Option<String> {
+    // Sumber dengan `$urandom`/`$random` berbeda lintas run secara SAH —
+    // fingerprint beda = anomali palsu (sama dgn determinism_check).
+    if has_nondeterministic_src(source) {
+        return None;
+    }
+    use maria_api::simulate_signals;
+    let run = || simulate_signals(source, max_time).ok();
+    let (s0, s1, s2) = (run(), run(), run());
+    let extract = |s: Option<Vec<(String, LogicVec)>>| -> Vec<(String, String)> {
+        s.into_iter()
+            .flatten()
+            .map(|(n, v)| (n.clone(), format!("{}={}", n, v)))
+            .collect()
+    };
+    let a = extract(s0);
+    let b = extract(s1);
+    let c = extract(s2);
+    let names: BTreeSet<&str> = a.iter().map(|(n, _)| n.as_str()).collect();
+    let mut diffs = Vec::new();
+    for name in &names {
+        let va = a.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str()).unwrap_or("__missing__");
+        let vb = b.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str()).unwrap_or("__missing__");
+        let vc = c.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str()).unwrap_or("__missing__");
+        if va != vb || vb != vc {
+            diffs.push(format!("{}: {} | {} | {}", name, va, vb, vc));
+        }
+    }
+    if diffs.is_empty() { None } else { Some(diffs.join("; ")) }
+}
+
+#[cfg(test)]
+mod signal_check {
+    use super::*;
+    use crate::FuzzConfig;
+
+    const COUNTER: &str = r#"
+module top(input logic clk, input logic rst_n,
+           input logic [3:0] a, input logic [3:0] b,
+           output logic [3:0] y);
+  logic [3:0] r;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) r <= '0;
+    else r <= a + b;
+  end
+  assign y = r;
+  initial begin clk = 0; forever #5 clk = ~clk; end
+  initial begin rst_n = 0; a = 1; b = 2; #7 rst_n = 1; #3 a = 3; b = 4; end
+endmodule
+"#;
+
+    fn cfg() -> FuzzConfig {
+        FuzzConfig { max_time: 40, hang_ms: 3000, ..FuzzConfig::default() }
+    }
+
+    #[test]
+    fn sim_signal_check_stable_for_counter() {
+        let r = sim_signal_check(COUNTER, 40);
+        assert!(r.is_none(), "counter harus stabil: {:?}", r);
+    }
+
+    #[test]
+    fn sim_signal_check_skips_nondeterministic() {
+        let src = format!("{}\ninitial $display($urandom());\n", COUNTER);
+        assert!(
+            sim_signal_check(&src, 40).is_none(),
+            "sumber nondeterministik harus di-skip, bukan anomali palsu"
+        );
+    }
 }
 
 #[cfg(test)]

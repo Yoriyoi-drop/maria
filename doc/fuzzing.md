@@ -214,6 +214,10 @@ cargo test -p maria-fuzz --features dev
 sebagai anggota workspace (lib kosong tanpa feature `dev`; bin memakai
 `required-features = ["dev"]` sehingga tidak ikut build user).
 
+**v2 selesai (2026-09-07)** — 55 unit test hijau. Ringkasannya di bawah;
+detail bug + kampanye di bagian "v2" setelah daftar bug v1. Kode fuzzer
+tersebar di `crates/maria-fuzz/src/` (14 file, 1 file = 1 tanggung jawab).
+
 | Modul | Status | Catatan |
 |-------|--------|---------|
 | `lib.rs` (orkestrasi) | ✅ | loop fuzz + report + merge kampanye paralel |
@@ -225,9 +229,10 @@ sebagai anggota workspace (lib kosong tanpa feature `dev`; bin memakai
 | `guide.rs` | ✅ | energy schedule AFLFast + rare boost + α adaptif (#4/#5/#8) |
 | `oracle.rs` | ✅ | compile/sim verdict + fingerprint sinyal (#2/#3) |
 | `harness.rs` | ✅ | isolasi thread, panic-catch, hang-timeout (#18) |
-| `differential.rs` | ✅ | determinism + EMI dead-code, compare sinyal common (#13/#19) |
+| `differential.rs` | ✅ | determinism + EMI dead-code + expr-swap, compare common (#13/#19) |
 | `directed.rs` | ✅ | bias seed ke fitur target (#17) |
 | `cdg.rs` | ✅ | target = fitur unreached; progress report (#20) |
+| `bugdb.rs` | ✅ | bug DB persisten lintas-kampanye + re-seed parent (#18) |
 | `main.rs` (bin) | ✅ | CLI --iters/--seed/--corpus-dir/--target/--emit-bugs + env |
 
 ### Hasil smoke campaign pertama (seed 42, 200 iterasi)
@@ -237,18 +242,107 @@ iters=200 compile_ok=63 compile_err=137 sim_ok=63 sim_err=0
 panics=0 hangs=0 new_features=9 det_mismatch=0 emi_mismatch=3 covered=43
 ```
 
-**Temuan terkonfirmasi (bug EMI nyata):** menambah `wire [7:0] _fuzz_dn;
-assign _fuzz_dn = 8'h00;` (dead-code) sebelum `endmodule` modul hierarki yang
-memakai part-select out-of-range (`a[3:0]` pada `a` 2-bit) mengubah hasil
-simulasi modul child: `y=10 → xx`, `__port_u_child_x=xx01 → xxxx`.
-Tereproduksi via CLI (`maria --print-state`). Dugaan: init/indexing sinyal
-port atau part-select terpengaruh keberadaan sinyal tambahan → **perlu triage
-di simulator** (bukan di fuzzer).
+### Bug ditemukan fuzz → sudah diperbaiki (triage & fix di maria-simulator)
+
+**Bug 1 — part-select OOB beda hasil serial vs paralel (EMI)**
+`a[3:0]` pada `a` 2-bit: jalur paralel (SIM-28) mem-X-kan SELURUH hasil
+(`xxxx`) sedangkan jalur serial memberi `xx01` — modul child dirubah nilai
+hanya karena dead-code menambah proses comb (melewati ambang paralel).
+*Fix:* `parallel.rs` RangeSelect — bit luar batas → X, bit dalam batas →
+nilai asli (selaras LRM §11.5.1 & jalur serial).
+
+**Bug 2 — semantik X/Z bitwise tidak konsisten jalur serial vs paralel**
+`x & 0`: jalur serial packed (`eval_binary_packed`, tabel LRM) = 0;
+jalur paralel (`eval_binary` pessimistic) = X. Dead-code EMI menaikkan
+jumlah proses comb 3→4 → paralel aktif → hasil berubah (`0` vs `x`).
+*Fix:* `parallel.rs` `with_packed_eval()` — flag scoped thread-local agar
+evaluator paralel memakai semantik `use_packed_eval` yang sama dgn serial.
+
+**Bug 3 — BitAnd/BitOr pessimistic `Z` salah vs LRM**
+`0 & Z`/`1 | Z` dihitung X di mode pessimistic; tabel LRM 4-state memberi
+0/1 (nilai dominan). `bitwise_op` fast-path meratakan Z→X sebelum closure.
+*Fix:* `value.rs` — fast-path baca nilai bit asli dari `bits` (preservasi Z),
+pessimistic menangani Z-dominan (`0&Z=0`, `1|Z=1`); X tetap pessimistic.
++2 test regresi (`test_xprop_pessimistic_bitand_z_dominated` / `_bitor_`).
+
+**Verifikasi setelah fix:** 345 test maria-simulator + seluruh workspace
+(899 + 378 + 307 + … semua hijau), kampanye ulang seed 42 × 300 iterasi:
+`emi_mismatch=0 bugs=0`.
+
+---
+
+## v2 (2026-09-07) — responsif korpus, minimizer hang, hilangkan artefak oracle
+
+### Perbaikan maria-fuzz (artefak fuzzer → bukan bug engine)
+
+**Bug F1 — false-positive property-oracle dari minimizer**
+Minimizer baris bisa menghapus deklarasi `wire [W-1:0]` temp mirror
+(`_fz_rtA`/`_fz_rtB`) → temp jadi implicit net lebar default → `A !== B` = 1
+walaupun ekspresi sama → viol=1 palsu yang BERKELANJUTAN. `duplicate_line`
+juga bisa meng-drive temp dua kali (multi-driver → X → viol=1 palsu).
+*Fix:* `lib.rs` `mirror_intact()`/`mirror_pair_intact()` — setiap blok mirror
+WAJIB utuh (2 deklarasi lebar sama, tepat 1 driver per temp, rhs identik,
+viol ter-deklarasi). Blok rusak di-skip. +6 unit test.
+
+**Bug F2 — `sim_signal_check` anomali palsu utk sumber nondeterministik**
+`$urandom`/`$random` berbeda lintas run secara SAH → fingerprint beda dilapor
+anomali. *Fix:* `oracle.rs` skip bila `has_nondeterministic_src` (sama dgn
+determinism/EMI). +1 unit test.
+
+**Bug F3 — minimizer hang belum ada**
+Kampanye Hang (parser opentitan kmac fragment) harus di-bisect manual.
+*Fix:* `lib.rs` cabang `RunStatus::Hang` — minimasi baris sambil status tetap
+Hang (`run_isolated` predicate, ambang ≤ 800 ms agar tiap kandidat yang
+masih hang tidak membakar penuh `hang_ms`). Laporan bug Hang sekarang
+membawa input terminimalkan.
+
+**Bug F4 — re-seed bug-DB tidak efektif (#18)**
+Bug lama masuk `corpus.seeds` (hanya sumber fragment) tapi TIDAK masuk
+`guide` → tidak pernah jadi parent mutasi → regressi tidak benar-benar
+diexercise antar kampanye. *Fix:* `lib.rs` — bug re-seed juga
+`guide.add(src, feats, is_bug=true)` (energi tinggi, #20 bug-boosted).
+
+**Lain:** `corpus.rs` auto-detect tambah `examples/`, `fuzz/`, `cva6/`;
+`gen.rs` shape baru #4 (`always_comb` + `for` unroll + nested `if/else` +
+part-select — stress statement-engine).
+
+### Bug utama maria ditemukan fuzz → diperbaiki
+
+**Bug M1 — Hang parser: `parse_clocking_block` loop infinite di EOF**
+`crates/maria-parser/src/specify.rs` `parse_clocking_block` — arm catch-all
+`_ => advance()` tanpa guard EOF. Input terpotong `clocking cb @(posedge
+tck);` (tanpa `endclocking`) di module implisit level-unit → di EOF advance
+macet (pos jebol), loop tidak pernah break; safety counter `parse_steps`/
+`peek_count` tidak efektif karena kontrol tidak pernah kembali ke cek
+level-atas. Hang >170 s RSS flat. *Fix:* arm `_` break bila `Token::Eof`.
+Regresi: `test_parser_no_hang_on_truncated_clocking_fragment` (watchdog 10s).
+
+**Bug M2 — panic elaborasi: concat part-select lebar negatif**
+`{ sig[0+:(IDW-STIDW)], ... }` dgn `IDW = top_pkg::TL_AIW` (symbol package
+unresolved → 0) dan `STIDW = $clog2(M)` (2) → `IDW-STIDW` = -2 →
+`const_eval_params` i64 → `as usize` wrap ke 2^64-2 →
+`ExprRangeSelect(hi=u64::MAX-1, lo=0)` → `expr_approx_width` concat `.sum()`
+panic `attempt to add with overflow`. 6× ditemukan seed 42 (korpus opentitan).
+*Fix dua lapis:* (1) `stmt.rs expr_approx_width` — Concat/Replicate saturasi
+(lebar hanya perkiraan utk konteks sizing — tidak boleh panic);
+(2) `expr.rs` RangeSelect/ExprRangeSelect — bound const `max(0)` sebelum
+`as usize`, negatif = OOB (engine isi X per §11.5.1).
+Regresi: `test_no_panic_concat_negative_range_select`.
+
+### Hasil kampanye v2 (korpus aktif, 7 × 300 iterasi)
+
+Sebelum fix M1/M2: seed 42 → `panics=6 hangs=0 bugs=6` (6× overflow panic,
+semua dari concat same); bugdb Hang opentitan kmac → hang parser.
+Setelah fix M1/M2: `panics=0 hangs=0 det=0 emi=0 sig=0 prop=0 bugs=0` untuk
+7 seed (42, 1, 12345, 77, 31337, 2024, 999). Property-oracle artifact
+sebelumnya (10+7 viol=1 palsu) kini 0.
 
 ### Roadmap lanjutan (belum dikerjakan)
 
-- Minimizer untuk bug differential (saat ini hanya panic yang di-minimize).
-- Database bug persisten (re-seed lintas kampanye, #18 FSM-aware).
-- Corpus paralel bersama antar worker (saat ini tiap kampanye punya corpus sendiri).
-- Fuzzing SVA/assertion + covergroup (property-oracle).
-- Fuzzing fitur mahal: interface/class/UVM/DPI melalui corpus opentitan/cva6.
+- **Minimizer differential** ✅ sudah jalan (det/EMI/sim-sig/property) + **Hang** ✅ (v2).
+- **Database bug persisten** ✅ (`bugdb.rs`, re-seed jadi parent mutasi).
+- **Corpus paralel bersama antar worker** ✅ (`main.rs` `--workers`).
+- Fuzzing **SVA/assertion + covergroup** (property-oracle #5) — mirror ada;
+  `assert`/`cover` ala SVA belum (butuh evaluasi dukungan assertion engine).
+- Fuzzing fitur mahal: **interface/class/UVM/DPI** via corpus opentitan/cva6 —
+  sebagian tercakup korpus; masih butuh oracle khusus.

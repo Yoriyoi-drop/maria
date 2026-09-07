@@ -41,6 +41,9 @@ mod synth_phase4;
 #[cfg(test)]
 mod synth_phase5;
 
+#[cfg(test)]
+mod parallel_emi_tests;
+
 // Guided structure-aware fuzzer (metode test fuzzing "tidak buta"):
 // grammar-aware generation + coverage feedback + differential oracle.
 

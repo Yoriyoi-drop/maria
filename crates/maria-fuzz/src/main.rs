@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use maria_fuzz::{FuzzConfig, FuzzReport, run_fuzz};
+use maria_fuzz::{FuzzConfig, FuzzReport, run_fuzz, corpus};
+
 
 fn print_usage() {
     eprintln!(
@@ -45,7 +46,10 @@ fn main() {
         return;
     }
 
-    let mut cfg = FuzzConfig::default();
+    let mut cfg = FuzzConfig {
+        sim_sig_check: true,
+        ..FuzzConfig::default()
+    };
     let mut i = 0usize;
     while i < args.len() {
         let a = &args[i];
@@ -121,16 +125,27 @@ fn main() {
         run_fuzz(&cfg)
     } else {
         // Kampanye paralel: tiap worker seed berbeda (Paper #14 scale).
+        // Corpus seed bersama (Paper #12): load sekali, bagi ke semua worker
+        // supaya semua worker putar dari corpus yang sama.
+        let shared_corpus = corpus::Corpus::from_dirs(&cfg.corpus_dirs);
         let cfg = Arc::new(cfg);
+        let shared_corpus = Arc::new(shared_corpus);
         let handles: Vec<std::thread::JoinHandle<FuzzReport>> = (0..cfg.workers)
             .map(|w| {
                 let cfg = Arc::clone(&cfg);
-                std::thread::spawn(move || {
-                    let mut c = (*cfg).clone();
-                    c.seed = c.seed.wrapping_add(w as u64 * 0x9E37_79B9);
-                    c.workers = 1;
-                    run_fuzz(&c)
-                })
+                let corpus = Arc::clone(&shared_corpus);
+                std::thread::Builder::new()
+                    .name(format!("fuzz-worker-{}", w))
+                    .stack_size(maria_fuzz::harness::WORKER_STACK_BYTES)
+                    .spawn(move || {
+                        let mut c = (*cfg).clone();
+                        c.seed = c.seed.wrapping_add(w as u64 * 0x9E37_79B9);
+                        c.workers = 1;
+                        // Inject corpus bersama ke worker ini.
+                        c.corpus = Some((*corpus).clone());
+                        run_fuzz(&c)
+                    })
+                    .expect("spawn fuzz worker")
             })
             .collect();
         let mut merged = FuzzReport::default();

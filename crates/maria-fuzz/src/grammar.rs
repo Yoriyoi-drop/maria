@@ -25,7 +25,14 @@ pub const BLOCK_KEYWORDS: &[&str] = &[
 pub const STMT_KEYWORDS: &[&str] = &["if", "else", "case", "for", "while", "repeat", "forever"];
 
 /// Fungsi sistem yang dikenal engine maria.
-pub const SYS_FUNCS: &[&str] = &["$display", "$clog2", "$bits", "$size", "$left", "$right"];
+pub const SYS_FUNCS: &[&str] = &[
+    "$display", "$clog2", "$bits", "$size", "$left", "$right",
+    "$urandom", "$random", "$fopen", "$fwrite", "$fclose",
+    "$dumpfile", "$dumpvars", "$finish", "$stop",
+    "$cast", "$typename", "$bits", "$countbits",
+    "$onehot", "$isonehot", "$isunknown", "$isunknown",
+    "$realtime", "$time", "$stime",
+];
 
 /// Apakah token adalah kata kunci SV yang dikenal fuzzer.
 pub fn is_keyword(word: &str) -> bool {
@@ -65,7 +72,7 @@ pub fn random_body_snippet(rng: &mut StdRng) -> String {
             rng.gen_range(0..2u32),
             target,
             expr,
-            target
+            format!("{}$clog2", target)
         ),
         2 => format!(
             "{} begin\n  case (fz_sel{})\n    1'd0: {} = {};\n    default: {} = ~{};\n  endcase\nend",

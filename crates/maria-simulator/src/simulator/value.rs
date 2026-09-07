@@ -868,11 +868,12 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     _ => LogicVal::X,
                 })
             } else {
-                // Pessimistic: any X → X — BUG FIX (SIM-11): urutan match lama
-                // `(Zero, _) | (_, Zero) => Zero` SEBELUM `_ => X` membuat
-                // pessimistic 0 & X = 0 (identik dgn optimistic — mode tak
-                // pernah berbeda utk BitAnd). X/Z harus dicek PERTAMA.
+                // Pessimistic: any X → X. BUG FIX (fuZZ): Z didominasi nilai
+                // pasti — `0 & Z = 0` (bukan X) sesuai tabel LRM 4-state &
+                // jalur packed (simd/scalar). X tetap pessimistis (policy
+                // SIM-11 dipertahankan); hanya Z-dominan dikoreksi.
                 bitwise_op(&lhs_ext, &rhs_ext, |a, b| match (a, b) {
+                    (LogicVal::Zero, LogicVal::Z) | (LogicVal::Z, LogicVal::Zero) => LogicVal::Zero,
                     (LogicVal::X, _) | (_, LogicVal::X) | (LogicVal::Z, _) | (_, LogicVal::Z) => {
                         LogicVal::X
                     }
@@ -891,11 +892,11 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     _ => LogicVal::X,
                 })
             } else {
-                // Pessimistic: any X → X — BUG FIX (SIM-11): urutan match lama
-                // `(One, _) | (_, One) => One` SEBELUM `_ => X` membuat
-                // pessimistic 1 | X = 1 (identik dgn optimistic). X/Z harus
-                // dicek PERTAMA.
+                // Pessimistic: any X → X. BUG FIX (fuZZ): Z didominasi nilai
+                // pasti — `1 | Z = 1` (bukan X) sesuai tabel LRM 4-state &
+                // jalur packed. X tetap pessimistis (policy SIM-11).
                 bitwise_op(&lhs_ext, &rhs_ext, |a, b| match (a, b) {
+                    (LogicVal::One, LogicVal::Z) | (LogicVal::Z, LogicVal::One) => LogicVal::One,
                     (LogicVal::X, _) | (_, LogicVal::X) | (LogicVal::Z, _) | (_, LogicVal::Z) => {
                         LogicVal::X
                     }
@@ -1264,55 +1265,24 @@ where
 
     // Fast path: use u64 bitmasks for ≤ 64 bits
     if width <= 64 {
-        let (mut lk, lv) = to_bitmasks(lhs);
-        let (mut rk, rv) = to_bitmasks(rhs);
         let mask = if width == 64 {
             !0u64
         } else {
             (1u64 << width) - 1
         };
 
-        // Zero-extend shorter operand: bits beyond its width are known 0
-        if lhs.width < width {
-            let lhs_ext_mask = if lhs.width == 64 {
-                !0u64
-            } else {
-                (1u64 << lhs.width) - 1
-            };
-            lk |= mask & !lhs_ext_mask; // set known=1, value=0 for extension bits
-        }
-        if rhs.width < width {
-            let rhs_ext_mask = if rhs.width == 64 {
-                !0u64
-            } else {
-                (1u64 << rhs.width) - 1
-            };
-            rk |= mask & !rhs_ext_mask; // set known=1, value=0 for extension bits
-        }
-
         // Compute per-bit results using u64 ops
         let mut result_known = 0u64;
         let mut result_value = 0u64;
 
+        // BUG FIX (fuZZ): ambil nilai bit ASLI dari `bits` (4-state penuh)
+        // — versi lama memakai bitmasks (known/value) yang meratakan Z→X,
+        // sehingga closure tak pernah membedakan Z (0&Z=0, 1|Z=1 —
+        // tabel LRM) di jalur fast path. Slow path (>64 bit) sudah benar;
+        // bit di luar lebar operand = zero-extension (LRM §11.8.1).
         for i in 0..width {
-            let l_val = if (lk >> i) & 1 == 1 {
-                if (lv >> i) & 1 == 1 {
-                    LogicVal::One
-                } else {
-                    LogicVal::Zero
-                }
-            } else {
-                LogicVal::X
-            };
-            let r_val = if (rk >> i) & 1 == 1 {
-                if (rv >> i) & 1 == 1 {
-                    LogicVal::One
-                } else {
-                    LogicVal::Zero
-                }
-            } else {
-                LogicVal::X
-            };
+            let l_val = lhs.bits.get(i).copied().unwrap_or(LogicVal::Zero);
+            let r_val = rhs.bits.get(i).copied().unwrap_or(LogicVal::Zero);
             match op(l_val, r_val) {
                 LogicVal::Zero => {
                     result_known |= 1 << i;
@@ -1432,6 +1402,45 @@ mod tests {
         let r = eval_binary(BinaryIrOp::BitOr, &LogicVec::from_u64(1, 1), &x_vec());
         set_xprop_mode(prev);
         assert_eq!(r.bits[0], LogicVal::X, "pessimistic: 1 | X harus X");
+    }
+
+    fn z_vec() -> LogicVec {
+        LogicVec {
+            bits: vec![LogicVal::Z],
+            width: 1,
+        }
+    }
+
+    #[test]
+    fn test_xprop_pessimistic_bitand_z_dominated() {
+        // BUG FIX (fuZZ): `0 & Z = 0` sesuai tabel LRM 4-state — Z tidak
+        // boleh mengubah hasil AND dgn 0. Jalur packed sudah benar; jalur
+        // nilai (value.rs) sebelumnya memberi X di mode pessimistic.
+        let prev = get_xprop_mode();
+        set_xprop_mode(XPropagationMode::Pessimistic);
+        let r0 = eval_binary(BinaryIrOp::BitAnd, &LogicVec::from_u64(0, 1), &z_vec());
+        let r0r = eval_binary(BinaryIrOp::BitAnd, &z_vec(), &LogicVec::from_u64(0, 1));
+        // 1 & Z tetap X (tidak didominasi).
+        let r1 = eval_binary(BinaryIrOp::BitAnd, &LogicVec::from_u64(1, 1), &z_vec());
+        set_xprop_mode(prev);
+        assert_eq!(r0.bits[0], LogicVal::Zero, "pessimistic: 0 & Z harus 0");
+        assert_eq!(r0r.bits[0], LogicVal::Zero, "pessimistic: Z & 0 harus 0");
+        assert_eq!(r1.bits[0], LogicVal::X, "pessimistic: 1 & Z tetap X");
+    }
+
+    #[test]
+    fn test_xprop_pessimistic_bitor_z_dominated() {
+        // BUG FIX (fuZZ): `1 | Z = 1` sesuai tabel LRM 4-state.
+        let prev = get_xprop_mode();
+        set_xprop_mode(XPropagationMode::Pessimistic);
+        let r1 = eval_binary(BinaryIrOp::BitOr, &LogicVec::from_u64(1, 1), &z_vec());
+        let r1r = eval_binary(BinaryIrOp::BitOr, &z_vec(), &LogicVec::from_u64(1, 1));
+        // 0 | Z tetap X (tidak didominasi).
+        let r0 = eval_binary(BinaryIrOp::BitOr, &LogicVec::from_u64(0, 1), &z_vec());
+        set_xprop_mode(prev);
+        assert_eq!(r1.bits[0], LogicVal::One, "pessimistic: 1 | Z harus 1");
+        assert_eq!(r1r.bits[0], LogicVal::One, "pessimistic: Z | 1 harus 1");
+        assert_eq!(r0.bits[0], LogicVal::X, "pessimistic: 0 | Z tetap X");
     }
 
     #[test]

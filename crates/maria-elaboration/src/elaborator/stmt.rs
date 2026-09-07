@@ -105,8 +105,15 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
         // (biasanya konstanta/param yang sudah di-fold).
         IrExpr::ExprPartSelect(_, _, width) => ir_const_u64(width).map(|w| w as usize).unwrap_or(1),
         IrExpr::ArrayIndex { elem_width, .. } => *elem_width,
-        IrExpr::Concat(items) => items.iter().map(|e| expr_approx_width(e, signals)).sum(),
-        IrExpr::Replicate(n, inner) => n * expr_approx_width(inner, signals),
+        IrExpr::Concat(items) => {
+            // Saturasi: item dengan lebar tak-sah (mis. part-select hi meluap
+            // dari underflow width konstanta, `IDW-STIDW` di top_pkg unresolved)
+            // berujung usize::MAX → `.sum()` panic "attempt to add with overflow"
+            // (ditemukan maria-fuzz: panic pada concat tlul_socket `shifted_id`).
+            // lebar di sini HANYA perkiraan utk konteks sizing — jangan panic.
+            items.iter().fold(0usize, |acc, e| acc.saturating_add(expr_approx_width(e, signals)))
+        },
+        IrExpr::Replicate(n, inner) => n.saturating_mul(expr_approx_width(inner, signals)),
         // Unary logika & reduksi menghasilkan 1 bit (`!x`, `&x`, `|x`, `^x`);
         // sisanya (aritmetika, bitwise) selebar operand.
         IrExpr::UnaryOp(op, inner) => match op {
@@ -236,8 +243,17 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
     match e {
         IrExpr::Const(lv) => {
             if ctx > lv.width && lv.width <= 64 && ctx <= 64 {
-                let v = lv.to_u64();
-                *lv = LogicVec::from_u64(v, ctx);
+                // JANGAN lewat `to_u64()`: bit X/Z literal ikut hilang
+                // (X/Z → 0) saat Const dilebarkan konteks assign
+                // (`assign y = 1'bx` dgn y [1:0] menjadi 2'b00 padahal
+                // harus 2'b0x — ditemukan maria-fuzz). Zero-extend per-bit,
+                // pertahankan bit X/Z yang sudah ada.
+                let mut bits = lv.bits.clone();
+                bits.resize(ctx, LogicVal::Zero);
+                *lv = LogicVec {
+                    bits,
+                    width: ctx,
+                };
             }
             lv.width
         }

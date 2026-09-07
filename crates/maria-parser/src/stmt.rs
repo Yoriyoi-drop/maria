@@ -2387,6 +2387,45 @@ impl Parser {
         };
         self.expect(Token::Semi)?;
         let step = if self.peek() != &Token::RParen {
+            // `parse_expr` consumes postfix `++`/`--` into a BinaryOp, which
+            // would otherwise leave no assignment step and make the loop
+            // condition repeat forever. Handle the common identifier form
+            // before expression parsing so the loop variable is updated.
+            if let Token::Ident(var) = self.peek().clone() {
+                if matches!(self.peek_ahead(1), Token::Increment | Token::Decrement) {
+                    let is_inc = matches!(self.peek_ahead(1), Token::Increment);
+                    self.advance();
+                    self.advance();
+                    let op = if is_inc { BinaryOp::Add } else { BinaryOp::Sub };
+                    Some(Box::new(Stmt::BlockingAssign {
+                        lhs: Expr::Ident {
+                            name: var,
+                            line: 0,
+                            col: 0,
+                        },
+                        rhs: Expr::BinaryOp {
+                            op,
+                            lhs: Box::new(Expr::Ident {
+                                name: var,
+                                line: 0,
+                                col: 0,
+                            }),
+                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                        },
+                        delay: None,
+                    }))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let step = if step.is_some() {
+            step
+        } else if self.peek() != &Token::RParen {
             let expr = self.parse_expr(0)?;
             if self.peek() == &Token::Increment {
                 self.advance();

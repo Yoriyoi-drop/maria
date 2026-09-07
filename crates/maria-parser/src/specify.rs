@@ -197,6 +197,14 @@ impl Parser {
                     items.push(ClockingItem::InputOutput { signals });
                 }
                 _ => {
+                    // Terpotongnya input di dalam clocking block (mis. fragmen
+                    // fuzz `clocking cb @(posedge tck);` tanpa endclocking) →
+                    // `_ => advance()` di EOF memutar pos forever = hang parser
+                    // (ditemukan maria-fuzz: Hang opentitan kmac vseq fragment).
+                    // EOF harus keluar dari loop, bukan advance macet.
+                    if self.peek() == &Token::Eof {
+                        break;
+                    }
                     self.advance();
                 }
             }
