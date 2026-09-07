@@ -221,3 +221,41 @@ endmodule
         .expect("compile concat lebar negatif harus selesai <10s (dulu panic/regresi?)");
     assert!(r.is_ok(), "part-select lebar negatif/unresolved harus error elegan, bukan panic");
 }
+
+/// Regresi diagnostic RT0001 (ditemukan maria-fuzz seed 42): concat part-select
+/// member `tl_h_i[i].a_source[0+:(IDW-STIDW)]` dengan `tl_h_i[i]` tak-resolved
+/// → elaborator fallback `Err(_)` emit `HierRef("")` → engine luntur jadi
+/// `error[RT0001]: hierarchical signal '' not found` — nama KOSONG (diagnostic
+/// tak berguna untuk input tak-deklar).
+///
+/// Fix: `expr.rs` MemberAccess fallback — kalau `build_hier_name` kosong (obj
+/// berupa Index/PartSelect tak-resolved), pakai nama field (`a_source`) supaya
+/// pesan error memuat sinyal yang sebenarnya.
+#[test]
+fn test_rt0001_reports_real_signal_name_not_empty() {
+    let src = r#"
+module tlul_socket_m1 #(
+  parameter int unsigned  M         = 4,
+) (
+);
+  localparam int unsigned IDW   = top_pkg::TL_AIW;
+  localparam int unsigned STIDW = $clog2(M);
+    assign shifted_id = {
+      tl_h_i[i].a_source[0+:(IDW-STIDW)],
+      reqid_sub
+    };
+endmodule
+"#;
+    let r = super::simulate_str(&src, 10).unwrap_err();
+    let msg = r.to_string();
+    assert!(
+        msg.contains("a_source") && !msg.contains("signal '' not found"),
+        "RT0001 harus memuat nama field, bukan kosong: {}",
+        msg
+    );
+    assert!(
+        msg.contains("not found"),
+        "harus jadi not-found error yang bisa dibaca: {}",
+        msg
+    );
+}

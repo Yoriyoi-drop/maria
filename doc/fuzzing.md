@@ -346,3 +346,90 @@ sebelumnya (10+7 viol=1 palsu) kini 0.
   `assert`/`cover` ala SVA belum (butuh evaluasi dukungan assertion engine).
 - Fuzzing fitur mahal: **interface/class/UVM/DPI** via corpus opentitan/cva6 —
   sebagian tercakup korpus; masih butuh oracle khusus.
+
+---
+
+## v2.1 (2026-09-07) — assert-oracle, hang delta-storm, sim-err triage
+
+### Mutasi baru: assert-oracle (Paper #14/#2/#3, oracle #5)
+`ast_mutate.rs insert_assert_oracle` — tanam assertion yang WAJIB benar:
+```systemverilog
+wire [W-1:0] _fz_atA_N;  assign _fz_atA_N = (<rhs>);
+wire [W-1:0] _fz_atB_N;  assign _fz_atB_N = (<rhs>);
+initial #1 assert (_fz_atA_N === _fz_atB_N) else $fatal(0, "...");
+```
+Dua temp mengevaluasi ekspresi SAMA → engine konsisten = assertion selalu pass;
+fail = bug evaluasi. Berbeda dgn mirror (`_fz_viol` net compare): di sini
+`$fatal` membuat SIMULASI GAGAL (`RT7001`) — tak ada false-positive dari
+minimizer/multi-driver. Main loop: sim_err pada source yang memuat
+`has_assert_oracle` → property_violations + minisasi. Mutasi op #11.
+
+### Hang delta-storm: bedakan hang sejati vs engine-settle (false positive massal)
+`always @(posedge clk)` tanpa clock = delta-storm; engine SETTLE via delta-limit
+(100k) → selesai normal (~10s build debug). Dengan `hang_ms=2000`, eksekusi ini
+`>hang_ms` → fuzzer salah-klaim `Hang` (12–32×/kampanye seed 999/4567/8888),
+padahal **bukan hang sejati** — engine menangguhkan dengan error `RT2001`, bukan
+infinite.
+*Fix:* default `hang_ms` naik 3000 → **12000** (di atas settle delta-storm
+debug). Delta-storm kini selesai normal (bukan Hang); hanya hang SEJATI yang tak
+pernah settle (parser/stack infinite, mis. M1 clocking, recursive elaboration)
+yang >12s → Hang & di-minimize. Konfirmasi hang memakai window ≥15s sebelum
+posting, agar kandidat yang engine-settle tidak salah masuk bug DB.
+
+### Bug utama maria dari sim-err triage (MARIA_FUZZ_SIMERR dump)
+Sweep sim-err seed 42 (release): 43× `RT2001` (delta-limit — input osilasi,
+engine benar tolak) + 8× `RT0001`.
+
+**Bug M3 — RT0001 nama sinyal KOSONG**
+`error[RT0001]: hierarchical signal '' not found` — concat part-select member
+`tl_h_i[i].a_source[0+:(IDW-STIDW)]` dengan `tl_h_i[i]` tak-resolved →
+`build_hier_name` obj (Index/PartSelect) → `""` → fallback `Err(_)` emit
+`HierRef(Symbol::intern(""))` → engine luntur `signal '' not found` (diagnostic
+tak berguna).
+*Fix:* `elaborator/expr.rs` MemberAccess fallback — kalau `hier_name` kosong,
+pakai nama field (`a_source`). Kini `RT0001: hierarchical signal 'a_source'
+not found`. Regresi `test_rt0001_reports_real_signal_name_not_empty`.
+
+`RT2001` dinyatakan **bukan bug engine** (input malformed; engine tolak benar) —
+tidak dilaporkan sebagai bug fuzz.
+
+### Verifikasi v2.1
+`cargo test` seluruh hijau (maria-tests 902, simulator 349, compiler 307,
+elaboration 6, maria-fuzz 57). Kampanye release seed 999 120 iterasi:
+`hangs=0 bugs=0` (sebelumnya 12 hang palsu). Seed 42 release 300 iterasi:
+`hangs=0 bugs=0`. Run fuzzer disarankan **release** (`--release`) — build debug
+delta-storm settle ~10s bikin kampanye lambat.
+---
+
+## v2.2 (2026-09-07) — interface-oracle, EMI artefak filter, assert-oracle proof
+
+### Mutasi baru: interface-oracle (fitur mahal, Paper #10/#12)
+`ast_mutate.rs insert_interface` (op #12) — tanam interface utuh + modport +
+child yang memakai modport + instansiasi + koneksi lintas-modul (stress
+elaborator interface/hierarki/modport). Self-contained (nama unik `fz_bus_`,
+`fz_child_`, `fz_bif_`). `has_interface_oracle` utk deteksi. +2 unit test.
+
+### Fix assert-oracle false positive (11 palso, seed 42)
+Assert-oracle main-loop hanya cek `has_assert_oracle` (ada `_fz_at`) — tapi
+sim_err bisa RT0001 lain (hier-signal tak-resolved dari source malformed),
+bukan assertion fail. Minimizer menghapus deklarasi temp → 11 bug palsu
+`assert-oracle: sim err RT0001`.
+*Fix:* hanya sim code **RT7001** (dari `assert ... else $fatal`) + 
+`has_assert_oracle_temps` (blok utuh: deklarasi wire temp lebar sama) →
++ `sim_err_isolated` harness (return sim error code utk predicate minimasi).
+
+### Fix EMI artefak filter (2 palso, seed 31337)
+EMI minimizer menghasilkan source malformed (implicit net / multi-driver, mis.
+`fz_q1` di-drive 2×, `a,[11:11]` concat koma, interface data 9→8 trunc) →
+dead-code mengubah net-topology → `z` vs `x` beda. Bukan bug engine.
+*Fix dua lapis:* (1) minimizer determinism/EMI — kandidat wajib compile+sim ok
+(`fingerprint_isolated().is_some()`) + tetap mismatch; (2) `compare_common` —
+abaikan sinyal internal artefak fuzzer (`is_internal_artifact`: prefix `fz_`,
+`_fz_`, `_fuzz_` — semua ditanam oracle). EMI bug sejati = dead-code mengubah
+sinyal top nyata. +1 unit test (`internal_artifact_filter`).
+
+### Verifikasi v2.2
+`cargo test` hijau: maria-fuzz **61** (+4 oracle/artifact). Kampanye release
+7 seed (42/1/12345/77/999/2024/31337) × 300 iterasi:
+`panics=0 hangs=0 det=0 emi=0 sig=0 prop=0 bugs=0` (semua false-positive
+yang muncul di v2.1: 11 assert-palsu + 2 EMI-palsu, kini 0).

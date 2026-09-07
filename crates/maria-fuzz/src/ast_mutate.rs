@@ -65,7 +65,7 @@ pub fn mutate(rng: &mut StdRng, source: &str, corpus: &Corpus) -> String {
     };
     let mut out = source.to_string();
     for _ in 0..chain {
-        let op = rng.gen_range(0..11u32);
+        let op = rng.gen_range(0..13u32);
         out = match op {
             0 => replace_operator(rng, &out),
             1 => flip_literal(rng, &out),
@@ -85,6 +85,12 @@ pub fn mutate(rng: &mut StdRng, source: &str, corpus: &Corpus) -> String {
             // (Paper #2/#3/#14; oracle #5 property): `_fz_viol = (lhs !== rhs)`.
             // Engine konsisten → selalu 0; 1 = bug semantik eval.
             10 => insert_assert_mirror(rng, &out),
+            // NEW: property-oracle berbasis assert (Paper #14, oracle #5) —
+            //      `assert (tempA === tempB) else $fatal`. Fail = bug eval.
+            11 => insert_assert_oracle(rng, &out),
+            // NEW: interface-oracle — tanam interface + modport + instansiasi
+            //      lintas-modul (stress elaborator interface/hierarki).
+            12 => insert_interface(rng, &out),
             _ => out.to_string(),
         };
     }
@@ -574,6 +580,152 @@ pub fn insert_assert_mirror(rng: &mut StdRng, source: &str) -> String {
     s
 }
 
+/// Property-oracle berbasis `assert` (Paper #14/#2/#3, oracle #5): tanam
+/// assertion yang WAJIB benar — dua temp `_fz_atA`/`_fz_atB` mengevaluasi
+/// ekspresi SAMA, lalu `assert (_fz_atA === _fz_atB) else $fatal`. Engine
+/// konsisten → assertion selalu pass; fail = bug evaluasi (eval/lebar/order).
+pub fn insert_assert_oracle(rng: &mut StdRng, source: &str) -> String {
+    let assign_lines: Vec<&str> = source
+        .lines()
+        .filter(|l| l.contains("assign") && l.contains('=') && l.trim_end().ends_with(';'))
+        .collect();
+    let Some(line) = assign_lines.choose(rng).copied() else {
+        return source.to_string();
+    };
+    let Some((lhs_raw, rhs_raw)) = line.split_once('=') else {
+        return source.to_string();
+    };
+    let lhs = lhs_raw.replace("assign", "").trim().to_string();
+    if lhs.is_empty()
+        || lhs.contains(' ')
+        || lhs.contains('[')
+        || lhs.contains('`')
+        || lhs.contains('.')
+        || lhs.contains('{')
+    {
+        return source.to_string();
+    }
+    let Some(width) = declared_width(source, &lhs) else {
+        return source.to_string();
+    };
+    let rhs = rhs_raw.trim().trim_end_matches(';').trim().to_string();
+    if rhs.is_empty() || rhs.contains(';') || rhs.contains('$') || rhs.contains('"') {
+        return source.to_string();
+    }
+    let run_id = rng.gen_range(0..99999u32);
+    let snippet = format!(
+        "  // fuzz assert oracle (Paper #14, oracle #5)\n  wire [{w}-1:0] _fz_atA_{vi};\n  assign _fz_atA_{vi} = ({rh});\n  wire [{w}-1:0] _fz_atB_{vi};\n  assign _fz_atB_{vi} = ({rh});\n  initial begin\n    #1 assert (_fz_atA_{vi} === _fz_atB_{vi}) else $fatal(0, \"fuzzer assert oracle violated\");\n  end\n",
+        w = width,
+        vi = run_id,
+        rh = rhs
+    );
+    let mut s = source.to_string();
+    if let Some(end) = s.rfind("endmodule") {
+        s.insert_str(end, &snippet);
+    } else {
+        s.push_str(&snippet);
+    }
+    s
+}
+
+/// Deteksi sinyal assert-oracle yang sudah tertanam (Paper #18 re-seed).
+pub fn has_assert_oracle(source: &str) -> bool {
+    source.contains("_fz_atA_") && source.contains("_fz_atB_") && source.contains("assert (")
+}
+
+/// Validasi blok assert-oracle masih UTUH: deklarasi `wire [W-1:0] _fz_atA_N`
+/// dan `_fz_atB_N` (lebar sama) + `assert (...)` masih ada. Minimizer baris
+/// bisa menghapus deklarasi wire → temp jadi implicit net (lebar default) →
+/// assert `===` antara lebar beda = 0 selalu, ATAU sinyal tak ada → RT0001
+/// (bukan RT7001). Hanya blok utuh yang membuktikan engine mengevaluasi ekspresi
+/// identik di lebar sama (fail = bug eval, bukan artefak minimizer).
+pub fn has_assert_oracle_temps(source: &str) -> bool {
+    if !has_assert_oracle(source) {
+        return false;
+    }
+    let lines: Vec<&str> = source.lines().map(|l| l.trim()).collect();
+    // Cari satu `_fz_atA_<digits>` dan pasangannya `_fz_atB_<digits>` yang sama,
+    // masing2 punya deklarasi `wire [..-1:0]` tepat satu.
+    let decl_of = |name: &str| -> Option<String> {
+        let hits: Vec<&str> = lines
+            .iter()
+            .filter(|l| l.starts_with("wire [") && l.contains(name) && l.ends_with(';') && l.contains("-1:0]"))
+            .copied()
+            .collect();
+        if hits.len() != 1 {
+            return None;
+        }
+        let l = hits[0];
+        let s = l.find('[')?;
+        let e = l[s..].find(']')? + s;
+        Some(l[s..=e].to_string())
+    };
+    for l in &lines {
+        if let Some(rest) = l.strip_prefix("assign _fz_atA_") {
+            let id: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if id.is_empty() {
+                continue;
+            }
+            let a = format!("_fz_atA_{}", id);
+            let b = format!("_fz_atB_{}", id);
+            match (decl_of(&a), decl_of(&b)) {
+                (Some(da), Some(db)) if da == db => return true,
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// Tanam interface + instansiasi + koneksi (Paper #10/#12, fitur mahal):
+/// airadakan elaborator interface/modport/hierarki 2-level. Sisip di awal file
+/// (sebelum module pertama) definisi interface & child yang memakai modport,
+/// dan di body module top sediakan koneksi. Self-contained (nama unik) —
+/// tidak bergantung pada seed sehingga minimizer tidak bisa merusak sintaks.
+/// Men-differential stress: instansiasi interface + hier signal map + modport.
+pub fn insert_interface(rng: &mut StdRng, source: &str) -> String {
+    let w: usize = [4usize, 8, 16].choose(rng).copied().unwrap_or(8);
+    let id = rng.gen_range(0..99_999u32);
+    let ifname = format!("fz_bus_{}", id);
+    let child = format!("fz_child_{}", id);
+    // Interface utuh + child yang memakai modport + top yang instansiasi.
+    let block = format!(
+        "\ninterface {ifname}; \n  logic [{w}-1:0] data;\n  logic valid;\n  modport m (input data, output valid);\nendinterface : {ifname}\n\n\
+         module {child} (\\\n  {ifname}.m ifc\n);\n  assign ifc.valid = ifc.data[0];\nendmodule\n\n"
+    );
+    let inst = format!(
+        "{ifname} fz_bif_{id} ();\n  {child} fz_u_{id} (.ifc(fz_bif_{id}));\n  wire [{w}-1:0] fz_d_{id};\n  assign fz_d_{id} = fz_bif_{id}.data;\n"
+    );
+    let mut s = String::new();
+    s.push_str(&block);
+    // Sisip koneksi instansiasi ke dalam body module top (atau akhiri sebagai
+    // fragment bebas-module — parser auto-bungkus).
+    if let Some(mstart) = source.rfind("endmodule") {
+        // Sisip di dalam module pertama yang ada.
+        if let Some(m1) = source.find("module ") {
+            let _ = m1; // cari akhir header / awal body
+        }
+    }
+    // Simpel: sisipkan instansiasi tepat sebelum `endmodule` pertama, definisi
+    // interface di depan.
+    let body = if let Some(pos) = source.find("endmodule") {
+        let mut t = String::new();
+        t.push_str(&source[..pos]);
+        t.push_str(&inst);
+        t.push_str(&source[pos..]);
+        t
+    } else {
+        source.to_string()
+    };
+    s.push_str(&body);
+    s
+}
+
+/// Deteksi interface-oracle (Paper #18 re-seed): ada `interface fz_bus_`.
+pub fn has_interface_oracle(source: &str) -> bool {
+    source.contains("interface fz_bus_") && source.contains(".ifc(")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +772,76 @@ mod tests {
         assert!(out.contains("_fz_viol_"), "harus ada sinyal violasi: {}", out);
         assert!(out.contains("!== _fz_rtB_"), "harus memuat mirror ekspresi: {}", out);
         assert!(out.contains("endmodule"));
+    }
+
+    #[test]
+    fn insert_assert_oracle_adds_assert_and_temps() {
+        let mut rng = StdRng::seed_from_u64(8);
+        let out = insert_assert_oracle(&mut rng, SEED);
+        assert!(out.contains("_fz_atA_"), "harus ada temp A: {}", out);
+        assert!(out.contains("_fz_atB_"), "harus ada temp B: {}", out);
+        assert!(out.contains("assert ("), "harus menanam assertion: {}", out);
+        assert!(out.contains("$fatal"), "assert harus punya else $fatal: {}", out);
+        assert!(out.contains("endmodule"));
+    }
+
+    #[test]
+    fn has_assert_oracle_detects_planted() {
+        let mut rng = StdRng::seed_from_u64(9);
+        let out = insert_assert_oracle(&mut rng, SEED);
+        assert!(has_assert_oracle(&out));
+        assert!(!has_assert_oracle(SEED));
+    }
+
+    #[test]
+    fn assert_oracle_temps_requires_complete_decls() {
+        let mut rng = StdRng::seed_from_u64(12);
+        // Blok utuh (temp2 ter-deklarasi) → true.
+        let full = insert_assert_oracle(&mut rng, SEED);
+        assert!(has_assert_oracle_temps(&full), "blok utuh harus valid");
+        // Minimizer artefak: hilangkan deklarasi `wire [W-1:0] _fz_atB_` →
+        // temp jadi implicit net → harus ditolak (bukan proof bug eval).
+        let mut dropped = full.clone();
+        if let Some(pos) = dropped.find("wire [") {
+            if let Some(line_end) = dropped[pos..].find('\n') {
+                let real = pos + line_end;
+                let _ = real;
+            }
+        }
+        // Hapus baris deklarasi wire pertama (yang berisi "_fz_atA_" wire decl).
+        let lines: Vec<String> = dropped.lines().map(|s| s.to_string()).collect();
+        let mut kept = Vec::new();
+        let mut removed = false;
+        for l in &lines {
+            if !removed && l.trim_start().starts_with("wire [") && l.contains("_fz_atA_") {
+                removed = true;
+                continue;
+            }
+            kept.push(l.clone());
+        }
+        dropped = kept.join("\n");
+        assert!(
+            !has_assert_oracle_temps(&dropped),
+            "deklarasi temp hilang = artefak minimizer, bukan proof bug"
+        );
+    }
+
+    #[test]
+    fn insert_interface_adds_interface_and_inst() {
+        let mut rng = StdRng::seed_from_u64(10);
+        let out = insert_interface(&mut rng, SEED);
+        assert!(out.contains("interface fz_bus_"), "harus ada interface: {}", out);
+        assert!(out.contains("modport"), "harus ada modport: {}", out);
+        assert!(out.contains(".ifc("), "harus ada koneksi ifc: {}", out);
+        assert!(out.contains("endmodule"));
+    }
+
+    #[test]
+    fn has_interface_oracle_detects_planted() {
+        let mut rng = StdRng::seed_from_u64(11);
+        let out = insert_interface(&mut rng, SEED);
+        assert!(has_interface_oracle(&out));
+        assert!(!has_interface_oracle(SEED));
     }
 
     #[test]

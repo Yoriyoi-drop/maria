@@ -21,7 +21,9 @@ OPTIONS:
   --iters N          Jumlah iterasi (env MARIA_FUZZ_N, default 300)
   --seed N           Seed RNG (default 0x6d61726961)
   --max-time T       max_time simulasi (default 100)
-  --hang-ms M        ambang hang per eksekusi (default 3000)
+  --hang-ms M        ambang hang per eksekusi (default 12000; harus > settle
+                     delta-storm engine ~10s debug, agar delta-storm yang
+                     engine-settle tidak salah-klaim Hang)
   --corpus-dir DIR   direktori corpus SV nyata (bisa diulang)
   --target FEATURE   fuzzing terarah (mis. >>, case, $clog2)
   --workers W        kampanye paralel (env MARIA_FUZZ_WORKERS, default 1)

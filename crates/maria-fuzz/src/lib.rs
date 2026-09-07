@@ -44,6 +44,12 @@ pub struct FuzzConfig {
     /// `max_time` simulasi (siklus).
     pub max_time: u64,
     /// Ambang hang per eksekusi (ms). Lewat = `Hang` + thread di-leak.
+    /// Default = 12000: HARUS melebihi settle delta-storm engine (build debug
+    /// ~10s utk delta-limit 100k). Input `always @(posedge)` tanpa clock adalah
+    /// delta-storm yang ENGINE SETTLE (delta-limit) — selesai normal, bukan
+    /// hang. Hanya hang SEJATI (parser/stack infinite, tak pernah settle) yang
+    /// melewati ambang ini → Hang. Default lebih rendah (2000) keliru
+    /// mengklasifikasi delta-storm sebagai Hang (false positive massal).
     pub hang_ms: u64,
     /// Direktori corpus seed SV nyata (Paper #12) — opsional.
     pub corpus_dirs: Vec<PathBuf>,
@@ -71,7 +77,7 @@ impl Default for FuzzConfig {
             iters: 300,
             seed: 0x6d61_7269_61,
             max_time: 100,
-            hang_ms: 3000,
+            hang_ms: 12_000,
             corpus_dirs: Vec::new(),
             target: None,
             workers: 1,
@@ -362,10 +368,24 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
             }
             RunStatus::Hang => {
                 report.hangs += 1;
-                // Minimizer hang (#18/#14): reduksi input sambil status tetap
-                // Hang. Ambang hang minimasi LEBIH pendek (≤800 ms) agar setiap
-                // kandidat yang masih hang tidak membakar seluruh hang_ms —
-                // kandidat non-hang selesai cepat, sehingga cost total wajar.
+                // Konfirmasi SEBELUM minimasi: input yang hanya LAMBAT tapi
+                // SEBENARNYA selesai (mis. delta-storm `always @(posedge clk)`
+                // tanpa clock yang di-hentikan engine lewat delta-limit 100k,
+                // settle ~10s di build debug) bukan hang sejati — engine
+                // menangguhkan, bukan infinite. Validasi dgn window jauh lebih
+                // besar dari settle; bila selesai → bukan hang → minggir tanpa
+                // biaya minimasi mahal.
+                let confirm_ms = cfg.hang_ms.max(15_000);
+                if matches!(
+                    harness::run_isolated(&src, cfg.max_time, confirm_ms).status,
+                    RunStatus::Done
+                ) {
+                    continue;
+                }
+                // Hang sejati (tak selesai bahkan melewati window besar): minimasi
+                // baris sambil status tetap Hang. Ambang minimasi pendek (≤800ms)
+                // agar tiap kandidat hang tak bakar penuh; kandidat non-hang
+                // selesai cepat → cost total wajar.
                 let min_ms = cfg.hang_ms.min(800).max(200);
                 let minimized = corpus::Corpus::minimize(&src, &mut |cand| {
                     matches!(
@@ -403,12 +423,20 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                     differential::DiffVerdict::Mismatch(d) => {
                                         report.determinism_mismatch += 1;
                                         // Minimizer determinism: kandidat masih harus
-                                        // menghasilkan determinism mismatch yang sama.
+                                        // menghasilkan determinism mismatch yang sama PADA
+                                        // source VALID (compile+sim ok). Minimizer baris bisa
+                                        // menghapus deklarasi → implicit net / multi-driver /
+                                        // referensi hilang → fingerprint beda `z` vs `x` BUKAN
+                                        // bukti bug engine (artefak minimizer, sama pola M3/F1).
                                         let minimized = corpus::Corpus::minimize(
                                             &src,
-                                            &mut |cand| match differential::determinism_check(cand, cfg) {
-                                                differential::DiffVerdict::Mismatch(_) => true,
-                                                _ => false,
+                                            &mut |cand| {
+                                                matches!(harness::run_isolated(cand, cfg.max_time, cfg.hang_ms).status, RunStatus::Done)
+                                                    && harness::fingerprint_isolated(cand, cfg.max_time, cfg.hang_ms).is_some()
+                                                    && matches!(
+                                                        differential::determinism_check(cand, cfg),
+                                                        differential::DiffVerdict::Mismatch(_)
+                                                    )
                                             },
                                         );
                                         let mlen = minimized.len();
@@ -429,12 +457,19 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                     differential::DiffVerdict::Mismatch(d) => {
                                         report.emi_mismatch += 1;
                                         // Minimizer EMI (#13): kandidat masih harus
-                                        // menghasilkan mismatch vs dead-code variant.
+                                        // menghasilkan mismatch vs dead-code variant PADA
+                                        // source VALID (compile+sim ok). Source malformed
+                                        // (implicit net / multi-driver) memberi fingerprint
+                                        // `z` vs `x` beda yang bukan bug engine.
                                         let minimized = corpus::Corpus::minimize(
                                             &src,
-                                            &mut |cand| match differential::emi_check(cand, cfg) {
-                                                differential::DiffVerdict::Mismatch(_) => true,
-                                                _ => false,
+                                            &mut |cand| {
+                                                matches!(harness::run_isolated(cand, cfg.max_time, cfg.hang_ms).status, RunStatus::Done)
+                                                    && harness::fingerprint_isolated(cand, cfg.max_time, cfg.hang_ms).is_some()
+                                                    && matches!(
+                                                        differential::emi_check(cand, cfg),
+                                                        differential::DiffVerdict::Mismatch(_)
+                                                    )
                                             },
                                         );
                                         let mlen = minimized.len();
@@ -506,6 +541,55 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                         } else {
                             report.sim_err += 1;
                             feats.push(format!("err:{}", sim.code));
+                            // Dev diagnostic (env gate): cetak source + code + message
+                            // SIM error yang bukan assert-oracle — utk inspeksi manual
+                            // apakah sim_err = bug engine atau input tak-sah. Tidak
+                            // termasuk campaign default (hanya bila env di-set).
+                            if std::env::var("MARIA_FUZZ_SIMERR").is_ok() && !ast_mutate::has_assert_oracle(&src)
+                            {
+                                eprintln!(
+                                    "[simerr] code={} msg={}\n---\n{}\n---",
+                                    sim.code,
+                                    sim.message,
+                                    src
+                                );
+                            }
+                            // Property-oracle assert (Paper #14/#2/#3, oracle #5):
+                            // seed memuat assert-oracle (`_fz_atA/_fz_atB` eval ekspresi
+                            // identik). Sim error = assertion FAIL = bug evaluasi.
+                            // HANYA code RT7001 (dari `assert ... else $fatal`) yang
+                            // menandakan assertion violate. sim_err lain (mis. RT0001
+                            // hier-signal not found dari seed malformed yang punya
+                            // referensi tak-resolved, RT2001 delta-storm) BUKAN bug
+                            // engine — jangan salah-klaim.
+                            if sim.code.contains("RT7001")
+                                && ast_mutate::has_assert_oracle(&src)
+                                && ast_mutate::has_assert_oracle_temps(&src)
+                            {
+                                report.property_violations += 1;
+                                let minimized = corpus::Corpus::minimize(
+                                    &src,
+                                    &mut |cand| {
+                                        ast_mutate::has_assert_oracle_temps(cand)
+                                            && matches!(
+                                                harness::run_isolated(cand, cfg.max_time, cfg.hang_ms).status,
+                                                RunStatus::Done
+                                            )
+                                            && harness::sim_err_isolated(cand, cfg.max_time, cfg.hang_ms)
+                                                .map(|c| c.contains("RT7001"))
+                                                .unwrap_or(false)
+                                    },
+                                );
+                                let mlen = minimized.len();
+                                report.bugs.push(BugRecord {
+                                    kind: BugKind::Differential,
+                                    source: minimized,
+                                    detail: format!(
+                                        "assert-oracle: {}{} — ekspresi identik dievaluasi beda; minimized {}→{} bytes",
+                                        sim.code, sim.message, src.len(), mlen
+                                    ),
+                                });
+                            }
                         }
                     }
                 } else {

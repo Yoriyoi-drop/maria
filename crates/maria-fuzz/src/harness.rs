@@ -94,6 +94,22 @@ pub fn fingerprint_isolated(source: &str, max_time: u64, hang_ms: u64) -> Option
     rx.recv_timeout(Duration::from_millis(hang_ms)).ok().flatten()
 }
 
+/// Jalankan simulasi saja, kembalikan ERROR CODE dari SimError (mis. "RT7001"),
+/// atau None bila compile/sim ok (tak ada error) / hang.
+/// Dipakai assertion-oracle: pastikan minimasi mempertahankan error code yang
+/// sama (RT7001 = assertion `$fatal` fail), bukan error lain (RT0001 dll.).
+pub fn sim_err_isolated(source: &str, max_time: u64, hang_ms: u64) -> Option<String> {
+    let (tx, rx) = mpsc::channel();
+    let source = source.to_string();
+    spawn_isolated(move || {
+        let r = catch_unwind(AssertUnwindSafe(|| {
+            sim_verdict(&source, max_time).code
+        }));
+        let _ = tx.send(r.ok().filter(|c| !c.is_empty()));
+    });
+    rx.recv_timeout(Duration::from_millis(hang_ms)).ok().flatten()
+}
+
 /// Jalankan compile saja, kembalikan Ok(message) / Err(panic message).
 /// Dipakai minimizer (predikat = masih panic).
 pub fn compile_only_isolated(source: &str, hang_ms: u64) -> Result<String, String> {

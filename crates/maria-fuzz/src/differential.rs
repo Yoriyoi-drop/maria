@@ -222,11 +222,29 @@ fn fingerprint_map(fp: &str) -> std::collections::HashMap<String, String> {
 
 /// Bandingkan hanya sinyal yang ada di kedua sisi.
 /// None = identik; Some(detail) = daftar penyimpangan.
+///
+/// Sinyal INTERNAL artefak fuzzer diabaikan: prefix `fz_`, `_fz_`, `_fuzz_`
+/// (semuanya ditanam oracle generator/grammar/assert-mirror/interface; `fz_q1`,
+/// `fz_y`, `_fz_atA/B`, `_fz_viol`, `_fuzz_pa`, `fz_bif`, `fz_d`, dsb).
+/// Dead-code menambah net yang utk source malformed (multi-driver / implicit
+/// net) mengubah net-topology → `z` vs `x` beda, PADAHAL bukan bug engine.
+/// EMI bug sejati = dead-code mengubah sinyal TOP nyata (`y`, `r`, `flag`,
+/// sinyal user non-`fz_`). Nota: kalau user menulis sinyal sendiri berawalan
+/// `fz_`, EMI tak bisa membedakannya — konvensi internal fuzzer.
+fn is_internal_artifact(name: &str) -> bool {
+    let base = name.rsplit('.').next().unwrap_or(name);
+    base.starts_with("fz_") || base.starts_with("_fz_") || base.starts_with("_fuzz")
+}
+
+/// Bandingkan hanya sinyal yang ada di kedua sisi, mengabaikan artefak internal.
 fn compare_common(a: &str, b: &str) -> Option<String> {
     let ma = fingerprint_map(a);
     let mb = fingerprint_map(b);
     let mut diffs: Vec<String> = Vec::new();
     for (name, va) in &ma {
+        if is_internal_artifact(name) {
+            continue;
+        }
         if let Some(vb) = mb.get(name) {
             if va != vb {
                 diffs.push(format!("{}: {} vs {}", name, va, vb));
@@ -338,5 +356,24 @@ endmodule
     fn nondeterministic_skipped() {
         let src = format!("{}\ninitial $display($urandom());\n", COUNTER);
         assert_eq!(determinism_check(&src, &cfg()), DiffVerdict::Skip);
+    }
+
+    #[test]
+    fn internal_artifact_filter() {
+        // Sinyal top nyata (user) → tidak di-filter.
+        assert!(!is_internal_artifact("y"));
+        assert!(!is_internal_artifact("r"));
+        assert!(!is_internal_artifact("tl_h_i"));
+        // Artefak internal fuzzer (oracle/gen/grammar) → di-filter.
+        assert!(is_internal_artifact("fz_q1"));
+        assert!(is_internal_artifact("_fz_atA_7"));
+        assert!(is_internal_artifact("_fz_viol_7"));
+        assert!(is_internal_artifact("_fuzz_pa_123"));
+        assert!(is_internal_artifact("fz_u_5.fz_d_14800"));
+        assert!(is_internal_artifact("fz_bif_3"));
+        // Top-level output bersih terhadap internal.
+        let ma = "y=00@2|r=00@2|fz_q1=1@1|_fuzz_pa_5=zzz@3";
+        let mb = "y=00@2|r=00@2|fz_q1=x@1|_fuzz_pa_5=001@3";
+        assert_eq!(compare_common(ma, mb), None, "hanya artefak beda → bukan bug EMI");
     }
 }

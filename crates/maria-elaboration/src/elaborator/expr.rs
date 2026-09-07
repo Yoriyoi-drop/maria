@@ -1127,7 +1127,16 @@ impl Elaborator {
                     }),
                     Err(_) => {
                         // If obj can't be elaborated (e.g., instance name), emit a HierRef
-                        // that the engine can resolve at runtime using the flattened signal list
+                        // that the engine can resolve at runtime using the flattened signal list.
+                        // Guard: `build_hier_name` kembali "" utk obj non-Ident/MemberAccess
+                        // (mis. `arr[i].field`, `ns[0].field` dgn indeks tak-resolved) →
+                        // emit `HierRef("")` → engine kalah `signal '' not found` (RT0001
+                        // nama KOSONG — diagnostic tak berguna, ditemukan maria-fuzz dari
+                        // concat `tl_h_i[i].a_source[...]` opentitan). Fallback ke nama
+                        // field agar pesan error memuat sinyal yang sebenarnya.
+                        if hier_name.is_empty() {
+                            return Ok(IrExpr::HierRef(*field));
+                        }
                         Ok(IrExpr::HierRef(Symbol::intern(&hier_name)))
                     }
                 }
