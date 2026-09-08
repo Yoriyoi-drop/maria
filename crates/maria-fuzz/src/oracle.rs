@@ -31,8 +31,10 @@ pub struct SimVerdict {
 }
 
 /// Compile oracle (Paper #2/#3): input valid → ok; input invalid → err code.
+/// Pakai varian QUIET maria-api — child yang gagal-compile mencetak puluhan
+/// baris diagnosa (E1002/E1005/WR0102) ke stderr; fuzzer hanya butuh code.
 pub fn compile_verdict(source: &str) -> CompileVerdict {
-    match maria_api::compile_str(source) {
+    match maria_api::compile_str_quiet(source) {
         Ok(d) => CompileVerdict {
             ok: true,
             code: String::new(),
@@ -48,7 +50,7 @@ pub fn compile_verdict(source: &str) -> CompileVerdict {
 
 /// Sim oracle (Paper #2/#3): compile+simulasi → fingerprint sinyal.
 pub fn sim_verdict(source: &str, max_time: u64) -> SimVerdict {
-    match maria_api::simulate_signals(source, max_time) {
+    match maria_api::simulate_signals_quiet(source, max_time) {
         Ok(sigs) => SimVerdict {
             ok: true,
             fingerprint: fingerprint(&sigs),
@@ -63,6 +65,34 @@ pub fn sim_verdict(source: &str, max_time: u64) -> SimVerdict {
             message: e.to_string(),
             assertion: e.to_string().to_lowercase().contains("assert"),
         },
+    }
+}
+
+/// Sim oracle + coverage nyata engine (satu eksekusi: fingerprint DAN
+/// coverage keys). Dipakai jalur utama fuzzer — coverage keys menjadi
+/// feedback eksekusi sungguhan (line/branch/toggle/FSM), bukan teks statistik.
+pub fn sim_verdict_cov(source: &str, max_time: u64) -> (SimVerdict, Vec<String>) {
+    match maria_api::simulate_signals_with_coverage_quiet(source, max_time) {
+        Ok((sigs, cov)) => (
+            SimVerdict {
+                ok: true,
+                fingerprint: fingerprint(&sigs),
+                code: String::new(),
+                message: String::new(),
+                assertion: false,
+            },
+            cov,
+        ),
+        Err(e) => (
+            SimVerdict {
+                ok: false,
+                fingerprint: String::new(),
+                code: e.error_code().to_string(),
+                message: e.to_string(),
+                assertion: e.to_string().to_lowercase().contains("assert"),
+            },
+            Vec::new(),
+        ),
     }
 }
 
@@ -108,8 +138,8 @@ pub fn sim_signal_check(source: &str, max_time: u64) -> Option<String> {
     if has_nondeterministic_src(source) {
         return None;
     }
-    use maria_api::simulate_signals;
-    let run = || simulate_signals(source, max_time).ok();
+    use maria_api::simulate_signals_quiet;
+    let run = || simulate_signals_quiet(source, max_time).ok();
     let (s0, s1, s2) = (run(), run(), run());
     let extract = |s: Option<Vec<(String, LogicVec)>>| -> Vec<(String, String)> {
         s.into_iter()
@@ -228,5 +258,42 @@ endmodule
     fn nondeterministic_detection() {
         assert!(!has_nondeterministic_src(COUNTER));
         assert!(has_nondeterministic_src("$display($urandom());"));
+    }
+
+    const CLOCKED: &str = r#"
+module top(input logic clk, input logic rst_n,
+           input logic [3:0] a, input logic [3:0] b,
+           output logic [3:0] y);
+  logic [3:0] r;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) r <= '0;
+    else r <= a + b;
+  end
+  assign y = r;
+  initial begin clk = 0; forever #5 clk = ~clk; end
+  initial begin rst_n = 0; a = 1; b = 2; #7 rst_n = 1; #3 a = 3; b = 4; end
+endmodule
+"#;
+
+    #[test]
+    fn sim_verdict_cov_returns_execution_coverage_keys() {
+        // Feedback coverage EKSEKUSI nyata: satu panggilan mengembalikan
+        // fingerprint + key coverage (line/branch/toggle/FSM) dari engine.
+        let (v, cov) = sim_verdict_cov(CLOCKED, 40);
+        assert!(v.ok, "source valid harus sim ok: {}", v.message);
+        assert!(!cov.is_empty(), "sim valid harus menghasilkan coverage keys");
+        assert!(
+            cov.iter().any(|k| k.starts_with("cov_line:")),
+            "harus ada line coverage: {:?}",
+            cov
+        );
+        assert!(
+            cov.iter().any(|k| k.starts_with("cov_toggle:")),
+            "clk harus memicu toggle coverage: {:?}",
+            cov
+        );
+        // Deterministik per source — aman dijadikan kunci novelty fuzzing.
+        let (_, cov2) = sim_verdict_cov(CLOCKED, 40);
+        assert_eq!(cov, cov2, "coverage keys harus identik untuk source sama");
     }
 }

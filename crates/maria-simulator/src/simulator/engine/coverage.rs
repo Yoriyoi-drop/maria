@@ -498,6 +498,44 @@ impl SimulationEngine {
         gaps
     }
 
+    /// Peta coverage EKSEKUSI ber-granular-elemen: satu key per item yang
+    /// benar-benar kena (line, branch, toggle, FSM). Dipakai fuzzer
+    /// (`maria-fuzz`) sebagai feedback coverage nyata — menggantikan
+    /// sinyal teks-statistik yang gagal membedakan dua eksekusi berbeda.
+    /// Deterministik per source (tanpa `$urandom`), sehingga aman dijadikan
+    /// kunci novelty fuzzing.
+    pub fn coverage_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        // Line coverage: key = `proc.discriminant`.
+        for (k, _) in &self.cover_line {
+            keys.push(format!("cov_line:{}", k));
+        }
+        // Branch coverage: key = branch + label.
+        for (bk, labels) in &self.cover_branches {
+            for (label, _) in labels {
+                keys.push(format!("cov_branch:{}.{}", bk, label));
+            }
+        }
+        // Toggle coverage: nama sinyal + transisi bit (old→new).
+        for (sig_id, toggles) in &self.cover_toggle {
+            let name = self.design.top.signals.get(*sig_id).map(|s| s.name.to_string());
+            for (old, new) in toggles {
+                let n = name.as_deref().unwrap_or("sig");
+                keys.push(format!("cov_toggle:{}:{:?}->{:?}", n, old, new));
+            }
+        }
+        // FSM coverage: nama sinyal + nilai state dikunjungi.
+        for (sig_id, vals) in &self.cover_fsm {
+            let name = self.design.top.signals.get(*sig_id).map(|s| s.name.to_string());
+            for v in vals {
+                let n = name.as_deref().unwrap_or("sig");
+                keys.push(format!("cov_fsm:{}:{:#x}", n, v));
+            }
+        }
+        keys.sort();
+        keys
+    }
+
     /// VERIF-26: cetak coverage gap analysis ke stderr (setelah summary).
     pub(crate) fn report_coverage_gaps(&self) {
         let gaps = self.coverage_gaps();

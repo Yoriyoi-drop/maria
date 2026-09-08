@@ -28,6 +28,7 @@ OPTIONS:
   --target FEATURE   fuzzing terarah (mis. >>, case, $clog2)
   --workers W        kampanye paralel (env MARIA_FUZZ_WORKERS, default 1)
   --emit-bugs DIR    tulis file bug terminimalkan ke direktori
+  --sim-sig-check    aktifkan oracle nilai sinyal (3× pipeline/iterasi; OFF default)
   --verbose          progress tiap 100 iterasi ke stderr
   -h, --help         bantuan ini
 "
@@ -48,8 +49,11 @@ fn main() {
         return;
     }
 
+    // sim_sig_check OFF default (audit H5): biaya 3× pipeline per iterasi
+    // (~4× total eksekusi), padahal determinism oracle sudah menutupi sebagian.
+    // Aktifkan eksplisit lewat --sim-sig-check untuk eksperimen oracle nilai.
     let mut cfg = FuzzConfig {
-        sim_sig_check: true,
+        sim_sig_check: false,
         ..FuzzConfig::default()
     };
     let mut i = 0usize;
@@ -87,6 +91,9 @@ fn main() {
             "--emit-bugs" => {
                 i += 1;
                 cfg.emit_dir = Some(PathBuf::from(&args[i]));
+            }
+            "--sim-sig-check" => {
+                cfg.sim_sig_check = true;
             }
             "--verbose" => {
                 cfg.verbose = true;
@@ -163,8 +170,38 @@ fn main() {
     // Ringkasan akhir.
     println!("=== maria-fuzz done in {} ms ===", elapsed.as_millis());
     println!("{}", report.summary());
-    if report.covered_features > 0 {
+    if let Some(cdg) = &report.cdg_info {
+        println!(
+            "CDG progress (Paper #20): {}/{} target hit ({:.1}%)",
+            cdg.targets_hit,
+            cdg.targets_total,
+            cdg.ratio * 100.0
+        );
+        if !report.unreached_targets.is_empty() {
+            let unreached_preview: Vec<&str> = report
+                .unreached_targets
+                .iter()
+                .take(8)
+                .map(|s| s.as_str())
+                .collect();
+            println!(
+                "unreached targets ({} total, showing {}): {}",
+                report.unreached_targets.len(),
+                unreached_preview.len(),
+                unreached_preview.join(", ")
+            );
+        }
+    } else if report.covered_features > 0 {
         println!("feature coverage: {} fitur tertutup", report.covered_features);
+    }
+    // Statistik palet mutasi (GAP-3): op teratas menurut novelty.
+    let mut ops: Vec<(usize, u64, u64)> = (0..maria_fuzz::ast_mutate::NUM_OPS)
+        .map(|i| (i, report.op_stats.novels[i], report.op_stats.attempts[i]))
+        .collect();
+    ops.sort_by(|a, b| b.1.cmp(&a.1));
+    println!("mutation ops (op: novel/attempt):");
+    for (i, n, a) in ops.iter().take(6) {
+        println!("  op {}: {}/{}", i, n, a);
     }
     for (idx, b) in report.bugs.iter().enumerate() {
         println!("--- bug #{} [{:?}] ---", idx, b.kind);

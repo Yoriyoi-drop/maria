@@ -8,11 +8,17 @@
 //! `run_fuzz` sekali: load bug lama → re-seed seed awal (prevent regressi hilang).
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
 use crate::BugKind;
 use crate::BugRecord;
+
+/// Lock global akses file bug DB — worker paralel (main.rs --workers)
+/// membaca & menulis path yang sama; tanpa lock, load/save bisa ter-interleave
+/// dan save terakhir menimpa entri worker lain (last-writer-wins).
+static BUGDB_LOCK: Mutex<()> = Mutex::new(());
 
 /// Satu entri bug database — identik dengan `BugRecord` tapi ada field metadata
 /// kampanye (seed, iterasi, waktu) untuk rujukan regressi.
@@ -30,7 +36,7 @@ pub struct BugDbEntry {
 }
 
 /// Database bug yang persisten di disk (JSON, satu file).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BugDb {
     /// Semua bug yang ditemukan (berisi entri + duplicate raw bug yang
     /// sebelumnya tidak ada di DB → di-append).
@@ -51,15 +57,37 @@ impl BugDb {
 
     /// Muat DB dari path. None bila file tidak ada (kampanye pertama).
     pub fn load(path: &Path) -> Option<Self> {
+        let _g = BUGDB_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        Self::load_locked(path)
+    }
+
+    /// Muat tanpa lock (internal — pemanggil wajib memegang BUGDB_LOCK).
+    fn load_locked(path: &Path) -> Option<Self> {
         let raw = std::fs::read(path).ok()?;
         let db: BugDb = serde_json::from_slice(&raw).ok()?;
         Some(db)
     }
 
-    /// Simpan DB ke path (atomik-ish: write ke temp, rename).
+    /// Simpan DB ke path — MERGE-SAFE lintas worker paralel: entri yang sudah
+    /// ada di disk digabung (dedup by kind+source+detail). Tanpa merge, tiap
+    /// worker menimpa file dengan bug miliknya sendiri (last-writer-wins).
+    /// Tulis atomik (temp + rename) di bawah lock global.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let _g = BUGDB_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let mut merged = self.clone();
+        if let Some(existing) = Self::load_locked(path) {
+            for e in existing.entries {
+                let dup = merged.entries.iter().any(|m| {
+                    m.kind == e.kind && m.source == e.source && m.detail == e.detail
+                });
+                if !dup {
+                    merged.entries.push(e);
+                }
+            }
+        }
         let tmp = path.with_extension("json.tmp");
-        let serialized = serde_json::to_vec(self).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let serialized = serde_json::to_vec(&merged)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(&tmp, &serialized)?;
         std::fs::rename(tmp, path)?;
         Ok(())

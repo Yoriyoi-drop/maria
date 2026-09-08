@@ -339,6 +339,19 @@ pub fn simulate_str(source: &str, max_time: u64) -> Result<(), SimError> {
 
 /// Compile SystemVerilog source string into IR
 pub fn compile_str(source: &str) -> Result<maria_ir::IrDesign, SimError> {
+    compile_str_inner(source, false)
+}
+
+/// Compile SystemVerilog source string into IR — versi SENYAP: diagnostik
+/// parser/elaborator TIDAK di-emit ke stderr (hanya verdict/code yang
+/// diambil). Dipakai maria-fuzz: tiap mutasi child yang gagal-compile
+/// mencetak puluhan baris diagnosa (E1002/E1005/WR0102) → noise stderr +
+/// biaya I/O per iterasi.
+pub fn compile_str_quiet(source: &str) -> Result<maria_ir::IrDesign, SimError> {
+    compile_str_inner(source, true)
+}
+
+fn compile_str_inner(source: &str, quiet: bool) -> Result<maria_ir::IrDesign, SimError> {
     let mut pp = Preprocessor::new();
     let preprocessed = pp.preprocess(source, None).map_err(|e| {
         SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor: {}", e))
@@ -367,7 +380,7 @@ pub fn compile_str(source: &str) -> Result<maria_ir::IrDesign, SimError> {
         Ok(d) => d,
         Err(e) => {
             // Parse function returned fatal error — emit collected errors too
-            if !parser.errors.is_empty() {
+            if !quiet && !parser.errors.is_empty() {
                 let mut emitter =
                     maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
                 for diag in &parser.errors {
@@ -381,9 +394,11 @@ pub fn compile_str(source: &str) -> Result<maria_ir::IrDesign, SimError> {
     // Hanya abort untuk real errors, warnings seperti "skipping construct" tetap lanjut
     if !parser.errors.is_empty() {
         let has_real_errors = parser.errors.iter().any(|d| d.is_error());
-        let mut emitter = maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
-        for diag in &parser.errors {
-            let _ = emitter.emit(diag);
+        if !quiet {
+            let mut emitter = maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
+            for diag in &parser.errors {
+                let _ = emitter.emit(diag);
+            }
         }
         if has_real_errors {
             return Err(SimError::from_parse_diagnostic(parser.errors[0].clone()));
@@ -403,7 +418,7 @@ pub fn compile_str(source: &str) -> Result<maria_ir::IrDesign, SimError> {
 
     // Flush elaboration-time diagnostics (warnings like WR0102)
     let elab_diags = elaborator.flush_diagnostics();
-    if !elab_diags.is_empty() {
+    if !quiet && !elab_diags.is_empty() {
         let mut emitter = maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
         for diag in &elab_diags {
             let _ = emitter.emit(diag);
@@ -470,8 +485,56 @@ pub fn simulate_signals(
     source: &str,
     max_time: u64,
 ) -> Result<Vec<(String, maria_ir::LogicVec)>, SimError> {
-    let design = compile_str(source)?;
+    let sigs = simulate_signals_with_coverage_inner(source, max_time, false)?.0;
+    Ok(sigs)
+}
+
+/// Jalur fuzzer: versi senyap `simulate_signals` (tanpa emisi diagnostik &
+/// laporan coverage akhir-run; dipakai oracle nilai sinyal & fingerprint).
+pub fn simulate_signals_quiet(
+    source: &str,
+    max_time: u64,
+) -> Result<Vec<(String, maria_ir::LogicVec)>, SimError> {
+    let sigs = simulate_signals_with_coverage_inner(source, max_time, true)?.0;
+    Ok(sigs)
+}
+
+/// Run simulation and return final signal values PLUS coverage feedback
+/// (`SimulationEngine::coverage_keys`, lihat engine/coverage.rs).
+/// Coverage keys = item line/branch/toggle/FSM yang benar-benar tereksekusi —
+/// dipakai maria-fuzz sebagai umpan coverage nyata (bukan teks statistik).
+pub fn simulate_signals_with_coverage(
+    source: &str,
+    max_time: u64,
+) -> Result<(Vec<(String, maria_ir::LogicVec)>, Vec<String>), SimError> {
+    simulate_signals_with_coverage_inner(source, max_time, false)
+}
+
+/// Jalur fuzzer: versi SENYAP — compile tanpa emisi diagnostik ke stderr DAN
+/// laporan coverage akhir-run di-senyapkan (tiap simulasi = engine.run();
+/// report penuh per iterasi = noise + I/O, temuan kampanye seed 42).
+/// Coverage keys tetap diambil via `coverage_keys()`.
+pub fn simulate_signals_with_coverage_quiet(
+    source: &str,
+    max_time: u64,
+) -> Result<(Vec<(String, maria_ir::LogicVec)>, Vec<String>), SimError> {
+    simulate_signals_with_coverage_inner(source, max_time, true)
+}
+
+fn simulate_signals_with_coverage_inner(
+    source: &str,
+    max_time: u64,
+    quiet: bool,
+) -> Result<(Vec<(String, maria_ir::LogicVec)>, Vec<String>), SimError> {
+    let design = if quiet {
+        compile_str_quiet(source)?
+    } else {
+        compile_str(source)?
+    };
     let mut engine = simulator::SimulationEngine::new(design, max_time);
+    if quiet {
+        engine.set_coverage_report_silent();
+    }
     engine.run()?;
     let sigs: Vec<(String, maria_ir::LogicVec)> = engine
         .design
@@ -496,7 +559,8 @@ pub fn simulate_signals(
             )
         })
         .collect();
-    Ok(sigs)
+    let cov = engine.coverage_keys();
+    Ok((sigs, cov))
 }
 
 #[cfg(test)]

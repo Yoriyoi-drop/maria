@@ -47,9 +47,13 @@ impl CoverageGuide {
     }
 
     /// Tambah seed ke corpus fuzzer (feature sudah diekstrak pemanggil).
+    /// CATATAN (audit GAP-2/H3): `add` TIDAK lagi mencatat fitur ke peta
+    /// global. Peta hanya di-update oleh `map_record` dari hasil EKSEKUSI
+    /// nyata (sim_ok) — mencegah "coverage" dari input invalid sekaligus
+    /// mencegah double-count (sebelumnya `add`+`record` menambah 2×).
     pub fn add(&mut self, source: String, feats: Vec<String>, is_bug: bool) {
-        self.map.record(&feats);
-        let energy = self.compute_energy(&feats, 0, is_bug);
+        // cost 0 saat add — biaya nyata dipelajari lewat note_visit.
+        let energy = self.compute_energy(&feats, 0, is_bug, 0);
         // Dedup by source (hash = source string).
         if let Some(e) = self.seeds.iter_mut().find(|e| e.source == source) {
             e.feats = feats;
@@ -79,17 +83,22 @@ impl CoverageGuide {
         }
     }
 
-    /// Catat hasil iterasi: fitur baru? → adaptasi energi (Paper #8).
-    pub fn record(&mut self, source: &str, feats: &[String]) -> bool {
+    /// Catat fitur ke peta global — HANYA dari eksekusi nyata (pemanggil
+    /// wajib mem-filter input yang tereksekusi; audit GAP-2). Frekuensi
+    /// di-increment SETIAP eksekusi (dasar power schedule #4/#5); hasil
+    /// boolean = apakah ada fitur baru (novelty → corpus, α-adaptasi).
+    pub fn map_record(&mut self, feats: &[String]) -> bool {
         let is_new = self.map.has_new(feats);
-        if is_new {
-            self.map.record(feats);
-            // Seed parent yang memicu fitur baru dapat dorongan energi.
-            if let Some(e) = self.seeds.iter_mut().find(|e| e.source == source) {
-                e.energy *= 2.0;
-            }
-        }
+        self.map.record(feats);
         is_new
+    }
+
+    /// Boost energi seed parent yang memicu fitur baru (atribusi mutasi —
+    /// dulu digabung ke dalam `record`).
+    pub fn boost_source(&mut self, source: &str) {
+        if let Some(e) = self.seeds.iter_mut().find(|e| e.source == source) {
+            e.energy *= 2.0;
+        }
     }
 
     /// Adaptasi alpha (EcoFuzz #8): mandek → eksplorasi lebih luas.
@@ -105,8 +114,10 @@ impl CoverageGuide {
         }
     }
 
-    /// Increment kunjungan parent yang baru saja dieksekusi (path frequency).
-    pub fn note_visit(&mut self, source: &str) {
+    /// Increment kunjungan parent yang baru saja dieksekusi (path frequency) +
+    /// catat biaya eksekusi aktual (GAP-4: seed mahal → energi lebih rendah;
+    /// `duration_ms` sudah dikumpulkan harness tapi sebelumnya tak dipakai).
+    pub fn note_visit(&mut self, source: &str, duration_ms: u64) {
         let pos = self.seeds.iter().position(|e| e.source == source);
         if let Some(pos) = pos {
             self.seeds[pos].visits += 1;
@@ -114,7 +125,7 @@ impl CoverageGuide {
                 let e = &self.seeds[pos];
                 (e.feats.clone(), e.visits, e.is_bug)
             };
-            let energy = self.compute_energy(&feats, visits, is_bug);
+            let energy = self.compute_energy(&feats, visits, is_bug, duration_ms);
             self.seeds[pos].energy = energy;
         }
     }
@@ -154,8 +165,10 @@ impl CoverageGuide {
     }
 
     /// Power schedule (Paper #4): 1/freq^α + bonus fitur langka (#5)
-    /// + bug boost (#20: bug-guided utility).
-    fn compute_energy(&self, feats: &[String], visits: u64, is_bug: bool) -> f64 {
+    /// + bug boost (#20) + penalti biaya eksekusi (GAP-4: seed mahal kurang
+    /// disukai — baseline 100 ms; seed 10× lebih lambat → ~10× energi lebih
+    /// rendah, seperti speed-scheduling AFL++-class).
+    fn compute_energy(&self, feats: &[String], visits: u64, is_bug: bool, duration_ms: u64) -> f64 {
         let base = 1.0 / (1.0 + visits as f64).powf(self.alpha);
         // Fitur langka (jarang dieksekusi seluruh corpus) → energi tinggi.
         let rare: u64 = feats
@@ -166,6 +179,7 @@ impl CoverageGuide {
         if is_bug {
             e *= 4.0;
         }
+        e /= 1.0 + duration_ms as f64 / 100.0;
         e.max(0.001)
     }
 }
@@ -188,7 +202,11 @@ mod tests {
     #[test]
     fn rare_feature_gets_more_energy() {
         let mut g = CoverageGuide::new(2);
-        // Seed umum: fitur "+" sudah sering (dihitung 2x).
+        // Feature map = hasil EKSEKUSI (map_record): "+" sering tereksekusi,
+        // "width:999" langka (add tidak lagi mencatat map — GAP-2).
+        g.map_record(&["+".to_string()]);
+        g.map_record(&["+".to_string()]);
+        g.map_record(&["width:999".to_string()]);
         g.add("common_a".to_string(), vec!["+".to_string()], false);
         g.add("common_b".to_string(), vec!["+".to_string()], false);
         // Seed langka: fitur unik yang baru diperkenalkan seed ini.
@@ -218,17 +236,30 @@ mod tests {
         let mut g = CoverageGuide::new(4);
         g.add("s".to_string(), vec!["+".to_string()], false);
         let e0 = g.seeds[0].energy;
-        g.note_visit("s");
-        g.note_visit("s");
+        g.note_visit("s", 0);
+        g.note_visit("s", 0);
         let e2 = g.seeds[0].energy;
         assert!(e2 < e0, "kunjungan menurunkan energi (power schedule)");
+    }
+
+    #[test]
+    fn cost_penalty_lowers_energy() {
+        // GAP-4: seed mahal (eksekusi lama) harus kurang disukai.
+        let mut g = CoverageGuide::new(6);
+        g.add("fast".to_string(), vec!["+".to_string()], false);
+        g.add("slow".to_string(), vec!["+".to_string()], false);
+        g.note_visit("fast", 0);
+        g.note_visit("slow", 1000);
+        let fast = g.seeds.iter().find(|e| e.source == "fast").unwrap().energy;
+        let slow = g.seeds.iter().find(|e| e.source == "slow").unwrap().energy;
+        assert!(fast > slow, "seed cepat energi lebih tinggi ({} vs {})", fast, slow);
     }
 
     #[test]
     fn record_new_feature_returns_true_once() {
         let mut g = CoverageGuide::new(5);
         g.add("s".to_string(), vec!["+".to_string()], false);
-        assert!(g.record("s", &["width:77".to_string()])); // fitur baru
-        assert!(!g.record("s", &["width:77".to_string()])); // sudah ada
+        assert!(g.map_record(&["width:77".to_string()])); // fitur baru
+        assert!(!g.map_record(&["width:77".to_string()])); // sudah ada
     }
 }

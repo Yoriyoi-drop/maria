@@ -173,6 +173,7 @@ impl SimulationEngine {
             coverage_options: HashMap::new(),
             coverage_enabled: true,
             coverage_enabled_types: std::collections::HashSet::new(),
+            coverage_report_silent: false,
             glitch_window: 0,
             glitch_prev: std::collections::HashMap::new(),
             cover_line: HashMap::new(),
@@ -477,6 +478,12 @@ impl SimulationEngine {
 
     pub fn set_delta_limit(&mut self, limit: u64) {
         self.delta_limit = limit;
+    }
+
+    /// Sembunyikan laporan coverage verbose akhir-run (dipakai maria-fuzz
+    /// via `simulate_signals_with_coverage`; coverage keys tetap tersedia).
+    pub fn set_coverage_report_silent(&mut self) {
+        self.coverage_report_silent = true;
     }
 
     /// Set glitch detection window (in time units). 0 = disabled.
@@ -1722,8 +1729,10 @@ impl SimulationEngine {
             // ── VPI: End of simulation callback (setelah final blocks) ──
             crate::vpi::callback::dispatch_end_of_simulation();
 
-            self.report_full_coverage();
-            self.report_coverage();
+            if !self.coverage_report_silent {
+                self.report_full_coverage();
+                self.report_coverage();
+            }
             // VERIF-17/18/19: ringkasan transaction recording (bila ada).
             if !self.tr_records.is_empty() {
                 eprintln!("\n=== Transaction Recording ===");

@@ -25,11 +25,10 @@ pub mod harness;
 pub mod oracle;
 
 use std::path::PathBuf;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use std::collections::HashSet;
 
 use gen::Generator;
 use harness::RunStatus;
@@ -127,6 +126,12 @@ pub struct FuzzReport {
     /// bernilai 1 — hasil assign tidak konsisten dgn re-evaluasi.
     pub property_violations: u64,
     pub covered_features: usize,
+    /// Progress CDG (#20): rasio target hit vs total & unreached targets.
+    pub cdg_info: Option<crate::cdg::CdgInfo>,
+    pub unreached_targets: Vec<String>,
+    /// Statistik & bobot adaptif per operator mutasi (GAP-3) — untuk
+    /// evaluasi palet & debug, bukan untuk determinisme laporan.
+    pub op_stats: ast_mutate::OpStats,
     pub bugs: Vec<BugRecord>,
 }
 
@@ -145,6 +150,13 @@ impl FuzzReport {
         self.sim_sig_anomalies += other.sim_sig_anomalies;
         self.property_violations += other.property_violations;
         self.covered_features = self.covered_features.max(other.covered_features);
+        if let Some(other_cdg) = &other.cdg_info {
+            if self.cdg_info.as_ref().map_or(true, |c| other_cdg.ratio > c.ratio) {
+                self.cdg_info = Some(other_cdg.clone());
+                self.unreached_targets = other.unreached_targets.clone();
+            }
+        }
+        self.op_stats.merge(&other.op_stats);
         self.bugs.extend(other.bugs.clone());
     }
 
@@ -316,16 +328,21 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         let feats = feature::FeatureMap::extract(&frag);
         guide.add(frag, feats, false);
     }
+    // Statistik & bobot adaptif palet mutasi (GAP-3).
+    let mut op_stats = ast_mutate::OpStats::default();
 
     for iter in 0..cfg.iters {
         // ── 1. pilih parent (energy schedule) ──
         let Some(parent) = guide.select() else { break };
 
-        // ── 2. rantai mutasi ──
+        // ── 2. rantai mutasi (1..3 op; tiap op dipilih adaptif) ──
         let chain = rng.gen_range(1..=3);
         let mut src = parent.clone();
+        let mut ops_used: Vec<usize> = Vec::with_capacity(chain as usize);
         for _ in 0..chain {
-            src = ast_mutate::mutate(&mut rng, &src, &corpus);
+            let (op, next) = ast_mutate::mutate(&mut rng, &src, &corpus, &mut op_stats);
+            ops_used.push(op);
+            src = next;
         }
 
         // ── 3. bias terarah (#17) ──
@@ -346,7 +363,6 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         let out = harness::run_isolated(&src, cfg.max_time, cfg.hang_ms);
         report.total += 1;
 
-        let mut feats = feature::FeatureMap::extract(&src);
         match &out.status {
             RunStatus::Panic(p) => {
                 report.panics += 1;
@@ -410,11 +426,9 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
             RunStatus::Done => {
                 if out.compile.ok {
                     report.compile_ok += 1;
-                    feats.push("stage:compile".to_string());
                     if let Some(sim) = &out.sim {
                         if sim.ok {
                             report.sim_ok += 1;
-                            feats.push("stage:sim".to_string());
 
                             // ── 6a. differential determinism (#13 basis; #19 oracle) ──
                             if rng.gen_bool(0.30) {
@@ -540,7 +554,6 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                             }
                         } else {
                             report.sim_err += 1;
-                            feats.push(format!("err:{}", sim.code));
                             // Dev diagnostic (env gate): cetak source + code + message
                             // SIM error yang bukan assert-oracle — utk inspeksi manual
                             // apakah sim_err = bug engine atau input tak-sah. Tidak
@@ -594,24 +607,42 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                     }
                 } else {
                     report.compile_err += 1;
-                    feats.push(format!("err:{}", out.compile.code));
                 }
             }
         }
 
         // ── 5. feature map + corpus + adaptasi (#6/#7/#8) ──
-        let is_new = guide.record(&parent, &feats);
-        if is_new {
-            report.new_features += 1;
-            guide.record_adapt(true);
-        } else {
-            guide.record_adapt(false);
+        // Execution-gated (audit GAP-2): HANYA hasil sim_ok yang membuktikan
+        // fitur benar-benar tereksekusi. Panic/Hang/compile_err/sim_err TIDAK
+        // masuk peta — mencegah "coverage" dari testcase invalid dan saturasi
+        // dini (energi & CDG jadi jujur). Fitur eksekusi = fitur teks child +
+        // stage + coverage keys nyata engine (line/branch/toggle/FSM).
+        let executed = matches!(&out.status, RunStatus::Done)
+            && out.compile.ok
+            && out.sim.as_ref().map(|s| s.ok).unwrap_or(false);
+        let mut is_new = false;
+        if executed {
+            let mut exec_feats = feature::FeatureMap::extract(&src);
+            exec_feats.push("stage:compile".to_string());
+            exec_feats.push("stage:sim".to_string());
+            exec_feats.extend(out.coverage.iter().cloned());
+            is_new = guide.map_record(&exec_feats);
+            if is_new {
+                report.new_features += 1;
+                // Seed menarik (fitur eksekusi baru) masuk corpus utk mutasi
+                // lanjut (mencegah corpus saturation & starvation).
+                guide.add(src.clone(), exec_feats, false);
+                // Atribusi: parent yang memicu novelty dapat dorongan energi.
+                guide.boost_source(&parent);
+            }
         }
-        guide.note_visit(&parent);
-        // Seed menarik (fitur baru / sim ok) masuk corpus utk mutasi lanjut.
-        if out.compile.ok && (is_new || out.sim.as_ref().is_some_and(|s| s.ok)) {
-            guide.add(src, feats, false);
+        // Atribusi op-level (GAP-3): op yang memicu novelty naik bobot palet.
+        for op in &ops_used {
+            op_stats.record_outcome(*op, is_new);
         }
+        guide.record_adapt(is_new);
+        // Cost-aware visit (GAP-4): seed mahal dikecilkan energinya.
+        guide.note_visit(&parent, out.duration_ms);
 
         if cfg.verbose && iter > 0 && iter % cfg.verbose_every == 0 {
             eprintln!(
@@ -624,9 +655,18 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
     }
 
     report.covered_features = guide.coverage().covered();
+    let cov_map = guide.coverage();
+    report.cdg_info = Some(cdg::report(&cov_map));
+    report.unreached_targets = cdg::plan_targets(&cov_map);
+    report.op_stats = op_stats;
 
     // Simpan bug DB persisten (Paper #18) — sebelum emit_bugs supaya
-    // entri baru tercatat di disk.
+    // entri baru tercatat di disk. Direktori emit dibuat DULUAN: kampanye
+    // seed 42 gagal `bug_db.save` dengan "No such file or directory"
+    // karena dir emit belum ada (ordering bug).
+    if let Some(dir) = &cfg.emit_dir {
+        let _ = std::fs::create_dir_all(dir);
+    }
     if let Err(e) = bug_db.save(&db_path) {
         eprintln!("[fuzz] warning: gagal simpan bug DB: {}", e);
     }

@@ -129,7 +129,7 @@ impl Generator {
     /// multi-modul, instansiasi, koneksi port).
     fn shape_child(&self, _rng: &mut StdRng, w: usize, op: &str, param: bool) -> String {
         let mut s = String::new();
-        s.push_str("#(\n  parameter CW = 4\n) module child (\n");
+        s.push_str("module child #(\n  parameter CW = 4\n) (\n");
         s.push_str("  input  logic [CW-1:0] x,\n  output logic [CW-1:0] q\n);\n");
         s.push_str("  assign q = ~x;\n");
         s.push_str("endmodule\n\n");
@@ -143,7 +143,7 @@ impl Generator {
             w, w, w
         ));
         s.push_str(&format!("  logic [{}-1:0] wr;\n", w));
-        s.push_str("  child #(.CW(4)) u_child (.x(a[3:0]), .q(wr));\n");
+        s.push_str(&format!("  child #(.CW({})) u_child (.x(a), .q(wr));\n", w));
         s.push_str(&format!("  logic [{}-1:0] r;\n", w));
         s.push_str("  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n)\n      r <= '0;\n    else\n");
         s.push_str(&format!("      r <= wr {} b;\n", op));
@@ -158,7 +158,7 @@ impl Generator {
 
     /// Shape 4: `always_comb` + `for` loop unroll + nested `if/else` + part-select
     /// — stress statement-engine (loop unrolling, distribusi i, bit-select).
-    fn shape_loop(&self, rng: &mut StdRng, w: usize, param: bool) -> String {
+    fn shape_loop(&self, _rng: &mut StdRng, w: usize, param: bool) -> String {
         let mut s = String::new();
         if param {
             s.push_str("module top #(parameter W = 8) (\n");

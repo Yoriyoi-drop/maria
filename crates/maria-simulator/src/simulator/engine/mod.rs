@@ -393,6 +393,10 @@ pub struct SimulationEngine {
     pub coverage_enabled: bool,
     /// Selectively enable specific coverage types (empty = all enabled)
     pub coverage_enabled_types: HashSet<CoverageType>,
+    /// Sembunyikan laporan coverage verbose akhir-run (dipakai maria-fuzz:
+    /// setiap simulasi memanggil engine.run; report penuh per iterasi = noise
+    /// stderr + I/O; coverage keys tetap diambil via `coverage_keys()`).
+    pub coverage_report_silent: bool,
     /// Line ranges (start, end) inklusif 1-based yang di-exclude dari line
     /// coverage oleh `` `coverage_off ``/`` `coverage_on `` (SIM-29).
     pub coverage_exclusions: Vec<(usize, usize)>,

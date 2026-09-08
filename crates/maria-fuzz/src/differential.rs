@@ -96,7 +96,6 @@ pub fn emi_variant_ex(source: &str, style: EmiStyle) -> String {
 /// Operator biner komutatif aman dtukar operannya (a op b == b op a utk
 /// semua nilai 4-state, incl. X/Z) — Paper #13 equivalent mutant.
 const COMMUTATIVE_OPS: &[u8] = b"+&|^*";
-const MULTI_OPS: &[&str] = &["&&", "||"];
 
 /// EMI equivalent-expression: tukar operan operator komutatif PERTAMA yang
 /// ditemukan (`2 * 3 + a` → `2 * 3 + a` tidak berubah; `a + b` → `b + a`).

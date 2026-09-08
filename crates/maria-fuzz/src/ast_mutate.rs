@@ -53,48 +53,112 @@ pub const OP_GROUPS: &[&[&str]] = &[
 pub const LITERALS: &[&str] = &["'0", "'1", "'x", "'z", "1'b0", "1'b1", "2'd0", "2'd1", "2'd2"];
 
 /// Terapkan satu mutasi acak pada source. Operator mutasi dipilih random.
-pub fn mutate(rng: &mut StdRng, source: &str, corpus: &Corpus) -> String {
-    // Chain length: semakin panjang semakin banyak variasi per iterasi
-    // (Paper #2/#3 eksplorasi luas, Paper #12 fragment splice).
-    // Kadang 1, kadang 2-4 untuk eksplorasi lebih dalam.
-    let chain = match rng.gen_range(0..100u32) {
-        n if n < 25 => 1,   // 25%: chain 1
-        n if n < 50 => 2,   // 25%: chain 2
-        n if n < 75 => 3,   // 25%: chain 3
-        _ => 4,             // 25%: chain 4
-    };
-    let mut out = source.to_string();
-    for _ in 0..chain {
-        let op = rng.gen_range(0..13u32);
-        out = match op {
-            0 => replace_operator(rng, &out),
-            1 => flip_literal(rng, &out),
-            2 => splice_corpus_fragment(rng, &out, corpus),
-            3 => insert_grammar_decl(rng, &out),
-            4 => insert_grammar_body(rng, &out),
-            5 => duplicate_line(rng, &out),
-            // NEW: mutasi lebar bit (Paper #7 VUzzer — eksplorasi lebar).
-            6 => change_width(rng, &out),
-            // NEW: sisip part-select out-of-range (stress test per-bit §11.5.1).
-            7 => insert_partselect_oob(rng, &out),
-            // NEW: ganti parameter/const value (Paper #15 YARPGen — type-aware).
-            8 => tweak_params(rng, &out),
-            // NEW: manipulasi initial/reset (race condition stressor).
-            9 => tweak_initial(rng, &out),
-            // NEW: property-oracle — mirror ekspresi assign ke sinyal violasi
-            // (Paper #2/#3/#14; oracle #5 property): `_fz_viol = (lhs !== rhs)`.
-            // Engine konsisten → selalu 0; 1 = bug semantik eval.
-            10 => insert_assert_mirror(rng, &out),
-            // NEW: property-oracle berbasis assert (Paper #14, oracle #5) —
-            //      `assert (tempA === tempB) else $fatal`. Fail = bug eval.
-            11 => insert_assert_oracle(rng, &out),
-            // NEW: interface-oracle — tanam interface + modport + instansiasi
-            //      lintas-modul (stress elaborator interface/hierarki).
-            12 => insert_interface(rng, &out),
-            _ => out.to_string(),
-        };
+/// Jumlah operator mutasi (id 0..=12).
+pub const NUM_OPS: usize = 13;
+
+/// Statistik & bobot adaptif per operator mutasi (audit GAP-3): op yang
+/// sering memicu novelty (fitur eksekusi baru) naik bobotnya; yang mandek
+/// meluruh — palet tidak lagi uniform. Bobot awal seragam 1.0.
+#[derive(Debug, Clone)]
+pub struct OpStats {
+    pub attempts: [u64; NUM_OPS],
+    pub novels: [u64; NUM_OPS],
+    weights: [f64; NUM_OPS],
+}
+
+impl Default for OpStats {
+    fn default() -> Self {
+        OpStats {
+            attempts: [0; NUM_OPS],
+            novels: [0; NUM_OPS],
+            weights: [1.0; NUM_OPS],
+        }
     }
-    out
+}
+
+impl OpStats {
+    /// Catat pemilihan op (dipanggil `mutate` saat op dipilih).
+    pub fn record_attempt(&mut self, op: usize) {
+        if op < NUM_OPS {
+            self.attempts[op] += 1;
+        }
+    }
+
+    /// Catat hasil iterasi utk op: novel → bobot naik (×1.25, cap 20);
+    /// tidak → meluruh (×0.995, floor 0.2).
+    pub fn record_outcome(&mut self, op: usize, novel: bool) {
+        if op >= NUM_OPS {
+            return;
+        }
+        if novel {
+            self.novels[op] += 1;
+            self.weights[op] = (self.weights[op] * 1.25).min(20.0);
+        } else {
+            self.weights[op] = (self.weights[op] * 0.995).max(0.2);
+        }
+    }
+
+    /// Gabung statistik (worker paralel / report merge).
+    pub fn merge(&mut self, other: &OpStats) {
+        for i in 0..NUM_OPS {
+            self.attempts[i] += other.attempts[i];
+            self.novels[i] += other.novels[i];
+            self.weights[i] = self.weights[i].max(other.weights[i]);
+        }
+    }
+}
+
+/// Pilih op mutasi — berbobot adaptif (floor 0.2 × 13 > 0, total selalu > 0).
+fn pick_op(rng: &mut StdRng, stats: &OpStats) -> usize {
+    let total: f64 = stats.weights.iter().sum();
+    let mut pick = rng.gen_range(0.0..total);
+    for (i, w) in stats.weights.iter().enumerate() {
+        if pick < *w {
+            return i;
+        }
+        pick -= *w;
+    }
+    NUM_OPS - 1
+}
+
+/// Terapkan SATU operator mutasi (audit GAP-1: rantai ganda 1..4 × 1..3 =
+/// 1..12 mutasi per iterasi → mayoritas child rusak-sintaks; mutasi
+/// incremental kecil jauh lebih viable — rantai eksternal 1..3 di lib.rs).
+/// Pemilihan op berbobot adaptif (`stats`, GAP-3). Kembalikan (op_id, src).
+pub fn mutate(
+    rng: &mut StdRng,
+    source: &str,
+    corpus: &Corpus,
+    stats: &mut OpStats,
+) -> (usize, String) {
+    let op = pick_op(rng, stats);
+    stats.record_attempt(op);
+    let out = match op {
+        0 => replace_operator(rng, source),
+        1 => flip_literal(rng, source),
+        2 => splice_corpus_fragment(rng, source, corpus),
+        3 => insert_grammar_decl(rng, source),
+        4 => insert_grammar_body(rng, source),
+        5 => duplicate_line(rng, source),
+        // Mutasi lebar bit (Paper #7 VUzzer — eksplorasi lebar).
+        6 => change_width(rng, source),
+        // Sisip part-select out-of-range (stress test per-bit §11.5.1).
+        7 => insert_partselect_oob(rng, source),
+        // Ganti parameter/const value (Paper #15 YARPGen — type-aware).
+        8 => tweak_params(rng, source),
+        // Manipulasi initial/reset (race condition stressor).
+        9 => tweak_initial(rng, source),
+        // Property-oracle mirror (Paper #2/#3/#14, oracle #5):
+        // `_fz_viol = (lhs !== rhs)` — engine konsisten → selalu 0.
+        10 => insert_assert_mirror(rng, source),
+        // Property-oracle berbasis assert (Paper #14, oracle #5):
+        // `assert (tempA === tempB) else $fatal`. Fail = bug eval.
+        11 => insert_assert_oracle(rng, source),
+        // Interface-oracle (stress elaborator interface/hierarki/modport).
+        12 => insert_interface(rng, source),
+        _ => source.to_string(),
+    };
+    (op, out)
 }
 
 /// Ganti operator ke anggota golongan lain yang ada di seed (Paper #10).
@@ -300,11 +364,21 @@ pub fn insert_partselect_oob(rng: &mut StdRng, source: &str) -> String {
                 || l.contains("output")
         })
         .filter_map(|l| {
-            // Ambil nama diakhir baris (setelah tipe & [dim])
+            // Ambil nama diakhir baris (setelah tipe & [dim]); buang koma
+            // pemisah port-list agar nama sinyal utuh (audit GAP-1).
             let mut parts: Vec<&str> = l.split_whitespace().collect();
-            parts.retain(|p| !p.is_empty() && !p.starts_with('[') && !p.contains(':') && !p.contains(';'));
-            let tail = parts.last()?.to_string();
-            if tail == "logic" || tail == "wire" || tail == "reg" || tail == "input" || tail == "output" {
+            parts.retain(|p| {
+                !p.is_empty()
+                    && !p.starts_with('[')
+                    && !p.contains(':')
+                    && !p.contains(';')
+                    && !p.contains(',')
+            });
+            let tail = parts.last()?.trim_end_matches(',').to_string();
+            if tail.is_empty()
+                || tail == "logic" || tail == "wire" || tail == "reg"
+                || tail == "input" || tail == "output"
+            {
                 None
             } else {
                 Some(tail)
@@ -426,12 +500,13 @@ fn extract_signal_names(source: &str) -> Vec<String> {
                     && !p.starts_with('[')
                     && !p.contains(':')
                     && !p.contains(';')
+                    && !p.contains(',') // koma pemisah port-list → nama rusak
                     && **p != "logic"
                     && **p != "wire"
                     && **p != "reg"
                     && **p != "input"
                     && **p != "output"
-            }).map(|s| s.to_string()).collect::<Vec<_>>()
+            }).map(|s| s.trim_end_matches(',').to_string()).collect::<Vec<_>>()
         })
         .collect()
 }
@@ -698,15 +773,7 @@ pub fn insert_interface(rng: &mut StdRng, source: &str) -> String {
     );
     let mut s = String::new();
     s.push_str(&block);
-    // Sisip koneksi instansiasi ke dalam body module top (atau akhiri sebagai
-    // fragment bebas-module — parser auto-bungkus).
-    if let Some(mstart) = source.rfind("endmodule") {
-        // Sisip di dalam module pertama yang ada.
-        if let Some(m1) = source.find("module ") {
-            let _ = m1; // cari akhir header / awal body
-        }
-    }
-    // Simpel: sisipkan instansiasi tepat sebelum `endmodule` pertama, definisi
+    // Sisipkan instansiasi tepat sebelum `endmodule` pertama, definisi
     // interface di depan.
     let body = if let Some(pos) = source.find("endmodule") {
         let mut t = String::new();

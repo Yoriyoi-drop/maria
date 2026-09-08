@@ -12,7 +12,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::oracle::{compile_verdict, sim_verdict, CompileVerdict, SimVerdict};
+use crate::oracle::{
+    compile_verdict, sim_verdict, sim_verdict_cov, CompileVerdict, SimVerdict,
+};
 
 /// Stack thread worker maria (byte). Parsing/elaborasi file besar dengan
 /// nesting dalam (file corpora nyata, mis. regtop OpenTitan) butuh stack
@@ -50,6 +52,9 @@ pub struct RunOutcome {
     pub status: RunStatus,
     pub compile: CompileVerdict,
     pub sim: Option<SimVerdict>,
+    /// Coverage keys eksekusi nyata (line/branch/toggle/FSM) — feedback
+    /// coverage-guided yang diambil dalam SATU eksekusi (tanpa sim ulang).
+    pub coverage: Vec<String>,
     pub duration_ms: u64,
 }
 
@@ -77,6 +82,7 @@ pub fn run_isolated(source: &str, max_time: u64, hang_ms: u64) -> RunOutcome {
                     message: format!(">{} ms", hang_ms),
                 },
                 sim: None,
+                coverage: Vec::new(),
                 duration_ms: hang_ms,
             }
         }
@@ -140,15 +146,17 @@ pub fn compile_only_isolated(source: &str, hang_ms: u64) -> Result<String, Strin
 fn run_inner(source: &str, max_time: u64) -> RunOutcome {
     let result = catch_unwind(AssertUnwindSafe(|| {
         let compile = compile_verdict(source);
-        let sim = if compile.ok {
-            Some(sim_verdict(source, max_time))
+        let (sim, coverage) = if compile.ok {
+            let (b, c) = sim_verdict_cov(source, max_time);
+            (Some(b), c)
         } else {
-            None
+            (None, Vec::new())
         };
         RunOutcome {
             status: RunStatus::Done,
             compile,
             sim,
+            coverage,
             duration_ms: 0,
         }
     }));
@@ -162,6 +170,7 @@ fn run_inner(source: &str, max_time: u64) -> RunOutcome {
                 message: String::new(),
             },
             sim: None,
+            coverage: Vec::new(),
             duration_ms: 0,
         },
     }
