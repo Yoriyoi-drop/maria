@@ -337,6 +337,47 @@ pub fn simulate_str(source: &str, max_time: u64) -> Result<(), SimError> {
     run_simulation(design, max_time)
 }
 
+/// Jumlah diagnostik parser (warnings, errors) utk source — TANPA emisi.
+/// Dipakai maria-fuzz utk menolak klaim property-oracle pada source yang
+/// di-RECOVERY parser (stray `endtask` dsb → warning E1005 → semantik bisa
+/// tak konsisten/mangle — bukan bukti bug engine; temuan korpus opentitan:
+/// 5× false-positive mirror `_fz_viol=1` semua dipicu baris `endtask : body`).
+pub fn compile_diag_counts(source: &str) -> (usize, usize) {
+    let mut pp = Preprocessor::new();
+    let Ok(preprocessed) = pp.preprocess(source, None) else {
+        return (0, 1);
+    };
+    let mut lexer = Lexer::new(&preprocessed);
+    let mut tokens = Vec::new();
+    loop {
+        let (tok, line, col) = lexer.next_token();
+        if tok == maria_parser::lexer::Token::Eof {
+            break;
+        }
+        tokens.push((tok, line, col));
+    }
+    let file_line_map = lexer.file_line_map.clone();
+    let first_source = if file_line_map.is_empty() {
+        "<string>".to_string()
+    } else {
+        file_line_map[0].1.clone()
+    };
+    let mut parser = Parser::new(tokens, &first_source)
+        .with_source_lines(&preprocessed)
+        .with_file_line_map(file_line_map);
+    let _ = parser.parse_design();
+    let mut w = 0usize;
+    let mut e = 0usize;
+    for d in &parser.errors {
+        if d.is_error() {
+            e += 1;
+        } else {
+            w += 1;
+        }
+    }
+    (w, e)
+}
+
 /// Compile SystemVerilog source string into IR
 pub fn compile_str(source: &str) -> Result<maria_ir::IrDesign, SimError> {
     compile_str_inner(source, false)

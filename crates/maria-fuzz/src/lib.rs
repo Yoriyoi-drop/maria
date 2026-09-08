@@ -437,7 +437,12 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                 // menangguhkan, bukan infinite. Validasi dgn window jauh lebih
                 // besar dari settle; bila selesai → bukan hang → minggir tanpa
                 // biaya minimasi mahal.
-                let confirm_ms = hang_ms_eff.max(15_000);
+                // Window ×2: kelas loop-guarded yang terminate lambat (mis.
+                // `for` step termutasi `i=i-1` → MAX_LOOP_ITER 100k ×2
+                // re-trigger ≈ 17s, temuan korpus cva6/opentitan) butuh
+                // >12s/15s; ×2 (>24s) memisahkan "lambat tapi selesai" dari
+                // hang sejati (parser/infinite tak pernah settle).
+                let confirm_ms = (hang_ms_eff * 2).max(15_000);
                 if matches!(
                     harness::run_isolated(&src, cfg.max_time, confirm_ms).status,
                     RunStatus::Done
@@ -554,7 +559,12 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                             //      utk op ∈ {+,-,|,^} — identitas eksplisit SV
                             //      4-state. Menangkap KESALAHAN SEMANTIK yang
                             //      konsisten-diri (bukan hanya inkonsistensi).
-                            if rng.gen_bool(0.15) {
+                            // Gate parse-BERSIH: source di-recovery parser
+                            // (E1005 stray endtask dsb) dapat melahirkan
+                            // semantik tak konsisten — bukan bukti bug engine.
+                            if rng.gen_bool(0.15)
+                                && maria_api::compile_diag_counts(&src).0 == 0
+                            {
                                 match differential::meta_identity_check(&src, cfg) {
                                     differential::DiffVerdict::Same => {}
                                     differential::DiffVerdict::Mismatch(d) => {
@@ -609,7 +619,7 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                             //      dua temp mirror (`_fz_rtA`/`_fz_rtB`) yang
                             //      mengevaluasi ekspresi SAMA memberi hasil
                             //      beda → `_fz_viol = 1` = bug evaluasi.
-                            if mirror_intact(&src) {
+                            if mirror_intact(&src) && maria_api::compile_diag_counts(&src).0 == 0 {
                                 if let Some(viol) = oracle::property_violation(&sim.fingerprint) {
                                     report.property_violations += 1;
                                     let minimized = corpus::Corpus::minimize(
@@ -668,7 +678,8 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                             // hier-signal not found dari seed malformed yang punya
                             // referensi tak-resolved, RT2001 delta-storm) BUKAN bug
                             // engine — jangan salah-klaim.
-                            if sim.code.contains("RT7001")
+                            if maria_api::compile_diag_counts(&src).0 == 0
+                                && sim.code.contains("RT7001")
                                 && ast_mutate::has_assert_oracle(&src)
                                 && ast_mutate::has_assert_oracle_temps(&src)
                             {
