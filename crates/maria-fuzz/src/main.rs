@@ -27,6 +27,8 @@ OPTIONS:
   --corpus-dir DIR   direktori corpus SV nyata (bisa diulang)
   --target FEATURE   fuzzing terarah (mis. >>, case, $clog2)
   --workers W        kampanye paralel (env MARIA_FUZZ_WORKERS, default 1)
+  --sweep N          validasi oracle: sweep N seed generated -> FP per oracle
+                     + observability fault op-swap (GAP-5 eksperimen)
   --emit-bugs DIR    tulis file bug terminimalkan ke direktori
   --sim-sig-check    aktifkan oracle nilai sinyal (3× pipeline/iterasi; OFF default)
   --verbose          progress tiap 100 iterasi ke stderr
@@ -87,6 +89,22 @@ fn main() {
             "--workers" => {
                 i += 1;
                 cfg.workers = parse_u64(&args[i], "--workers") as usize;
+            }
+            "--sweep" => {
+                i += 1;
+                let n = parse_u64(&args[i], "--sweep") as usize;
+                let res = maria_fuzz::faults::sweep(n, &cfg);
+                println!("=== oracle validation sweep ({} seeds) ===", res.seeds_total);
+                println!(
+                    "clean={} fp_det={} fp_emi={} fp_meta={} faults_observable={}/{}",
+                    res.seeds_clean,
+                    res.fp_determinism,
+                    res.fp_emi,
+                    res.fp_meta,
+                    res.fault_observable,
+                    res.fault_total
+                );
+                std::process::exit(0);
             }
             "--emit-bugs" => {
                 i += 1;

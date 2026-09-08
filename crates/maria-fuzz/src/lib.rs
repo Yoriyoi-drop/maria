@@ -18,6 +18,7 @@ pub mod differential;
 pub mod bugdb;
 pub mod directed;
 pub mod feature;
+pub mod faults;
 pub mod gen;
 pub mod grammar;
 pub mod guide;
