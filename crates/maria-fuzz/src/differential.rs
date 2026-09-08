@@ -208,6 +208,96 @@ pub fn emi_check(source: &str, cfg: &FuzzConfig) -> DiffVerdict {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Oracle metamorfik identitas (GAP-5) — perluasan EMI dari "kode mati tidak
+// boleh mengubah output" ke "relasi identitas semantik harus dipertahankan":
+//
+//   assign y = <rhs>;      ≡      assign y = (<rhs> op 0);
+//
+// untuk op ∈ {+, -, |, ^}. Identitas eksplisit di SV 4-state (*semua* nilai
+// termasuk X/Z): x+0=x, x-0=x, x|0=x, x^0=x. Jika maria mengevaluasi `op 0`
+// secara salah (lebar/signedness/order), fingerprint berubah → bug, walaupun
+// evaluasi konsisten diri (menutup sebagian ORACLE GAP: oracle ini menangkap
+// KESALAHAN SEMANTIK, bukan hanya inkonsistensi internal).
+// ──────────────────────────────────────────────────────────────────────
+
+/// Operator identitas — deterministik dari hash source (minimizer memanggil
+/// berkali-kali; varian harus pure function dari source, sama dgn EMI).
+pub fn meta_style_for(source: &str) -> &'static str {
+    let h = source.bytes().fold(0x9e37_79b9u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x1000_0000_01b3)
+    });
+    match h % 4 {
+        0 => "+ 0",
+        1 => "- 0",
+        2 => "| 0",
+        _ => "^ 0",
+    }
+}
+
+/// Bangun varian metamorfik-identitas: ganti `assign lhs = rhs;` pertama
+/// yang AMAN (lhs sederhana tanpa selektor, rhs satu-baris tanpa `;$"/`)
+/// menjadi `assign lhs = (rhs op 0);`. Deterministik (baris aman pertama).
+/// None bila tidak ada assign yang memenuhi syarat.
+pub fn meta_identity_variant(source: &str) -> Option<String> {
+    let op = meta_style_for(source);
+    let mut out = String::with_capacity(source.len() + 8);
+    let mut replaced = false;
+    for line in source.lines() {
+        if !replaced {
+            let t = line.trim();
+            if t.starts_with("assign") && t.contains('=') && t.trim_end().ends_with(';') {
+                let (lhs_raw, rhs_raw) = t.split_once('=').unwrap_or(("", ""));
+                let lhs = lhs_raw.replace("assign", "").trim().to_string();
+                let rhs = rhs_raw.trim().trim_end_matches(';').trim().to_string();
+                let safe = !lhs.is_empty()
+                    && !lhs.contains(' ')
+                    && !lhs.contains('[')
+                    && !lhs.contains('`')
+                    && !lhs.contains('.')
+                    && !lhs.contains('{')
+                    && !rhs.is_empty()
+                    && !rhs.contains(';')
+                    && !rhs.contains('$')
+                    && !rhs.contains('"');
+                if safe {
+                    out.push_str(&format!("assign {} = ({} {});", lhs, rhs, op));
+                    out.push('\n');
+                    replaced = true;
+                    continue;
+                }
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if replaced {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Oracle metamorfik-identitas: original vs varian `(rhs op 0)` — sinyal
+/// common harus identik. Penyimpangan = bug evaluasi (identity dilanggar).
+pub fn meta_identity_check(source: &str, cfg: &FuzzConfig) -> DiffVerdict {
+    if oracle::has_nondeterministic_src(source) {
+        return DiffVerdict::Skip;
+    }
+    let Some(variant) = meta_identity_variant(source) else {
+        return DiffVerdict::Skip;
+    };
+    let f_orig = harness::fingerprint_isolated(source, cfg.max_time, cfg.hang_ms);
+    let f_var = harness::fingerprint_isolated(&variant, cfg.max_time, cfg.hang_ms);
+    match (f_orig, f_var) {
+        (Some(a), Some(b)) => match compare_common(&a, &b) {
+            None => DiffVerdict::Same,
+            Some(detail) => DiffVerdict::Mismatch(format!("orig vs meta-identity: {}", detail)),
+        },
+        _ => DiffVerdict::Skip,
+    }
+}
+
 /// Urai fingerprint `name=bits@width|name=...` → map nama → nilai.
 fn fingerprint_map(fp: &str) -> std::collections::HashMap<String, String> {
     fp.split('|')
@@ -374,5 +464,35 @@ endmodule
         let ma = "y=00@2|r=00@2|fz_q1=1@1|_fuzz_pa_5=zzz@3";
         let mb = "y=00@2|r=00@2|fz_q1=x@1|_fuzz_pa_5=001@3";
         assert_eq!(compare_common(ma, mb), None, "hanya artefak beda → bukan bug EMI");
+    }
+
+    #[test]
+    fn meta_identity_variant_changes_source() {
+        let v = meta_identity_variant(COUNTER).expect("counter punya assign aman");
+        assert_ne!(v, COUNTER);
+        assert!(v.contains("0);"), "variant harus memuat `op 0`: {}", v);
+    }
+
+    #[test]
+    fn meta_identity_same_for_counter() {
+        // Soundness: `(r op 0) ≡ r` utk semua nilai — validasi relasi identitas
+        // pada design nyata (harus Same, bukan false positive).
+        let cfg = cfg();
+        assert_eq!(meta_identity_check(COUNTER, &cfg), DiffVerdict::Same);
+    }
+
+    #[test]
+    fn meta_identity_sensitive_to_semantic_change() {
+        // Sensitivitas: `(a + 1)` BUKAN identitas → fingerprint harus beda
+        // (bukti oracle benar-benar mendeteksi perubahan semantik).
+        let cfg = cfg();
+        let src = "module top(input logic [3:0] a, output logic [3:0] y);\n  assign y = a;\n  initial begin a = 4'd5; end\nendmodule\n";
+        let bad = src.replace("assign y = a;", "assign y = (a + 1'b1);");
+        let f1 = harness::fingerprint_isolated(src, cfg.max_time, cfg.hang_ms);
+        let f2 = harness::fingerprint_isolated(&bad, cfg.max_time, cfg.hang_ms);
+        match (f1, f2) {
+            (Some(a), Some(b)) => assert_ne!(a, b, "a vs a+1 harus beda"),
+            _ => panic!("fingerprint gagal utk program sederhana"),
+        }
     }
 }

@@ -121,6 +121,8 @@ pub struct FuzzReport {
     pub new_features: u64,
     pub determinism_mismatch: u64,
     pub emi_mismatch: u64,
+    /// Metamorphic-identity oracle (GAP-5): `rhs op 0 ≡ rhs` dilanggar.
+    pub meta_mismatch: u64,
     pub sim_sig_anomalies: u64,
     /// Property-oracle (Paper #2/#3/#14, oracle #5): mirror `lhs !== rhs`
     /// bernilai 1 — hasil assign tidak konsisten dgn re-evaluasi.
@@ -147,6 +149,7 @@ impl FuzzReport {
         self.new_features += other.new_features;
         self.determinism_mismatch += other.determinism_mismatch;
         self.emi_mismatch += other.emi_mismatch;
+        self.meta_mismatch += other.meta_mismatch;
         self.sim_sig_anomalies += other.sim_sig_anomalies;
         self.property_violations += other.property_violations;
         self.covered_features = self.covered_features.max(other.covered_features);
@@ -164,7 +167,7 @@ impl FuzzReport {
     pub fn summary(&self) -> String {
         format!(
             "iters={} compile_ok={} compile_err={} sim_ok={} sim_err={} panics={} hangs={} \
-             new_features={} det_mismatch={} emi_mismatch={} sig_anom={} prop_viol={} covered={} bugs={}",
+             new_features={} det_mismatch={} emi_mismatch={} meta_mismatch={} sig_anom={} prop_viol={} covered={} bugs={}",
             self.total,
             self.compile_ok,
             self.compile_err,
@@ -175,6 +178,7 @@ impl FuzzReport {
             self.new_features,
             self.determinism_mismatch,
             self.emi_mismatch,
+            self.meta_mismatch,
             self.sim_sig_anomalies,
             self.property_violations,
             self.covered_features,
@@ -491,6 +495,38 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                             kind: BugKind::Differential,
                                             source: minimized,
                                             detail: format!("emi: {}; minimized {}→{} bytes",
+                                                d, src.len(), mlen),
+                                        });
+                                    }
+                                    differential::DiffVerdict::Skip => {}
+                                }
+                            }
+                            // ── 6b'. oracle metamorfik-identitas (GAP-5):
+                            //      `assign y = rhs` ≡ `assign y = (rhs op 0)`
+                            //      utk op ∈ {+,-,|,^} — identitas eksplisit SV
+                            //      4-state. Menangkap KESALAHAN SEMANTIK yang
+                            //      konsisten-diri (bukan hanya inkonsistensi).
+                            if rng.gen_bool(0.15) {
+                                match differential::meta_identity_check(&src, cfg) {
+                                    differential::DiffVerdict::Same => {}
+                                    differential::DiffVerdict::Mismatch(d) => {
+                                        report.meta_mismatch += 1;
+                                        let minimized = corpus::Corpus::minimize(
+                                            &src,
+                                            &mut |cand| {
+                                                matches!(harness::run_isolated(cand, cfg.max_time, cfg.hang_ms).status, RunStatus::Done)
+                                                    && harness::fingerprint_isolated(cand, cfg.max_time, cfg.hang_ms).is_some()
+                                                    && matches!(
+                                                        differential::meta_identity_check(cand, cfg),
+                                                        differential::DiffVerdict::Mismatch(_)
+                                                    )
+                                            },
+                                        );
+                                        let mlen = minimized.len();
+                                        report.bugs.push(BugRecord {
+                                            kind: BugKind::Differential,
+                                            source: minimized,
+                                            detail: format!("meta-identity: {}; minimized {}→{} bytes",
                                                 d, src.len(), mlen),
                                         });
                                     }
