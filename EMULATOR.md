@@ -1035,6 +1035,51 @@ maria-emu 97 test).
 
 Verifikasi: `cargo test --workspace` pass (maria-emu **97 test**, +10 baru).
 
+### Investigasi crash GRUB biosdisk trampolin (2026-09-08)
+
+**Gejala**: boot berhenti di tahap pemilahan region nol. GRUB sukses:
+`El Torito → cdboot → LZMA decompress → entry kernel @0x424fe41a`
+(step 8,558,021, bytes `55 89 e5 56` = prologue valid). Lalu `grub_bios_interrupt`
+(PATOK 0x909c) → prot_to_real (0x82d2) → INT 13h AH=42 (CD read, host stub)
+→ real_to_prot (0x830c) → epilogue @0x9163 `ret` pop **0x313b44** dari stack
+(alih-alih return CALL @0x424fdbd3 yang disimpan di `[0xf75c]`) → eksekusi
+region NOL (`00 00` = `add [al]`,al? — opcode 0x00) selamanya, pc walk 2 B/step.
+
+**Bukti** (`MARIA_X86_DBG` + `MARIA_X86_CALLS`, env-gated di `X86Cpu::step`/
+handler call/ret):
+- Epilogue 0x915d-0x9163 pop 6 reg (edi/esi/ebx/eax/ecx/ebp) + ret; slot stack
+  berisi DATA (`0x4c42430a` "CBL\n", `0x4f4d2e53` "S.MO") bukan register simpanan
+  → sp epilogue 4-8 byte terlalu tinggi dari frame yang benar.
+- Frame pmode (ret@[0xf75c], 7 push) di-restore ke sp=0x7f740 (cocok save area
+  [0x90f3]); `ret` @0x8326 pop `0x9126` (benar); penyimpangan muncul di
+  antara restore-sp dan epilogue.
+- IVT real mode (0:0x40-0x84) KOSONG → GRUB tidak install-IVT; `int` selalu
+  stub host.
+- `0x9083` memuat `36 ff 5f 06` = `lcall *%ss:0x6(%edi)` (**ff /3 far call
+  belum diimplementasi**) — jalur itu tidak dieksekusi sebelum crash, tapi
+  potensi blocker berikutnya.
+
+**Yang diperbaiki sesi ini**:
+- `exec_int` (0xcd/0xcc): real mode + IVT terisi → interrupt frame
+  (push FLAGS/CS/IP, clear IF) + dispatch ke handler guest; IVT kosong →
+  stub host (perilaku lama). Ini semantik x86 yang benar — GRUB yang
+  meng-install vektor sendiri akan bekerja.
+- Instrumentasi debug env-gated `MARIA_X86_DBG` (per-step state: pc/cs/ip/
+  pmode/cr0/sp/gpr + 8 byte kode) dan `MARIA_X86_CALLS` (call/ret + return
+  address) — siap dipakai untuk sesi lanjutan.
+- `X86Disk::read_bytes`, prefetch instruksi, bulk memory (lihat §Optimasi).
+
+**Tidak teratasi / langkah berikut**:
+- Akar 4-byte drift stack di jalur prot_to_real↔real_to_prot belum
+  terisolasi instruksi-demi-instruksi. Referensi differential QEMU
+  (`qemu-system-i386 -d in_asm,cpu`) tidak sampai trampolin (SeaBIOS idle
+  di boot menu headless — perlu `-nographic -no-reboot` + opsi menu off /
+  input). Bochs tak bisa (plugin display rusak).
+- Rekomendasi: (a) diff per-instruksi vs QEMU pada window prot_to_real
+  (0x82d2-0x8326) — cari instruksi yang menghasilkan sp berbeda; (b)
+  implementasi `ff /3` (lcall) + `iret` frame penuh; (c) setelah trampolin
+  benar, GRUB lanjut ke relokasi → JIT (R3).
+
 ---
 
 ## 21. Roadmap — Urutan Implementasi

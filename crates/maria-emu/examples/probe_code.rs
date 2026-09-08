@@ -43,14 +43,14 @@ fn main() {
         int13,
         String::from_utf8_lossy(&cpu.out)
     );
-    // Dump region busur 0x8f00-0x9800 ke file /tmp/opencode/lowregion.bin
+    // Dump region busur 0x8000-0xa000 ke file (kernel decompress-in-place)
     {
-        let mut v = Vec::with_capacity(0x9800 - 0x8f00);
-        for k in 0x8f00u64..0x9800 {
+        let mut v = Vec::with_capacity(0xa000 - 0x8000);
+        for k in 0x8000u64..0xa000 {
             v.push(mem.read(k, 1).unwrap_or(0) as u8);
         }
-        let _ = std::fs::write("/tmp/opencode/lowregion.bin", &v);
-        println!("low-region 0x8f00-0x9800 disimpan");
+        let _ = std::fs::write("/tmp/opencode/ram8000.bin", &v);
+        println!("low-region 0x8000-0xa000 disimpan");
     }
     if cpu.pmode {
         // Replikasi gdt_seg_base(cs) dari cache publik (base = byte 2-4 + 7 GDT).

@@ -33,6 +33,13 @@ fn main() {
         cpu.step(&mut mem).unwrap();
     }
     println!("== awal window @{} ==", mk);
+    // Dump IVT real mode (vektor BIOS yang dipakai GRUB trampolin).
+    for n in [0x10u64, 0x13, 0x15, 0x16, 0x1a, 0x21] {
+        let b = n * 4;
+        let ip = mem.read(b, 2).unwrap_or(0);
+        let cs = mem.read(b + 2, 2).unwrap_or(0);
+        println!("  IVT[0x{n:02x}] @0x{b:04x} = 0x{cs:04x}:0x{ip:04x}");
+    }
     // Window: catat pc + instruksi; tandai saat pc pindah ke > 0x100000 (tinggi).
     let mut hi = 0u64;
     let mut ring = [0u64; 6];

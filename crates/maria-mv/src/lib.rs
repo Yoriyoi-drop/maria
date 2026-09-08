@@ -19,6 +19,18 @@ pub mod parser;
 use crate::ast::MvFile;
 use std::fmt;
 
+/// Lebar enum SV untuk `n` anggota: clog2(n), minimal 1.
+/// Dipakai bersama oleh `check.rs` (validasi lebar/type_width) dan `codegen.rs`
+/// (emisi `typedef enum logic [w:0]`). Sinkron: jangan duplikasi logika ini
+/// di dua tempat secara terpisah.
+pub(crate) fn enum_bits(n: usize) -> i64 {
+    if n <= 2 {
+        1
+    } else {
+        ((n - 1) as f64).log2().ceil() as i64
+    }
+}
+
 /// Error parse/lex Maria HDL dengan posisi (line, col).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MvError {
@@ -229,6 +241,66 @@ module counter #(WIDTH = 8) {
     fn transpile_error_unclosed() {
         let err = transpile("module m {\n    in clk : bit\n", "m").unwrap_err();
         assert!(err.msg.contains("tidak ditutup"));
+    }
+
+    #[test]
+    fn atsv_escape_hatch_verbatim() {
+        // `@sv { ... }` — teks SV mentah di-emit verbatim; body isolasi dari
+        // lexer .mv (karakter `|->`, `"`, `$`, `;` bebas DI DALAM body).
+        // CATATAN: statement .mv di luar `@sv` TIDAK memakai `;` (mirip Python);
+        // hanya isi `@sv` yang bebas menulis `;` SV.
+        let src = r#"
+module m {
+    in clk : bit
+    out y  : logic[3:0]
+    initial {
+        @sv {
+            // SV mentah — bisa apa pun
+            $monitor("t=%0t y=%0d", $time, y);
+            assert property (@(posedge clk) y == $past(y) + 1);
+        }
+        y = 4'h0
+    }
+}
+"#;
+        let r = transpile(src, "m").expect("transpile @sv");
+        assert!(
+            r.sv.contains("$monitor(\"t=%0t y=%0d\", $time, y);"),
+            "SV mentah harus di-emit verbatim: {}",
+            r.sv
+        );
+        assert!(
+            r.sv.contains("assert property (@(posedge clk) y == $past(y) + 1);"),
+            "operator SVA dalam @sv harus lolos: {}",
+            r.sv
+        );
+        // statement setelah @sv tetap di-emit
+        assert!(r.sv.contains("y = 4'h0;"), "stmts setelah @sv: {}", r.sv);
+    }
+
+    #[test]
+    fn atsv_brace_balance_and_string() {
+        // Brace di dalam string `@sv` tidak menghitung kedalaman; brace
+        // bersarang di luar string dihitung.
+        let src = r#"
+module m {
+    out y : logic[7:0]
+    comb {
+        @sv {
+            // string berisi { tak memengaruhi
+            `SV_MACRO("{a}") 
+            y = 8'hFF;
+        }
+    }
+}
+"#;
+        let r = transpile(src, "m").expect("transpile @sv brace balance");
+        assert!(
+            r.sv.contains("`SV_MACRO(\"{a}\")"),
+            "string berisi brace harus lolos verbatim: {}",
+            r.sv
+        );
+        assert!(r.sv.contains("y = 8'hFF;"), "body @sv: {}", r.sv);
     }
 
     #[test]

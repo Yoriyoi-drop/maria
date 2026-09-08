@@ -76,11 +76,16 @@ pub enum Tok {
     PosEdge,
     NegEdge,
     Dollar,
-    // F39: fork/join — konkurrensi branch (SV `fork ... join[_any|_none]`)
+    /// F39: fork/join — konkurrensi branch (SV `fork ... join[_any|_none]`)
     Fork,
     Join,
     JoinAny,
     JoinNone,
+
+    /// Escape hatch: `@sv { ... }` — teks SystemVerilog mentah yang di-emit
+    /// verbatim (body diambil mentah dari source, ISOLASI dari lexer .mv —
+    /// karakter apa pun lolos). Untuk konstruk SV yang belum didukung bahasa.
+    RawSvh(String),
 
     // ── Constraint lanjutan (F12) ──
     Inside,
@@ -465,6 +470,99 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
             continue;
         }
 
+        // ── Escape hatch `@sv { ... }` ──
+        // Body SV mentah diambil LANGSUNG dari source (bukan token stream) —
+        // isolasi dari lexer .mv sehingga karakter apa pun (`.foo`, `|->`,
+        // `"string"`, dsb.) lolos tanpa error. Scan brace-balance string-aware
+        // hingga `}` penutup; seluruh isi jadi SATU token RawSvh.
+        if c == '@' && is_atsv(&chars, i) {
+            i += 3; // '@sv'
+            col += 3;
+            // lewati spasi sebelum `{`
+            while i < chars.len() && chars[i].is_whitespace() {
+                if chars[i] == '\n' {
+                    line += 1;
+                    col = 1;
+                } else {
+                    col += 1;
+                }
+                i += 1;
+            }
+            if i < chars.len() && chars[i] == '{' {
+                i += 1;
+                col += 1;
+                let start = i;
+                let mut depth = 1usize;
+                let mut in_str = false;
+                while i < chars.len() {
+                    let ch = chars[i];
+                    // komentar baris `//` — `{`/`}`/`"` di dalamnya TIDAK dihitung
+                    if !in_str && ch == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                        while i < chars.len() && chars[i] != '\n' {
+                            i += 1;
+                            col += 1;
+                        }
+                        continue;
+                    }
+                    // komentar blok `/* ... */` — isi diabaikan brace/string
+                    if !in_str && ch == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+                        i += 2;
+                        col += 2;
+                        loop {
+                            if i >= chars.len() {
+                                break;
+                            }
+                            if chars[i] == '\n' {
+                                line += 1;
+                                col = 1;
+                                i += 1;
+                                continue;
+                            }
+                            if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                                i += 2;
+                                col += 2;
+                                break;
+                            }
+                            i += 1;
+                            col += 1;
+                        }
+                        continue;
+                    }
+                    if in_str {
+                        if ch == '"' {
+                            in_str = false;
+                        } else if ch == '\\' && i + 1 < chars.len() {
+                            i += 2;
+                            col += 2;
+                            continue;
+                        }
+                    } else if ch == '"' {
+                        in_str = true;
+                    } else if ch == '{' {
+                        depth += 1;
+                    } else if ch == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    } else if ch == '\n' {
+                        line += 1;
+                        col = 1;
+                        i += 1;
+                        continue;
+                    }
+                    i += 1;
+                    col += 1;
+                }
+                let body: String = chars[start..i].iter().collect();
+                i += 1; // konsumsi `}`
+                out.push((Tok::RawSvh(body), tok_line, tok_col));
+                continue;
+            }
+            // `@sv` tanpa `{` — fallback: perlakukan sebagai `@` + ident biasa
+            // (pembatas berikutnya menangani `@`).
+        }
+
         // ── Operator & delimiter ──
         let (tok, adv): (Tok, usize) = match c {
             '{' => (Tok::LBrace, 1),
@@ -650,6 +748,12 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
 
 fn peek(chars: &[char], i: usize, c: char) -> bool {
     i + 1 < chars.len() && chars[i + 1] == c
+}
+
+/// Deteksi `@sv` — `@` diikuti huruf `sv` (bukan `@(...)` event control).
+/// `i` menunjuk ke `'@'`.
+fn is_atsv(chars: &[char], i: usize) -> bool {
+    i + 2 < chars.len() && chars[i + 1] == 's' && chars[i + 2] == 'v'
 }
 
 fn peek2(chars: &[char], i: usize, c: char) -> bool {

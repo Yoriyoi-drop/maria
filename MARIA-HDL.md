@@ -441,6 +441,34 @@ untuk SV murni (`j = ++i` di source .sv). Postfix di RHS ekspresi
 (`j = i--`) DITOLAK di level .mv dgn error jelas (side-effect postfix tak
 bisa diwakili SV).
 
+#### Escape hatch `@sv` (F40)
+
+Sisipan SystemVerilog **mentah (verbatim)** untuk konstruk SV yang belum
+didukung bahasa `.mv`. Isi diambil LANGSUNG dari source (bukan token .mv) oleh
+lexer — jadi karakter apa pun (`|->`, `##`, `` `macro ``, `"string"`, `;`) lolos
+tanpa error. Type-check & codegen melewatinya (konservatif, seperti
+`assert property`); isi di-emit apa adanya (di-indent seragam).
+
+```mv
+comb {
+    @sv {
+        // SV mentah — apa pun boleh, termasuk operator SVA & macro
+        assert property (@(posedge clk) disable iff (rst_n == 0) inc |-> $past(count) + 1'b1 == count);
+        `MY_MACRO(x, y);
+        $monitor("t=%0t y=%0d", $time, y);
+    }
+}
+```
+
+Aturan:
+- `@sv` wajib diikuti `{ ... }`; body dibatasi oleh brace **seimbang** yang
+  paham string `"..."` DAN komentar (`//`, `/* */`) — `{`/`}` di dalamnya
+  tidak dihitung.
+- Emisi verbatim: tidak ditambah `;` — user menulis isi persis. Statement `.mv`
+  **di luar** `@sv` tetap tanpa `;` (aturan .mv).
+- Contoh lengkap: `examples/mv/escape_hatch.mv` (assertion SVA concurrent +
+  `$display` disisipkan via `@sv`, hasil `TB_ESCAPE_OK count=...`).
+
 ### 6.7 Instansiasi
 
 ```mv
@@ -838,6 +866,7 @@ Ringkasan mapping konstruk `.mv` → SV:
 | `interface i { }` | `interface i; ... endinterface` (`.svh`) |
 | `class c ...` | `class c ... endclass` (`.sv`) |
 | `assert` / `assert property` | 1:1 |
+| `@sv { ... }` (F40) | emisi isi SV **verbatim** — escape hatch utk konstruk SV yang belum didukung bahasa; isi diambil mentah dari source (isolasi dari lexer .mv), type-check dilewati |
 
 ### 10.1 Isi `.svh` vs `.sv`
 

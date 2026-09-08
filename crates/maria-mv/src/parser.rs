@@ -1368,6 +1368,18 @@ impl Parser {
                     col: c,
                 })
             }
+            // Escape hatch `@sv { ... }` — body sudah jadi satu token RawSvh
+            // (di-level lexer); emit verbatim.
+            Tok::RawSvh(_) => {
+                let (l, c) = self.pos_line();
+                match self.peek().clone() {
+                    Tok::RawSvh(body) => {
+                        self.advance();
+                        Ok(Stmt::RawSvh(body))
+                    }
+                    _ => Err(MvError::new(l, c, "RawSvh tanpa body".to_string())),
+                }
+            }
             _ => self.parse_assign_or_expr(),
         }
     }

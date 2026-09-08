@@ -251,6 +251,10 @@ pub enum Stmt {
     /// Body dipertahankan RAW (teks persis di antara `(` dan `)`) karena
     /// berisi operator SVA (`|->`, `##`) yang bukan token `.mv` — emisi 1:1.
     AssertProperty(String),
+    /// Escape hatch: `@sv { ... }` — teks SystemVerilog mentah yang di-emit
+    /// verbatim (untuk konstruk SV yang belum didukung bahasa). Body diambil
+    /// mentah dari source oleh lexer (bukan token .mv).
+    RawSvh(String),
 }
 
 /// F39: mode sinkronisasi fork/join (MARIA-HDL.md §6.6).

@@ -505,7 +505,9 @@ fn collect_ctx<'a>(files: impl IntoIterator<Item = &'a MvFile>) -> Ctx<'a> {
                 i.ports.iter().map(|p| p.names.clone()).flatten().collect(),
             );
         }
-        for m in &file.modules {
+        // module & program berbagi namespace SV — indeks ports/params/type-params
+        // identik (reuse helper; program tak punya param, tapi konsisten).
+        for m in file.modules.iter().chain(file.programs.iter()) {
             modules.insert(m.name.as_str());
             module_ports.insert(
                 m.name.as_str(),
@@ -525,35 +527,6 @@ fn collect_ctx<'a>(files: impl IntoIterator<Item = &'a MvFile>) -> Ctx<'a> {
             module_type_params.insert(
                 m.name.as_str(),
                 m.params
-                    .iter()
-                    .filter(|p| {
-                        p.type_default.is_some()
-                            || matches!(&p.ty, Some(MvType::Named(s, ..)) if s == "type")
-                    })
-                    .map(|p| p.name.clone())
-                    .collect(),
-            );
-        }
-        for prg in &file.programs {
-            modules.insert(prg.name.as_str());
-            module_ports.insert(
-                prg.name.as_str(),
-                prg.items
-                    .iter()
-                    .filter_map(|it| match it {
-                        MItem::Port(p) => Some(p.names.clone()),
-                        _ => None,
-                    })
-                    .flatten()
-                    .collect(),
-            );
-            module_params.insert(
-                prg.name.as_str(),
-                prg.params.iter().map(|p| p.name.clone()).collect(),
-            );
-            module_type_params.insert(
-                prg.name.as_str(),
-                prg.params
                     .iter()
                     .filter(|p| {
                         p.type_default.is_some()
@@ -622,7 +595,7 @@ fn collect_enum_members<'a>(td: &'a Typedef, out: &mut HashMap<&'a str, i64>) {
     if let Typedef::Enum { width, members, .. } = td {
         let w = match width {
             Some(Expr::Int(n)) => *n,
-            _ => enum_bits(members.len()),
+            _ => crate::enum_bits(members.len()),
         };
         for m in members {
             out.entry(m.name.as_str()).or_insert(w);
@@ -631,13 +604,8 @@ fn collect_enum_members<'a>(td: &'a Typedef, out: &mut HashMap<&'a str, i64>) {
 }
 
 /// Lebar enum implisit: clog2(n), minimal 1 (sinkron dengan codegen).
-fn enum_bits(n: usize) -> i64 {
-    if n <= 2 {
-        1
-    } else {
-        ((n - 1) as f64).log2().ceil() as i64
-    }
-}
+/// Dipakai `collect_enum_members` & `type_width` — hidup di lib.rs sebagai
+/// helper bersama (`crate::enum_bits`) agar tidak terduplikasi dua kali.
 
 fn resolve_typedef<'a>(name: &str, ctx: &'a Ctx<'a>) -> Option<&'a Typedef> {
     if let Some((pkg, item)) = name.split_once("::") {
@@ -1727,6 +1695,9 @@ fn check_stmt<'a>(
         // `assert property (...)` — body RAW (operator SVA `|->`/`##` bukan
         // token .mv), konservatif: isi tidak dianalisis, hanya dilewati.
         Stmt::AssertProperty(_) => Ok(()),
+        // Escape hatch `@sv { ... }` — teks SV mentah, ditangani lexer/codegen;
+        // check tidak menganalisis isi (konservatif, seperti assert property).
+        Stmt::RawSvh(_) => Ok(()),
     }
 }
 
@@ -2103,7 +2074,7 @@ fn type_width(ty: &MvType, ctx: &Ctx, scope: &Scope, depth: usize) -> Option<i64
                 Typedef::Union { packed: false, .. } => None,
                 Typedef::Enum { width, members, .. } => match width {
                     Some(Expr::Int(n)) => Some(*n),
-                    _ => Some(enum_bits(members.len())),
+                    _ => Some(crate::enum_bits(members.len())),
                 },
             }
         }

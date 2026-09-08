@@ -192,7 +192,7 @@ fn emit_typedef(out: &mut String, indent: usize, td: &Typedef) {
                 // `enum(N)` = N bit → `[N-1:0]`
                 Some(Expr::Int(n)) => format!("{}", n - 1),
                 Some(w) => format!("{} - 1", emit_expr(w)),
-                None => format!("{}", enum_width(members.len())),
+                None => format!("{}", crate::enum_bits(members.len())),
             };
             let members_s: Vec<String> = members
                 .iter()
@@ -208,15 +208,6 @@ fn emit_typedef(out: &mut String, indent: usize, td: &Typedef) {
                 &format!("typedef enum logic [{w}:0] {{ {joined} }} {name};"),
             );
         }
-    }
-}
-
-/// Lebar enum implisit: clog2(n), minimal 1.
-fn enum_width(n: usize) -> i64 {
-    if n <= 2 {
-        1
-    } else {
-        ((n - 1) as f64).log2().ceil() as i64
     }
 }
 
@@ -383,10 +374,7 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                             line(out, 1, &format!("{} {}();", emit_type(ty), nm));
                         }
                     } else {
-                        let init_s = init
-                            .as_ref()
-                            .map(|e| format!(" = {}", emit_expr(e)))
-                            .unwrap_or_default();
+                        let init_s = emit_init(init);
                         line(
                             out,
                             1,
@@ -404,10 +392,7 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                     .cloned()
                     .collect();
                 if !fresh.is_empty() {
-                    let init_s = init
-                        .as_ref()
-                        .map(|e| format!(" = {}", emit_expr(e)))
-                        .unwrap_or_default();
+                    let init_s = emit_init(init);
                     line(
                         out,
                         1,
@@ -553,10 +538,7 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
                     line(out, indent, &format!("{} {}();", emit_type(ty), nm));
                 }
             } else {
-                let init_s = init
-                    .as_ref()
-                    .map(|e| format!(" = {}", emit_expr(e)))
-                    .unwrap_or_default();
+                let init_s = emit_init(init);
                 line(
                     out,
                     indent,
@@ -567,10 +549,7 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
         MItem::Reg {
             names, ty, init, ..
         } => {
-            let init_s = init
-                .as_ref()
-                .map(|e| format!(" = {}", emit_expr(e)))
-                .unwrap_or_default();
+            let init_s = emit_init(init);
             line(
                 out,
                 indent,
@@ -1076,10 +1055,7 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
         Stmt::Break => line(out, indent, "break;"),
         Stmt::Continue => line(out, indent, "continue;"),
         Stmt::VarDecl { names, ty, init } => {
-            let init_s = init
-                .as_ref()
-                .map(|e| format!(" = {}", emit_expr(e)))
-                .unwrap_or_default();
+            let init_s = emit_init(init);
             line(
                 out,
                 indent,
@@ -1107,6 +1083,25 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
         Stmt::AssertProperty(raw) => {
             // Body RAW (termasuk parens) — emisi 1:1 (MARIA-HDL.md §7.2)
             line(out, indent, &format!("assert property {raw};"));
+        }
+        // Escape hatch `@sv { ... }` — emit body SV mentah verbatim (per baris,
+        // di-indent seragam). Tidak ditambah `;` — user menulis isi persis.
+        Stmt::RawSvh(text) => emit_raw(out, indent, text),
+    }
+}
+
+/// Emit teks SV mentah dari `@sv { ... }`: tiap baris di-indent seragam
+/// `indent` (baris kosong tetap kosong). Deterministik (tidak mengubah isi
+/// non-empty selain menambah indentasi konsisten).
+fn emit_raw(out: &mut String, indent: usize, text: &str) {
+    let pad = "    ".repeat(indent);
+    for ln in text.split('\n') {
+        if ln.trim().is_empty() {
+            out.push('\n');
+        } else {
+            out.push_str(&pad);
+            out.push_str(ln);
+            out.push('\n');
         }
     }
 }
@@ -1266,6 +1261,14 @@ fn pad_type(t: String) -> String {
     } else {
         format!("{t} ")
     }
+}
+
+/// Suffix inisialisasi deklarasi: `= expr` bila ada, kosong bila tidak.
+/// Dedup — dipakai deklarasi Sig/Reg/VarDecl (codegen).
+fn emit_init(init: &Option<Expr>) -> String {
+    init.as_ref()
+        .map(|e| format!(" = {}", emit_expr(e)))
+        .unwrap_or_default()
 }
 
 // ── Expressions ──

@@ -1568,9 +1568,9 @@ impl X86Cpu {
             0xff => self.exec_ff_group(op, opsz, seg_ov, mem)?,
             0xcd => {
                 let n = self.fetch8(mem)?;
-                self.int_dispatch(n, mem)?;
+                self.exec_int(n, mem)?;
             }
-            0xcc => self.int_dispatch(3, mem)?,
+            0xcc => self.exec_int(3, mem)?,
             // ── lea (8d) ──
             0x8d => {
                 let mr = self.fetch8(mem)?;
@@ -2838,6 +2838,46 @@ impl X86Cpu {
     }
 
     // ── INT dispatch → BIOS stub ──
+    /// Eksekusi `int n` real-time dengan semantik CPU:
+    /// - Protected mode: IDT tidak disimulasikan → host stub (BIOS default).
+    /// - Real mode: bila IVT (0:n*4) TERISI → push frame (FLAGS, CS, IP) LALU
+    ///   lompat ke handler guest (GRUB install IVT sendiri untuk trampolin
+    ///   prot_to_real; handler-nya nanti iret). Bila IVT KOSONG (boot awal,
+    ///   belum ada BIOS vector) → host stub.
+    /// BUG FIX: sebelumnya `int` langsung memanggil stub tanpa frame & tanpa
+    /// melihat IVT — bookkeeping stack GRUB (frame push + handler iret + jalur
+    /// real_to_prot) tidak pernah terjadi → stack korup di epilogue trampolin
+    /// biosdisk (ret pop alamat sampah 0x313b44 → eksekusi region nol).
+    fn exec_int(&mut self, n: u8, mem: &mut dyn MemoryPort) -> Result<(), CpuFault> {
+        if self.pmode {
+            return self.int_dispatch(n, mem);
+        }
+        let base = (n as u64) * 4;
+        let ip = mem
+            .read(base, 2)
+            .map_err(|e| self.fault(format!("IVT read ip 0x{:x}: {}", base, e)))? as u16;
+        let cs = mem
+            .read(base + 2, 2)
+            .map_err(|e| self.fault(format!("IVT read cs 0x{:x}: {}", base + 2, e)))?
+            as u16;
+        if ip == 0 && cs == 0 {
+            // IVT kosong (BIOS default belum di-set) → host stub.
+            return self.int_dispatch(n, mem);
+        }
+        // Frame interrupt (real mode): push FLAGS (IF tetap di-frame), CS, IP.
+        // IF/TF dibersihkan untuk handler; iret mengembalikannya.
+        let ret_ip = self.ip as u16;
+        let ret_cs = self.cs;
+        let fl = self.flags;
+        self.push16(mem, fl)?;
+        self.push16(mem, ret_cs)?;
+        self.push16(mem, ret_ip)?;
+        self.set_flag(FLAG_IF, false);
+        self.cs = cs;
+        self.ip = ip as u32;
+        Ok(())
+    }
+
     fn int_dispatch(&mut self, n: u8, mem: &mut dyn MemoryPort) -> Result<(), CpuFault> {
         match n {
             0x10 => self.int10(mem),
