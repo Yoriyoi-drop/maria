@@ -499,6 +499,47 @@ pub fn simulate_signals_quiet(
     Ok(sigs)
 }
 
+/// Jalur fuzzer: fingerprint MID-SIMULATION — sinyal top disampling tiap
+/// `interval` waktu (`engine.set_trace_interval`) + nilai final. Bug
+/// transient (salah di delta lalu pulih sebelum akhir run) tak terlihat
+/// oleh fingerprint nilai-final; trace sampling menutup celah. Senyap.
+pub fn simulate_signals_with_trace_quiet(
+    source: &str,
+    max_time: u64,
+    interval: u64,
+) -> Result<(Vec<(String, maria_ir::LogicVec)>, Vec<String>), SimError> {
+    let design = compile_str_quiet(source)?;
+    let mut engine = simulator::SimulationEngine::new(design, max_time);
+    engine.set_coverage_report_silent();
+    engine.set_trace_interval(interval);
+    engine.run()?;
+    let sigs: Vec<(String, maria_ir::LogicVec)> = engine
+        .design
+        .top
+        .signals
+        .iter()
+        .map(|s| {
+            (
+                s.name.to_string(),
+                engine
+                    .state
+                    .read_signal(
+                        engine
+                            .design
+                            .top
+                            .signals
+                            .iter()
+                            .position(|x| x.name == s.name)
+                            .unwrap_or(0),
+                    )
+                    .clone(),
+            )
+        })
+        .collect();
+    let trace = engine.trace_snapshots.clone();
+    Ok((sigs, trace))
+}
+
 /// Run simulation and return final signal values PLUS coverage feedback
 /// (`SimulationEngine::coverage_keys`, lihat engine/coverage.rs).
 /// Coverage keys = item line/branch/toggle/FSM yang benar-benar tereksekusi —

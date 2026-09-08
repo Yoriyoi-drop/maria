@@ -297,9 +297,9 @@ pub fn meta_identity_variant(source: &str) -> Option<String> {
 }
 
 /// Oracle metamorfik-identitas: original vs varian `(rhs op 0)` — sinyal
-/// common harus identik. Penyimpangan = bug evaluasi (identity dilanggar).
-/// Fingerprint standar sudah berisi sinyal flatten child module — fault
-/// internal child terlihat tanpa jalur terpisah.
+/// common harus identik di SEMUA waktu (fingerprint TRACE mid-simulation,
+/// bukan hanya nilai final): bug transient (salah di delta lalu pulih) kini
+/// terlihat. Identitas bitwise bersifat time-invariant → sound.
 pub fn meta_identity_check(source: &str, cfg: &FuzzConfig) -> DiffVerdict {
     if oracle::has_nondeterministic_src(source) {
         return DiffVerdict::Skip;
@@ -307,8 +307,10 @@ pub fn meta_identity_check(source: &str, cfg: &FuzzConfig) -> DiffVerdict {
     let Some(variant) = meta_identity_variant(source) else {
         return DiffVerdict::Skip;
     };
-    let f_orig = harness::fingerprint_isolated(source, cfg.max_time, cfg.hang_ms);
-    let f_var = harness::fingerprint_isolated(&variant, cfg.max_time, cfg.hang_ms);
+    // Interval sampling diskalakan dgn max_time (deterministik per source).
+    let iv = (cfg.max_time.max(8)) / 8;
+    let f_orig = harness::trace_isolated(source, cfg.max_time, cfg.hang_ms, iv);
+    let f_var = harness::trace_isolated(&variant, cfg.max_time, cfg.hang_ms, iv);
     match (f_orig, f_var) {
         (Some(a), Some(b)) => match compare_common(&a, &b) {
             None => DiffVerdict::Same,

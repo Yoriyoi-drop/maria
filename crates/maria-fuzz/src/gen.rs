@@ -54,7 +54,7 @@ impl Generator {
     pub fn random_module(&self, rng: &mut StdRng) -> String {
         let w = *WIDTHS.choose(rng).unwrap();
         let op = *OPS.choose(rng).unwrap();
-        let shape = rng.gen_range(0..3u32);
+        let shape = rng.gen_range(0..6u32);
         let with_param = rng.gen_bool(0.15);
         let with_clog2 = rng.gen_bool(0.3);
 
@@ -62,7 +62,9 @@ impl Generator {
             0 => self.shape_arith(rng, w, op, with_param, with_clog2),
             1 => self.shape_case(rng, w, with_param),
             2 => self.shape_child(rng, w, op, with_param),
-            _ => self.shape_loop(rng, w, with_param),
+            3 => self.shape_loop(rng, w, with_param),
+            4 => self.shape_mem(rng, w, with_param),
+            _ => self.shape_state(rng, w, with_param),
         }
     }
 
@@ -199,6 +201,55 @@ impl Generator {
         s.push_str("  end\n");
         s.push_str(&format!("  assign y = r;\n"));
         s.push_str("  assign flag = (a > b) ? 2'd1 : (a == b) ? 2'd2 : 2'd0;\n");
+        s.push_str(&self.stimulus(rng, w));
+        s.push_str("endmodule\n");
+        s
+    }
+/// Shape 5: memori array + signed + `%` + ternary — jalur lebar/signed/
+    /// array (IEEE §11.7/11.8) & fitur `%` (sebelumnya unreached).
+    fn shape_mem(&self, rng: &mut StdRng, w: usize, param: bool) -> String {
+        let mut s = String::new();
+        if param {
+            s.push_str("module top #(parameter W = 8) (\n");
+        } else {
+            s.push_str("module top (\n");
+        }
+        s.push_str(&format!(
+            "  input  logic        clk,\n  input  logic        rst_n,\n  input  logic [{}-1:0] a,\n  input  logic [{}-1:0] b,\n  output logic [{}-1:0] y,\n  output logic [31:0]  sum\n);\n",
+            w, w, w
+        ));
+        s.push_str("  logic [15:0] mem [0:3];\n");
+        s.push_str("  logic signed [31:0] sacc;\n");
+        s.push_str("  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) begin sacc <= '0; mem[0] <= '0; end\n    else begin mem[a[1:0]] <= b; if (b != 0) sacc <= sacc + a; end\n  end\n");
+        s.push_str("  localparam M = 7;\n");
+        s.push_str("  assign y = mem[a[1:0]];\n");
+        s.push_str("  assign sum = (a % M) + b[1:0] + sacc;\n");
+        s.push_str("  initial begin clk = 0; forever #5 clk = ~clk; end\n");
+        s.push_str(&self.stimulus(rng, w));
+        s.push_str("endmodule\n");
+        s
+    }
+
+    /// Shape 6: FSM 8-state + always_latch + repeat/while — fitur unreached
+    /// (always_latch, repeat, while) & case multi-transisi FSM.
+    fn shape_state(&self, rng: &mut StdRng, w: usize, param: bool) -> String {
+        let mut s = String::new();
+        if param {
+            s.push_str("module top #(parameter W = 8) (\n");
+        } else {
+            s.push_str("module top (\n");
+        }
+        s.push_str(&format!(
+            "  input  logic        clk,\n  input  logic        rst_n,\n  input  logic [{}-1:0] a,\n  input  logic [{}-1:0] b,\n  output logic [{}-1:0] y,\n  output logic [1:0]   flag\n);\n",
+            w, w, w
+        ));
+        s.push_str("  logic [2:0] state;\n");
+        s.push_str(&format!("  logic [{}-1:0] r;\n", w));
+        s.push_str("  always_ff @(posedge clk or negedge rst_n) begin\n    if (!rst_n) state <= 3'd0;\n    else case (state)\n      3'd0: state <= a[0] ? 3'd1 : 3'd2;\n      3'd1: state <= 3'd3;\n      3'd2: state <= 3'd4;\n      3'd3: state <= a[1] ? 3'd5 : 3'd6;\n      3'd4: state <= 3'd7;\n      3'd5: state <= 3'd0;\n      3'd6: state <= 3'd1;\n      default: state <= 3'd0;\n    endcase\n  end\n");
+        s.push_str("  always_latch if (!rst_n) r = '0;\n");
+        s.push_str("  assign y = r;\n");
+        s.push_str("  assign flag = (state == 3'd7) ? 2'd1 : (state == 3'd0) ? 2'd2 : 2'd0;\n");
+        s.push_str("  initial begin\n    integer fz_i; fz_i = 0;\n    repeat (3) fz_i = fz_i + 1;\n    while (fz_i < 5) fz_i = fz_i + 1;\n  end\n");
         s.push_str(&self.stimulus(rng, w));
         s.push_str("endmodule\n");
         s

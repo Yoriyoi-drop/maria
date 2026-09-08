@@ -757,6 +757,25 @@ impl SimulationEngine {
                 self.record_fsm_value(sig_id, &new_val);
             }
         }
+        // ── Trace sampling MID-SIMULATION (opt-in): snapshot sinyal top tiap
+        // interval waktu — maria-fuzz fingerprint mid-sim (bug transient yang
+        // pulih sebelum akhir run terlihat; fingerprint nilai-final buta).
+        if let Some(iv) = self.trace_interval {
+            let t = self.state.time;
+            if t % iv == 0 && t != self.trace_last_time {
+                self.trace_last_time = t;
+                let mut parts: Vec<String> = self
+                    .design
+                    .top
+                    .signals
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| format!("{}={}", s.name, self.state.read_signal(i)))
+                    .collect();
+                parts.sort();
+                self.trace_snapshots.push(format!("t{}:{}", t, parts.join(",")));
+            }
+        }
     }
 
     /// Sample a named covergroup: evaluate coverpoints, update hit counts and bins.

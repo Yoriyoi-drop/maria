@@ -108,12 +108,14 @@ fn main() {
                 let res = maria_fuzz::faults::sweep(n, &cfg);
                 println!("=== oracle validation sweep ({} seeds) ===", res.seeds_total);
                 println!(
-                    "clean={} fp_det={} fp_emi={} fp_meta={} faults_observable={}/{}",
+                    "clean={} fp_det={} fp_emi={} fp_meta={} faults_observable={}/{} | trace={}/{}",
                     res.seeds_clean,
                     res.fp_determinism,
                     res.fp_emi,
                     res.fp_meta,
                     res.fault_observable,
+                    res.fault_total,
+                    res.fault_observable_trace,
                     res.fault_total
                 );
                 std::process::exit(0);

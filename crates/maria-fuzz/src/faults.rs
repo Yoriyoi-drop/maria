@@ -28,9 +28,21 @@ pub fn op_swap_fault(source: &str, from: &str, to: &str) -> Option<String> {
     Some(s)
 }
 
-/// Observability: fingerprint source ≠ fingerprint ber-fault → fault benar-
-/// benar mengubah perilaku sinyal. Fingerprint standar SUDAH memuat sinyal
-/// flatten child module — hierarki tak menyembunyikan fault (terverifikasi).
+/// Observability: fingerprint TRACE (mid-sim sampling, oracle metamorfik)
+/// source ≠ source ber-fault → fault mengubah perilaku di SEMUA waktu;
+/// transient sekarang terlihat. Banding dgn fingerprint final (buat ukur
+/// uplift celah transient).
+pub fn fault_observable_trace(source: &str, from: &str, to: &str, cfg: &FuzzConfig) -> bool {
+    let Some(faulted) = op_swap_fault(source, from, to) else {
+        return false;
+    };
+    let iv = (cfg.max_time.max(8)) / 8;
+    let f1 = harness::trace_isolated(source, cfg.max_time, cfg.hang_ms, iv);
+    let f2 = harness::trace_isolated(&faulted, cfg.max_time, cfg.hang_ms, iv);
+    matches!((f1, f2), (Some(a), Some(b)) if a != b)
+}
+
+/// Observability fingerprint FINAL (dipakai sweep utk perbandingan).
 pub fn fault_observable(source: &str, from: &str, to: &str, cfg: &FuzzConfig) -> bool {
     let Some(faulted) = op_swap_fault(source, from, to) else {
         return false;
@@ -50,8 +62,10 @@ pub struct SweepResult {
     pub fp_determinism: u64,
     pub fp_emi: u64,
     pub fp_meta: u64,
-    /// Observability op-swap fault: (terlihat, total dicoba).
+    /// Observability op-swap fault: (terlihat, total dicoba) — fingerprint
+    /// FINAL vs TRACE (mid-sim) utk mengukur uplift celah transient.
     pub fault_observable: u64,
+    pub fault_observable_trace: u64,
     pub fault_total: u64,
 }
 
@@ -100,6 +114,9 @@ pub fn sweep(n: usize, base: &FuzzConfig) -> SweepResult {
             res.fault_total += 1;
             if fault_observable(&src, f, t, &cfg) {
                 res.fault_observable += 1;
+            }
+            if fault_observable_trace(&src, f, t, &cfg) {
+                res.fault_observable_trace += 1;
             }
         }
     }

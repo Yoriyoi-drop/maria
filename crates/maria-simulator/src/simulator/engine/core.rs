@@ -174,6 +174,9 @@ impl SimulationEngine {
             coverage_enabled: true,
             coverage_enabled_types: std::collections::HashSet::new(),
             coverage_report_silent: false,
+            trace_snapshots: Vec::new(),
+            trace_interval: None,
+            trace_last_time: u64::MAX,
             glitch_window: 0,
             glitch_prev: std::collections::HashMap::new(),
             cover_line: HashMap::new(),
@@ -484,6 +487,15 @@ impl SimulationEngine {
     /// via `simulate_signals_with_coverage`; coverage keys tetap tersedia).
     pub fn set_coverage_report_silent(&mut self) {
         self.coverage_report_silent = true;
+    }
+
+    /// Aktifkan trace sampling per-interval-waktu (0/None = nonaktif).
+    /// Snapshot sinyal top di-push ke `trace_snapshots` (opsional; dipakai
+    /// maria-fuzz fingerprint MID-SIMULATION).
+    pub fn set_trace_interval(&mut self, interval: u64) {
+        self.trace_snapshots.clear();
+        self.trace_last_time = u64::MAX;
+        self.trace_interval = if interval == 0 { None } else { Some(interval) };
     }
 
     /// Set glitch detection window (in time units). 0 = disabled.

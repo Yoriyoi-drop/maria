@@ -104,6 +104,24 @@ pub fn fingerprint_isolated(source: &str, max_time: u64, hang_ms: u64) -> Option
     rx.recv_timeout(Duration::from_millis(hang_ms)).ok().flatten()
 }
 
+/// Jalankan simulasi dgn trace sampling MID-SIMULATION (interval waktu) →
+/// fingerprint trace: satu baris snapshot sinyal top per interval + nilai
+/// final. Bug transient (salah di delta lalu pulih) hanya terlihat di sini.
+/// None = gagal/hang.
+pub fn trace_isolated(source: &str, max_time: u64, hang_ms: u64, interval: u64) -> Option<String> {
+    let (tx, rx) = mpsc::channel();
+    let source = source.to_string();
+    spawn_isolated(move || {
+        let r = catch_unwind(AssertUnwindSafe(|| {
+            let (_, trace) =
+                maria_api::simulate_signals_with_trace_quiet(&source, max_time, interval).ok()?;
+            Some(trace.join("\n"))
+        }));
+        let _ = tx.send(r.unwrap_or(None));
+    });
+    rx.recv_timeout(Duration::from_millis(hang_ms)).ok().flatten()
+}
+
 /// Jalankan simulasi saja, kembalikan ERROR CODE dari SimError (mis. "RT7001"),
 /// atau None bila compile/sim ok (tak ada error) / hang.
 /// Dipakai assertion-oracle: pastikan minimasi mempertahankan error code yang

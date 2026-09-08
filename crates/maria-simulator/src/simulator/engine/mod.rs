@@ -397,6 +397,13 @@ pub struct SimulationEngine {
     /// setiap simulasi memanggil engine.run; report penuh per iterasi = noise
     /// stderr + I/O; coverage keys tetap diambil via `coverage_keys()`).
     pub coverage_report_silent: bool,
+    /// Trace sampling opt-in (`set_trace_interval`): baris snapshot sinyal
+    /// top per interval waktu — dipakai maria-fuzz sbg fingerprint
+    /// MID-SIMULATION (bug transient yang pulih sebelum akhir run terlihat;
+    /// fingerprint nilai-final buta). Default None = tanpa overhead.
+    pub trace_snapshots: Vec<String>,
+    pub trace_interval: Option<u64>,
+    pub trace_last_time: u64,
     /// Line ranges (start, end) inklusif 1-based yang di-exclude dari line
     /// coverage oleh `` `coverage_off ``/`` `coverage_on `` (SIM-29).
     pub coverage_exclusions: Vec<(usize, usize)>,
