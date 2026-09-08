@@ -221,16 +221,28 @@ pub fn emi_check(source: &str, cfg: &FuzzConfig) -> DiffVerdict {
 // KESALAHAN SEMANTIK, bukan hanya inkonsistensi internal).
 // ──────────────────────────────────────────────────────────────────────
 
+/// Relasi identitas metamorfik (GAP-5):
+///
+///   assign y = rhs;      ≡      assign y = (rhs op 0);   op ∈ {|, ^}
+///
+/// HANYA op bitwise tanpa carry — identitas eksplisit di SV 4-state
+/// (x|0=x, x^0=x utk SEMUA nilai termasuk X/Z).
+///
+/// ⚠️ `+ 0` / `- 0` DIKECUALIKAN: pada 4-state, `x + 0 ≠ x` bila x memuat
+/// unknown, karena carry/borrow X menjalar ke seluruh bit (IEEE 1800 §11.4.3:
+/// hasil aritmetika semua-X — perilaku engine maria memberi
+/// `(~x + 0)` = xxxxxxxx saat `~x` = 1xxxxxxx: BENAR, bukan bug).
+/// Mengikutkan +0/-0 di oracle = false positive (terbukti temuan seed77).
+/// ──────────────────────────────────────────────────────────────────────
+
 /// Operator identitas — deterministik dari hash source (minimizer memanggil
 /// berkali-kali; varian harus pure function dari source, sama dgn EMI).
 pub fn meta_style_for(source: &str) -> &'static str {
     let h = source.bytes().fold(0x9e37_79b9u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x1000_0000_01b3)
     });
-    match h % 4 {
-        0 => "+ 0",
-        1 => "- 0",
-        2 => "| 0",
+    match h % 2 {
+        0 => "| 0",
         _ => "^ 0",
     }
 }
@@ -260,7 +272,13 @@ pub fn meta_identity_variant(source: &str) -> Option<String> {
                     && !rhs.contains(';')
                     && !rhs.contains('$')
                     && !rhs.contains('"');
-                if safe {
+                // Guard ARTEFAK minimizer (pelajaran seed77/fzH): lhs harus
+                // ter-deklarasi dgn lebar ter-resolve (`[msb:0]` numerik) —
+                // net implicit / parameter hilang (`child #(), CW tak
+                // ter-deklarasi`) → lebar ambigu → varian bisa beda bukan
+                // karena bug eval. Sama dgn guard property-oracle.
+                let width_known = safe && crate::ast_mutate::declared_width(source, &lhs).is_some();
+                if width_known {
                     out.push_str(&format!("assign {} = ({} {});", lhs, rhs, op));
                     out.push('\n');
                     replaced = true;
@@ -493,6 +511,40 @@ endmodule
         match (f1, f2) {
             (Some(a), Some(b)) => assert_ne!(a, b, "a vs a+1 harus beda"),
             _ => panic!("fingerprint gagal utk program sederhana"),
+        }
+    }
+
+    #[test]
+    fn meta_identity_sound_with_unknown_carry() {
+        // IEEE 1800: `(rhs + 0) ≠ rhs` bila rhs memuat X — carry X menjalar
+        // ke semua bit (maria memberi semua-X = BENAR, bukan bug). Identitas
+        // metamorfik hanya berlaku utk op bitwise tanpa carry (`|`, `^`);
+        // oracle wajib membatasi diri agar tidak false positive (pelajaran
+        // temuan kampanye seed 77: `(~x + 0)` → all-X).
+        let cfg = cfg();
+        // Sanity: perilaku aritmetika X nggak identitas (dokumentasi caveat).
+        let plus = "module top;\n  logic [6:0] a;\n  wire [7:0] x;\n  assign x = a;\n  wire [7:0] q;\n  assign q = (~x + 0);\nendmodule\n";
+        let fp = harness::fingerprint_isolated(plus, cfg.max_time, cfg.hang_ms);
+        assert_eq!(
+            fp.map(|f| f.contains("q=xxxxxxxx@8")),
+            Some(true),
+            "x+0 semua-X = carry X merambat (perilaku LRM)"
+        );
+        // Identitas bitwise dipertahankan meski x memuat X sebagian.
+        let src = "module top;\n  logic [6:0] a;\n  wire [7:0] x;\n  assign x = a;\n  wire [7:0] q;\n  assign q = (~x | 0);\nendmodule\n";
+        assert_eq!(
+            meta_identity_check(src, &cfg),
+            DiffVerdict::Same,
+            "|0 identity harus dipertahankan pada nilai 4-state parsial"
+        );
+    }
+
+    #[test]
+    fn meta_style_for_restricted_to_bitwise() {
+        // Oracle metamorfik HANYA memakai op bitwise tanpa carry.
+        for _ in 0..200 {
+            let s = meta_style_for("module top; endmodule");
+            assert!(s == "| 0" || s == "^ 0", "op harus bitwise: {}", s);
         }
     }
 }

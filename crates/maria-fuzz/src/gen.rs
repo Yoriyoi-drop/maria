@@ -66,8 +66,28 @@ impl Generator {
         }
     }
 
+    /// Stimulus `initial` acak (GAP-6): nilai a/b & delay divariasikan per
+    /// seed RNG kampanye → reachable state lebih luas. Audit menemukan
+    /// stimulus FIXED (`a=5,b=3; a=17,b=9; b=4`) membatasi perilaku. Nilai
+    /// dibatasi < 2^w; delay 2..12 agar total span < max_time default 100.
+    fn stimulus(&self, rng: &mut StdRng, w: usize) -> String {
+        let max = (1u64 << w).min(65535) as u64;
+        let a1 = rng.gen_range(0..max);
+        let b1 = rng.gen_range(0..max);
+        let a2 = rng.gen_range(0..max);
+        let b2 = rng.gen_range(0..max);
+        let b3 = rng.gen_range(0..max);
+        let t1 = rng.gen_range(2..=12u64);
+        let t2 = rng.gen_range(2..=12u64);
+        let t3 = rng.gen_range(2..=12u64);
+        format!(
+            "  initial begin rst_n = 0; a = {}; b = {}; #{} rst_n = 1; #{} a = {}; b = {}; #{} b = {}; end\n",
+            a1, b1, t1, t2, a2, b2, t3, b3
+        )
+    }
+
     /// Shape 1: `always_ff` + `assign` — arithmetic/bitwise pada register.
-    fn shape_arith(&self, _rng: &mut StdRng, w: usize, op: &str, param: bool, clog2: bool) -> String {
+    fn shape_arith(&self, rng: &mut StdRng, w: usize, op: &str, param: bool, clog2: bool) -> String {
         let mut s = String::new();
         let mut header = String::new();
         if param {
@@ -95,7 +115,7 @@ impl Generator {
         s.push_str("  assign y = r;\n");
         s.push_str("  assign flag = (a > b) ? 2'd1 : (a == b) ? 2'd2 : 2'd0;\n");
         s.push_str("  initial begin clk = 0; forever #5 clk = ~clk; end\n");
-        s.push_str("  initial begin rst_n = 0; a = 5; b = 3; #7 rst_n = 1; #3 a = 17; b = 9; #7 b = 4; end\n");
+        s.push_str(&self.stimulus(rng, w));
         s.push_str("endmodule\n");
         s
     }
@@ -120,14 +140,14 @@ impl Generator {
         if rng.gen_bool(0.5) {
             s.push_str("  initial begin clk = 0; forever #5 clk = ~clk; end\n");
         }
-        s.push_str("  initial begin rst_n = 0; a = 5; b = 3; #7 rst_n = 1; #3 a = 17; b = 9; #7 b = 4; end\n");
+        s.push_str(&self.stimulus(rng, w));
         s.push_str("endmodule\n");
         s
     }
 
     /// Shape 3: hierarki dua modul — child diinstansiasi di top (Paper #14:
     /// multi-modul, instansiasi, koneksi port).
-    fn shape_child(&self, _rng: &mut StdRng, w: usize, op: &str, param: bool) -> String {
+    fn shape_child(&self, rng: &mut StdRng, w: usize, op: &str, param: bool) -> String {
         let mut s = String::new();
         s.push_str("module child #(\n  parameter CW = 4\n) (\n");
         s.push_str("  input  logic [CW-1:0] x,\n  output logic [CW-1:0] q\n);\n");
@@ -151,14 +171,14 @@ impl Generator {
         s.push_str("  assign y = r;\n");
         s.push_str("  assign flag = (a > b) ? 2'd1 : (a == b) ? 2'd2 : 2'd0;\n");
         s.push_str("  initial begin clk = 0; forever #5 clk = ~clk; end\n");
-        s.push_str("  initial begin rst_n = 0; a = 5; b = 3; #7 rst_n = 1; #3 a = 17; b = 9; #7 b = 4; end\n");
+        s.push_str(&self.stimulus(rng, w));
         s.push_str("endmodule\n");
         s
     }
 
     /// Shape 4: `always_comb` + `for` loop unroll + nested `if/else` + part-select
     /// — stress statement-engine (loop unrolling, distribusi i, bit-select).
-    fn shape_loop(&self, _rng: &mut StdRng, w: usize, param: bool) -> String {
+    fn shape_loop(&self, rng: &mut StdRng, w: usize, param: bool) -> String {
         let mut s = String::new();
         if param {
             s.push_str("module top #(parameter W = 8) (\n");
@@ -179,7 +199,7 @@ impl Generator {
         s.push_str("  end\n");
         s.push_str(&format!("  assign y = r;\n"));
         s.push_str("  assign flag = (a > b) ? 2'd1 : (a == b) ? 2'd2 : 2'd0;\n");
-        s.push_str("  initial begin rst_n = 0; a = 5; b = 3; #7 rst_n = 1; #3 a = 17; b = 9; #7 b = 4; end\n");
+        s.push_str(&self.stimulus(rng, w));
         s.push_str("endmodule\n");
         s
     }

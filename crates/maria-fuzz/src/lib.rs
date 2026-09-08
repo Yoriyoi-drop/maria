@@ -28,6 +28,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 use gen::Generator;
@@ -358,6 +359,21 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
             }
         }
 
+        // ── 3b. steering CDG aktif (#20) — bila tan-pa --target, bias seed
+        //      ke fitur TRACKED yang belum tereksekusi (recomputed berkala;
+        //      hanya target steerable — snippet valid, audit GAP-8/CDG
+        //      report-only jadi aktif). Deterministik per seed RNG.
+        if cfg.target.is_none() && iter % 25 == 0 {
+            let unreached = cdg::plan_targets(&guide.coverage());
+            if let Some(t) = unreached.choose(&mut rng) {
+                if directed::is_steerable(t) && !directed::is_relevant(&src, t) {
+                    if let Some(b) = directed::bias_seed(&src, t) {
+                        src = b;
+                    }
+                }
+            }
+        }
+
         // ── 4. eksekusi terisolasi + oracle ──
         if let Ok(dump_path) = std::env::var("MARIA_FUZZ_DUMP") {
             // Debug: tulis kandidat terakhir sebelum eksekusi — bila proses
@@ -464,6 +480,9 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                             detail: format!("determinism: {}; minimized {}→{} bytes",
                                                 d, src.len(), mlen),
                                         });
+                                        if let Some(b) = report.bugs.last() {
+                                            bug_db.push(b, cfg.seed, iter + 1);
+                                        }
                                     }
                                     differential::DiffVerdict::Skip => {}
                                 }
@@ -497,6 +516,9 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                             detail: format!("emi: {}; minimized {}→{} bytes",
                                                 d, src.len(), mlen),
                                         });
+                                        if let Some(b) = report.bugs.last() {
+                                            bug_db.push(b, cfg.seed, iter + 1);
+                                        }
                                     }
                                     differential::DiffVerdict::Skip => {}
                                 }
@@ -529,6 +551,9 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                             detail: format!("meta-identity: {}; minimized {}→{} bytes",
                                                 d, src.len(), mlen),
                                         });
+                                        if let Some(b) = report.bugs.last() {
+                                            bug_db.push(b, cfg.seed, iter + 1);
+                                        }
                                     }
                                     differential::DiffVerdict::Skip => {}
                                 }
@@ -549,6 +574,9 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                         detail: format!("sim-sig: {}; minimized {}→{} bytes",
                                             info, src.len(), mlen),
                                     });
+                                    if let Some(b) = report.bugs.last() {
+                                        bug_db.push(b, cfg.seed, iter + 1);
+                                    }
                                 }
                             }
                         // ── 6d. property-oracle (#2/#3/#14, oracle #5):
@@ -586,6 +614,9 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                             mlen
                                         ),
                                     });
+                                    if let Some(b) = report.bugs.last() {
+                                        bug_db.push(b, cfg.seed, iter + 1);
+                                    }
                                 }
                             }
                         } else {
@@ -638,6 +669,9 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                         sim.code, sim.message, src.len(), mlen
                                     ),
                                 });
+                                if let Some(b) = report.bugs.last() {
+                                    bug_db.push(b, cfg.seed, iter + 1);
+                                }
                             }
                         }
                     }

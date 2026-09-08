@@ -557,19 +557,23 @@ pub fn tweak_initial(rng: &mut StdRng, source: &str) -> String {
 /// Lekser mini: lebar sinyal dari baris deklarasi `[msb:0]` — mendukung
 /// `[7:0]` dan `[16-1:0]` (ekspresi `n-1`). None bila tak bisa dipastikan
 /// (konservatif — mirror di-skip daripada salah width → false positive).
-fn declared_width(source: &str, name: &str) -> Option<usize> {
+pub(crate) fn declared_width(source: &str, name: &str) -> Option<usize> {
     const DECL: &[&str] = &["logic ", "wire ", "reg ", "bit ", "output ", "input ", "inout "];
     for line in source.lines() {
         let t = line.trim_start();
         if !DECL.iter().any(|d| t.starts_with(d)) {
             continue;
         }
-        // Token `name` (utuh, bukan substring) di baris ini?
+        // Token `name` (utuh, bukan substring) di baris ini? Trailing
+        // non-alnum (`)`/`,`/`]`) di-trim → port-decl `output y);` match.
         let tokens: Vec<&str> = line
             .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
             .filter(|s| !s.is_empty())
             .collect();
-        if !tokens.contains(&name) {
+        let name_match = tokens.iter().any(|t| {
+            t.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '_')) == name
+        });
+        if !name_match {
             continue;
         }
         let Some(open) = line.find('[') else { continue };
