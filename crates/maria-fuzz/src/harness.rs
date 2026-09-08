@@ -204,6 +204,208 @@ fn panic_string(payload: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Eksekusi SUBPROCESS (GAP-9, opt-in `--proc-iso`). Thread Rust tak bisa
+// dibunuh → hang sejati me-leak thread yang terus membakar CPU. Subprocess
+// bisa di-KILL sejati, dan stack-overflow (SIGSEGV/abort) yang tak terjangkau
+// catch_unwind terdeteksi lewat exit code. Child = binary ini sendiri dalam
+// mode `--slave`: baca source dari stdin, compile+sim senyap, cetak baris
+// hasil, exit.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Mode slave (`--slave`): baca source dari stdin → compile+sim senyap →
+/// cetak `OK|compile_ok|compile_code|sim_ok|sim_code|dur|n_cov|cov,..` atau
+/// `PANIC|<msg>` ke stdout, exit. Dipanggil hanya oleh `run_isolated_proc`.
+pub fn run_slave() -> ! {
+    use std::io::Read;
+    let mut src = String::new();
+    let _ = std::io::stdin().read_to_string(&mut src);
+    let max_time = std::env::var("MARIA_FUZZ_SLAVE_MAX_TIME")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let started = Instant::now();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let compile = compile_verdict(&src);
+        let (sim, coverage) = if compile.ok {
+            let (b, c) = sim_verdict_cov(&src, max_time);
+            (Some(b), c)
+        } else {
+            (None, Vec::new())
+        };
+        (compile, sim, coverage)
+    }));
+    let dur = started.elapsed().as_millis() as u64;
+    match result {
+        Ok((compile, sim, coverage)) => {
+            let (sim_ok, sim_code) = match &sim {
+                Some(s) => (s.ok as u8, s.code.clone()),
+                None => (0u8, String::new()),
+            };
+            let code = if compile.ok {
+                String::new()
+            } else {
+                compile.code.clone()
+            };
+            println!(
+                "OK|{}|{}|{}|{}|{}|{}|{}",
+                compile.ok as u8,
+                code,
+                sim_ok,
+                sim_code,
+                dur,
+                coverage.len(),
+                coverage.join(",")
+            );
+            std::process::exit(0);
+        }
+        Err(payload) => {
+            println!("PANIC|{}", panic_string(payload).replace('|', "/"));
+            std::process::exit(101);
+        }
+    }
+}
+
+/// Eksekusi subprocess (GAP-9): hang di-KILL sejati; SIGSEGV/abort (stack
+/// overflow) terdeteksi via exit code non-zero (buta di jalur thread).
+/// Opt-in `--proc-iso`; gagal spawn → fallback thread `run_isolated`.
+pub fn run_isolated_proc(source: &str, max_time: u64, hang_ms: u64) -> RunOutcome {
+    let Some(exe) = std::env::current_exe().ok() else {
+        return run_isolated(source, max_time, hang_ms);
+    };
+    let mut child = match std::process::Command::new(&exe)
+        .arg("--slave")
+        .env("MARIA_FUZZ_SLAVE_MAX_TIME", max_time.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return run_isolated(source, max_time, hang_ms),
+    };
+    if let Some(mut si) = child.stdin.take() {
+        use std::io::Write;
+        let _ = si.write_all(source.as_bytes());
+        // drop si → EOF bagi child.
+    }
+    let reader = child.stdout.take().map(|mut so| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut v: Vec<u8> = Vec::new();
+            let _ = so.read_to_end(&mut v);
+            v
+        })
+    });
+    let deadline = Instant::now() + Duration::from_millis(hang_ms);
+    let mut timed_out = false;
+    loop {
+        if child.try_wait().ok().flatten().is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let out_buf = match reader {
+        Some(h) => h.join().unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let exit = child.wait().ok();
+    if timed_out {
+        return RunOutcome {
+            status: RunStatus::Hang,
+            compile: CompileVerdict {
+                ok: false,
+                code: "HANG".to_string(),
+                message: format!(">{} ms", hang_ms),
+            },
+            sim: None,
+            coverage: Vec::new(),
+            duration_ms: hang_ms,
+        };
+    }
+    let line = String::from_utf8_lossy(&out_buf).lines().next().unwrap_or("").to_string();
+    let mut parts = line.split('|');
+    match parts.next() {
+        Some("OK") => {
+            let compile_ok = parts.next().unwrap_or("0") == "1";
+            let compile_code = parts.next().unwrap_or("").to_string();
+            let sim_ok = parts.next().unwrap_or("0") == "1";
+            let sim_code = parts.next().unwrap_or("").to_string();
+            let dur: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+            let _n_cov: usize = parts.next().unwrap_or("0").parse().unwrap_or(0);
+            let covs: Vec<String> = parts
+                .next()
+                .unwrap_or("")
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+            let sim = if compile_ok {
+                Some(SimVerdict {
+                    ok: sim_ok,
+                    code: sim_code,
+                    message: String::new(),
+                    fingerprint: String::new(),
+                    assertion: false,
+                })
+            } else {
+                None
+            };
+            RunOutcome {
+                status: RunStatus::Done,
+                compile: CompileVerdict {
+                    ok: compile_ok,
+                    code: compile_code,
+                    message: String::new(),
+                },
+                sim,
+                coverage: covs,
+                duration_ms: dur,
+            }
+        }
+        Some("PANIC") => {
+            let rest: Vec<&str> = parts.collect();
+            RunOutcome {
+                status: RunStatus::Panic(format!("procpanic: {}", rest.join("|"))),
+                compile: CompileVerdict {
+                    ok: false,
+                    code: "PANIC".to_string(),
+                    message: String::new(),
+                },
+                sim: None,
+                coverage: Vec::new(),
+                duration_ms: 0,
+            }
+        }
+        _ => {
+            // Exit non-zero tanpa baris hasil = SIGSEGV/abort/tak dikenal.
+            let code = exit.and_then(|e| e.code()).unwrap_or(-1);
+            if code == 0 {
+                // Child keluar NORMAL tapi tanpa baris OK — anomali transien
+                // (stdout race saat spawn massal). Jangan salah-klaim crash;
+                // ulangi via jalur thread utk verdict yang benar.
+                return run_isolated(source, max_time, hang_ms);
+            }
+            RunOutcome {
+                status: RunStatus::Panic(format!("proc crashed (exit {:?})", code)),
+                compile: CompileVerdict {
+                    ok: false,
+                    code: "PANIC".to_string(),
+                    message: String::new(),
+                },
+                sim: None,
+                coverage: Vec::new(),
+                duration_ms: 0,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

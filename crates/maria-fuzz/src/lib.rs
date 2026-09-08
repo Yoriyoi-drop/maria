@@ -70,6 +70,10 @@ pub struct FuzzConfig {
     /// Direktori tujuan persist seed menarik (GAP-10) — parent aktif kampanye
     /// ini jadi corpus kampanye berikutnya (opsional; default tidak menulis).
     pub save_corpus_dir: Option<PathBuf>,
+    /// Eksekusi dgn SUBPROCESS (GAP-9, opt-in): hang di-KILL sejati (thread
+    /// Rust tak bisa dibunuh → leak CPU), stack-overflow (SIGSEGV) terdeteksi
+    /// via exit code (catch_unwind buta). Biaya spawn ~ms per run.
+    pub proc_isolate: bool,
     /// Activekan oracle nilai sinyal (#19) — injeksi input →
     /// fprint awal vs akhir vs akhir-2 divalidasi konsistensi.
     pub sim_sig_check: bool,
@@ -88,6 +92,7 @@ impl Default for FuzzConfig {
             emit_dir: None,
             corpus: None,
             save_corpus_dir: None,
+            proc_isolate: false,
             verbose: false,
             verbose_every: 100,
             sim_sig_check: false,
@@ -397,7 +402,11 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         } else {
             cfg.hang_ms.max((avg_ok_ms * 16.0) as u64)
         };
-        let out = harness::run_isolated(&src, cfg.max_time, hang_ms_eff);
+        let out = if cfg.proc_isolate {
+            harness::run_isolated_proc(&src, cfg.max_time, hang_ms_eff)
+        } else {
+            harness::run_isolated(&src, cfg.max_time, hang_ms_eff)
+        };
         report.total += 1;
 
         match &out.status {

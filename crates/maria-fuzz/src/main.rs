@@ -27,6 +27,9 @@ OPTIONS:
   --corpus-dir DIR   direktori corpus SV nyata (bisa diulang)
   --target FEATURE   fuzzing terarah (mis. >>, case, $clog2)
   --workers W        kampanye paralel (env MARIA_FUZZ_WORKERS, default 1)
+  --proc-iso         eksekusi dgn SUBPROCESS (GAP-9): hang di-kill sejati,
+                     stack-overflow (SIGSEGV) terdeteksi via exit code;
+                     biaya spawn ~ms — default thread untuk kecepatan
   --sweep N          validasi oracle: sweep N seed generated -> FP per oracle
                      + observability fault op-swap (GAP-5 eksperimen)
   --emit-bugs DIR    tulis file bug terminimalkan ke direktori
@@ -47,6 +50,11 @@ fn parse_u64(v: &str, name: &str) -> u64 {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Mode slave (GAP-9): dipanggil run_isolated_proc — baca source dari
+    // stdin, compile+sim, cetak hasil, exit. Intercept SEBELUM parse cfg.
+    if args.iter().any(|a| a == "--slave") {
+        maria_fuzz::harness::run_slave();
+    }
     if args.iter().any(|a| a == "-h" || a == "--help") {
         print_usage();
         return;
@@ -86,6 +94,9 @@ fn main() {
             "--target" => {
                 i += 1;
                 cfg.target = Some(args[i].clone());
+            }
+            "--proc-iso" => {
+                cfg.proc_isolate = true;
             }
             "--workers" => {
                 i += 1;
