@@ -67,6 +67,9 @@ pub struct FuzzConfig {
     /// Corpus seed bersama (worker paralel): kalau diisi, worker paralel
     /// pakai corpus ini alih-alih memuat ulang dari `corpus_dirs`.
     pub corpus: Option<crate::corpus::Corpus>,
+    /// Direktori tujuan persist seed menarik (GAP-10) — parent aktif kampanye
+    /// ini jadi corpus kampanye berikutnya (opsional; default tidak menulis).
+    pub save_corpus_dir: Option<PathBuf>,
     /// Activekan oracle nilai sinyal (#19) — injeksi input →
     /// fprint awal vs akhir vs akhir-2 divalidasi konsistensi.
     pub sim_sig_check: bool,
@@ -84,6 +87,7 @@ impl Default for FuzzConfig {
             workers: 1,
             emit_dir: None,
             corpus: None,
+            save_corpus_dir: None,
             verbose: false,
             verbose_every: 100,
             sim_sig_check: false,
@@ -336,6 +340,13 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
     }
     // Statistik & bobot adaptif palet mutasi (GAP-3).
     let mut op_stats = ast_mutate::OpStats::default();
+    // Ambang hang adaptif (temuan seed 12345 — hang flaky: run valid lambat
+    // 8–15s terklasifikasi Hang saat beban sistem naik; hang > 12000 ms
+    // tercatat tapi tak ter-reproduksi di re-run). Ambang efektif per iterasi
+    // = max(hang_ms, EMA durasi run-OK × 16) — klasifikasi tahan terhadap
+    // perlambatan GLOBAL, bukan hanya absolut (false positive timeout).
+    let mut avg_ok_ms: f64 = 0.0;
+    let mut n_ok: u64 = 0;
 
     for iter in 0..cfg.iters {
         // ── 1. pilih parent (energy schedule) ──
@@ -381,7 +392,12 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
             // abort (mis. stack overflow) file ini = input penyebab.
             std::fs::write(&dump_path, &src).ok();
         }
-        let out = harness::run_isolated(&src, cfg.max_time, cfg.hang_ms);
+        let hang_ms_eff = if n_ok == 0 {
+            cfg.hang_ms
+        } else {
+            cfg.hang_ms.max((avg_ok_ms * 16.0) as u64)
+        };
+        let out = harness::run_isolated(&src, cfg.max_time, hang_ms_eff);
         report.total += 1;
 
         match &out.status {
@@ -412,7 +428,7 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                 // menangguhkan, bukan infinite. Validasi dgn window jauh lebih
                 // besar dari settle; bila selesai → bukan hang → minggir tanpa
                 // biaya minimasi mahal.
-                let confirm_ms = cfg.hang_ms.max(15_000);
+                let confirm_ms = hang_ms_eff.max(15_000);
                 if matches!(
                     harness::run_isolated(&src, cfg.max_time, confirm_ms).status,
                     RunStatus::Done
@@ -682,6 +698,13 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
             }
         }
 
+        // EMA durasi run-OK — umpan ambang hang adaptif (lihat di atas).
+        if matches!(&out.status, RunStatus::Done) && out.compile.ok {
+            let d = out.duration_ms as f64;
+            avg_ok_ms = if n_ok == 0 { d } else { 0.9 * avg_ok_ms + 0.1 * d };
+            n_ok += 1;
+        }
+
         // ── 5. feature map + corpus + adaptasi (#6/#7/#8) ──
         // Execution-gated (audit GAP-2): HANYA hasil sim_ok yang membuktikan
         // fitur benar-benar tereksekusi. Panic/Hang/compile_err/sim_err TIDAK
@@ -740,6 +763,14 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
     }
     if let Err(e) = bug_db.save(&db_path) {
         eprintln!("[fuzz] warning: gagal simpan bug DB: {}", e);
+    }
+
+    // Persist corpus menarik (GAP-10): parent aktif/bug → seed kampanye
+    // berikutnya via --corpus-dir (evolusi lintas kampanye).
+    if let Some(dir) = &cfg.save_corpus_dir {
+        if let Err(e) = guide.persist_to(dir, 500) {
+            eprintln!("[fuzz] warning: gagal simpan corpus: {}", e);
+        }
     }
 
     if let Some(dir) = &cfg.emit_dir {

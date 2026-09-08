@@ -30,6 +30,7 @@ OPTIONS:
   --sweep N          validasi oracle: sweep N seed generated -> FP per oracle
                      + observability fault op-swap (GAP-5 eksperimen)
   --emit-bugs DIR    tulis file bug terminimalkan ke direktori
+  --save-corpus DIR  persist seed menarik (parent/bug) utk kampanye berikut
   --sim-sig-check    aktifkan oracle nilai sinyal (3× pipeline/iterasi; OFF default)
   --verbose          progress tiap 100 iterasi ke stderr
   -h, --help         bantuan ini
@@ -113,6 +114,10 @@ fn main() {
             "--sim-sig-check" => {
                 cfg.sim_sig_check = true;
             }
+            "--save-corpus" => {
+                i += 1;
+                cfg.save_corpus_dir = Some(PathBuf::from(&args[i]));
+            }
             "--verbose" => {
                 cfg.verbose = true;
             }
@@ -168,6 +173,8 @@ fn main() {
                         let mut c = (*cfg).clone();
                         c.seed = c.seed.wrapping_add(w as u64 * 0x9E37_79B9);
                         c.workers = 1;
+                        // Per-worker corpus dir — hindari race tulis seed_N.sv.
+                        c.save_corpus_dir = c.save_corpus_dir.map(|d| d.join(format!("w{}", w)));
                         // Inject corpus bersama ke worker ini.
                         c.corpus = Some((*corpus).clone());
                         run_fuzz(&c)

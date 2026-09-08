@@ -155,6 +155,32 @@ impl CoverageGuide {
         self.seeds.len()
     }
 
+    /// Tulis seed menarik (parent aktif) ke direktori — prioritas bug lalu
+    /// energi tertinggi; `cap` membatasi disk. Dipakai `--save-corpus`
+    /// (GAP-10: temuan/parent kampanye ini jadi corpus kampanye berikutnya
+    /// via `--corpus-dir`, bukan corpus file-direktori statis).
+    pub fn persist_to(&self, dir: &std::path::Path, cap: usize) -> std::io::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        let mut idx: Vec<usize> = (0..self.seeds.len()).collect();
+        idx.sort_by(|&a, &b| {
+            let ea = &self.seeds[a];
+            let eb = &self.seeds[b];
+            eb.is_bug
+                .cmp(&ea.is_bug)
+                .then(
+                    eb.energy
+                        .partial_cmp(&ea.energy)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+        });
+        let n = idx.len().min(cap);
+        for (k, &i) in idx.iter().take(n).enumerate() {
+            let path = dir.join(format!("seed_{:04}.sv", k));
+            std::fs::write(&path, &self.seeds[i].source)?;
+        }
+        Ok(())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.seeds.is_empty()
     }
