@@ -298,6 +298,8 @@ pub fn meta_identity_variant(source: &str) -> Option<String> {
 
 /// Oracle metamorfik-identitas: original vs varian `(rhs op 0)` — sinyal
 /// common harus identik. Penyimpangan = bug evaluasi (identity dilanggar).
+/// Fingerprint standar sudah berisi sinyal flatten child module — fault
+/// internal child terlihat tanpa jalur terpisah.
 pub fn meta_identity_check(source: &str, cfg: &FuzzConfig) -> DiffVerdict {
     if oracle::has_nondeterministic_src(source) {
         return DiffVerdict::Skip;

@@ -29,7 +29,8 @@ pub fn op_swap_fault(source: &str, from: &str, to: &str) -> Option<String> {
 }
 
 /// Observability: fingerprint source ≠ fingerprint ber-fault → fault benar-
-/// benar mengubah perilaku sinyal top (terlihat oleh oracle).
+/// benar mengubah perilaku sinyal. Fingerprint standar SUDAH memuat sinyal
+/// flatten child module — hierarki tak menyembunyikan fault (terverifikasi).
 pub fn fault_observable(source: &str, from: &str, to: &str, cfg: &FuzzConfig) -> bool {
     let Some(faulted) = op_swap_fault(source, from, to) else {
         return false;
@@ -119,5 +120,31 @@ mod tests {
     #[test]
     fn op_swap_none_when_absent() {
         assert!(op_swap_fault("assign y = a;", "&", "|").is_none());
+    }
+
+    #[test]
+    fn flattened_fingerprint_observes_child_internal_fault() {
+        // Flatten elaborator mengangkat sinyal child ke top.signals (nama
+        // hier `u.t`) → fingerprint standar SUDAH melihat fault internal
+        // child. Mengoreksi hipotesis audit "hierarki buta": berlaku utk
+        // input yang tak di-drive (X semuanya), bukan utk hierarki.
+        let cfg = FuzzConfig {
+            max_time: 40,
+            hang_ms: 2000,
+            ..FuzzConfig::default()
+        };
+        let src = "module child(input logic [3:0] x);\n  logic [3:0] t;\n  assign t = x & 4'b1010;\nendmodule\nmodule top(input logic [3:0] a);\n  child u(.x(a));\n  initial a = 4'd5;\nendmodule\n";
+        let faulted = op_swap_fault(src, "&", "|").expect("harus ada & di child");
+        let f_top = harness::fingerprint_isolated(&src, cfg.max_time, cfg.hang_ms);
+        let f_top_f = harness::fingerprint_isolated(&faulted, cfg.max_time, cfg.hang_ms);
+        assert!(
+            f_top.as_deref().map_or(false, |f| f.contains("u.t=")),
+            "fingerprint berisi sinyal flatten child: {:?}",
+            f_top
+        );
+        assert_ne!(
+            f_top, f_top_f,
+            "fault child-internal TERlihat di fingerprint standar (flatten)"
+        );
     }
 }

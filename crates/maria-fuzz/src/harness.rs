@@ -91,6 +91,10 @@ pub fn run_isolated(source: &str, max_time: u64, hang_ms: u64) -> RunOutcome {
 
 /// Jalankan simulasi saja, kembalikan fingerprint (untuk differential #13/#19).
 /// None = gagal compile/sim atau hang.
+/// Catatan: fingerprint SUDAH berisi sinyal flatten child module (`u.t`) —
+/// elaborator flatten mengangkat seluruh sinyal ke `top.signals`, jadi fault
+/// internal child terlihat tanpa jalur terpisah (terverifikasi via test
+/// `flattened_fingerprint_observes_child_internal_fault`).
 pub fn fingerprint_isolated(source: &str, max_time: u64, hang_ms: u64) -> Option<String> {
     let (tx, rx) = mpsc::channel();
     let source = source.to_string();
