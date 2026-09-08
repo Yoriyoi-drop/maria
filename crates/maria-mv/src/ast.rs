@@ -181,11 +181,13 @@ pub enum Stmt {
         qual: Option<String>,
         kind: String,
     },
-    /// `for var in from..to { body }`
+    /// `for var in from..to { body }` — optional `step` : `for i in 0..N step 2`
+    /// → increment `i = i + 2` di SV (default `+ 1`).
     For {
         var: String,
         from: Expr,
         to: Expr,
+        step: Option<Expr>,
         body: Box<Stmt>,
     },
     /// `while (cond) { body }`
@@ -495,11 +497,12 @@ pub enum MItem {
         line: usize,
         col: usize,
     },
-    /// `for i in 1..N { ... }` (generate)
+    /// `for i in 1..N { ... }` (generate) — optional `step` : `for i in 0..8 step 2`
     GenFor {
         var: String,
         from: Expr,
         to: Expr,
+        step: Option<Expr>,
         body: Vec<MItem>,
     },
     /// `if (cond) { ... } else { ... }` (generate)

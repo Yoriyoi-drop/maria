@@ -1192,10 +1192,14 @@ fn check_module_item<'a>(
             var,
             from,
             to,
+            step,
             body,
         } => {
             check_expr(from, ctx, scope, 0)?;
             check_expr(to, ctx, scope, 0)?;
+            if let Some(s) = step {
+                check_expr(s, ctx, scope, 0)?;
+            }
             let mut inner = scope.clone();
             inner.sigs.insert(var.as_str());
             for it in body {
@@ -1581,10 +1585,14 @@ fn check_stmt<'a>(
             var,
             from,
             to,
+            step,
             body,
         } => {
             check_expr(from, ctx, scope, 0)?;
             check_expr(to, ctx, scope, 0)?;
+            if let Some(s) = step {
+                check_expr(s, ctx, scope, 0)?;
+            }
             let mut inner = scope.clone();
             inner.sigs.insert(var.as_str());
             inner.loop_depth += 1;

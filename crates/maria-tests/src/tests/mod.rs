@@ -1043,6 +1043,43 @@ module bad_seq {
 }
 
 #[test]
+fn test_mv_for_step() {
+    // `for i in 0..N step 2` — increment `i = i + 2` di behavioral &
+    // generate; step 2 mengisi bit genap → y = 8'h55 (verifikasi via sim).
+    let src = r#"
+module step_dut {
+    in  clk : bit
+    out y   : logic[7:0]
+    comb {
+        y = 8'h00
+        for i in 0..7 step 2 {
+            y[i] = 1'b1
+        }
+    }
+}
+module tb_step {
+    sig clk : bit
+    sig y   : logic[7:0]
+    inst step_dut u (.clk(clk), .y(y))
+    initial {
+        clk = 0
+        #10
+        $finish
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "step").expect("transpile .mv step OK");
+    assert!(
+        r.sv.contains("for (int i = 0; i < 7; i = i + 2) begin"),
+        "codegen harus emit step: {}",
+        r.sv
+    );
+    let sigs = simulate_signals(&r.sv, 15).unwrap();
+    let y = sigs.iter().find(|(s, _)| s == "y").unwrap().1.to_u64();
+    assert_eq!(y, 0x55, "bit genap 0,2,4,6 = 1 → 0x55");
+}
+
+#[test]
 fn test_counter_simulation() {
     let source = r#"
 module tb_counter;

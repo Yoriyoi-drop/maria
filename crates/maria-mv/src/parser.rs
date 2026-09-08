@@ -783,18 +783,20 @@ impl Parser {
             }
             Tok::Inst => Ok(self.parse_inst()?),
             Tok::For => {
-                // generate for
+                // generate for — optional `step` (`for i in 0..8 step 2`)
                 self.advance();
                 let var = self.expect_ident()?;
                 self.expect(&Tok::In)?;
                 let from = self.parse_expr()?;
                 self.expect(&Tok::DotDot)?;
                 let to = self.parse_expr()?;
+                let step = self.parse_optional_step()?;
                 let body = self.parse_module_item_block()?;
                 Ok(MItem::GenFor {
                     var,
                     from,
                     to,
+                    step,
                     body,
                 })
             }
@@ -832,6 +834,17 @@ impl Parser {
             items.push(self.parse_module_item()?);
         }
         Ok(items)
+    }
+
+    /// Step opsional `for`: `for i in 0..N step 2 { ... }` — `step` di-lex
+    /// sebagai `Ident("step")` (bukan keyword), diikuti ekspresi nilai.
+    fn parse_optional_step(&mut self) -> Result<Option<Expr>, MvError> {
+        if self.is_ident("step") {
+            self.advance();
+            Ok(Some(self.parse_expr()?))
+        } else {
+            Ok(None)
+        }
     }
 
     /// `seq(clk)` / `seq(clk, rst)` / `seq(clk, rst, sync)` / `seq(negedge clk, ...)`
@@ -1119,11 +1132,13 @@ impl Parser {
                 let from = self.parse_expr()?;
                 self.expect(&Tok::DotDot)?;
                 let to = self.parse_expr()?;
+                let step = self.parse_optional_step()?;
                 let body = self.parse_stmt()?;
                 Ok(Stmt::For {
                     var,
                     from,
                     to,
+                    step,
                     body: Box::new(body),
                 })
             }

@@ -471,6 +471,7 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                 var,
                 from,
                 to,
+                step,
                 body,
             } => {
                 line(out, 0, "");
@@ -479,9 +480,10 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                     out,
                     1,
                     &format!(
-                        "for (genvar {var} = {}; {var} < {}; {var} = {var} + 1) begin : gen_{var}",
+                        "for (genvar {var} = {}; {var} < {}; {var} = {}) begin : gen_{var}",
                         emit_expr(from),
-                        emit_expr(to)
+                        emit_expr(to),
+                        for_inc(var, step.as_ref())
                     ),
                 );
                 for item in body {
@@ -612,6 +614,7 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
             var,
             from,
             to,
+            step,
             body,
         } => {
             line(out, indent, "generate");
@@ -619,9 +622,10 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
                 out,
                 indent + 1,
                 &format!(
-                    "for (genvar {var} = {}; {var} < {}; {var} = {var} + 1) begin : gen_{var}",
+                    "for (genvar {var} = {}; {var} < {}; {var} = {}) begin : gen_{var}",
                     emit_expr(from),
-                    emit_expr(to)
+                    emit_expr(to),
+                    for_inc(var, step.as_ref())
                 ),
             );
             for i in body {
@@ -951,15 +955,17 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             var,
             from,
             to,
+            step,
             body,
         } => {
             line(
                 out,
                 indent,
                 &format!(
-                    "for (int {var} = {}; {var} < {}; {var} = {var} + 1) begin",
+                    "for (int {var} = {}; {var} < {}; {var} = {}) begin",
                     emit_expr(from),
-                    emit_expr(to)
+                    emit_expr(to),
+                    for_inc(var, step.as_ref())
                 ),
             );
             emit_body(out, indent + 1, body);
@@ -1269,6 +1275,16 @@ fn emit_init(init: &Option<Expr>) -> String {
     init.as_ref()
         .map(|e| format!(" = {}", emit_expr(e)))
         .unwrap_or_default()
+}
+
+/// Ekspresi increment loop `for`: `i + 1` (default) atau `i + <step>` bila
+/// `step` diberikan (`for i in 0..N step 2`). Pemanggil menulis `{var} = {}`.
+/// Dipakai generate & behavioral.
+fn for_inc(var: &str, step: Option<&Expr>) -> String {
+    match step {
+        Some(s) => format!("{var} + {}", emit_expr(s)),
+        None => format!("{var} + 1"),
+    }
 }
 
 // ── Expressions ──

@@ -408,6 +408,7 @@ Emisi: `always begin ... end` / `always_latch begin ... end`.
 | `if (c) { ... } else { ... }` | `if (c) begin ... end else begin ... end` |
 | `case (e) { 0: { ... } 1, 2: { ... } default: { ... } }` | `case (e) 0: begin ... end 1, 2: ... default: ... endcase` |
 | `for i in 0..N { ... }` (behavioral) | `for (int i = 0; i < N; i = i + 1) begin ... end` |
+| `for i in 0..N step 2 { ... }` (F41) | `for (int i = 0; i < N; i = i + 2) begin ... end` — step opsional pada loop behavioral |
 | `while (c) { ... }` | `while (c) begin ... end` |
 | `do { ... } while (c)` (F38) | `do begin ... end while (c);` — loop post-test (body minimal sekali) |
 | `->ev` (F38) | `-> ev;` — event trigger (membangunkan `@(posedge ev)`) |
@@ -862,6 +863,7 @@ Ringkasan mapping konstruk `.mv` → SV:
 | `initial { }` / `final { }` | `initial begin ... end` / `final begin ... end` |
 | `inst m u (...)` | `m u (...);` |
 | `for i in A..B` (module body) | `generate for (genvar i = A; i < B; i = i + 1) begin : gen_i` |
+| `for i in A..B step 2` (module body, F41) | `generate for (genvar i = A; i < B; i = i + 2) begin : gen_i` |
 | `use pkg::*` | `import pkg::*;` |
 | `interface i { }` | `interface i; ... endinterface` (`.svh`) |
 | `class c ...` | `class c ... endclass` (`.sv`) |

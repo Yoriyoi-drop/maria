@@ -304,6 +304,52 @@ module m {
     }
 
     #[test]
+    fn for_step_generate_and_behavioral() {
+        // `for i in 0..N step 2` — increment `i = i + 2` di generate &
+        // behavioral; tanpa step tetap `i = i + 1`.
+        let src = r#"
+module m {
+    in clk : bit
+    out acc : logic[7:0]
+    sig a : logic[7:0]
+    // generate dengan step
+    for i in 0..8 step 2 {
+        sig a_int : logic[7:0]
+        comb { a = 1 }
+    }
+    // behavioral dengan step (hanya genap)
+    comb {
+        for j in 0..8 step 2 {
+            a[j] = 1
+        }
+    }
+    // behavioral tanpa step
+    comb {
+        for k in 0..4 {
+            a[k] = 0
+        }
+    }
+}
+"#;
+        let r = transpile(src, "m").expect("transpile for step");
+        assert!(
+            r.sv.contains("for (genvar i = 0; i < 8; i = i + 2) begin : gen_i"),
+            "generate step: {}",
+            r.sv
+        );
+        assert!(
+            r.sv.contains("for (int j = 0; j < 8; j = j + 2) begin"),
+            "behavioral step: {}",
+            r.sv
+        );
+        assert!(
+            r.sv.contains("for (int k = 0; k < 4; k = k + 1) begin"),
+            "tanpa step default +1: {}",
+            r.sv
+        );
+    }
+
+    #[test]
     fn transpile_many_cross_file() {
         // F9: `types.mv` + `counter.mv` di-transpile bersama — package dari
         // file pertama terlihat oleh file kedua (konteks gabungan).
