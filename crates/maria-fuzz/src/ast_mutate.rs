@@ -53,8 +53,8 @@ pub const OP_GROUPS: &[&[&str]] = &[
 pub const LITERALS: &[&str] = &["'0", "'1", "'x", "'z", "1'b0", "1'b1", "2'd0", "2'd1", "2'd2"];
 
 /// Terapkan satu mutasi acak pada source. Operator mutasi dipilih random.
-/// Jumlah operator mutasi (id 0..=12).
-pub const NUM_OPS: usize = 13;
+/// Jumlah operator mutasi (id 0..=22): 13 klasik + 10 semantic.
+pub const NUM_OPS: usize = 23;
 
 /// Statistik & bobot adaptif per operator mutasi (audit GAP-3): op yang
 /// sering memicu novelty (fitur eksekusi baru) naik bobotnya; yang mandek
@@ -156,6 +156,20 @@ pub fn mutate(
         11 => insert_assert_oracle(rng, source),
         // Interface-oracle (stress elaborator interface/hierarki/modport).
         12 => insert_interface(rng, source),
+        // ── Semantic mutation engine (bukan template): transformasi SEMANTIK
+        //    ke seed apa pun — variasi dari mutation, bukan string tetap. ──
+        13 => sem_toggle_blocking_nba(rng, source),
+        14 => sem_toggle_signedness(rng, source),
+        15 => sem_multi_writer(rng, source),
+        16 => sem_insert_delay0(rng, source),
+        17 => sem_toggle_lifetime(rng, source),
+        18 => sem_type_swap_logic_wire(rng, source),
+        // ── Ekspansi semantic (runtime/simulator stress): over-shift, X/Z,
+        //    loop bound, part-select diperketat — variasi dari SEED apa pun. ──
+        19 => sem_shift_extreme(rng, source),
+        20 => sem_xz_fill(rng, source),
+        21 => sem_loop_bound_tweak(rng, source),
+        22 => sem_partselect_tighten(rng, source),
         _ => source.to_string(),
     };
     (op, out)
@@ -795,6 +809,332 @@ pub fn insert_interface(rng: &mut StdRng, source: &str) -> String {
 /// Deteksi interface-oracle (Paper #18 re-seed): ada `interface fz_bus_`.
 pub fn has_interface_oracle(source: &str) -> bool {
     source.contains("interface fz_bus_") && source.contains(".ifc(")
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Semantic mutation engine — variasi SEMANTIK dari seed apa pun
+// (bukan template baris tetap). Setiap op = transformasi satu aspek
+// semantik IEEE 1800: scheduler (blocking/NBA, #0), tipe (signed, logic↔wire),
+// lifetime, konkurrensi (multi-writer race).
+// ──────────────────────────────────────────────────────────────────────
+
+/// Toggle blocking ↔ nonblocking pada satu assignment (`=` ↔ `<=`) —
+/// mengubah region scheduling (IEEE 1800 §4.9). Mencari `kata = expr;` di
+/// dalam blok prosedural dan membalik operator assignment pertamanya.
+pub fn sem_toggle_blocking_nba(rng: &mut StdRng, source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut cands: Vec<usize> = Vec::new(); // idx baris dgn assignment op
+    let mut in_proc = false;
+    for (i, l) in lines.iter().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with("always") || t.starts_with("initial") {
+            in_proc = true;
+        }
+        if in_proc {
+            if t.starts_with("end") && !t.starts_with("endcase") {
+                in_proc = false;
+            }
+            if find_assign_op(l).is_some() {
+                cands.push(i);
+            }
+        }
+    }
+    let Some(&idx) = cands.choose(rng) else {
+        return source.to_string();
+    };
+    let (pos, is_nba) = find_assign_op(lines[idx]).unwrap();
+    let (from, to) = if is_nba { ("<=", "=") } else { ("=", "<=") };
+    let mut s = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if i == idx {
+            let mut ll = l.to_string();
+            ll.replace_range(pos..pos + from.len(), to);
+            s.push_str(&ll);
+            s.push('\n');
+        } else {
+            s.push_str(l);
+            s.push('\n');
+        }
+    }
+    s
+}
+
+/// Temukan operator assignment `=` / `<=` (bukan `==`, bukan `>=`/`<=` komparasi,
+/// bukan `+=`). Return (pos, is_nba).
+fn find_assign_op(line: &str) -> Option<(usize, bool)> {
+    let b = line.as_bytes();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'<' && b[i + 1] == b'=' {
+            // `<=` — pastikan bukan operator lain setelahnya.
+            let prev = if i > 0 { b[i - 1] } else { 0 };
+            if prev != b' ' && prev != b'\t' && prev != b')' {
+                i += 1;
+                continue;
+            }
+            return Some((i, true));
+        }
+        if b[i] == b'=' && i + 1 < b.len() && b[i + 1] != b'=' {
+            // `=` — cegah `==`, `>=`, `+=`.
+            let prev = if i > 0 { b[i - 1] } else { 0 };
+            if prev == b'=' || prev == b'<' || prev == b'>' || prev == b'!' || prev == b'+' {
+                i += 1;
+                continue;
+            }
+            return Some((i, false));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Toggle signedness — tambah/hapus `signed` pada satu deklarasi vector.
+pub fn sem_toggle_signedness(rng: &mut StdRng, source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let cands: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            (l.contains("logic [") || l.contains("reg ["))
+                && (l.contains(';') || l.contains(','))
+                && !l.contains("signed")
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let Some(&idx) = cands.choose(rng) else {
+        return source.to_string();
+    };
+    // Sisipkan `signed` setelah `logic `.
+    let line = lines[idx];
+    let insert_at = line.find("logic ").map(|p| p + "logic ".len()).unwrap_or(0);
+    let mut s = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if i == idx {
+            let mut ll = l.to_string();
+            if ll.contains("signed") {
+                ll = ll.replace(" signed ", " ");
+            } else {
+                ll.insert_str(insert_at, "signed ");
+            }
+            s.push_str(&ll);
+            s.push('\n');
+        } else {
+            s.push_str(l);
+            s.push('\n');
+        }
+    }
+    s
+}
+
+/// Multi-writer race: duplikasi satu baris NBA di `always_ff` → dua proses/
+/// dua lvalue menulis sinyal sama di delta yang sama (P0 scheduler).
+pub fn sem_multi_writer(rng: &mut StdRng, source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let cands: Vec<(usize, &str)> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            let t = l.trim_start();
+            t.contains("<=") && !t.starts_with("//") && !t.starts_with("if") && !t.starts_with("else")
+        })
+        .map(|(i, l)| (i, *l))
+        .collect();
+    let Some(&(idx, line)) = cands.choose(rng) else {
+        return source.to_string();
+    };
+    // Salin baris NBA yang sama (lvalue sama) → race di delta.
+    let mut s = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        s.push_str(l);
+        s.push('\n');
+        if i == idx {
+            s.push_str(l);
+            s.push('\n');
+        }
+    }
+    s
+}
+
+/// Sisipkan ` #0;` sebelum satu assignment dalam blok prosedural — ubah
+/// region scheduling (zero-time re-scheduling, IEEE 1800 §4.10).
+pub fn sem_insert_delay0(rng: &mut StdRng, source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let cands: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            let t = l.trim_start();
+            (t.contains("=") || t.contains("<="))
+                && !t.starts_with("//")
+                && !t.starts_with("if")
+                && !t.starts_with("else")
+                && !t.starts_with("end")
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let Some(&idx) = cands.choose(rng) else {
+        return source.to_string();
+    };
+    let mut s = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if i == idx {
+            s.push_str("    #0; // fuzz semantic: zero-time reschedule\n");
+        }
+        s.push_str(l);
+        s.push('\n');
+    }
+    s
+}
+
+/// Toggle lifetime: `function`/`task` → `function automatic`/`task automatic`
+/// (atau hapus automatic bila sudah ada).
+pub fn sem_toggle_lifetime(rng: &mut StdRng, source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let cands: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            let t = l.trim_start();
+            t.starts_with("function") || t.starts_with("task")
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let Some(&idx) = cands.choose(rng) else {
+        return source.to_string();
+    };
+    let mut s = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if i == idx {
+            let head = if l.trim_start().contains("automatic") {
+                l.replace(" automatic ", " ")
+            } else {
+                l.replacen("function", "function automatic", 1)
+                    .replacen("task", "task automatic", 1)
+            };
+            s.push_str(&head);
+            s.push('\n');
+        } else {
+            s.push_str(l);
+            s.push('\n');
+        }
+    }
+    s
+}
+
+/// Type-swap: `logic` ↔ `wire` pada satu deklarasi (net vs variable — mengubah
+/// driver/semantik penyelesaian).
+pub fn sem_type_swap_logic_wire(rng: &mut StdRng, source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let cands: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.contains("logic ") && l.contains(";"))
+        .map(|(i, _)| i)
+        .collect();
+    let Some(&idx) = cands.choose(rng) else {
+        return source.to_string();
+    };
+    let mut s = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if i == idx {
+            s.push_str(&l.replace("logic ", "wire "));
+            s.push('\n');
+        } else {
+            s.push_str(l);
+            s.push('\n');
+        }
+    }
+    s
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Ekspansi semantic mutation — target runtime/simulator (bukan template;
+// tiap op = transformasi satu aspek semantik pada seed apa pun).
+// ──────────────────────────────────────────────────────────────────────
+
+/// Over-shift ekstrem: ganti count shift `<<`/`>>` dengan nilai jauh di luar
+/// lebar (64) — stress evaluasi over-shift IEEE 1800 §11.4.10.
+pub fn sem_shift_extreme(rng: &mut StdRng, source: &str) -> String {
+    let bytes = source.as_bytes();
+    let cands: Vec<(usize, usize, u64)> = int_literals(source)
+        .into_iter()
+        .filter(|(s, _, _)| {
+            let back = s.saturating_sub(8);
+            let ctx = std::str::from_utf8(&bytes[back..*s]).unwrap_or_default();
+            ctx.contains("<<") || ctx.contains(">>")
+        })
+        .collect();
+    let Some((s, e, _)) = cands.choose(rng).copied() else {
+        return source.to_string();
+    };
+    let mut out = source.to_string();
+    out.replace_range(s..e, "64");
+    out
+}
+
+/// Injeksi X/Z: ganti satu literal isi/`fill` (`'0`/`'1`/`1'b0`/...) dengan
+/// `'x`/`'z` — propagasi 4-state menekan evaluasi nilai unknown & runtime.
+pub fn sem_xz_fill(rng: &mut StdRng, source: &str) -> String {
+    let candidates: Vec<&str> = ["'0", "'1", "1'b0", "1'b1", "2'd0"]
+        .iter()
+        .copied()
+        .filter(|l| source.contains(l))
+        .collect();
+    let Some(from) = candidates.choose(rng).copied() else {
+        return source.to_string();
+    };
+    let to = *["'x", "'z"].choose(rng).unwrap();
+    let mut out = source.to_string();
+    if let Some(pos) = out.find(from) {
+        out.replace_range(pos..pos + from.len(), to);
+    }
+    out
+}
+
+/// Tweak bound loop: ganti literal upper-bound `for (`/`while (` dengan nilai
+/// kecil (0/1) atau besar (100) — stress loop unroll & batas iterasi engine.
+pub fn sem_loop_bound_tweak(rng: &mut StdRng, source: &str) -> String {
+    let bytes = source.as_bytes();
+    let cands: Vec<(usize, usize, u64)> = int_literals(source)
+        .into_iter()
+        .filter(|(s, _, _)| {
+            let back = s.saturating_sub(24);
+            let ctx = std::str::from_utf8(&bytes[back..*s]).unwrap_or_default();
+            ctx.contains("for (") || ctx.contains("while (")
+        })
+        .collect();
+    let Some((s, e, _)) = cands.choose(rng).copied() else {
+        return source.to_string();
+    };
+    let new_v = *[0u64, 1, 100].choose(rng).unwrap();
+    let mut out = source.to_string();
+    out.replace_range(s..e, &new_v.to_string());
+    out
+}
+
+/// Perketat part-select: ubah satu literal di dalam seleksi `[N:M]`/`[+:W]`/
+/// `[-:W]` (perkecil/geser) — stress evaluasi per-bit §11.5.1 + OOB.
+pub fn sem_partselect_tighten(rng: &mut StdRng, source: &str) -> String {
+    let bytes = source.as_bytes();
+    let cands: Vec<(usize, usize, u64)> = int_literals(source)
+        .into_iter()
+        .filter(|(s, e, _)| {
+            let before = std::str::from_utf8(&bytes[s.saturating_sub(12)..*s]).unwrap_or_default();
+            let after =
+                std::str::from_utf8(&bytes[*e..(*e + 12).min(bytes.len())]).unwrap_or_default();
+            before.contains('[')
+                && (after.starts_with(':')
+                    || after.contains("+:")
+                    || after.contains("-:"))
+        })
+        .collect();
+    let Some((s, e, n)) = cands.choose(rng).copied() else {
+        return source.to_string();
+    };
+    let new_v = if n > 1 { n - 1 } else { n + 8 };
+    let mut out = source.to_string();
+    out.replace_range(s..e, &new_v.to_string());
+    out
 }
 
 #[cfg(test)]

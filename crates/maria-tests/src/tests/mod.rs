@@ -13637,6 +13637,169 @@ fn test_parse_err_module_keyword_begin() {
     assert!(compile_str("module begin; endmodule").is_err());
 }
 
+// ===== IEEE 1800 regression (dari corpus-gap fuzzer, kmac_app_if.sv) =====
+
+/// Header import interface (IEEE 1800 §23.2.1): `import pkg::t;` di header
+/// interface → nama typedef SCOPE port — `inout wire t x` (net-type +
+/// user-type). Sebelumnya `t` salah-parse jadi nama port → E1002
+/// "expected RParen, found 'req'" (app_req_t dari kmac_pkg).
+#[test]
+fn test_iface_header_import_typedef_port() {
+    let src = r#"
+package p;
+  typedef logic [7:0] t;
+endpackage
+interface i import p::t; (
+  inout wire t x,
+  output t y
+);
+endinterface
+module top(output logic [7:0] z);
+  i u_i ();
+  assign z = u_i.y;
+endmodule
+"#;
+    let d = compile_str(src).expect("interface header import + typedef port harus compile");
+    assert!(d.modules.len() >= 1, "module top harus ada");
+}
+
+/// SVA label + property TANPA ';' penutup (aksi `else `MACRO` di-skip
+/// preprocessor → menganggur) — skip assertion TIDAK boleh menelan item
+/// berikut (label assert kedua + task). Sebelumnya parser resume di `fork :`
+/// → "skipping unknown construct: 'isolation_fork'" (kmac_app_if.sv).
+#[test]
+fn test_sva_assert_without_semi_does_not_swallow_next_items() {
+    let src = r#"
+interface i;
+  logic clk_i = 0;
+  logic req_valid = 0;
+  clocking mon_cb @(posedge clk_i);
+  endclocking
+  StrbAlignLSB_A:
+    assert property (req_valid |-> ~|(req_valid & req_valid))
+  NoReqBeforeLastResponse_A:
+    assert property (req_valid |-> req_valid)
+  task automatic wait_cycles(int unsigned num_cycles);
+    fork : isolation_fork begin
+      repeat (num_cycles) @mon_cb;
+    end join
+  endtask
+endinterface
+module top;
+endmodule
+"#;
+    // compile_str Ok = parse lengkap (assert + task fork) tanpa error.
+    let _d = compile_str(src).expect("SVA tanpa ';' + item berikut harus parse");
+}
+
+/// Port interface+modport `AXI_BUS.Slave in` — comma guard `Ident . Ident`
+/// = port BARU (cva6 axi_cut.sv). Sebelumnya E1002 "found Dot".
+#[test]
+fn test_iface_modport_port_list() {
+    let src = r#"
+module axi_cut #(
+  parameter int unsigned ID_WIDTH = 0,
+  parameter type AXI_BUS = logic
+) (
+  input logic       clk_i,
+  AXI_BUS.Slave     in,
+  AXI_BUS.Master    out
+);
+endmodule
+"#;
+    let _d = compile_str(src).expect("port interface.modport harus parse");
+}
+
+/// `(* async *) .p(...)` — atribut sebelum koneksi instance (IEEE 1800
+/// §22.11, cdc_fifo_gray.sv PULP). Sebelumnya E1002 "found Star".
+#[test]
+fn test_attr_before_instance_conn() {
+    let src = r#"
+module cdc (input logic a, output logic b);
+  assign b = a;
+endmodule
+module top;
+  logic a, b;
+  cdc u_cdc (
+    (* async *) .a(a),
+    (* keep *)  .b(b)
+  );
+endmodule
+"#;
+    let _d = compile_str(src).expect("atribut sebelum koneksi instance harus parse");
+}
+
+/// `.T ( logic [$bits(x)-1:0] )` — type-param arg dgn packed range
+/// (axi_cdc_dst.sv cva6). Range di-parse-dan-dibuang (DataType tanpa variant).
+#[test]
+fn test_type_param_range_arg() {
+    let src = r#"
+module cdc #(parameter type T = logic) ();
+endmodule
+module top;
+  logic [7:0] w;
+  cdc #(.T ( logic [$bits(w)-1:0] )) u ();
+endmodule
+"#;
+    let _d = compile_str(src).expect("type-param arg dgn range harus parse");
+}
+
+/// `define M(a, b = $sformatf("%m")) $fatal(1, "...", b, a);` — penutup
+/// param-list STRING/paren aware; invokasi dgn arg berisi `)` dalam string
+/// (`dv_fatal("...ready()")`). Sebelumnya body bocor `)` / arg terpotong →
+/// "expected expression, found RParen" (sw_logger_if.sv).
+#[test]
+fn test_macro_define_and_invoke_paren_string() {
+    let src = r#"
+`define dv_fatal(MSG_, ID_ = $sformatf("%m")) $fatal(1, "[%0s] %0s", ID_, MSG_);
+
+module top;
+  logic _ready = 1;
+  initial begin
+    _ready = _ready;
+    // Simulasi TIDAK boleh sampai $fatal — hanya parse yang diverifikasi.
+  end
+endmodule
+"#;
+    let _d = compile_str(src).expect("define dgn default paren + string harus parse");
+}
+
+/// `constraint C::name { }` eksternal di dalam PACKAGE (include file DV,
+/// adc_ctrl_env_pkg.sv). Body class sudah diparse; skip agar tak desync →
+/// "expected wire/reg/..." (package.rs).
+#[test]
+fn test_package_level_extern_constraint() {
+    let src = r#"
+package env_pkg;
+  import uvm_pkg::*;
+  class cfg_c;
+    rand int a;
+    constraint min_le_max_c;
+  endclass
+  constraint cfg_c::min_le_max_c { a > 1; }
+endpackage
+module top;
+endmodule
+"#;
+    let _d = compile_str(src).expect("constraint eksternal di package harus parse");
+}
+
+/// `localparam type T = struct packed { ... }` — type-param localparam dgn
+/// struct (frontend.sv cva6). Sebelumnya "expected type" di `struct`.
+#[test]
+fn test_localparam_type_struct() {
+    let src = r#"
+module top;
+  localparam type bht_update_t = struct packed {
+    logic valid;
+    logic [7:0] target;
+  };
+  bht_update_t upd;
+endmodule
+"#;
+    let _d = compile_str(src).expect("localparam type struct harus parse");
+}
+
 // ===== Category 3: Port declaration errors =====
 
 #[test]

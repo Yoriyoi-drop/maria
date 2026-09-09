@@ -1403,6 +1403,24 @@ impl Parser {
             return Err(self.err("expected interface type after virtual"));
         }
         let dt = match self.peek() {
+            Token::Struct => {
+                self.advance();
+                if matches!(self.peek(), Token::Ident(s) if s == "packed") {
+                    self.advance();
+                }
+                DataType::StructType {
+                    members: self.parse_struct_body()?,
+                }
+            }
+            Token::Union => {
+                self.advance();
+                if matches!(self.peek(), Token::Ident(s) if s == "packed") {
+                    self.advance();
+                }
+                DataType::UnionType {
+                    members: self.parse_struct_body()?,
+                }
+            }
             Token::Bit => {
                 self.advance();
                 DataType::Bit
@@ -1469,6 +1487,17 @@ impl Parser {
             }
             _ => return Err(self.err("expected type")),
         };
+        // `.T ( logic [7:0] )` — arg type-param dgn packed range
+        // (axi_cdc_dst.sv cva6: `logic [$bits(aw_chan_t)-1:0]`). DataType
+        // tidak punya variant range — parse & BUANG (sama spt discard
+        // parametrik `#(...)` di atas). Parse-accept; lebar jadian urusan
+        // elaborator (WR0102 bila salah). Stopgap korpus, bukan semantik penuh.
+        if self.peek() == &Token::LBrack {
+            let _ = self.parse_range()?;
+            while self.peek() == &Token::LBrack {
+                let _ = self.parse_range()?;
+            }
+        }
         if self.peek() == &Token::Signed {
             self.advance();
             Ok(DataType::Signed(Box::new(dt)))

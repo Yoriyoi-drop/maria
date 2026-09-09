@@ -898,7 +898,21 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // Also skip expensive auto-incdir scanning for the fast path.
     // Catatan: bila ada sumber .mv (inline F8), jalur legacy dipakai —
     // run_fast membaca file dari disk dan tidak tahu buffer inline.
-    if (cli.fast || cli.filelist.is_some()) && inline_src.is_empty() {
+    // PERF-1 (fix): auto-fast untuk FILE BESAR (>256 KB) — legacy `run` serial
+    // + auto-incdir scan memakan 30–42s utk satu file 21k baris (opentitan
+    // i3c_reg_top.sv) karena scan ribuan file + elaborasi serial; run_fast
+    // (CompileSession paralel + MICD) menyelesaikannya <1s. Mode print
+    // (--tokens/--ast) dan inline .mv tetap legacy.
+    let total_src_bytes: u64 = sources
+        .iter()
+        .filter_map(|s| std::fs::metadata(s).ok())
+        .map(|m| m.len())
+        .sum();
+    if inline_src.is_empty()
+        && !cli.print_tokens
+        && !cli.print_ast
+        && (cli.fast || cli.filelist.is_some() || total_src_bytes > 256 * 1024)
+    {
         return run_fast(cli, None, env);
     }
 
@@ -908,6 +922,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // Auto-detect include paths: consolidated single-pass scan
     // Walk up from each source dir's ancestors, recursively scan for SV files (depth ≤ 4)
     // NOTE: This is expensive so only runs for the legacy pipeline, not the fast path.
+    // GATE: scan hanya bila ADa sumber yang memuat `` `include `` (tanggal 9s
+    // utk header tanpa module — cva6 assign.svh). Tanpa include, scan mubazir.
+    let sources_need_include_scan = sources.iter().any(|src| {
+        std::fs::read_to_string(src).map(|s| s.contains("`include")).unwrap_or(false)
+    });
     let mut seen_dirs = std::collections::HashSet::new();
     let mut src_dirs = std::collections::HashSet::new();
     for src in &sources {
@@ -947,6 +966,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         let mut anc = Some(src_dir.clone());
         while let Some(ref d) = anc {
             if !seen_dirs.insert(d.clone()) {
+                break;
+            }
+            if !sources_need_include_scan {
                 break;
             }
             if let Ok(entries) = std::fs::read_dir(d) {
@@ -1219,10 +1241,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     }
 
     if tokens.is_empty() {
-        return Err(SimError::with_diag(
-            DiagCode::InvalidSyntax,
-            "no tokens found (empty source?)",
-        ));
+        // File header/macro-only (`` `define ``/komentar, tanpa module) —
+        // desain kosong VALID (SV legal). Bukan error: lanjut jalur normal,
+        // elaborator melaporkan "no modules found" sebagai NOTE.
+        eprintln!("[maria] no module declarations in design (header/macro-only file)");
+        return Ok(());
     }
 
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
@@ -1248,28 +1271,33 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             d
         }
         Err(e) => {
-            if !parser.errors.is_empty() {
+            // Emit hanya WARNING di sini; error dicetak SATU kali oleh
+            // top-level handler (hindari duplikasi diagnostic line:col).
+            if parser.errors.iter().any(|d| !d.is_error()) {
                 let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
                 for diag in &parser.errors {
-                    let _ = emitter.emit(diag);
+                    if !diag.is_error() {
+                        let _ = emitter.emit(diag);
+                    }
                 }
             }
             return Err(e);
         }
     };
-    // Emit parser diagnostics (warnings + errors) — only abort for real errors
-    // In compile-only mode, individual construct errors are non-fatal
-    if !parser.errors.is_empty() {
-        let has_real_errors = parser.errors.iter().any(|d| d.is_error());
+    // Emit parser diagnostics (warnings) — errors ditangani top-level sekali.
+    // In compile-only mode, individual construct errors are non-fatal.
+    if parser.errors.iter().any(|d| !d.is_error()) {
         let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
         for diag in &parser.errors {
-            let _ = emitter.emit(diag);
+            if !diag.is_error() {
+                let _ = emitter.emit(diag);
+            }
         }
-        if has_real_errors && !cli.compile_only {
-            return Err(maria_core::error::SimError::from_parse_diagnostic(
-                parser.errors[0].clone(),
-            ));
-        }
+    }
+    if parser.errors.iter().any(|d| d.is_error()) && !cli.compile_only {
+        return Err(maria_core::error::SimError::from_parse_diagnostic(
+            parser.errors[0].clone(),
+        ));
     }
     let ts_for_ir = design_timescale.clone();
     design.timescale = design_timescale;

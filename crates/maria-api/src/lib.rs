@@ -77,7 +77,7 @@ use maria_parser::lexer::Lexer;
 use maria_parser::preprocessor::Preprocessor;
 use maria_parser::Parser;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Compare two ASTs for regression testing. Returns list of structural differences.
 pub fn compare_asts(design_a: &maria_ir::IrDesign, design_b: &maria_ir::IrDesign) -> Vec<String> {
@@ -320,6 +320,199 @@ pub fn compile_files(paths: &[String]) -> Result<maria_ir::IrDesign, SimError> {
     Ok(result)
 }
 
+/// Satu error proyek dengan lokasi sumber asli (file:line:col post-mapping
+/// include). Dipakai project-wide error sweep maria-fuzz — bukan estimasi
+/// offset: `source_snippet` memberikan posisi persis di file asli.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectError {
+    pub file: String,
+    pub line: usize,
+    pub col: usize,
+    pub code: String,
+    pub message: String,
+}
+
+impl ProjectError {
+    /// Lokasi `file:line:col` — format standar semua tool maria.
+    pub fn loc(&self) -> String {
+        format!("{}:{}:{}", self.file, self.line, self.col)
+    }
+}
+
+/// Konversi `Diagnostic` maria → `ProjectError`. Preferensi `source_snippet`
+/// (file/line/col asli dari file-line-map include); fallback spans.
+fn diagnostic_to_project_error(d: &maria_core::diagnostics::Diagnostic) -> ProjectError {
+    let loc = if let Some(ss) = &d.source_snippet {
+        ProjectError {
+            file: ss.file.clone(),
+            line: ss.line,
+            col: ss.col,
+            code: String::new(),
+            message: String::new(),
+        }
+    } else if let Some(span) = d.spans.first() {
+        ProjectError {
+            file: span.file.as_str().to_string(),
+            line: span.start as usize,
+            col: span.end as usize,
+            code: String::new(),
+            message: String::new(),
+        }
+    } else {
+        ProjectError {
+            file: "<design>".to_string(),
+            line: 0,
+            col: 0,
+            code: String::new(),
+            message: String::new(),
+        }
+    };
+    ProjectError {
+        code: d.code.as_str().to_string(),
+        message: d.message.to_string(),
+        ..loc
+    }
+}
+
+/// Compile proyek (banyak file sebagai SATU design) dan kumpulkan SEMUA
+/// error — parse + elaborasi (modus AnalysisRecovery: top tak unik / hierarki
+/// tidak menggagalkan analisis) — dengan lokasi file:line:col asli.
+///
+/// Berbeda dari `compile_str`/`compile_files` yang early-return error PERTAMA:
+/// sweep kepatuhan butuh GAMBARAN UTUH error proyek (fitur LRM belum didukung,
+/// dependensi lintas file, macro, package) — bukan satu titik gagal pertama.
+/// Dipakai `maria-fuzz` project-wide seed sweep (Paper #12 corpus nyata).
+pub fn compile_collect_errors(paths: &[String]) -> Vec<ProjectError> {
+    compile_collect_errors_inc(paths, &[])
+}
+
+/// Varian `compile_collect_errors` dengan incdirs eksternal (search path
+/// `include tambahan). Auto-parent-dirs semua file tetap ditambahkan.
+pub fn compile_collect_errors_inc(paths: &[String], incdirs: &[String]) -> Vec<ProjectError> {
+    // ── Search path include: parent dir tiap file + ancestor (depth ≤4,
+    //    mengikuti auto-incdir scan CLI) + incdirs eksternal. OpenTitan
+    //    memakai include lintas-dir (mis. `prim_mubi_pkg.sv` dari ip lain)
+    //    yang TIDAK tersolve oleh parent-dir file saja → file di-drop →
+    //    error nyata proyek hilang dari sweep. ──
+    let mut search: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for p in paths {
+        let path = Path::new(p);
+        let mut anc = path.parent().map(|d| d.to_path_buf());
+        let mut depth = 0;
+        while let Some(ref d) = anc {
+            if seen.insert(d.clone()) {
+                search.push(d.clone());
+            }
+            if depth >= 4 {
+                break;
+            }
+            anc = d.parent().map(|d| d.to_path_buf());
+            depth += 1;
+        }
+    }
+    for i in incdirs {
+        let d = PathBuf::from(i);
+        if !seen.contains(&d) {
+            search.push(d);
+        }
+    }
+    // Satu preprocessor bersama (defines/include-set global proyek).
+    let mut base_pp = Preprocessor::new();
+    for s in &search {
+        if let Some(s) = s.to_str() {
+            base_pp.add_search_path(s);
+        }
+    }
+    // ── Gabung file + kumpulkan error preprocess (JANGAN drop file) ──
+    let mut combined = String::new();
+    let mut out: Vec<ProjectError> = Vec::new();
+    for path in paths {
+        let mut pp = base_pp.clone();
+        match pp.preprocess_file(path) {
+            Ok(processed) => {
+                combined.push_str(&format!("`line 1 \"{}\"\n", path));
+                combined.push_str(&processed);
+                combined.push('\n');
+            }
+            Err(e) => {
+                // Include tak terresolve / IO error: rekam sebagai gap proyek,
+                // jangan drop diam-diam (sebelumnya: continue → 1679 error
+                // nyata opentitan hilang jadi 16).
+                out.push(ProjectError {
+                    file: path.clone(),
+                    line: 1,
+                    col: 1,
+                    code: "E1001".to_string(),
+                    message: format!("preprocessor: {}", e),
+                });
+            }
+        }
+    }
+    if combined.is_empty() {
+        return out;
+    }
+    let mut pp = Preprocessor::new();
+    let Ok(preprocessed) = pp.preprocess(&combined, None) else {
+        return out;
+    };
+    let mut lexer = Lexer::new(&preprocessed);
+    let mut tokens = Vec::new();
+    loop {
+        let (tok, line, col) = lexer.next_token();
+        if tok == maria_parser::lexer::Token::Eof {
+            break;
+        }
+        tokens.push((tok, line, col));
+    }
+    let file_line_map = lexer.file_line_map.clone();
+    let first_source = if file_line_map.is_empty() {
+        "<string>".to_string()
+    } else {
+        file_line_map[0].2.clone()
+    };
+    let mut parser = Parser::new(tokens, &first_source)
+        .with_source_lines(&preprocessed)
+        .with_file_line_map(file_line_map);
+    let design = match parser.parse_design() {
+        Err(_) => {
+            out.extend(
+                parser
+                    .errors
+                    .iter()
+                    .filter(|d| d.is_error())
+                    .map(diagnostic_to_project_error),
+            );
+            return out;
+        }
+        Ok(design) => design,
+    };
+    // Error parse yang dikumpulkan (bukan fatal) tetap dilaporkan.
+    out.extend(
+        parser
+            .errors
+            .iter()
+            .filter(|d| d.is_error())
+            .map(diagnostic_to_project_error),
+    );
+    // Elaborasi modus recovery: error semantik/hierarki/top dikumpulkan,
+    // top tidak unik TIDAK menggagalkan analisis (sama seperti CLI run).
+    let mut elaborator = maria_elaboration::Elaborator::with_source(
+        design,
+        preprocessed.lines().map(|s| s.to_string()).collect(),
+        first_source,
+    );
+    let _ = elaborator.elaborate(None, ElaborateMode::AnalysisRecovery);
+    out.extend(
+        elaborator
+            .flush_diagnostics()
+            .iter()
+            .filter(|d| d.is_error())
+            .map(diagnostic_to_project_error),
+    );
+    out
+}
+
 /// Compile a SystemVerilog source file and run simulation
 pub fn simulate_file(path: &str, max_time: u64) -> Result<(), SimError> {
     let source = fs::read_to_string(path).map_err(|e| {
@@ -360,7 +553,7 @@ pub fn compile_diag_counts(source: &str) -> (usize, usize) {
     let first_source = if file_line_map.is_empty() {
         "<string>".to_string()
     } else {
-        file_line_map[0].1.clone()
+        file_line_map[0].2.clone()
     };
     let mut parser = Parser::new(tokens, &first_source)
         .with_source_lines(&preprocessed)
@@ -412,7 +605,7 @@ fn compile_str_inner(source: &str, quiet: bool) -> Result<maria_ir::IrDesign, Si
     let first_source = if file_line_map.is_empty() {
         "<string>".to_string()
     } else {
-        file_line_map[0].1.clone()
+        file_line_map[0].2.clone()
     };
     let mut parser = Parser::new(tokens, &first_source)
         .with_source_lines(&preprocessed)
@@ -608,15 +801,35 @@ fn simulate_signals_with_coverage_inner(
     max_time: u64,
     quiet: bool,
 ) -> Result<(Vec<(String, maria_ir::LogicVec)>, Vec<String>), SimError> {
-    let design = if quiet {
-        compile_str_quiet(source)?
-    } else {
-        compile_str(source)?
-    };
+    simulate_signals_cfg_inner(source, max_time, quiet, &EngineFlags::default())
+}
+
+/// Eksposur jalur eksekusi internal engine (deep differential fuzzing).
+/// Flag memilih jalur evaluasi: packed-eval, DAG-parallel, timing wheel,
+/// MIR JIT — masing-masing harus menghasilkan hasil IDENTIK utk input sama.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EngineFlags {
+    pub use_packed_eval: bool,
+    pub use_dag_parallel: bool,
+    pub use_timing_wheel: bool,
+    pub use_mir_jit: bool,
+}
+
+fn simulate_signals_cfg_inner(
+    source: &str,
+    max_time: u64,
+    quiet: bool,
+    flags: &EngineFlags,
+) -> Result<(Vec<(String, maria_ir::LogicVec)>, Vec<String>), SimError> {
+    let design = compile_str_quiet(source)?;
     let mut engine = simulator::SimulationEngine::new(design, max_time);
     if quiet {
         engine.set_coverage_report_silent();
     }
+    engine.set_use_packed_eval(flags.use_packed_eval);
+    engine.set_use_dag_parallel(flags.use_dag_parallel);
+    engine.set_use_timing_wheel(flags.use_timing_wheel);
+    engine.set_use_mir_jit(flags.use_mir_jit);
     engine.run()?;
     let sigs: Vec<(String, maria_ir::LogicVec)> = engine
         .design
@@ -643,6 +856,16 @@ fn simulate_signals_with_coverage_inner(
         .collect();
     let cov = engine.coverage_keys();
     Ok((sigs, cov))
+}
+
+/// Jalur fuzzer: simulasi dgn flag jalur internal (packed/DAG/timing-wheel/
+/// MIR JIT). Untuk differential across execution paths — result harus sama.
+pub fn simulate_signals_with_flags_quiet(
+    source: &str,
+    max_time: u64,
+    flags: &EngineFlags,
+) -> Result<Vec<(String, maria_ir::LogicVec)>, SimError> {
+    Ok(simulate_signals_cfg_inner(source, max_time, true, flags)?.0)
 }
 
 #[cfg(test)]

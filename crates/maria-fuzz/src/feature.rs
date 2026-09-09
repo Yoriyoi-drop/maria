@@ -35,6 +35,26 @@ impl FeatureMap {
             .filter(|t| source.contains(*t))
             .map(|t| t.to_string())
             .collect();
+        // Ternary `? :` — TRACKED "? :" text-match gagal utk `a ? b : c`
+        // (spasi beda). Deteksi: '?' yang BUKAN wildcard (bukan ==?/!=?/?))
+        // dan diikuti ':' di sekitarnya.
+        let bytes = source.as_bytes();
+        let has_ternary = (0..bytes.len()).any(|i| {
+            bytes[i] == b'?'
+                && i > 0
+                && bytes[i - 1] != b'='
+                && i + 1 < bytes.len()
+                && bytes[i + 1] != b'?'
+                && bytes[i + 1] != b')'
+                && source[i + 1..]
+                    .split('\n')
+                    .next()
+                    .map(|rest| rest.contains(':'))
+                    .unwrap_or(false)
+        });
+        if has_ternary && !feats.iter().any(|f| f == "? :") {
+            feats.push("? :".to_string());
+        }
         // Lebar sinyal `[<n>:<m>]` (#7: lebar = fitur dataflow).
         // Scanner: `[` lalu `hi : lo` di dalam kurung → width = hi-lo+1.
         let chars: Vec<char> = source.chars().collect();

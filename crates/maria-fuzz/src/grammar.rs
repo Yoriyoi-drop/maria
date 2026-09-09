@@ -60,11 +60,14 @@ pub fn random_expr(rng: &mut StdRng) -> String {
 
 /// Ekspansi produksi: serpihan isi blok (`begin ... end`) — bisa digabung
 /// berulang (Grammarinator-style). Rujuk simbol fuzzer `fz_*` agar mandiri.
+/// Palet DIVERSE (bukan template): casez/casex, fork/join, event-control,
+/// repeat/while, concat/replication, ternary, NBA-vs-blocking — variasi
+/// semantik untuk mutasi & splice (sumber: semantic.rs P0 areas).
 pub fn random_body_snippet(rng: &mut StdRng) -> String {
     let kw = *BLOCK_KEYWORDS.choose(rng).unwrap();
     let target = format!("fz_y{}", rng.gen_range(0..4u32));
     let expr = random_expr(rng);
-    match rng.gen_range(0..4u32) {
+    match rng.gen_range(0..12u32) {
         0 => format!("{} begin\n  {} = {};\nend", kw, target, expr),
         1 => format!(
             "{} begin\n  if (fz_sel{}) {} = {};\n  else {} = '0;\nend",
@@ -83,7 +86,8 @@ pub fn random_body_snippet(rng: &mut StdRng) -> String {
             target,
             target
         ),
-        _ => format!("{} begin\n  for (fz_i{} = 0; fz_i{} < 4; fz_i{} = fz_i{} + 1) begin\n    {} = {};\n  end\nend",
+        3 => format!(
+            "{} begin\n  for (fz_i{} = 0; fz_i{} < 4; fz_i{} = fz_i{} + 1) begin\n    {} = {};\n  end\nend",
             kw,
             rng.gen_range(0..4u32),
             rng.gen_range(0..4u32),
@@ -92,15 +96,89 @@ pub fn random_body_snippet(rng: &mut StdRng) -> String {
             target,
             expr,
         ),
+        // ── Perluasan: konstruk menekan area P0 (bukan template, variasi
+        //    random per panggilan; serpihan di-splice ke seed apa pun). ──
+        4 => format!(
+            "{} begin\n  casez (fz_sel{})\n    2'b0?: {} = {};\n    2'b1?: {} = ~{};\n    default: {} = 'x;\n  endcase\nend",
+            kw,
+            rng.gen_range(0..2u32),
+            target,
+            expr,
+            target,
+            expr,
+            target
+        ),
+        5 => format!(
+            "{} begin\n  fork\n    #{} {} = {};\n    #{} {} = {};\n  join_none\nend",
+            kw,
+            rng.gen_range(1..=5),
+            target,
+            expr,
+            rng.gen_range(1..=5),
+            target,
+            expr
+        ),
+        6 => format!(
+            "{} begin\n  @(posedge fz_ck{});\n  #{} {} = {};\nend",
+            kw,
+            rng.gen_range(0..2u32),
+            rng.gen_range(0..=3),
+            target,
+            expr
+        ),
+        7 => format!(
+            "{} begin\n  repeat ({}) begin\n    {} <= {};\n  end\nend",
+            kw,
+            rng.gen_range(1..=4),
+            target,
+            expr
+        ),
+        8 => format!(
+            "{} begin\n  {}= {{{}, {}}};\nend",
+            kw,
+            target,
+            expr,
+            expr
+        ),
+        9 => format!(
+            "{} begin\n  {} = {} ? {} : '0;\n  #0;\n  {} = {};\nend",
+            kw,
+            target,
+            expr,
+            expr,
+            target,
+            expr
+        ),
+        10 => format!(
+            "{} begin\n  while (fz_i{} < 3) begin\n    {} = {};\n    fz_i{} = fz_i{} + 1;\n  end\nend",
+            kw,
+            rng.gen_range(0..4u32),
+            target,
+            expr,
+            rng.gen_range(0..4u32),
+            rng.gen_range(0..4u32)
+        ),
+        _ => format!(
+            "{} begin\n  {} <= {};\n  {} = {};\nend",
+            kw,
+            target,
+            expr,
+            target,
+            expr
+        ),
     }
 }
 
 /// Serpihan maksimal satu baris (untuk operasi splice ringan).
 pub fn random_line_snippet(rng: &mut StdRng) -> String {
-    match rng.gen_range(0..3u32) {
+    match rng.gen_range(0..6u32) {
         0 => random_decl(rng),
         1 => format!("assign fz_y{} = {};", rng.gen_range(0..4u32), random_expr(rng)),
-        _ => format!("if (fz_sel{}) begin\n  {}", rng.gen_range(0..2u32), random_body_snippet(rng)),
+        2 => format!("if (fz_sel{}) begin\n  {}", rng.gen_range(0..2u32), random_body_snippet(rng)),
+        // ── Perluasan splice ringan: X/Z, signed cast, NBA, part-select. ──
+        3 => format!("assign fz_y{} = {}'x;", rng.gen_range(0..4u32), [1u32, 2, 4, 8].choose(rng).unwrap()),
+        4 => format!("assign fz_y{} = signed'({});", rng.gen_range(0..4u32), random_expr(rng)),
+        _ => format!("assign fz_y{} = fz_a{}[{} +: {}];", rng.gen_range(0..4u32), rng.gen_range(0..4u32), rng.gen_range(0..8u32), rng.gen_range(1..=4u32)),
     }
 }
 

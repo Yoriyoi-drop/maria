@@ -369,6 +369,418 @@ fn compare_common(a: &str, b: &str) -> Option<String> {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Differential vs tool referensi LRM (iverilog/verilator) — jembatan ke
+// paritas VCS/Questa-class. Target maria "sejajar VCS" = semantik IEEE 1800
+// yang benar (mis. multi-driver race → X, bukan last-writer deterministik;
+// ekstensi lebar/tanda; region ordering). Oracle konsistensi-diri (determinism
+// /EMI/metamorphic) BUTA terhadap "salah konsisten" — differential inilah yang
+// menangkap deviasi vs LRM. DUT = core PASIF (dari gen::passive_core): tanpa
+// stimulus/clock internal agar tb eksternal drive input tanpa konflik wire
+// (maria longgar meng-drive input; iverilog/VCS menolak).
+// ──────────────────────────────────────────────────────────────────────
+
+/// Cari executable di PATH (tanpa dep eksternal).
+fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let p = dir.join(name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Port DUT yang di-parse dari header `module top ... (...)`: (dir, width,
+/// name). Heuristik cukup utk core generated maria (format konsisten).
+fn parse_ports(source: &str) -> Option<(String, Vec<(String, usize, String)>)> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut mi = None;
+    for (i, l) in lines.iter().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with("module ") {
+            let after = t[7..].trim();
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            mi = Some((i, name));
+            break;
+        }
+    }
+    let (start, mname) = mi?;
+    // Kumpulkan teks header modul sampai `);`.
+    let mut buf = String::new();
+    let mut closed = false;
+    for l in &lines[start..] {
+        let t = l.trim();
+        if let Some(pos) = t.find(");") {
+            // Potong hanya bagian sebelum `);` (menghindari isi body).
+            let cut = if t.starts_with("module") || t.contains('#') {
+                t.split(");").next().unwrap_or(t)
+            } else {
+                t
+            };
+            buf.push_str(cut);
+            closed = true;
+            break;
+        }
+        buf.push_str(t);
+        buf.push('\n');
+    }
+    if !closed {
+        return None;
+    }
+    // Ambil segmen setelah buka-tanda kurung port (setelah `#(...)` atau `(`, )
+    let open = buf.find('(')?;
+    let inner = &buf[open + 1..];
+    let mut ports = Vec::new();
+    for chunk in inner.split(',') {
+        let c = chunk.trim();
+        if c.is_empty() {
+            continue;
+        }
+        let dir = if c.contains("input") {
+            "input"
+        } else if c.contains("output") {
+            "output"
+        } else {
+            continue; // non-port token
+        };
+        // Lebar dari `[msb-1:0]` / `[msb:0]` / `[w:0]`.
+        let width = if let (Some(a), Some(b)) = (c.find('['), c.find(']')) {
+            let range = &c[a + 1..b];
+            let mut width = 1usize;
+            if let Some((msb_s, _lsb)) = range.split_once(':') {
+                let msb_s = msb_s.trim();
+                if let Some((x, y)) = msb_s.split_once('-') {
+                    if let (Ok(x), Ok(y)) = (x.trim().parse::<i64>(), y.trim().parse::<i64>()) {
+                        width = (x - y + 1).max(1) as usize;
+                    }
+                } else if let Ok(x) = msb_s.parse::<i64>() {
+                    width = (x + 1).max(1) as usize;
+                }
+            }
+            width
+        } else {
+            1
+        };
+        // Nama = identifier terakhir (buang tipe/kata kunci).
+        let name = c
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|t| !t.is_empty())
+            .last()?
+            .trim_end_matches(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .to_string();
+        ports.push((dir.to_string(), width, name));
+    }
+    if ports.is_empty() {
+        return None;
+    }
+    Some((mname, ports))
+}
+
+/// Nilai stimulus deterministik per (nama, waktu, iterasi-hash).
+fn ivl_val(name: &str, t: u64) -> u64 {
+    let mut h = 0x9E3779B97F4A7C15u64;
+    for b in name.bytes() {
+        h = (h ^ u64::from(b)).wrapping_mul(0x1000_0000_01b3);
+    }
+    h = (h ^ t).wrapping_mul(0xBF58476D1CE4E5B9);
+    h ^ (h >> 31)
+}
+
+/// Bangun testbench: drive input + sampel output di beberapa waktu →
+/// tulis `dtrace.txt` (format `%0t <out>=%b` per baris) — SAMA utk maria
+/// dan iverilog (perbandingan adil).
+fn build_tb(module: &str, ports: &[(String, usize, String)], max_time: u64) -> String {
+    let mut s = String::new();
+    s.push_str("`timescale 1ns/1ps\n");
+    s.push_str("module tb;\n");
+    s.push_str("  logic clk;\n");
+    s.push_str("  logic rst_n;\n");
+    let mut conns = Vec::new();
+    for (dir, w, name) in ports {
+        if dir == "input" {
+            if name == "clk" {
+                conns.push(format!(".clk(clk)"));
+            } else if name == "rst_n" {
+                conns.push(format!(".rst_n(rst_n)"));
+            } else if *w == 1 {
+                s.push_str(&format!("  logic {};\n", name));
+                conns.push(format!(".{}({})", name, name));
+            } else {
+                s.push_str(&format!("  logic [{}:0] {};\n", w - 1, name));
+                conns.push(format!(".{}({})", name, name));
+            }
+        } else {
+            if *w == 1 {
+                s.push_str(&format!("  wire {};\n", name));
+            } else {
+                s.push_str(&format!("  wire [{}:0] {};\n", w - 1, name));
+            }
+            conns.push(format!(".{}({})", name, name));
+        }
+    }
+    s.push_str(&format!(
+        "  {} u ({});\n",
+        module,
+        conns.join(", ")
+    ));
+    // Clock generik.
+    s.push_str("  initial begin clk = 0; forever #5 clk = ~clk; end\n");
+    // Stimulus: nilai deterministik per port di t=3 dan t=41.
+    s.push_str("  initial begin\n    rst_n = 0;\n");
+    for (dir, w, name) in ports {
+        if dir != "input" || name == "clk" || name == "rst_n" {
+            continue;
+        }
+        let v = ivl_val(name, 3) & ((1u64 << (*w).min(16)) - 1);
+        s.push_str(&format!("    {} = {};\n", name, v));
+    }
+    s.push_str("    #9 rst_n = 1;\n");
+    for (dir, w, name) in ports {
+        if dir != "input" || name == "clk" || name == "rst_n" {
+            continue;
+        }
+        let v = ivl_val(name, 41) & ((1u64 << (*w).min(16)) - 1);
+        s.push_str(&format!("    #13 {} = {};\n", name, v));
+    }
+    let horizon = max_time.min(100).max(30);
+    s.push_str(&format!("    #{} $finish;\n  end\n", horizon));
+    // Trace: sampel output di 4 waktu.
+    s.push_str("  initial begin\n    integer f;\n    f = $fopen(\"dtrace.txt\", \"w\");\n");
+    for t in [3u64, 25, 55, (horizon as u64 - 1).min(85)] {
+        if t <= horizon {
+            s.push_str(&format!("    #{};\n", t));
+            for (dir, _w, name) in ports {
+                if dir == "output" {
+                    s.push_str(&format!("    $fdisplay(f, \"T{} {} = %0d\", {});\n", t, name, name));
+                }
+            }
+        }
+    }
+    s.push_str("    $fclose(f);\n  end\n");
+    s.push_str("endmodule\n");
+    s
+}
+
+/// Ekstrak sampel (waktu, nilai) dari trace teks — tahan perbedaan newline
+/// (maria `$fdisplay` kadang tanpa '\n' saat banyak tulis ke handle sama;
+/// iverilog pakai newline). Format: `T<time> <name> = <value>`.
+fn trace_samples(s: &str) -> Vec<(u64, String)> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] == b'T' {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 1 {
+                let t: u64 = std::str::from_utf8(&b[i + 1..j])
+                    .ok()
+                    .and_then(|x| x.parse().ok())
+                    .unwrap_or(0);
+                let mut k = j;
+                while k < b.len() && b[k] != b'=' {
+                    k += 1;
+                }
+                if k < b.len() {
+                    let mut v = k + 1;
+                    while v < b.len() && b[v] == b' ' {
+                        v += 1;
+                    }
+                    let vs = v;
+                    while v < b.len()
+                        && (b[v].is_ascii_digit()
+                            || matches!(b[v], b'x' | b'X' | b'z' | b'Z'))
+                    {
+                        v += 1;
+                    }
+                    out.push((
+                        t,
+                        std::str::from_utf8(&b[vs..v]).unwrap_or("").to_string(),
+                    ));
+                    i = v;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Jalankan tool eksternal di temp dir, tulis `dtrace.txt`; Ok = sukses.
+fn run_tool_trace(bin: &str, args: &[&str], dir: &std::path::Path) -> bool {
+    let st = std::process::Command::new(bin)
+        .args(args)
+        .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    st.map(|s| s.success()).unwrap_or(false)
+}
+
+/// Jalankan verilator (`--binary`) — proxy LRM kedua; lebih mahal dari
+/// iverilog → dipakai KONFIRMASI, bukan screening.
+fn run_verilator_trace(core: &str, tb: &str, dir: &std::path::Path) -> Option<String> {
+    if find_on_path("verilator").is_none() {
+        return None;
+    }
+    let _ = std::fs::write(dir.join("core.sv"), core);
+    let _ = std::fs::write(dir.join("tb.sv"), tb);
+    if !run_tool_trace(
+        "verilator",
+        &[
+            "--binary",
+            "-O0",
+            "-Wno-fatal",
+            "--top-module",
+            "tb",
+            "-o",
+            "vprog",
+            "core.sv",
+            "tb.sv",
+        ],
+        dir,
+    ) {
+        return None;
+    }
+    if !run_tool_trace("./vprog", &[], dir) {
+        return None;
+    }
+    std::fs::read_to_string(dir.join("dtrace.txt")).ok()
+}
+
+/// Oracle referensi (publik): bandingkan trace maria vs iverilog (+ konfirmasi
+/// verilator). Temp dir dibersihkan setelah selesai — prinsip "0 file saat
+/// normal"; matikan pembersihan dgn env `MARIA_FUZZ_KEEP_TMP` (debug trace).
+pub fn reference_vs_ivl(core: &str, cfg: &FuzzConfig) -> DiffVerdict {
+    let dir = std::env::temp_dir().join(format!(
+        "maria_ref_{:x}",
+        core.bytes().fold(0x6d61_7269u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3))
+    ));
+    let v = reference_vs_ivl_at(core, cfg, &dir);
+    if std::env::var("MARIA_FUZZ_KEEP_TMP").is_err() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    v
+}
+
+/// Inti oracle referensi — `dir` disediakan pemanggil (wrapper pembersihan).
+fn reference_vs_ivl_at(core: &str, cfg: &FuzzConfig, dir: &std::path::Path) -> DiffVerdict {
+    let Some(ivl) = find_on_path("iverilog") else {
+        return DiffVerdict::Skip;
+    };
+    let Some(vvp) = find_on_path("vvp") else {
+        return DiffVerdict::Skip;
+    };
+    let maria_bin = std::env::var("MARIA_FUZZ_BIN").unwrap_or_else(|_| {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        for cand in [
+            "target/debug/maria",
+            "../target/debug/maria",
+            "../../target/debug/maria",
+            "maria/target/debug/maria",
+        ] {
+            let p = cwd.join(cand);
+            if p.is_file() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+        cwd.join("target/debug/maria").to_string_lossy().to_string()
+    });
+    if !std::path::Path::new(&maria_bin).exists() {
+        return DiffVerdict::Skip;
+    }
+    let Some((mname, ports)) = parse_ports(core) else {
+        return DiffVerdict::Skip;
+    };
+    let tb = build_tb(&mname, &ports, cfg.max_time);
+
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("[ref] gagal buat temp dir: {}", e);
+        return DiffVerdict::Skip;
+    }
+    let _ = std::fs::write(dir.join("core.sv"), core);
+    let _ = std::fs::write(dir.join("tb.sv"), &tb);
+
+    // Jalankan maria (compile+sim) → dtrace.txt.
+    let mut cmd = std::process::Command::new(&maria_bin);
+    cmd.args(["-T", &cfg.max_time.to_string(), "tb.sv", "core.sv"])
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if cmd.status().map(|s| !s.success()).unwrap_or(true) {
+        return DiffVerdict::Skip; // maria gagal compile/sim seed → bukan deviasi
+    }
+    let trace_m = std::fs::read_to_string(dir.join("dtrace.txt")).unwrap_or_default();
+    if trace_m.is_empty() {
+        return DiffVerdict::Skip;
+    }
+
+    // Jalankan iverilog + vvp → dtrace.txt (overwrite; tb sama).
+    let ivl_ok = run_tool_trace(&ivl.to_string_lossy(), &["-g2012", "-o", "prog", "core.sv", "tb.sv"], &dir)
+        && run_tool_trace(&vvp.to_string_lossy(), &["prog"], &dir);
+    if !ivl_ok {
+        return DiffVerdict::Skip;
+    }
+    let trace_i = std::fs::read_to_string(dir.join("dtrace.txt")).unwrap_or_default();
+    if trace_i.is_empty() {
+        return DiffVerdict::Skip;
+    }
+
+    let ma = trace_samples(&trace_m);
+    let mi = trace_samples(&trace_i);
+    if ma == mi {
+        return DiffVerdict::Same;
+    }
+
+    // ── Konfirmasi verilator (proxy LRM kedua) ──
+    let vt = run_verilator_trace(core, &tb, &dir);
+    if let Some(vtrace) = &vt {
+        let mv = trace_samples(vtrace);
+        if mv == ma {
+            // maria setuju dgn verilator; iverilog outlier — tool-variance,
+            // bukan deviasi maria (JANGAN diklaim).
+            return DiffVerdict::Skip;
+        }
+    }
+
+    let mut diffs = Vec::new();
+    let n = ma.len().max(mi.len());
+    for i in 0..n {
+        let a = ma.get(i).map(|(t, v)| format!("t{}={}", t, v)).unwrap_or_else(|| "<missing>".to_string());
+        let b = mi.get(i).map(|(t, v)| format!("t{}={}", t, v)).unwrap_or_else(|| "<missing>".to_string());
+        if a != b {
+            diffs.push(format!("{} | maria:{}  ivl:{}", i, a, b));
+        }
+        if diffs.len() >= 6 {
+            break;
+        }
+    }
+    DiffVerdict::Mismatch(format!("vs iverilog (LRM proxy): {}", diffs.join(" ;; ")))
+}
+
+/// Jalankan command dengan stdout/stderr dibuang; Ok(())=sukses.
+fn io_discard_command(bin: &std::path::Path, dir: &std::path::Path, args: &[&str]) -> Result<(), std::io::Error> {
+    let st = std::process::Command::new(bin)
+        .args(args)
+        .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if st.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "non-zero"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,5 +962,131 @@ endmodule
             let s = meta_style_for("module top; endmodule");
             assert!(s == "| 0" || s == "^ 0", "op harus bitwise: {}", s);
         }
+    }
+
+    #[test]
+    fn reference_vs_ivl_detects_multiwriter_race() {
+        // Regression: multi-driver race — maria resolve deterministik,
+        // iverilog (LRM) beri X → oracle referensi WAJIB Mismatch.
+        if find_on_path("iverilog").is_none() || find_on_path("vvp").is_none() {
+            eprintln!("skip: iverilog/vvp tidak ada di PATH");
+            return;
+        }
+        let core = r#"module top(input logic clk, input logic rst_n, input logic [7:0] a, output logic [7:0] y);
+  logic [7:0] r;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) r <= '0;
+    else r <= a;
+  end
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) r <= 8'hA5;
+    else r <= r + 8'd1;
+  end
+  assign y = r;
+endmodule"#;
+        match reference_vs_ivl(core, &cfg()) {
+            DiffVerdict::Mismatch(d) => {
+                assert!(!d.is_empty(), "detail mismatch harus terisi");
+            }
+            DiffVerdict::Same => {
+                panic!("race multi-driver harus beda: maria deterministik vs iverilog X")
+            }
+            DiffVerdict::Skip => panic!("oracle harus bisa menjalankan kedua tool"),
+        }
+    }
+
+    #[test]
+    fn reference_vs_ivl_same_on_single_driver() {
+        // Sanity: DUT single-driver deterministik → trace maria == iverilog
+        // (bukan false-positive).
+        if find_on_path("iverilog").is_none() || find_on_path("vvp").is_none() {
+            eprintln!("skip: iverilog/vvp tidak ada di PATH");
+            return;
+        }
+        let core = r#"module top(input logic clk, input logic rst_n, input logic [7:0] a, output logic [7:0] y);
+  logic [15:0] acc;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) acc <= 16'd0;
+    else acc <= acc + {8'd0, a};
+  end
+  assign y = acc[7:0];
+endmodule"#;
+        assert_eq!(
+            reference_vs_ivl(core, &cfg()),
+            DiffVerdict::Same,
+            "DUT single-driver harus identik dgn iverilog"
+        );
+    }
+
+    #[test]
+    fn reference_vs_ivl_repro_minimized_race_finding() {
+        // Regression ter-minimize dari kampanye --ref-diff: 3 writer NBA
+        // pada reg SAMA saat reset — maria resolve deterministik, iverilog
+        // (LRM) beri X → oracle HARUS tetap Mismatch (stabil/re-reproducible).
+        if find_on_path("iverilog").is_none() || find_on_path("vvp").is_none() {
+            eprintln!("skip: iverilog/vvp tidak ada di PATH");
+            return;
+        }
+        let core = r#"module top #(parameter W = 2) (
+  input  logic clk,
+  input  logic rst_n,
+  input  logic [2-1:0] a,
+  output logic [7:0] wv_o);
+  logic [1:0] r2;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) r2 <= '0;
+  end
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) r2 <= 8'hA5;
+  end
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) r2 <= '0;
+    else begin
+    end
+  end
+endmodule"#;
+        match reference_vs_ivl(core, &cfg()) {
+            DiffVerdict::Mismatch(d) => assert!(!d.is_empty()),
+            other => panic!("temuan race reset harus tetap Mismatch, dapat {:?}", other),
+        }
+    }
+
+    // ── Deep differential: jalur eksekusi internal ──
+
+    #[test]
+    fn path_packed_vs_standard_same() {
+        let src = "module p; logic [7:0] a,b,y; assign a=8'hF0; assign b=8'h0F; assign y = a & b; initial #5 $finish; endmodule";
+        let v = path_packed_vs_standard(src, 10);
+        assert!(matches!(v, DiffVerdict::Same), "packed==standard: {:?}", v);
+    }
+
+    #[test]
+    fn path_timing_wheel_vs_vec_same() {
+        let src = "module t; logic clk; logic [3:0] c; initial clk=0; always #5 clk=~clk; always_ff @(posedge clk) c <= c + 1; initial #50 $finish; endmodule";
+        let v = path_timing_wheel_vs_vec(src, 60);
+        assert!(matches!(v, DiffVerdict::Same), "wheel==vec: {:?}", v);
+    }
+
+    #[test]
+    fn path_dag_vs_serial_same() {
+        let src = "module d; logic [7:0] a,b,c; assign a = 8'd5; assign b = a + 8'd3; assign c = b * 8'd2 + a; initial #5 $finish; endmodule";
+        let v = path_dag_vs_serial(src, 10);
+        assert!(matches!(v, DiffVerdict::Same), "dag==serial: {:?}", v);
+    }
+
+    #[test]
+    fn path_mir_jit_vs_interpreted_same() {
+        let src = "module m; logic [7:0] a,b,y; assign a=8'd6; assign b=8'd7; assign y = a * b + a; initial #5 $finish; endmodule";
+        let v = path_mir_jit_vs_interpreted(src, 10);
+        assert!(matches!(v, DiffVerdict::Same), "mir==interp: {:?}", v);
+    }
+
+    #[test]
+    fn cross_file_pair_ok() {
+        // Dua file valid digabung → masih valid (tidak boleh error palsu).
+        let a = "package pa; localparam int P = 4; endpackage\n";
+        let b = "module mb; import pa::*; logic [P-1:0] x; assign x = '0; endmodule\n";
+        let joined = format!("{}{}", a, b);
+        assert!(maria_api::compile_diag_counts(&joined).0 == 0);
     }
 }

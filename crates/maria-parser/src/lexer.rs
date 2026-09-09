@@ -428,7 +428,10 @@ pub struct Lexer {
     line: usize,
     col: usize,
     pub current_source: String,
-    pub file_line_map: Vec<(usize, String)>,
+    /// (posisi fisik combined, nilai directive, path) — satuan label file+line
+    /// value-aware (IEEE estilo `JS`): token line = cumulative fisik, tapi
+    /// label file = direktif terdekat & line = nilai direktif + offset fisik.
+    pub file_line_map: Vec<(usize, usize, String)>,
 }
 
 impl Lexer {
@@ -547,9 +550,9 @@ impl Lexer {
         } else {
             after_cmd.trim()
         };
-        if num_str.parse::<usize>().is_err() {
+        let Ok(line_val) = num_str.parse::<usize>() else {
             return false;
-        }
+        };
         // DON'T reset self.line — keep cumulative line numbers
         // so source_lines indexing works correctly
         let path = if let Some(quote_pos) = after_cmd.find('"') {
@@ -564,7 +567,9 @@ impl Lexer {
         };
         if !path.is_empty() {
             self.current_source = path.clone();
-            self.file_line_map.push((self.line, path));
+            // (posisi fisik directive, nilai directive, path) — nilai dipakai
+            // resolve_source_file value-aware; posisi utk source_lines fisik.
+            self.file_line_map.push((self.line, line_val, path));
         }
         self.pos = line_end;
         if self.pos < self.chars.len() && self.chars[self.pos] == '\n' {

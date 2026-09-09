@@ -2,9 +2,16 @@
 //!
 //! Paper #12 (Holler et al., "Fuzzing with Code Fragments"): mutasi efektif
 //! datang dari serpihan kode *nyata*, bukan literal acak. Corpus diambil
-//! dari direktori proyek (test/, opentitan/, cva6/, …) lewat `--corpus-dir`.
+//! dari direktori proyek (test/, opentitan/, cva6/, …) lewat `--corpus-dir`,
+//! atau dari FILELIST (`.f`/`.maria` — mendukung proyek nyata penuh).
 //! Default: auto-detect SV files dari project root jika tidak ada corpus-dir.
 //! `minimize` = reduksi input bug ke bentuk minimal (OSS-Fuzz-style).
+//!
+//! DEEP CHANGE (GAP-11): file >64KB sebelumnya di-buang (fuzzer hanya
+//! melihat snippet permukaan). File besar membawa KEDALAMAN struktural nyata
+//! (generate, interface, package, hierarchy 3+ level) — biang bug deep.
+//! Limit naik ke `MAX_SEED_BYTES`; korpus real diambil dari filelist
+//! (`from_filelist`) sehingga file yang sama di-compile penuh menjadi seed.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -14,6 +21,11 @@ use serde::{Deserialize, Serialize};
 
 use rand::seq::SliceRandom;
 use rand::Rng;
+
+/// Limit ukuran file seed (AUDIT GAP-11: naik dari 64KB → 1MB agar file RTL
+/// nyata dengan modul dalam — generate/interface/param — masuk corpus.
+/// File >1MB sangat jarang dan terlalu mahal utk mutasi; dilewati).
+pub const MAX_SEED_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Corpus {
@@ -84,8 +96,58 @@ impl Corpus {
         self.seeds.is_empty()
     }
 
+    /// Muat SV files dari FILELIST (`.f` / `.maria`): satu path per baris,
+    /// `#` komentar. File TIDAK di-skip berdasarkan ukuran (DEEP GAP-11) —
+    /// file besar membawa kedalaman struktural nyata. Batasi total seed agar
+    /// memori wajar (sampel deterministik stride jika > `cap`).
+    pub fn from_filelist(path: &Path, cap: usize) -> Self {
+        let mut files: Vec<String> = Vec::new();
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines() {
+                let l = line.trim();
+                if l.is_empty() || l.starts_with('#') {
+                    continue;
+                }
+                // Path relatif terhadap direktori filelist.
+                let full = if Path::new(l).is_absolute() {
+                    PathBuf::from(l)
+                } else {
+                    path.parent().unwrap_or(Path::new(".")).join(l)
+                };
+                files.push(full.to_string_lossy().to_string());
+            }
+        }
+        let mut seeds: Vec<String> = Vec::new();
+        for f in &files {
+            if seeds.len() >= cap {
+                break;
+            }
+            if let Ok(content) = std::fs::read_to_string(f) {
+                if content.contains("module ") || content.contains("interface ") {
+                    seeds.push(content);
+                }
+            }
+        }
+        Corpus { seeds }
+    }
+
     /// Serpihan acak (fragment) dari corpus — bahan splice mutasi (#12).
+    ///
+    /// DEEP CHANGE (GAP-11): sebelumnya 1-5 baris (permukaan). Kini dengan
+    /// probabilitas 50% mengambil blok STRUKTURAL UTUH (`module ... endmodule`,
+    /// `interface ... endinterface`, `package ... endpackage`, `always_* begin
+    /// ... end` bersarang) sehingga splice membawa kedalaman generate/interface/
+    /// hierarchy — bukan baris lepas.
     pub fn random_fragment(&self, rng: &mut StdRng) -> Option<String> {
+        if self.seeds.is_empty() {
+            return None;
+        }
+        // 50%: blok struktural utuh.
+        if rng.gen_bool(0.5) {
+            if let Some(block) = self.random_block(rng) {
+                return Some(block);
+            }
+        }
         let seed = self.seeds.choose(rng)?;
         let lines: Vec<&str> = seed.lines().collect();
         if lines.is_empty() {
@@ -95,6 +157,56 @@ impl Corpus {
         let n = rng.gen_range(1..=5.min(lines.len().max(1)));
         let end = (start + n).min(lines.len());
         Some(lines[start..end].join("\n"))
+    }
+
+    /// Ambil blok struktural utuh acak: module/interface/package/procedural
+    /// block paling luar yang bisa ditutup dengan benar (balance begin/end).
+    fn random_block(&self, rng: &mut StdRng) -> Option<String> {
+        let seed = self.seeds.choose(rng)?;
+        let lines: Vec<&str> = seed.lines().collect();
+        if lines.is_empty() {
+            return None;
+        }
+        // Cari semua posisi awal blok top-level.
+        let openers: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| {
+                let t = l.trim_start();
+                t.starts_with("module ")
+                    || t.starts_with("interface ")
+                    || t.starts_with("package ")
+                    || t.starts_with("function ")
+                    || t.starts_with("task ")
+                    || t.starts_with("always ")
+                    || t.starts_with("always_comb")
+                    || t.starts_with("always_ff")
+                    || t.starts_with("always_latch")
+                    || t.starts_with("initial ")
+                    || t.starts_with("final ")
+                    || t.starts_with("fork")
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if openers.is_empty() {
+            return None;
+        }
+        let start = *openers.choose(rng)?;
+        // Balance begin/end untuk menemukan penutup (dengan kedalaman).
+        let mut depth = 0i32;
+        for (i, l) in lines.iter().enumerate().skip(start) {
+            let t = l.trim();
+            if t.starts_with("//") {
+                continue;
+            }
+            let begins = t.matches("begin").count() as i32;
+            let ends = t.matches("end").count() as i32;
+            depth += begins - ends;
+            if depth <= 0 {
+                return Some(lines[start..=i].join("\n"));
+            }
+        }
+        Some(lines[start..].join("\n"))
     }
 
     /// Sampel beberapa seed utuh (untuk seed awal corpus).
@@ -153,7 +265,10 @@ fn collect_sv(dir: &Path, out: &mut Vec<String>) {
         let Ok(meta) = entry.metadata() else {
             continue;
         };
-        if meta.len() > 64 * 1024 {
+        // DEEP GAP-11: batas naik dari 64KB → MAX_SEED_BYTES (1MB). File
+        // RTL nyata (generate/interface/param dalam) sering >64KB; membuang
+        // mereka = fuzzer buta terhadap kedalaman struktural.
+        if meta.len() > MAX_SEED_BYTES {
             continue;
         }
         if let Ok(content) = std::fs::read_to_string(&path) {

@@ -433,3 +433,50 @@ sinyal top nyata. +1 unit test (`internal_artifact_filter`).
 7 seed (42/1/12345/77/999/2024/31337) × 300 iterasi:
 `panics=0 hangs=0 det=0 emi=0 sig=0 prop=0 bugs=0` (semua false-positive
 yang muncul di v2.1: 11 assert-palsu + 2 EMI-palsu, kini 0).
+
+---
+
+## v2.3 (2026-09-09) — project-wide sweep, auto-fast, mem LIVE, EMA cap
+
+### Feature 1 — project-wide seed sweep (`sweep.rs`, Paper #12/#18)
+Kritik: fuzz memperlakukan korpus nyata hanya sebagai fragment mutasi —
+error yang HANYA muncul saat SELURUH proyek di-compile (dependensi lintas
+file, macro, package) tidak pernah terlihat. Per-file standalone melewatkan
+mis. opentitan penuh.
+*Fix tiga lapis:*
+1. `maria-api::compile_collect_errors(_inc)` — kumpulkan SEMUA error
+   (parse + elab AnalysisRecovery) dengan file:line:col (`ProjectError`).
+   Preprocess include search path: parent dir tiap file + ancestor depth ≤4
+   + incdirs eksternal; file yang preprocess gagal DIREKAM (E1001), tidak
+   di-drop diam-diam.
+2. `maria-fuzz/src/sweep.rs` — enumerasi semua `.sv`/`.v` → compile sebagai
+   satu design → klasifikasi kategori (Parse/Semantik/Hierarki/Resolusi Top/
+   Penghubung DPI/Runtime/Elaborasi/Lain), kode unik dedup, sample ≤10 per
+   kategori. Sample deterministik `cap=300` (env `MARIA_FUZZ_SWEEP_FULL`=semua).
+3. `run_fuzz` panggil sweep sekali per kampanye → `FuzzReport.project_sweep`
+   + laporan per kategori di CLI.
+Hasil opentitan penuh (4436 file): `Parse 168 (E1002) / Hierarki 9 (E3001) /
+Lain 3 (E9001)` — sebelum fix include-search hanya 16 (file di-drop). Numerik
+belum menyamai 1679 (jalur CLI recovery per-file) karena sweep abort di error
+fatal pertama gabungan — angka di atas = gap FITUR nyata pertama yang dulu
+tak pernah terlihat fuzz.
+
+### Feature 2 — auto-fast pipeline maria (>20s case)
+File 21k baris opentitan (`i3c_reg_top.sv`): legacy `run` = 30–42s (auto-incdir
+scan ribuan file + elaborasi serial); `run_fast` (CompileSession paralel+MICD)
+= ~1s. `src/main.rs` PERF-1: sumber >256KB (atau `--fast`/`-f`) otomatis ke
+`run_fast` (kecuali `--tokens`/`--ast`/`.mv` inline). Ukur: **0.58s** (was 30-42s).
+
+### Feature 3 — kedalaman generator: memori LIVE (Ph-3)
+`build_module`: mem 1D/2D dulu deklarasi mati (tak pernah stress evaluator).
+Kini `use_mem` knob → `mem_decl` (1D atau 2D) + baca OOB di `assign y`
+(`mem_read`, index OOB bila knob oob) + proses `always_ff` tulis NBA
+(`mem_write`). Mem 2D didukung engine (verified: sim OK). +7 gen test hijau.
+
+### Fix performa fuzzer — EMA hang cap (PERFORM-1)
+`avg_ok_ms` EMA diangkat outlier delta-storm (selesai 5–7s) → `hang_ms_eff`
+melonjak 16× (112s) → konfirmasi hang 224s → kampanye melambat tanpa batas.
+*Fix:* EMA hanya dari run-OK < `OK_BUDGET_MS` (3s; delta-storm dikecualikan)
++ cap absolute `HANG_CAP_MS` (30s). Hang sejati tetap terdeteksi cepat;
+kampanye tidak melambat oleh outlier delta-storm (menemukan modul
+`forever #5 clk` + loop tak-maju = engine settle via delta-limit, bukan hang).

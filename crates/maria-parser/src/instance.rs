@@ -32,6 +32,15 @@ impl Parser {
                 self.advance();
                 *s
             }
+            Token::Dollar => {
+                // Nama module ala Yosys/synthesis: `module $_DLATCH_P_ (...)`
+                // (vendor lowrisc_ibex latch_map.v). `$` + ident.
+                self.advance();
+                let ident = self.expect_ident()?;
+                let mut s = String::from("$");
+                s.push_str(ident.as_str());
+                Symbol::intern(&s)
+            }
             _ => return Err(self.err("expected module name")),
         };
         let mut ports = Vec::new();
@@ -53,6 +62,20 @@ impl Parser {
                 } else {
                     self.expect_ident()?
                 };
+                // Register imported typedef supaya deklarasi berikut bisa pakai.
+                // Register imported typedef supaya deklarasi berikut bisa pakai. Nama
+                // EKSPLISIT (`import pkg::t`) = calon jenis port LANGSUNG (IEEE
+                // 1800 §23.2.1) tanpa tunggu package_tdefs — package bisa di
+                // file eksternal (kmac_pkg), parser per-file tak punya tabelnya.
+                if item == "*" {
+                    if let Some(tdefs) = self.package_tdefs.get(&pkg) {
+                        for name in tdefs {
+                            self.typedef_names.insert(*name);
+                        }
+                    }
+                } else {
+                    self.typedef_names.insert(item);
+                }
                 items.push(ModuleItem::Import {
                     package: pkg,
                     item: item,
@@ -199,6 +222,14 @@ impl Parser {
         self.advance(); // consume 'module'
         match self.peek() {
             Token::Ident(_) => {
+                self.advance();
+            }
+            Token::Dollar => {
+                // Yosys module name `$...` — fast path (discovery pass).
+                self.advance();
+                if !matches!(self.peek(), Token::Ident(_)) {
+                    return Err(self.err("expected module name"));
+                }
                 self.advance();
             }
             _ => return Err(self.err("expected module name")),
@@ -439,6 +470,24 @@ impl Parser {
                         package: pkg,
                         item: item_name,
                     });
+                    // IEEE 1800 §23.2.1 header import: registrasi typedef agar
+                    // port ANATYPE ter-resolve — `inout wire app_req_t req`,
+                    // app_req_t dari kmac_pkg (kmac_app_if.sv). Sama spt
+                    // parse_module/import-body.
+                    // IEEE 1800 §23.2.1 header import: registrasi typedef agar
+                    // port ANATYPE ter-resolve — `inout wire app_req_t req`,
+                    // app_req_t dari kmac_pkg (kmac_app_if.sv). Nama eksplisit
+                    // LANGSUNG jadi calon jenis (package eksternal tak punya
+                    // tabel); wildcard via package_tdefs.
+                    if item_name == "*" {
+                        if let Some(tdefs) = self.package_tdefs.get(&pkg) {
+                            for n in tdefs {
+                                self.typedef_names.insert(*n);
+                            }
+                        }
+                    } else {
+                        self.typedef_names.insert(item_name);
+                    }
                 }
                 if self.peek() == &Token::Comma {
                     self.advance();
@@ -703,11 +752,17 @@ impl Parser {
                         }
                         _ => return Err(self.err("expected port name")),
                     }
-                    self.expect(Token::LParen)?;
-                    if self.peek() != &Token::RParen {
-                        self.parse_expr(0)?;
+                    // IEEE 1800 §23.3.2.2: `.clk_i` TANPA kurung = koneksi
+                    // IMPLISIT (nama port = nama sinyal sama). Umum di
+                    // OpenTitan (`u_bound_if (.clk_i, .rst_ni);`). Kurung =
+                    // koneksi eksplisit `.p(expr)`.
+                    if self.peek() == &Token::LParen {
+                        self.advance();
+                        if self.peek() != &Token::RParen {
+                            self.parse_expr(0)?;
+                        }
+                        self.expect(Token::RParen)?;
                     }
-                    self.expect(Token::RParen)?;
                 }
                 Token::Comma => {
                     self.advance(); // skip stray comma
@@ -772,6 +827,21 @@ impl Parser {
                             }
                         }
                     } // if !consumed_keyword_type
+
+                    // IEEE 1800 §23.2.2.3: net type ATAU keyword type + user
+                    // typedef — `input wire app_req_t req` (app_req_t = typedef
+                    // dari import body/header). Saat keyword type dikonsumsi,
+                    // ident BERIKUT yang TERDAFTAR di typedef_names = TIPE,
+                    // bukan nama port. Tanpa ini `app_req_t` salah-parse jadi
+                    // nama port → `req` berikutnya = E1002 (kmac_app_if).
+                    if dtype_name.is_none() && consumed_keyword_type {
+                        if let Token::Ident(s) = self.peek() {
+                            if self.typedef_names.contains(&Symbol::intern(s.as_str())) {
+                                let name = self.expect_ident()?;
+                                dtype_name = Some(name.as_str().to_string());
+                            }
+                        }
+                    }
 
                     if self.peek() == &Token::Signed {
                         self.advance();
@@ -948,6 +1018,13 @@ impl Parser {
                                     | Token::Integer
                             ) || (matches!(&ahead, Token::Ident(_))
                                 && matches!(self.peek_ahead(2), Token::Scope))
+                                // `Ident . Ident` = port interface+modport
+                                // (`AXI_BUS.Slave in, AXI_BUS.Master out` —
+                                // axi_cut.sv cva6): comma = batas port BARU,
+                                // bukan lanjutan nama. Tanpa ini port kedua
+                                // salah-parse → `expected RParen, found Dot`.
+                                || (matches!(&ahead, Token::Ident(_))
+                                    && matches!(self.peek_ahead(2), Token::Dot))
                                 || (matches!(&ahead, Token::Ident(_))
                                     && matches!(self.peek_ahead(2), Token::Ident(_)));
                             // `Ident Ident` setelah comma = port baru bertipe
@@ -1124,6 +1201,13 @@ impl Parser {
                     // `mod u(.*);` tidak jatuh ke parse_expr positional.
                     if self.peek() == &Token::RParen {
                         break;
+                    }
+                    // IEEE 1800 §22.11: `(* async *) .p(...)` — atribut sebelum
+                    // koneksi (cdc_fifo_gray.sv PULP). Tanpa skip → "expected
+                    // expression, found Star".
+                    if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
+                        self.skip_attribute();
+                        continue;
                     }
                     if self.peek() == &Token::Dot {
                         self.advance();

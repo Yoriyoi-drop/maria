@@ -38,6 +38,8 @@ pub fn is_steerable(target: &str) -> bool {
             target,
             "case" | "for" | "while" | "repeat" | "forever" | "fork" | "join"
                 | "join_any" | "join_none" | "$clog2" | "$bits" | "$size" | "$display" | "final"
+                | "always_latch" | "typedef" | "class" | "task" | "genvar" | "enum"
+                | "package" | "`define"
         )
 }
 
@@ -50,6 +52,17 @@ pub fn bias_seed(source: &str, target: &str) -> Option<String> {
     }
     if source.contains(target) {
         return None;
+    }
+    // Target package/`define: prepend (tak bisa di dalam module).
+    if target == "package" {
+        let mut s = String::from("package fz_pkg;\n  localparam int fz_P = 1;\nendpackage\n");
+        s.push_str(source);
+        return Some(s);
+    }
+    if target == "`define" {
+        let mut s = String::from("`define fz_MACRO 1\n");
+        s.push_str(source);
+        return Some(s);
     }
     // 1) Coba ganti operator yang ada dengan target (bila target operator).
     if is_operator(target) {
@@ -64,22 +77,31 @@ pub fn bias_seed(source: &str, target: &str) -> Option<String> {
             }
         }
     }
-    // 2) Sisipkan konstruk target — snippet WAJIB valid (elab+sim). "forever"
-    //    memakai delay agar tak jadi delta-storm (engine RT2001).
+    // 2) Sisipkan konstruk target — snippet WAJIB SELF-CONTAINED (deklarasi
+    //    sendiri, tanpa ref sinyal luar) agar child compile+sim → fitur
+    //    terekam (execution-gate). Snippet lama ref `fz_*` tanpa deklarasi →
+    //    compile_err → fitur tak pernah tercapai. `forever` memakai delay
+    //    agar tak jadi delta-storm (engine RT2001).
     let snippet = match target {
-        "case" => "  always_comb begin case (fz_sel) 1'd0: fz_q = 1'b0; default: fz_q = 1'b1; endcase end\n".to_string(),
-        "for" => "  initial begin for (fz_i = 0; fz_i < 4; fz_i = fz_i + 1) fz_q = fz_i[0]; end\n".to_string(),
+        "case" => "  always_comb begin case (fz_sel) 1'd0: fz_q = 1'b0; default: fz_q = 1'b1; endcase end\n  logic fz_sel;\n  logic fz_q;\n".to_string(),
+        "for" => "  initial begin integer fz_i; for (fz_i = 0; fz_i < 4; fz_i = fz_i + 1) ; end\n".to_string(),
         "$clog2" => "  localparam fz_cb = $clog2(16);\n".to_string(),
-        "$bits" => "  localparam fz_n = $bits(fz_q);\n".to_string(),
-        "$size" => "  localparam fz_s = $size(fz_q);\n".to_string(),
+        "$bits" => "  initial $display(\"fz_bits=%0d\", $bits(16'd7));\n".to_string(),
+        "$size" => "  initial $display(\"fz_size=%0d\", $size(16'd0));\n".to_string(),
         "$display" => "  initial $display(\"fuzz\");\n".to_string(),
         "final" => "  final $display(\"fuzz\");\n".to_string(),
-        "while" => "  initial begin fz_i = 0; while (fz_i < 4) begin fz_q = fz_i[0]; fz_i = fz_i + 1; end end\n".to_string(),
-        "repeat" => "  initial begin repeat (4) fz_q = ~fz_q; end\n".to_string(),
-        "forever" => "  initial begin forever #10 fz_q = ~fz_q; end\n".to_string(),
-        "fork" => "  initial begin fork #1 fz_q = 1'b0; #2 fz_q = 1'b1; join end\n".to_string(),
-        "join_any" => "  initial begin fork #1 fz_q = 1'b0; join_any end\n".to_string(),
-        "join_none" => "  initial begin fork #1 fz_q = 1'b0; join_none end\n".to_string(),
+        "while" => "  initial begin integer fz_i; fz_i = 0; while (fz_i < 2) fz_i = fz_i + 1; end\n".to_string(),
+        "repeat" => "  initial begin integer fz_i; fz_i = 0; repeat (2) fz_i = fz_i + 1; end\n".to_string(),
+        "forever" => "  initial begin forever #10 fz_q = ~fz_q; end\n  logic fz_q;\n".to_string(),
+        "fork" => "  initial begin fork #1 fz_q = 1'b0; #2 fz_q = 1'b1; join end\n  logic fz_q;\n".to_string(),
+        "join_any" => "  initial begin fork #1 fz_q = 1'b0; join_any end\n  logic fz_q;\n".to_string(),
+        "join_none" => "  initial begin fork #1 fz_q = 1'b0; join_none end\n  logic fz_q;\n".to_string(),
+        "always_latch" => "  logic fz_en, fz_d;\n  logic fz_lt;\n  always_latch if (fz_en) fz_lt = fz_d;\n".to_string(),
+        "typedef" => "  typedef logic [7:0] fz_typedef_t;\n  fz_typedef_t fz_td;\n".to_string(),
+        "class" => "  class fz_c;\n    int fz_x;\n  endclass\n".to_string(),
+        "task" => "  task automatic fz_t();\n    integer fz_i; fz_i = 5;\n  endtask\n".to_string(),
+        "genvar" => "  genvar fz_g;\n  generate for (fz_g = 0; fz_g < 2; fz_g = fz_g + 1) begin : fz_glbl end endgenerate\n".to_string(),
+        "enum" => "  typedef enum logic [1:0] { fz_E0, fz_E1, fz_E2, fz_E3 } fz_enum_t;\n  fz_enum_t fz_es;\n".to_string(),
         _ => format!("  assign fz_q = fz_a {} 1'b1;\n", target),
     };
     let mut s = source.to_string();
@@ -92,7 +114,11 @@ pub fn bias_seed(source: &str, target: &str) -> Option<String> {
 }
 
 fn is_operator(target: &str) -> bool {
-    ["+", "-", "&", "|", "^", "<<", ">>", "==", "!=", "<", ">", "<=", ">="].contains(&target)
+    [
+        "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "==", "!=", "<", ">",
+        "<=", ">=", "&&", "||",
+    ]
+    .contains(&target)
 }
 
 #[cfg(test)]
@@ -134,9 +160,14 @@ mod tests {
         assert!(is_steerable("while"));
         assert!(is_steerable("fork"));
         assert!(is_steerable("$clog2"));
-        assert!(!is_steerable("class"));
-        assert!(!is_steerable("package"));
-        assert!(!is_steerable("typedef"));
+        // Snippet self-contained tersedia utk konstruk ini (revisi: class/
+        // typedef/task/genvar/enum/always_latch kini steerable).
+        assert!(is_steerable("class"));
+        assert!(is_steerable("typedef"));
+        assert!(is_steerable("genvar"));
+        assert!(is_steerable("always_latch"));
+        assert!(!is_steerable("covergroup"));
+        assert!(!is_steerable("import"));
         assert!(!is_steerable("~"));
         assert!(!is_steerable("!"));
     }
@@ -144,7 +175,7 @@ mod tests {
     #[test]
     fn bias_unsteerable_returns_none() {
         let src = "module top;\n  assign y = a;\nendmodule\n";
-        assert!(bias_seed(src, "class").is_none(), "target tak aman → tanpa bias");
+        assert!(bias_seed(src, "covergroup").is_none(), "target tak aman → tanpa bias");
     }
 
     #[test]

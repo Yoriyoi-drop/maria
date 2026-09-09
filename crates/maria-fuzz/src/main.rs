@@ -25,16 +25,23 @@ OPTIONS:
                      delta-storm engine ~10s debug, agar delta-storm yang
                      engine-settle tidak salah-klaim Hang)
   --corpus-dir DIR   direktori corpus SV nyata (bisa diulang)
+  --real-filelist F  filelist proyek nyata (`.f`/`.maria`) — REAL-PROJECT
+                     error hunt: per-file compile → klasifikasi + minimasi
+                     tiap error ke reproducer (GAP-11, kedalaman)
   --target FEATURE   fuzzing terarah (mis. >>, case, $clog2)
   --workers W        kampanye paralel (env MARIA_FUZZ_WORKERS, default 1)
   --proc-iso         eksekusi dgn SUBPROCESS (GAP-9): hang di-kill sejati,
-                     stack-overflow (SIGSEGV) terdeteksi via exit code;
-                     biaya spawn ~ms — default thread untuk kecepatan
+                     stack-overflow (SIGSEGV) terdeteksi via exit code; ON
+                     default — matikan dgn env MARIA_FUZZ_NO_PROC_ISO
   --sweep N          validasi oracle: sweep N seed generated -> FP per oracle
                      + observability fault op-swap (GAP-5 eksperimen)
   --emit-bugs DIR    tulis file bug terminimalkan ke direktori
   --save-corpus DIR  persist seed menarik (parent/bug) utk kampanye berikut
   --sim-sig-check    aktifkan oracle nilai sinyal (3× pipeline/iterasi; OFF default)
+  --ref-diff         differential vs iverilog (LRM proxy utk paritas VCS-class):
+                     core pasif baru per iterasi, bandingkan trace maria vs
+                     iverilog — butuh `iverilog`+`vvp` di PATH & maria-bin
+                     (env MARIA_FUZZ_BIN, default target/debug/maria)
   --verbose          progress tiap 100 iterasi ke stderr
   -h, --help         bantuan ini
 "
@@ -46,6 +53,11 @@ fn parse_u64(v: &str, name: &str) -> u64 {
         eprintln!("error: {} harus angka, dapat '{}'", name, v);
         std::process::exit(2);
     })
+}
+
+/// Satu baris pesan (ganti newline).
+fn trunc_line(s: &str) -> String {
+    s.lines().next().unwrap_or("").chars().take(90).collect()
 }
 
 fn main() {
@@ -60,11 +72,12 @@ fn main() {
         return;
     }
 
-    // sim_sig_check OFF default (audit H5): biaya 3× pipeline per iterasi
-    // (~4× total eksekusi), padahal determinism oracle sudah menutupi sebagian.
-    // Aktifkan eksplisit lewat --sim-sig-check untuk eksperimen oracle nilai.
+    // sim_sig_check ON default (revisi H5): determinism oracle cuma fingerprint
+    // FINAL — bug transient (salah di delta lalu pulih) hanya terlihat sim_sig
+    // (3× eksekusi/iterasi). Biaya naik tapi deteksi runtime naik — tujuan
+    // utama fuzzer IEEE 1800. Matikan via FuzzConfig bila mau cepat.
     let mut cfg = FuzzConfig {
-        sim_sig_check: false,
+        sim_sig_check: true,
         ..FuzzConfig::default()
     };
     let mut i = 0usize;
@@ -90,6 +103,18 @@ fn main() {
             "--corpus-dir" => {
                 i += 1;
                 cfg.corpus_dirs.push(PathBuf::from(&args[i]));
+            }
+            "--real-filelist" => {
+                i += 1;
+                let p = PathBuf::from(&args[i]);
+                if p.is_file() {
+                    cfg.real_files.push(p);
+                } else if p.is_dir() {
+                    cfg.real_files.push(p);
+                } else {
+                    eprintln!("error: --real-filelist '{}' tidak ditemukan", args[i]);
+                    std::process::exit(2);
+                }
             }
             "--target" => {
                 i += 1;
@@ -127,6 +152,9 @@ fn main() {
             "--sim-sig-check" => {
                 cfg.sim_sig_check = true;
             }
+            "--ref-diff" => {
+                cfg.ref_diff = true;
+            }
             "--save-corpus" => {
                 i += 1;
                 cfg.save_corpus_dir = Some(PathBuf::from(&args[i]));
@@ -147,6 +175,12 @@ fn main() {
         }
         i += 1;
     }
+
+    // proc_isolate ON default: thread tak bisa di-kill — hang sejati me-leak
+    // CPU; stack-overflow (SIGSEGV/abort) buta utk catch_unwind. Subprocess
+    // menangkap keduanya; biaya spawn ~ms/iterasi sebanding utk kampanye
+    // kepatuhan. Matikan via --untuk kecepatan bila perlu.
+    cfg.proc_isolate = !std::env::var("MARIA_FUZZ_NO_PROC_ISO").is_ok();
 
     // Env override (documented di doc/fuzzing.md).
     if let Ok(v) = std::env::var("MARIA_FUZZ_N") {
@@ -232,6 +266,62 @@ fn main() {
     } else if report.covered_features > 0 {
         println!("feature coverage: {} fitur tertutup", report.covered_features);
     }
+    // Gap kepatuhan IEEE 1800 (Tahap: proyek nyata): seed corpus valid yang
+    // ditolak maria saat compile (PARSE = gap fitur; ELAB = fragment/header).
+    println!(
+        "IEEE-1800 corpus gaps: {}/{} ditolak PARSE (fitur LRM kurang){}{} | elab-reject={}{}",
+        report.corpus_gap_total,
+        report.corpus_tested,
+        if report.corpus_gap_total > 0 { " — sintaks LRM belum didukung" } else { "" },
+        if report.corpus_tested == 0 { " (corpus kosong — pakai --corpus-dir)" } else { "" },
+        report.corpus_elab_reject,
+        if report.corpus_elab_reject > 0 { " (mayoritas file fragment/header, bukan fitur)" } else { "" }
+    );
+    for (i, s) in report.corpus_gap_samples.iter().enumerate() {
+        println!("  gap #{}: {}", i, s);
+    }
+    println!(
+        "IEEE-1800 gap diag codes: {}",
+        if report.corpus_gap_codes.is_empty() {
+            "(kosong)".to_string()
+        } else {
+            report.corpus_gap_codes.join(", ")
+        }
+    );
+    // Project-wide sweep (Paper #12/#18): SEMUA error saat korpus nyata
+    // di-compile sebagai satu design — dengan file:line:col per kategori.
+    if let Some(sw) = &report.project_sweep {
+        println!(
+            "project-sweep: {} file → {} error total (kode: {})",
+            sw.files_total,
+            sw.errors_total,
+            if sw.all_codes.is_empty() {
+                "-".to_string()
+            } else {
+                sw.all_codes.join(", ")
+            }
+        );
+        for (cat, stat) in &sw.cats {
+            if stat.count == 0 {
+                println!("  ✓ {} (0)", cat.label());
+                continue;
+            }
+            println!(
+                "  ✗ {} ({} error; kode: {})",
+                cat.label(),
+                stat.count,
+                stat.codes.join(",")
+            );
+            for s in &stat.samples {
+                let msg = if s.message.len() > 72 {
+                    format!("{}…", &s.message[..69])
+                } else {
+                    s.message.clone()
+                };
+                println!("    {} | {}", s.loc(), msg);
+            }
+        }
+    }
     // Statistik palet mutasi (GAP-3): op teratas menurut novelty.
     let mut ops: Vec<(usize, u64, u64)> = (0..maria_fuzz::ast_mutate::NUM_OPS)
         .map(|i| (i, report.op_stats.novels[i], report.op_stats.attempts[i]))
@@ -240,6 +330,26 @@ fn main() {
     println!("mutation ops (op: novel/attempt):");
     for (i, n, a) in ops.iter().take(6) {
         println!("  op {}: {}/{}", i, n, a);
+    }
+    // REAL-PROJECT error hunt (GAP-11): reproducer minimal per error code.
+    if let Some(rh) = &report.real_hunt {
+        println!(
+            "real-hunt: {} file → ok={} feature-gap={} internal-bug={} compile-err={}",
+            rh.files_scanned, rh.ok, rh.feature_gaps, rh.internal_bugs, rh.compile_errs
+        );
+        if !rh.all_codes.is_empty() {
+            println!("  error codes: {}", rh.all_codes.join(", "));
+        }
+        for b in &rh.bug_candidates {
+            println!("--- real bug candidate [{}] ---", b.kind.label());
+            println!("  {} | {} ({}) — {} error total", b.path.display(), b.code, trunc_line(&b.message), b.total_errors);
+            if !b.minimized.is_empty() {
+                println!("  minimized reproducer ({} bytes):\n{}", b.minimized.len(), b.minimized);
+            }
+        }
+        for g in &rh.gap_samples {
+            println!("  gap: {}", g);
+        }
     }
     for (idx, b) in report.bugs.iter().enumerate() {
         println!("--- bug #{} [{:?}] ---", idx, b.kind);

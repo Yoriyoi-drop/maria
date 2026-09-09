@@ -104,6 +104,28 @@ pub fn fingerprint_isolated(source: &str, max_time: u64, hang_ms: u64) -> Option
     rx.recv_timeout(Duration::from_millis(hang_ms)).ok().flatten()
 }
 
+/// Jalankan simulasi dgn FLAG JALUR INTERNAL engine (deep differential):
+/// memilih packed-eval / DAG-parallel / timing-wheel / MIR JIT. Source sama,
+/// jalur beda → fingerprint WAJIB identik; beda = bug internal engine.
+/// None = gagal compile/sim/hang.
+pub fn fingerprint_isolated_flags(
+    source: &str,
+    max_time: u64,
+    hang_ms: u64,
+    flags: maria_api::EngineFlags,
+) -> Option<String> {
+    let (tx, rx) = mpsc::channel();
+    let source = source.to_string();
+    spawn_isolated(move || {
+        let r = catch_unwind(AssertUnwindSafe(|| {
+            let sigs = maria_api::simulate_signals_with_flags_quiet(&source, max_time, &flags).ok()?;
+            Some(crate::oracle::fingerprint(&sigs))
+        }));
+        let _ = tx.send(r.unwrap_or(None));
+    });
+    rx.recv_timeout(Duration::from_millis(hang_ms)).ok().flatten()
+}
+
 /// Jalankan simulasi dgn trace sampling MID-SIMULATION (interval waktu) →
 /// fingerprint trace: satu baris snapshot sinyal top per interval + nilai
 /// final. Bug transient (salah di delta lalu pulih) hanya terlihat di sini.

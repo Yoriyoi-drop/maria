@@ -34,6 +34,10 @@ pub struct Preprocessor {
     warned_includes: HashSet<String>,
     include_stack: Vec<PathBuf>,
     include_set: std::collections::HashSet<PathBuf>,
+    /// Path file yang sedang diproses — untuk `` `line `` RESTORE setelah
+    /// include (tanpa ini token setelah include salah-label file include).
+    /// Di-set caller (compile_session), default None = label "<string>".
+    pub cur_path: Option<String>,
     pub quiet: bool,
     pub timescale: Option<(String, String)>, // (unit, precision)
     pub warnings: Vec<Diagnostic>,
@@ -60,6 +64,7 @@ impl Preprocessor {
             warnings: Vec::new(),
             resolved_includes: std::collections::HashSet::new(),
             coverage_exclusions: Vec::new(),
+            cur_path: None,
         }
     }
 
@@ -83,6 +88,8 @@ impl Preprocessor {
     }
 
     pub fn preprocess_file(&mut self, filename: &str) -> Result<String, SimError> {
+        // Label `` `line `` RESTORE utk include: path file induk.
+        self.cur_path = Some(filename.to_string());
         let path = Path::new(filename);
         let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let source = fs::read_to_string(filename)
@@ -155,6 +162,14 @@ impl Preprocessor {
                     let expanded = self.expand_inline_macros(&raw_line);
                     output.push_str(&expanded);
                     output.push('\n');
+                    // Body macro multi-baris (with `\` kontinuasi) menambah
+                    // baris FISIK → nilai line token berikut drift. Re-sync
+                    // ke baris file induk berikut (i+2, 1-based).
+                    if expanded.contains('\n') {
+                        if let Some(ref p) = self.cur_path {
+                            output.push_str(&format!("`line {}\"{}\"\n", i + 2, p));
+                        }
+                    }
                 }
                 i += 1;
                 continue;
@@ -172,6 +187,12 @@ impl Preprocessor {
                 let expanded = self.expand_inline_macros(&raw_line);
                 output.push_str(&expanded);
                 output.push('\n');
+                // Sama — macro invocation multi-baris: re-sync physical line.
+                if expanded.contains('\n') {
+                    if let Some(ref p) = self.cur_path {
+                        output.push_str(&format!("`line {}\"{}\"\n", i + 2, p));
+                    }
+                }
                 i += 1;
                 continue;
             }
@@ -227,12 +248,22 @@ impl Preprocessor {
                                     let inc_dir = resolved.parent().map(|p| p.to_path_buf());
                                     output
                                         .push_str(&format!("`line 1 \"{}\"\n", resolved.display()));
+                                    // cur_path = include utk nested include di dalamnya.
+                                    let outer_path = self.cur_path.clone();
+                                    self.cur_path = Some(resolved.display().to_string());
                                     let processed =
                                         self.preprocess(&inc_source, inc_dir.as_ref())?;
                                     output.push_str(&processed);
                                     if !processed.ends_with('\n') {
                                         output.push('\n');
                                     }
+                                    // RESTORE `` `line {i+2} "outer" ``: token
+                                    // berikutnya milik file INDUK. Include ada di
+                                    // baris i+1 (1-based) → baris berikut = i+2.
+                                    if let Some(ref outer) = outer_path {
+                                        output.push_str(&format!("`line {}\"{}\"\n", i + 2, outer));
+                                    }
+                                    self.cur_path = outer_path;
                                     Ok(())
                                 })();
                                 let popped = self.include_stack.pop();
@@ -520,10 +551,43 @@ impl Preprocessor {
 
         let (name, params, value, defaults) = if let Some(open_paren) = s.find('(') {
             let name = s[..open_paren].trim().to_string();
-            let close_paren = s[open_paren..]
-                .find(')')
-                .map(|p| open_paren + p)
-                .unwrap_or(s.len());
+            // Penutup param-list STRING-AWARE: `define dv_fatal(MSG_,
+            // ID_ = $sformatf("%m")) $fatal(...)` — `)` di dalam string/
+            // $sformatf("%m") TIDAK penutup; naive .find(')') memotong
+            // param-list di `$sformatf("%m")` → body bocor `) $fatal(...)`
+            // → `if (_ready) ) $fatal(...)` (sw_logger_if, E1002).
+            let close_paren = {
+                let b = s.as_bytes();
+                let mut d = 0usize;
+                let mut in_str = false;
+                let mut esc = false;
+                let mut end = s.len();
+                for (k, &c) in b.iter().enumerate().skip(open_paren) {
+                    if in_str {
+                        if esc {
+                            esc = false;
+                        } else if c == b'\\' {
+                            esc = true;
+                        } else if c == b'"' {
+                            in_str = false;
+                        }
+                        continue;
+                    }
+                    match c {
+                        b'"' => in_str = true,
+                        b'(' => d += 1,
+                        b')' => {
+                            d = d.saturating_sub(1);
+                            if d == 0 {
+                                end = k;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                end
+            };
             let params_str = if open_paren < close_paren && close_paren <= s.len() {
                 &s[open_paren + 1..close_paren]
             } else {
@@ -684,11 +748,37 @@ impl Preprocessor {
                         let args = if i < bytes.len() && bytes[i] == b'(' {
                             let args_start = i + 1;
                             let mut paren_depth = 1;
+                            // String-aware: `)`/`(` di dalam string literal TIDAK
+                            // menghitung. `dv_fatal("...calling ready()")` —
+                            // tanpa ini arg terpotong di `)` dalam string,
+                            // sisa `)"` bocor → `if (_ready) ) $fatal(...)`
+                            // (sw_logger_if.sv, E1002 expected expression).
+                            // Komentar `//...` juga di-skip (arg macro bisa
+                            // memuat komentar di baris lanjutan).
+                            let mut in_string = false;
+                            let mut escaped = false;
                             let mut args_end = args_start;
                             while args_end < bytes.len() && paren_depth > 0 {
-                                if bytes[args_end] == b'(' {
+                                let c = bytes[args_end];
+                                if in_string {
+                                    if escaped {
+                                        escaped = false;
+                                    } else if c == b'\\' {
+                                        escaped = true;
+                                    } else if c == b'"' {
+                                        in_string = false;
+                                    }
+                                } else if c == b'"' {
+                                    in_string = true;
+                                } else if c == b'/' && args_end + 1 < bytes.len() && bytes[args_end + 1] == b'/' {
+                                    // Skip komentar sampai newline.
+                                    while args_end < bytes.len() && bytes[args_end] != b'\n' {
+                                        args_end += 1;
+                                    }
+                                    continue;
+                                } else if c == b'(' {
                                     paren_depth += 1;
-                                } else if bytes[args_end] == b')' {
+                                } else if c == b')' {
                                     paren_depth -= 1;
                                 }
                                 args_end += 1;

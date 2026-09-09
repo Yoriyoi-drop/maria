@@ -60,7 +60,7 @@ fn main() {
     let first_source = if file_line_map.is_empty() {
         "<string>".to_string()
     } else {
-        file_line_map[0].1.clone()
+        file_line_map[0].2.clone()
     };
     let mut parser = Parser::new(tokens, &first_source)
         .with_source_lines(&combined)

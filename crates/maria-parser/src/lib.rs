@@ -25,6 +25,10 @@ pub struct Parser {
     pos: std::cell::Cell<usize>,
     source_file: String,
     source_lines: Vec<String>,
+    /// Peta isi per-file (dari `line directive di combined source_lines):
+    /// rel_line → teks baris. Dipakai snippet utk file INCLUDE (display_file
+    /// ≠ source_file — combined ≠ file fisik, index source_lines salah).
+    file_lines: std::collections::HashMap<String, std::collections::HashMap<usize, String>>,
     class_names: std::collections::HashSet<Symbol>,
     typedef_names: std::collections::HashSet<Symbol>,
     /// Nama class GLOBAL (lintas file) dari discovery pass CompileSession.
@@ -40,7 +44,7 @@ pub struct Parser {
     module_type_params: std::collections::HashSet<Symbol>,
     package_tdefs: std::collections::HashMap<Symbol, Vec<Symbol>>,
     type_param_names: Vec<Symbol>,
-    file_line_map: Vec<(usize, String)>,
+    file_line_map: Vec<(usize, usize, String)>,
     /// Offset cumulative line untuk konversi token line → file-relative line.
     /// Dihitung dari total baris combined source file sebelumnya. Dipakai saat
     /// file_line_map kosong (FastLexer tidak handle `line directive).
@@ -79,6 +83,7 @@ impl Parser {
             pos: std::cell::Cell::new(0),
             source_file: source_file.to_string(),
             source_lines: Vec::new(),
+            file_lines: std::collections::HashMap::new(),
             class_names: {
                 let mut s = std::collections::HashSet::new();
                 s.insert(Symbol::intern("process"));
@@ -116,10 +121,64 @@ impl Parser {
 
     pub fn with_source_lines(mut self, source: &str) -> Self {
         self.source_lines = source.lines().map(|s| s.to_string()).collect();
+        // Bangun peta isi per-file dari `line directive di combined source.
+        // Token include di-label dgn file directive; teks baris utk snippet
+        // harus dari FILE itu (bukan combined yang beda offset).
+        let mut cur_file: Option<String> = None;
+        let mut cur_pos: usize = 0;
+        let mut cur_val: usize = 0;
+        for (idx, line) in self.source_lines.iter().enumerate() {
+            let t = line.trim_start();
+            if let Some(rest) = t.strip_prefix("`line") {
+                let after = rest.trim();
+                let (num_str, path) = match after.find('"') {
+                    Some(q) => {
+                        let p = after[q + 1..]
+                            .split('"')
+                            .next()
+                            .unwrap_or("")
+                            .to_string();
+                        (after[..q].trim().to_string(), p)
+                    }
+                    None => (after.to_string(), String::new()),
+                };
+                if let Ok(n) = num_str.parse::<usize>() {
+                    cur_file = Some(path);
+                    cur_pos = idx;
+                    cur_val = n;
+                }
+                continue;
+            }
+            if let Some(f) = &cur_file {
+                if idx > cur_pos {
+                    let rel = cur_val + (idx - cur_pos) - 1;
+                    self.file_lines
+                        .entry(f.clone())
+                        .or_default()
+                        .insert(rel, line.clone());
+                }
+            }
+        }
         self
     }
 
-    pub fn with_file_line_map(mut self, map: Vec<(usize, String)>) -> Self {
+    /// Teks baris utk snippet — prioritas peta per-file (dari `line directive,
+/// akurat utk semua file termasuk yang punya include = combined ≠ fisik);
+/// fallback source_lines (FastLexer / tanpa directive).
+fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String> {
+    if let Some(m) = self.file_lines.get(file) {
+        if let Some(l) = m.get(&display_line) {
+            return Some(l.clone());
+        }
+    }
+    if file.is_empty() || file == self.source_file {
+        self.source_lines.get(display_line).cloned()
+    } else {
+        None
+    }
+}
+
+    pub fn with_file_line_map(mut self, map: Vec<(usize, usize, String)>) -> Self {
         self.file_line_map = map;
         self
     }
@@ -154,15 +213,19 @@ impl Parser {
 
     fn resolve_source_file(&self, cumulative_line: usize) -> (String, usize) {
         let mut best_file = self.source_file.clone();
-        let mut best_line: usize = 0;
-        for (d_line, file) in &self.file_line_map {
-            if *d_line < cumulative_line && *d_line >= best_line {
-                best_line = *d_line;
+        let mut best_pos: Option<usize> = None;
+        let mut best_val: usize = 0;
+        for (pos, val, file) in &self.file_line_map {
+            if *pos < cumulative_line && best_pos.map_or(true, |bp| *pos > bp) {
+                best_pos = Some(*pos);
+                best_val = *val;
                 best_file = file.clone();
             }
         }
-        let file_relative = if best_line > 0 {
-            cumulative_line - best_line
+        let file_relative = if let Some(bp) = best_pos {
+            // Value-aware: token fisik C di bawah directive (pos=redirect P,
+            // nilai=V=line file utk baris P+1) → rel = V + (C - P) - 1.
+            best_val + (cumulative_line - bp) - 1
         } else if self.line_base > 0 && cumulative_line > self.line_base {
             // Fallback: pakai line_base (FastLexer path)
             cumulative_line - self.line_base
@@ -240,17 +303,10 @@ impl Parser {
             DiagCode::InvalidSyntax
         };
 
-        // Buat source snippet — source_lines berisi `line directive` + source file.
-        // display_line adalah file-relative (dari resolve_source_file), tapi
-        // source_lines[0] = `line directive`, jadi offset +1 untuk mapping.
+        // Buat source snippet — text dari file yang benar: combined utk file
+        // current, peta per-file utk include (display_file ≠ source_file).
         let source_line = if display_line > 0 {
-            // +1 karena source_lines[0] = `line 1 "file"` directive
-            let idx = display_line; // display_line 1 → source_lines[1]
-            if idx < self.source_lines.len() {
-                Some(self.source_lines[idx].clone())
-            } else {
-                None
-            }
+            self.snippet_source_line(&display_file, display_line)
         } else {
             None
         };
@@ -448,24 +504,27 @@ impl Parser {
         let mut diag = Diagnostic::new(DiagLevel::Warning, DiagCode::InvalidSyntax, msg_for_diag)
             .with_code_context();
         // NOTE: gunakan display_line (file-relative), bukan line (cumulative lintas file).
-        if display_line > 0 && display_line <= self.source_lines.len() {
-            let source_line = &self.source_lines[display_line - 1];
-            let snippet =
-                SourceSnippet::new(&display_file, display_line, col, source_line.trim_end());
-            diag = diag.with_source_snippet(snippet);
+        // Index source_lines KONSISTEN dgn err(): source_lines[0] = `line N "file"`
+        // directive, konten baris k di [k] → idx = display_line (bukan -1).
+        if display_line > 0 {
+            if let Some(source_line) = self.snippet_source_line(&display_file, display_line) {
+                let snippet =
+                    SourceSnippet::new(&display_file, display_line, col, source_line.trim_end());
+                diag = diag.with_source_snippet(snippet);
 
-            // Generate fix-it for common warnings
-            let trimmed = source_line.trim_end();
-            if msg.contains("missing semicolon") || msg.contains("expected ';'") {
-                if !trimmed.ends_with(';') {
-                    let fix_it = FixItHint::insert(
-                        display_file.clone(),
-                        display_line,
-                        trimmed.len() + 1,
-                        ";",
-                        "Add missing semicolon",
-                    );
-                    diag = diag.with_fix_it(fix_it);
+                // Generate fix-it for common warnings
+                let trimmed = source_line.trim_end();
+                if msg.contains("missing semicolon") || msg.contains("expected ';'") {
+                    if !trimmed.ends_with(';') {
+                        let fix_it = FixItHint::insert(
+                            display_file.clone(),
+                            display_line,
+                            trimmed.len() + 1,
+                            ";",
+                            "Add missing semicolon",
+                        );
+                        diag = diag.with_fix_it(fix_it);
+                    }
                 }
             }
         }
@@ -1282,7 +1341,8 @@ impl Parser {
     /// begin/end agar `else begin … end` dilewati utuh; berhenti di `end`
     /// (penutup else-begin) atau `;` di depth 0.
     fn skip_assert_item(&mut self) {
-        let mut depth = 0i32;
+        let mut depth = 0i32; // begin/end
+        let mut paren = 0i32; // ( ) — ident di dalam property TIDAK = batas item
         let mut saw_begin = false;
         loop {
             match self.peek() {
@@ -1303,9 +1363,17 @@ impl Parser {
                         break;
                     }
                 }
+                Token::LParen => {
+                    paren += 1;
+                    self.advance();
+                }
+                Token::RParen => {
+                    paren = paren.saturating_sub(1);
+                    self.advance();
+                }
                 Token::Semi => {
                     self.advance();
-                    if depth <= 0 {
+                    if depth <= 0 && paren <= 0 {
                         break;
                     }
                 }
@@ -1321,6 +1389,29 @@ impl Parser {
                 | Token::EndGenerate => {
                     break;
                 }
+                // SVA tanpa aksi-else yang valid: preprocessor SKIP baris
+                // macro tak dikenal → `else `\`ASSERT_ERROR(X)` jadi `else`
+                // menggantung TANPA aksi (kmac_app_if.sv:178/185). Skip lanjut
+                // menelan item berikut sampai `;` (header task!) → parser
+                // resume di `fork :` = "skipping isolation_fork". Hentikan:
+                // ident di depth 0 = label item baru; keyword item baru =
+                // batas item berikut (tiada yang legal di dalam ekspresi
+                // property tanpa parens/block).
+                Token::Ident(_) if depth <= 0 && paren <= 0 => break,
+                Token::Task
+                | Token::Function
+                | Token::Initial
+                | Token::Final
+                | Token::Always
+                | Token::AlwaysComb
+                | Token::AlwaysFF
+                | Token::AlwaysLatch
+                | Token::Assign
+                | Token::Generate
+                | Token::GenVar
+                | Token::LocalParam
+                | Token::Param
+                | Token::Parameter if paren <= 0 => break,
                 _ => {
                     self.advance();
                 }

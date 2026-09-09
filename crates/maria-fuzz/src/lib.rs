@@ -23,7 +23,11 @@ pub mod gen;
 pub mod grammar;
 pub mod guide;
 pub mod harness;
+pub mod interaction;
 pub mod oracle;
+pub mod real;
+pub mod semantic;
+pub mod sweep;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -77,6 +81,14 @@ pub struct FuzzConfig {
     /// Activekan oracle nilai sinyal (#19) — injeksi input →
     /// fprint awal vs akhir vs akhir-2 divalidasi konsistensi.
     pub sim_sig_check: bool,
+    /// Differential vs tool referensi LRM (iverilog/verilator) — DUT core
+    /// pasif + tb eksternal; bandingkan trace maria vs iverilog. Menangkap
+    /// deviasi semantik yang konsisten-diri (buta bagi oracle lain).
+    pub ref_diff: bool,
+    /// Filelist proyek nyata (`.f`/`.maria`) untuk REAL-PROJECT error hunt
+    /// (GAP-11): tiap file di-compile → error diklasifikasi & terminimalkan ke
+    /// reproducer. Bukan feature-gap scorecard — kandidat bug internal/cascade.
+    pub real_files: Vec<PathBuf>,
 }
 
 impl Default for FuzzConfig {
@@ -95,7 +107,9 @@ impl Default for FuzzConfig {
             proc_isolate: false,
             verbose: false,
             verbose_every: 100,
-            sim_sig_check: false,
+            sim_sig_check: true,
+            ref_diff: false,
+            real_files: Vec::new(),
         }
     }
 }
@@ -127,6 +141,8 @@ pub struct FuzzReport {
     pub compile_err: u64,
     pub sim_ok: u64,
     pub sim_err: u64,
+    /// Runtime error (RT####) pada input parse-clean — kandidat bug engine.
+    pub sim_err_clean: u64,
     pub panics: u64,
     pub hangs: u64,
     pub new_features: u64,
@@ -138,10 +154,32 @@ pub struct FuzzReport {
     /// Property-oracle (Paper #2/#3/#14, oracle #5): mirror `lhs !== rhs`
     /// bernilai 1 — hasil assign tidak konsisten dgn re-evaluasi.
     pub property_violations: u64,
+    /// Differential vs tool referensi LRM: trace maria berbeda dari iverilog.
+    pub ref_mismatch: u64,
     pub covered_features: usize,
     /// Progress CDG (#20): rasio target hit vs total & unreached targets.
     pub cdg_info: Option<crate::cdg::CdgInfo>,
     pub unreached_targets: Vec<String>,
+    /// Gap kepatuhan IEEE 1800: seed corpus SV NYATA yang maria tolak saat
+    /// compile (fitur LRM belum didukung / regressi parse). Bukan crash —
+    /// dicatat terpisah utk roadmap kepatuhan.
+    pub corpus_gap_total: u64,
+    pub corpus_gap_samples: Vec<String>,
+    /// Kode diagnostic (E####/EL####) tiap gap — peta fitur LRM yang belum
+    /// didukung (scorecard kepatuhan IEEE 1800), dedup.
+    pub corpus_gap_codes: Vec<String>,
+    /// Seed ditolak di ELABORASI (code EL####) — lunak: sering file fragment/
+    /// header non-standalone, bukan fitur LRM hilang.
+    pub corpus_elab_reject: u64,
+    /// Jumlah seed corpus yang diuji oracle gap.
+    pub corpus_tested: u64,
+    /// Hasil project-wide sweep korpus nyata (Paper #12/#18): SEMUA error
+    /// (parse+elab) saat seluruh proyek di-compile sebagai satu design —
+    /// dengan file:line:col & klasifikasi kategori. `None` bila tidak diminta.
+    pub project_sweep: Option<crate::sweep::ProjectSweep>,
+    /// Hasil REAL-PROJECT error hunt (GAP-11): per-file compile →
+    /// klasifikasi + minimasi ke reproducer. Kandidat bug internal/cascade.
+    pub real_hunt: Option<crate::real::RealHuntReport>,
     /// Statistik & bobot adaptif per operator mutasi (GAP-3) — untuk
     /// evaluasi palet & debug, bukan untuk determinisme laporan.
     pub op_stats: ast_mutate::OpStats,
@@ -155,6 +193,7 @@ impl FuzzReport {
         self.compile_err += other.compile_err;
         self.sim_ok += other.sim_ok;
         self.sim_err += other.sim_err;
+        self.sim_err_clean += other.sim_err_clean;
         self.panics += other.panics;
         self.hangs += other.hangs;
         self.new_features += other.new_features;
@@ -163,6 +202,7 @@ impl FuzzReport {
         self.meta_mismatch += other.meta_mismatch;
         self.sim_sig_anomalies += other.sim_sig_anomalies;
         self.property_violations += other.property_violations;
+        self.ref_mismatch += other.ref_mismatch;
         self.covered_features = self.covered_features.max(other.covered_features);
         if let Some(other_cdg) = &other.cdg_info {
             if self.cdg_info.as_ref().map_or(true, |c| other_cdg.ratio > c.ratio) {
@@ -172,18 +212,38 @@ impl FuzzReport {
         }
         self.op_stats.merge(&other.op_stats);
         self.bugs.extend(other.bugs.clone());
+        self.corpus_gap_total += other.corpus_gap_total;
+        self.corpus_tested += other.corpus_tested;
+        self.corpus_elab_reject += other.corpus_elab_reject;
+        for s in &other.corpus_gap_samples {
+            if !self.corpus_gap_samples.contains(s) {
+                self.corpus_gap_samples.push(s.clone());
+            }
+        }
+        for c in &other.corpus_gap_codes {
+            if !self.corpus_gap_codes.contains(c) {
+                self.corpus_gap_codes.push(c.clone());
+            }
+        }
+        if self.project_sweep.is_none() {
+            self.project_sweep = other.project_sweep.clone();
+        }
+        if self.real_hunt.is_none() {
+            self.real_hunt = other.real_hunt.clone();
+        }
     }
 
     /// Ringkasan satu-baris untuk konsole / merge.
     pub fn summary(&self) -> String {
         format!(
-            "iters={} compile_ok={} compile_err={} sim_ok={} sim_err={} panics={} hangs={} \
-             new_features={} det_mismatch={} emi_mismatch={} meta_mismatch={} sig_anom={} prop_viol={} covered={} bugs={}",
+            "iters={} compile_ok={} compile_err={} sim_ok={} sim_err={} sim_err_clean={} panics={} hangs={} \
+             new_features={} det_mismatch={} emi_mismatch={} meta_mismatch={} sig_anom={} prop_viol={} ref_mismatch={} covered={} bugs={}",
             self.total,
             self.compile_ok,
             self.compile_err,
             self.sim_ok,
             self.sim_err,
+            self.sim_err_clean,
             self.panics,
             self.hangs,
             self.new_features,
@@ -192,6 +252,7 @@ impl FuzzReport {
             self.meta_mismatch,
             self.sim_sig_anomalies,
             self.property_violations,
+            self.ref_mismatch,
             self.covered_features,
             self.bugs.len(),
         )
@@ -327,21 +388,183 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         let feats = feature::FeatureMap::extract(&src);
         guide.add(src, feats, true);
     }
+    // ── Gap kepatuhan IEEE 1800 (Tahap: proyek NYATA): seed corpus SV nyata
+    //    (test/, opentitan/, cva6/, examples/) yang maria TOLAK saat compile
+    //    = fitur LRM belum didukung / regressi parse. Dua kelas:
+    //    • PARSE (code E####) = gap parser keras (fitur sintaks LRM) → scorecard.
+    //    • ELAB (code EL####) = lunak — sering file fragment/header non-standalone
+    //      (include guard, definisi tanpa modul) → counter terpisah, bukan gap.
+    //    Artifak fuzzer (nama `fz_`/`_fuzz`) di-skip.
+    let mut corpus_gap_total: u64 = 0;
+    let mut corpus_gap_samples: Vec<String> = Vec::new();
+    let mut corpus_gap_codes: Vec<String> = Vec::new();
+    let mut corpus_elab_reject: u64 = 0;
+    for seed in &corpus.seeds {
+        if seed.contains("fz_") || seed.contains("_fuzz") {
+            continue;
+        }
+        if let Err(e) = maria_api::compile_str_quiet(seed) {
+            let code = e.error_code().to_string();
+            // Parse keras = kode E1xxx (UnexpectedToken/ExpectedToken/
+            // ExpectedSemi/UnclosedBlock/InvalidSyntax). E2xxx semantic,
+            // E3xxx/EL3xxx elaborasi, E9xxx runtime — bukan gap sintaks.
+            let is_syntax = code.starts_with("E1");
+            if is_syntax {
+                corpus_gap_total += 1;
+                if !corpus_gap_codes.contains(&code) {
+                    corpus_gap_codes.push(code);
+                }
+                if corpus_gap_samples.len() < 5 {
+                    let head: Vec<&str> = seed.lines().take(8).collect();
+                    corpus_gap_samples.push(head.join(" | "));
+                }
+            } else {
+                corpus_elab_reject += 1;
+            }
+        }
+    }
     let mut report = FuzzReport {
         sim_sig_anomalies: 0,
+        corpus_gap_total,
+        corpus_gap_samples,
+        corpus_gap_codes,
+        corpus_elab_reject,
+        corpus_tested: corpus.seeds.len() as u64,
         ..FuzzReport::default()
     };
+    // ── Project-wide seed sweep (Paper #12/#18): korpus nyata di-compile
+    //    sebagai SATU design → SEMUA error (parse+elab) dengan file:line:col.
+    //    Gap-check per-file standalone di atas MELEWATKAN error yang hanya
+    //    muncul lintas-file (dependensi/macro/package/parameter) — mis. 1679
+    //    parse + 8 semantik + 23 hierarki opentitan penuh. Sweep menutupnya:
+    //    seed nyata menjadi target pencarian error, bukan sekadar fragment.
+    //    Sample deterministik `SWEEP_CAP` file (stride) agar tidak membakar
+    //    budget kampanye; `cap=0` via env MARIA_FUZZ_SWEEP_FULL utk semua.
+    let sweep_dirs: Vec<PathBuf> = if cfg.corpus_dirs.is_empty() {
+        vec![
+            PathBuf::from("test"),
+            PathBuf::from("examples"),
+            PathBuf::from("fuzz"),
+            PathBuf::from("opentitan"),
+            PathBuf::from("cva6"),
+        ]
+        .into_iter()
+        .filter(|d| d.exists())
+        .collect()
+    } else {
+        cfg.corpus_dirs.clone()
+    };
+    let sweep_cap: usize = if std::env::var("MARIA_FUZZ_SWEEP_FULL").is_ok() {
+        0
+    } else {
+        300
+    };
+    if !sweep_dirs.is_empty() {
+        let t0 = std::time::Instant::now();
+        let sweep = crate::sweep::sweep_corpus(&sweep_dirs, sweep_cap);
+        eprintln!(
+            "[fuzz] project-sweep: {} file → {} error ({} ms) — kode: {}",
+            sweep.files_total,
+            sweep.errors_total,
+            t0.elapsed().as_millis(),
+            if sweep.all_codes.is_empty() {
+                "-".to_string()
+            } else {
+                sweep.all_codes.join(",")
+            }
+        );
+        report.project_sweep = Some(sweep);
+    }
+
+    // ── REAL-PROJECT error hunt (GAP-11): per-file compile → klasifikasi →
+    //    minimasi ke reproducer. Menyerang KEDALAMAN: 1679 error parse
+    //    opentitan dari CLI `--filelist ... --recompile` tidak pernah
+    //    direduksi—bisa jadi cuma 1 fitur LRM + recovery cascade ribuan
+    //    error lanjutan. Hunt menemukan konstruk SEBENARNYA yang gagal
+    //    (minimized reproducer per error code).
+    if !cfg.real_files.is_empty() {
+        let t0 = std::time::Instant::now();
+        // Batasi file yang diproses per kampanye (budget) — filelist besar
+        // (3920 file) dengan compile per-file mahal.
+        let cap: usize = std::env::var("MARIA_FUZZ_REAL_FILES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(600);
+        let mut files: Vec<PathBuf> = Vec::new();
+        for f in &cfg.real_files {
+            if f.is_file() {
+                files.push(f.clone());
+            } else if f.is_dir() {
+                let mut collected: Vec<PathBuf> = Vec::new();
+                collect_sv_paths(f, &mut collected);
+                files.extend(collected);
+            }
+        }
+        // File besar dulu (kedalaman struktural) — deterministik.
+        files.sort_by(|a, b| b.metadata().map(|m| m.len()).unwrap_or(0)
+            .cmp(&a.metadata().map(|m| m.len()).unwrap_or(0)));
+        files.truncate(cap);
+        let hunt = crate::real::hunt_files(&files);
+        eprintln!(
+            "[fuzz] real-hunt: {} file → ok={} gap={} internal_bug={} compile_err={} ({} ms)",
+            hunt.files_scanned,
+            hunt.ok,
+            hunt.feature_gaps,
+            hunt.internal_bugs,
+            hunt.compile_errs,
+            t0.elapsed().as_millis()
+        );
+        for b in &hunt.bug_candidates {
+            eprintln!(
+                "  [real] {} | {} ({} error) — reproduce {} bytes",
+                b.kind.label(),
+                b.path.display(),
+                b.total_errors,
+                b.minimized.len()
+            );
+        }
+        report.real_hunt = Some(hunt);
+    }
     let started = Instant::now();
 
-    // ── Seed awal: modul generated (Paper #14/#15) + fragment corpus (#12) ──
-    for _ in 0..16 {
-        let s = gen.random_module(&mut rng);
-        let feats = feature::FeatureMap::extract(&s);
-        guide.add(s, feats, false);
-    }
-    for frag in corpus.sample_batch(&mut rng, 8) {
-        let feats = feature::FeatureMap::extract(&frag);
-        guide.add(frag, feats, false);
+    // ── Seed awal (Tahap: proyek NYATA, Paper #12/#18): corpus SV nyata
+    //    (test/, opentitan/, cva6/, examples/) jadi parent mutasi utama —
+    //    bukan modul generated. Modul generated HANYA fallback bila corpus
+    //    kosong (mandiri/valid — mencegah starvation guide).
+    let real_seeds = corpus.sample_batch(&mut rng, 48);
+    if real_seeds.is_empty() {
+        for _ in 0..16 {
+            let s = gen.random_module(&mut rng);
+            let feats = feature::FeatureMap::extract(&s);
+            guide.add(s, feats, false);
+        }
+    } else {
+        // Proyek nyata PRIMARY (48) + generator bootstrap (11) — campuran
+        // mencegah starvation fitur: dengan real-only, shape generator tak
+        // pernah masuk tilikan → fitur unreached (`<<`, `$clog2`, covergroup).
+        // SATU per shape (0..NUM_SHAPES) — deterministik: semua fitur shape
+        // ikut corpus, bukan keberuntungan sampling acak.
+        for s in real_seeds {
+            let feats = feature::FeatureMap::extract(&s);
+            guide.add(s, feats, false);
+        }
+        for k in 0..gen::NUM_SHAPES {
+            let s = gen.module_for_shape(&mut rng, k);
+            let feats = feature::FeatureMap::extract(&s);
+            guide.add(s, feats, false);
+        }
+        // Composed seeds — rakit dari INTERACTION GRAPH × SemanticPressure
+        // (P0 scheduler/concurrency dulu). Variasi dari assembly pool, bukan
+        // template: tiap campuran interaksi = modul struktur beda.
+        let pressure = semantic::SemanticPressure::scheduler_directed();
+        let graph = interaction::InteractionGraph::default();
+        let cw = [4usize, 8].choose(&mut rng).copied().unwrap_or(4);
+        for _ in 0..6 {
+            let ed = graph.sample(&mut rng, &pressure);
+            let s = gen.compose_from_interaction(&mut rng, cw, ed.a, ed.b);
+            let feats = feature::FeatureMap::extract(&s);
+            guide.add(s, feats, false);
+        }
     }
     // Statistik & bobot adaptif palet mutasi (GAP-3).
     let mut op_stats = ast_mutate::OpStats::default();
@@ -350,6 +573,19 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
     // tercatat tapi tak ter-reproduksi di re-run). Ambang efektif per iterasi
     // = max(hang_ms, EMA durasi run-OK × 16) — klasifikasi tahan terhadap
     // perlambatan GLOBAL, bukan hanya absolut (false positive timeout).
+    //
+    // PERFORM-1 (fix): EMA TIDAK boleh diangkat oleh outlier delta-storm.
+    // Input `always @(posedge clk)`/comb-loop dengan `forever #5 clk` SEDANGKAN
+    // SENDIRI (engine settle lewat delta-limit 100k, warning WR0301, selesai
+    // dalam 5–7s wall) — bukan indikator beban GLOBAL. Sebelumnya EMA naik ke
+    // ~7000ms → hang_ms_eff melonjak 16× ke 112s → konfirmasi hang jadi 224s
+    // → kampanye melambat tanpa batas. Fix:
+    //   • Hanya input yang selesai dalam `OK_BUDGET_MS` (normal, bukan
+    //     delta-storm) yang memengaruhi EMA.
+    //   • EMA di-CAP absolute `HANG_CAP_MS` sehingga tak pernah membengkak
+    //     tak terkendali oleh outlier.
+    const OK_BUDGET_MS: f64 = 3_000.0;
+    const HANG_CAP_MS: u64 = 30_000;
     let mut avg_ok_ms: f64 = 0.0;
     let mut n_ok: u64 = 0;
 
@@ -358,13 +594,32 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         let Some(parent) = guide.select() else { break };
 
         // ── 2. rantai mutasi (1..3 op; tiap op dipilih adaptif) ──
-        let chain = rng.gen_range(1..=3);
+        // GATE validitas (audit compile_err): child mutasi yang gagal compile
+        // di-retry (maks 1×) dengan rantai mutasi FRESH. Sebagian besar
+        // kompilasi yang bisa dieksekusi → proporsi sim/reach naik. Bila
+        // retry tetap gagal, child invalid tetap dipakai (parser-robustness &
+        // corpus mutasi butuh seed invalid pun untuk menjelajah sintaks).
+        let chain = rng.gen_range(1..=2);
         let mut src = parent.clone();
         let mut ops_used: Vec<usize> = Vec::with_capacity(chain as usize);
         for _ in 0..chain {
             let (op, next) = ast_mutate::mutate(&mut rng, &src, &corpus, &mut op_stats);
             ops_used.push(op);
             src = next;
+        }
+        if !harness::compile_only_isolated(&src, cfg.hang_ms).is_ok() {
+            let chain2 = rng.gen_range(1..=2);
+            let mut src2 = parent.clone();
+            let mut ops2: Vec<usize> = Vec::with_capacity(chain2 as usize);
+            for _ in 0..chain2 {
+                let (op, next) = ast_mutate::mutate(&mut rng, &src2, &corpus, &mut op_stats);
+                ops2.push(op);
+                src2 = next;
+            }
+            if harness::compile_only_isolated(&src2, cfg.hang_ms).is_ok() {
+                src = src2;
+                ops_used = ops2;
+            }
         }
 
         // ── 3. bias terarah (#17) ──
@@ -380,7 +635,7 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         //      ke fitur TRACKED yang belum tereksekusi (recomputed berkala;
         //      hanya target steerable — snippet valid, audit GAP-8/CDG
         //      report-only jadi aktif). Deterministik per seed RNG.
-        if cfg.target.is_none() && iter % 25 == 0 {
+        if cfg.target.is_none() && iter % 10 == 0 {
             let unreached = cdg::plan_targets(&guide.coverage());
             if let Some(t) = unreached.choose(&mut rng) {
                 if directed::is_steerable(t) && !directed::is_relevant(&src, t) {
@@ -400,7 +655,7 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         let hang_ms_eff = if n_ok == 0 {
             cfg.hang_ms
         } else {
-            cfg.hang_ms.max((avg_ok_ms * 16.0) as u64)
+            cfg.hang_ms.max((avg_ok_ms * 16.0) as u64).min(HANG_CAP_MS)
         };
         let out = if cfg.proc_isolate {
             harness::run_isolated_proc(&src, cfg.max_time, hang_ms_eff)
@@ -657,18 +912,62 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                             }
                         } else {
                             report.sim_err += 1;
-                            // Dev diagnostic (env gate): cetak source + code + message
-                            // SIM error yang bukan assert-oracle — utk inspeksi manual
-                            // apakah sim_err = bug engine atau input tak-sah. Tidak
-                            // termasuk campaign default (hanya bila env di-set).
-                            if std::env::var("MARIA_FUZZ_SIMERR").is_ok() && !ast_mutate::has_assert_oracle(&src)
-                            {
-                                eprintln!(
-                                    "[simerr] code={} msg={}\n---\n{}\n---",
-                                    sim.code,
-                                    sim.message,
-                                    src
+                            // ── Reklasifikasi (agresif): runtime error pada
+                            // input PARSE-CLEAN = kandidat bug engine, KECUALI
+                            // kelas legit-LRM (null-handle/mailbox/assert/delta-
+                            // storm/timeout = perilaku SV benar). RT yang keluar
+                            // di input valid = engine terlalu ketat / salah kode.
+                            // Sebelumnya semua sim_err dibuang → "jarang ketemu
+                            // error runtime" (padahal ada).
+                            let legit_runtime = [
+                                "RT0001", "RT0002", "RT0003", "RT0005", "RT2001",
+                                "RT2003", "RT3001", "RT7001", "RT7002", "RT7003",
+                            ];
+                            let clean_src = maria_api::compile_diag_counts(&src).0 == 0
+                                && !ast_mutate::has_assert_oracle(&src);
+                            let rt_is_suspicious = sim
+                                .code
+                                .starts_with("RT")
+                                && !legit_runtime
+                                    .iter()
+                                    .any(|c| sim.code.contains(c));
+                            if clean_src && rt_is_suspicious {
+                                report.sim_err_clean += 1;
+                                let minimized = corpus::Corpus::minimize(
+                                    &src,
+                                    &mut |cand| {
+                                        maria_api::compile_diag_counts(cand).0 == 0
+                                            && !ast_mutate::has_assert_oracle(cand)
+                                            && harness::sim_err_isolated(
+                                                cand,
+                                                cfg.max_time,
+                                                cfg.hang_ms,
+                                            )
+                                            .map(|c| {
+                                                c.starts_with("RT")
+                                                    && !legit_runtime
+                                                        .iter()
+                                                        .any(|x| c.contains(x))
+                                            })
+                                            .unwrap_or(false)
+                                    },
                                 );
+                                let mlen = minimized.len();
+                                report.bugs.push(BugRecord {
+                                    kind: BugKind::Differential,
+                                    source: minimized,
+                                    detail: format!(
+                                        "runtime-error pada input parse-clean: {}{};\
+                                         minimized {}→{} bytes",
+                                        sim.code,
+                                        sim.message,
+                                        src.len(),
+                                        mlen
+                                    ),
+                                });
+                                if let Some(b) = report.bugs.last() {
+                                    bug_db.push(b, cfg.seed, iter + 1);
+                                }
                             }
                             // Property-oracle assert (Paper #14/#2/#3, oracle #5):
                             // seed memuat assert-oracle (`_fz_atA/_fz_atB` eval ekspresi
@@ -719,13 +1018,55 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         }
 
         // EMA durasi run-OK — umpan ambang hang adaptif (lihat di atas).
-        if matches!(&out.status, RunStatus::Done) && out.compile.ok {
+        // PERFORM-1: HANYA input yang selesai dalam OK_BUDGET_MS (bukan
+        // delta-storm / comb-loop yang settle 5–7s) yang meng-update EMA.
+        // Input lambat-tapi-selesai (delta-storm) TIDAK mengangkat threshold
+        // → hang_sejati tetap terdeteksi cepat, kampanye tidak melambat.
+        if matches!(&out.status, RunStatus::Done) && out.compile.ok && out.duration_ms < OK_BUDGET_MS as u64 {
             let d = out.duration_ms as f64;
             avg_ok_ms = if n_ok == 0 { d } else { 0.9 * avg_ok_ms + 0.1 * d };
             n_ok += 1;
         }
 
-        // ── 5. feature map + corpus + adaptasi (#6/#7/#8) ──
+        /// Oracle referensi (LRM proxy) — jalankan SEBAGIAN iterasi: bangun core
+    /// pasif fresh (dari generator, bukan mutasi — tb eksternal drive tanpa
+    /// konflik wire), bandingkan trace maria vs iverilog. Mismatch = deviasi
+    /// semantik (buta bagi oracle konsistensi-diri).
+    if cfg.ref_diff && rng.gen_bool(0.30) {
+        let w = gen::WIDTHS.choose(&mut rng).copied().unwrap_or(8);
+        let core = gen.passive_core(&mut rng, w);
+        if !oracle::has_nondeterministic_src(&core) {
+            match differential::reference_vs_ivl(&core, cfg) {
+                differential::DiffVerdict::Same => {}
+                differential::DiffVerdict::Mismatch(d) => {
+                    report.ref_mismatch += 1;
+                    let minimized = corpus::Corpus::minimize(&core, &mut |cand| {
+                        matches!(
+                            differential::reference_vs_ivl(cand, cfg),
+                            differential::DiffVerdict::Mismatch(_)
+                        )
+                    });
+                    let mlen = minimized.len();
+                    report.bugs.push(BugRecord {
+                        kind: BugKind::Differential,
+                        source: minimized,
+                        detail: format!(
+                            "reference(iverilog): {}; minimized {}→{} bytes",
+                            d,
+                            core.len(),
+                            mlen
+                        ),
+                    });
+                    if let Some(b) = report.bugs.last() {
+                        bug_db.push(b, cfg.seed, iter + 1);
+                    }
+                }
+                differential::DiffVerdict::Skip => {}
+            }
+        }
+    }
+
+    // ── 5. feature map + corpus + adaptasi (#6/#7/#8) ──
         // Execution-gated (audit GAP-2): HANYA hasil sim_ok yang membuktikan
         // fitur benar-benar tereksekusi. Panic/Hang/compile_err/sim_err TIDAK
         // masuk peta — mencegah "coverage" dari testcase invalid dan saturasi
@@ -785,6 +1126,15 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         eprintln!("[fuzz] warning: gagal simpan bug DB: {}", e);
     }
 
+    // Auto-simpan bug source (.sv) — prinsip "0 file saat normal, file
+    // HANYA saat bug/error baru": bila `--emit-bugs` tidak diberikan tapi
+    // ada bug, tulis ke `.maria-fuzz-bugs/` (bukan polusi tanpa bug).
+    if let Some(dir) = &cfg.emit_dir {
+        emit_bugs(dir, &report);
+    } else if !report.bugs.is_empty() {
+        emit_bugs(std::path::Path::new(".maria-fuzz-bugs"), &report);
+    }
+
     // Persist corpus menarik (GAP-10): parent aktif/bug → seed kampanye
     // berikutnya via --corpus-dir (evolusi lintas kampanye).
     if let Some(dir) = &cfg.save_corpus_dir {
@@ -793,10 +1143,24 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         }
     }
 
-    if let Some(dir) = &cfg.emit_dir {
-        emit_bugs(dir, &report);
-    }
     report
+}
+
+/// Kumpulkan path file `.sv`/`.v` rekursif (untuk real-project hunt).
+fn collect_sv_paths(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_sv_paths(&p, out);
+        } else if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+            if ext == "sv" || ext == "v" {
+                out.push(p);
+            }
+        }
+    }
 }
 
 /// Tulis bug ke direktori (1 file per bug) — dev-reporting, bukan edit kode.

@@ -143,9 +143,10 @@ impl TerminalEmitter {
                 snippet.line, BOX_V, snippet.source_line
             )?;
 
-            // Pointer
+            // Pointer — caret harus mendarat di kolom `snippet.col` yang sama
+            // dengan baris source (prefix `{:>4} | ` = 7 char): (col-1) spasi.
             write!(self.writer, "     {} ", BOX_V)?;
-            for _ in 1..snippet.col.saturating_sub(1) {
+            for _ in 1..snippet.col {
                 write!(self.writer, " ")?;
             }
             write!(self.writer, "{}", RED)?;
@@ -270,7 +271,7 @@ impl TerminalEmitter {
             writeln!(self.writer, "   {}", BOX_V)?;
             writeln!(self.writer, "{:>4} | {}", snippet.line, snippet.source_line)?;
             write!(self.writer, "     | ")?;
-            for _ in 1..snippet.col.saturating_sub(1) {
+            for _ in 1..snippet.col {
                 write!(self.writer, " ")?;
             }
             write!(self.writer, "^")?;
@@ -403,9 +404,9 @@ impl TerminalEmitter {
         if let Some(snippet) = &diag.source_snippet {
             writeln!(self.writer, "  --> {}:{}", snippet.file, snippet.line)?;
             writeln!(self.writer, "   |")?;
-            writeln!(self.writer, " {} | {}", snippet.line, snippet.source_line)?;
-            write!(self.writer, "   | ")?;
-            for _ in 0..snippet.col {
+            writeln!(self.writer, "{:>4} | {}", snippet.line, snippet.source_line)?;
+            write!(self.writer, "     | ")?;
+            for _ in 1..snippet.col {
                 write!(self.writer, " ")?;
             }
             writeln!(self.writer, "^")?;
@@ -584,7 +585,7 @@ pub fn format_diagnostic(diag: &Diagnostic) -> String {
         output.push_str(&format!("   {}\n", BOX_V));
         output.push_str(&format!("{:>4} | {}\n", snippet.line, snippet.source_line));
         output.push_str("     | ");
-        for _ in 1..snippet.col.saturating_sub(1) {
+        for _ in 1..snippet.col {
             output.push(' ');
         }
         output.push('^');
@@ -762,5 +763,39 @@ mod tests {
         assert!(output.contains("RT1005"));
         assert!(output.contains("Signal read before assignment"));
         assert!(output.contains("Initialize signal"));
+    }
+
+    /// Col 1-based: caret harus mendarat tepat di kolom yang dilaporkan
+    /// (regresi: `saturating_sub(1)` lama geser caret 1 kolom ke kiri).
+    /// Baris caret prefix `"     | "` = 7 char, sama dengan baris source
+    /// `{:>4} | ` → col caret = pos '^' - 7 + 1.
+    fn caret_col_of(source_line: &str, snippet: &SourceSnippet) -> usize {
+        let d = Diagnostic::error(DiagCode::UnexpectedToken, "test")
+            .with_source_snippet(snippet.clone());
+        let out = format_diagnostic(&d);
+        let caret_line = out
+            .lines()
+            .find(|l| l.contains('^'))
+            .expect("harus ada baris caret");
+        let _ = source_line;
+        caret_line.find('^').unwrap() - 7 + 1
+    }
+
+    #[test]
+    fn caret_aligns_col_on_multidigit_line() {
+        let snippet = SourceSnippet::new("t.sv", 3, 20, "  assign y = bad + ;");
+        assert_eq!(caret_col_of("  assign y = bad + ;", &snippet), 20);
+    }
+
+    #[test]
+    fn caret_aligns_col_one() {
+        let snippet = SourceSnippet::new("t.sv", 3, 1, "module x;");
+        assert_eq!(caret_col_of("module x;", &snippet), 1);
+    }
+
+    #[test]
+    fn caret_aligns_col_two_digit_source() {
+        let snippet = SourceSnippet::new("t.sv", 12, 6, "      y = a;");
+        assert_eq!(caret_col_of("      y = a;", &snippet), 6);
     }
 }

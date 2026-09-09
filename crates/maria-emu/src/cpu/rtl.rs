@@ -124,7 +124,7 @@ fn compile_cpu_rtl(files: &[String], top: &str) -> Result<IrDesign, String> {
     let first_source = if file_line_map.is_empty() {
         "<rtl-cpu>".to_string()
     } else {
-        file_line_map[0].1.clone()
+        file_line_map[0].2.clone()
     };
     let mut parser = maria_parser::Parser::new(tokens, &first_source)
         .with_source_lines(&preprocessed)

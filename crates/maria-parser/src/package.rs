@@ -342,6 +342,31 @@ impl Parser {
                             }
                             self.skip_semi();
                         }
+                        Token::Constraint => {
+                            // Eksternal constraint di dalam package (include file
+                            // DV): `constraint C::name { ... }` — body sudah
+                            // dikumpulkan saat class di-parse; hanya skip utk
+                            // tidak desync (sama dgn arm top-level). Sebelumnya
+                            // jatuh ke parse_decl → "expected wire/reg/...".
+                            self.advance(); // 'constraint'
+                            while matches!(
+                                self.peek(),
+                                Token::Ident(_) | Token::Scope | Token::Hash
+                            ) {
+                                self.advance();
+                            }
+                            match self.peek() {
+                                Token::LBrace => {
+                                    let _ = self.parse_constraint_items();
+                                    if self.peek() == &Token::RBrace {
+                                        self.advance();
+                                    }
+                                }
+                                _ => {
+                                    let _ = self.skip_until_semi_or_end();
+                                }
+                            }
+                        }
                         _ => {
                             let decl = self.parse_decl()?;
                             items.push(PackageItem::Decl(decl));

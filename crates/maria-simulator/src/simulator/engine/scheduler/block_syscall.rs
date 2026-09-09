@@ -376,7 +376,9 @@ impl SimulationEngine {
             if let Some(h) = handle {
                 let msg = self.format_display(&ir_args[1..]);
                 if let Some(f) = self.file_handles.get_mut(&h) {
-                    let _ = write!(f, "{}", msg);
+                    // LRM: $fdisplay = $fwrite + newline (VCS/iverilog patuh;
+                    // maria sebelumnya concat tanpa '\n' — artefak differential).
+                    let _ = write!(f, "{}\n", msg);
                 }
             }
         } else if name == "fwrite" {
@@ -1265,7 +1267,9 @@ impl SimulationEngine {
             if let Some(h) = handle {
                 let msg = self.format_display(&ir_args[1..]);
                 if let Some(f) = self.file_handles.get_mut(&h) {
-                    let _ = write!(f, "{}", msg);
+                    // LRM: $fdisplay = $fwrite + newline (VCS/iverilog patuh;
+                    // maria sebelumnya concat tanpa '\n' — artefak differential).
+                    let _ = write!(f, "{}\n", msg);
                 }
             }
         } else if name == "fwrite" {

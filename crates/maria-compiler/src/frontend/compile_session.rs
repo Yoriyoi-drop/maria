@@ -280,6 +280,8 @@ impl CompileSession {
 
                 let mut pp = base_pp.clone();
                 let path_str = path.to_string_lossy();
+                // Label `` `line `` RESTORE utk include (path file induk).
+                pp.cur_path = Some(path_str.to_string());
                 // Gunakan Cow::from_utf8_lossy — untuk data valid UTF-8
                 // (99%+ file SV), tidak ada alokasi baru: hanya borrow mmap bytes.
                 // Sebelumnya .into_owned() SELALU mengalokasi String baru per file.
