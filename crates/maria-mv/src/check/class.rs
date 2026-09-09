@@ -11,8 +11,11 @@ pub(crate) fn check_func<'a>(
     base: &mut Scope<'a>,
 ) -> Result<(), MvError> {
     let mut scope = base.clone();
-    for (n, t, _) in &f.args {
+    for (n, t, _, default) in &f.args {
         super::expr::check_type_scope(t, ctx, Some(&scope), 0)?;
+        if let Some(d) = default {
+            check_expr(d, ctx, &scope, 0)?;
+        }
         scope.sigs.insert(n.as_str());
         scope.types.insert(n.as_str(), t);
     }
@@ -32,8 +35,11 @@ pub(crate) fn check_task<'a>(
 ) -> Result<(), MvError> {
     let mut scope = base.clone();
     scope.in_task = true;
-    for (n, ty, _) in &t.args {
+    for (n, ty, _, default) in &t.args {
         super::expr::check_type_scope(ty, ctx, Some(&scope), 0)?;
+        if let Some(d) = default {
+            check_expr(d, ctx, &scope, 0)?;
+        }
         scope.sigs.insert(n.as_str());
         scope.types.insert(n.as_str(), ty);
     }

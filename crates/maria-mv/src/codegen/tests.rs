@@ -566,3 +566,28 @@ module top {
         out.sv
     );
 }
+
+#[test]
+fn codegen_func_default_arg() {
+    // Default arg function/task: `b : int = 4` → `input int b = 4`.
+    let src = r#"
+func scale(v : int, factor : int = 2) -> int {
+    return v * factor
+}
+task send(data : logic[7:0], tag : logic[3:0] = 4'h0) {
+    #1
+    data = 0
+}
+"#;
+    let out = generate(&parse(src).unwrap(), "util");
+    assert!(
+        out.sv.contains("function int scale(input int v, input int factor = 2);"),
+        "func default: {}",
+        out.sv
+    );
+    assert!(
+        out.sv.contains("task send(inout logic [7:0] data, inout logic [3:0] tag = 4'h0);"),
+        "task default: {}",
+        out.sv
+    );
+}

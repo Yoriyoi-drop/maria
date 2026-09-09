@@ -519,11 +519,15 @@ pub(crate) fn emit_task(out: &mut String, t: &MTask) {
     line(out, 0, "endtask");
 }
 
-/// Format daftar argumen `(nama, tipe, arah)` — dipakai emit_func/emit_task/
-/// emit_class (DRY). `default_inout`: arah default saat tidak ditulis.
-pub(crate) fn emit_args(args: &[(String, MvType, Option<Dir>)], default_inout: bool) -> Vec<String> {
+/// Format daftar argumen `(nama, tipe, arah, default)` — dipakai
+/// emit_func/emit_task/emit_class (DRY). `default_inout`: arah default saat
+/// tidak ditulis. Default arg → `input int b = 4`.
+pub(crate) fn emit_args(
+    args: &[(String, MvType, Option<Dir>, Option<Expr>)],
+    default_inout: bool,
+) -> Vec<String> {
     args.iter()
-        .map(|(n, t, d)| {
+        .map(|(n, t, d, dflt)| {
             let dir = match d {
                 Some(Dir::In) => "input",
                 Some(Dir::Out) => "output",
@@ -531,7 +535,11 @@ pub(crate) fn emit_args(args: &[(String, MvType, Option<Dir>)], default_inout: b
                 None if default_inout => "inout",
                 None => "input",
             };
-            format!("{dir} {}", emit_signal_decl(t, n))
+            let dflt_s = dflt
+                .as_ref()
+                .map(|e| format!(" = {}", emit_expr(e)))
+                .unwrap_or_default();
+            format!("{dir} {}{dflt_s}", emit_signal_decl(t, n))
         })
         .collect()
 }

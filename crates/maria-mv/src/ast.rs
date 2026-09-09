@@ -383,8 +383,8 @@ pub enum Conn {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MFunc {
     pub name: String,
-    /// (nama, tipe, arah opsional)
-    pub args: Vec<(String, MvType, Option<Dir>)>,
+    /// (nama, tipe, arah opsional, default arg opsional `b : int = 4`)
+    pub args: Vec<(String, MvType, Option<Dir>, Option<Expr>)>,
     pub ret: Option<MvType>,
     pub body: Vec<Stmt>,
     pub line: usize,
@@ -396,7 +396,8 @@ pub struct MFunc {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MTask {
     pub name: String,
-    pub args: Vec<(String, MvType, Option<Dir>)>,
+    /// (nama, tipe, arah opsional, default arg opsional)
+    pub args: Vec<(String, MvType, Option<Dir>, Option<Expr>)>,
     pub body: Vec<Stmt>,
     pub line: usize,
     pub col: usize,

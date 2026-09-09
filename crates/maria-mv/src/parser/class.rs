@@ -123,7 +123,7 @@ impl Parser {
 
     pub(crate) fn parse_arg_list(
         &mut self,
-    ) -> Result<Vec<(String, MvType, Option<Dir>)>, MvError> {
+    ) -> Result<Vec<(String, MvType, Option<Dir>, Option<Expr>)>, MvError> {
         self.expect(&Tok::LParen)?;
         let mut args = Vec::new();
         while !self.eat(&Tok::RParen) {
@@ -145,7 +145,13 @@ impl Parser {
             let name = self.expect_ident()?;
             self.expect(&Tok::Colon)?;
             let ty = self.parse_type()?;
-            args.push((name, ty, dir));
+            // default arg opsional: `b : int = 4`
+            let default = if self.eat(&Tok::BlockingAssign) {
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
+            args.push((name, ty, dir, default));
             self.eat(&Tok::Comma);
         }
         Ok(args)

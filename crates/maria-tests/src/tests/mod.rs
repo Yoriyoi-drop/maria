@@ -1043,6 +1043,35 @@ module bad_seq {
 }
 
 #[test]
+fn test_mv_default_arg_function() {
+    // `.mv` default arg function: `func scale(v:int, factor:int=4)` →
+    // `input int factor = 4`; call 1-arg pakai default (40), call 2-arg
+    // override (30) — engine SV mendukung default param.
+    let src = r#"
+func scale(v : int, factor : int = 4) -> int {
+    return v * factor
+}
+module tb {
+    sig a, b : logic[31:0]
+    comb {
+        a = scale(10)
+        b = scale(10, 3)
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "def").expect("transpile default arg OK");
+    assert!(
+        r.sv.contains("input int factor = 4"),
+        "codegen harus emit default arg: {}",
+        r.sv
+    );
+    let sigs = simulate_signals(&r.sv, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("a"), 40, "scale(10) pakai default factor=4");
+    assert_eq!(get("b"), 30, "scale(10,3) override factor=3");
+}
+
+#[test]
 fn test_mv_for_step() {
     // `for i in 0..N step 2` — increment `i = i + 2` di behavioral &
     // generate; step 2 mengisi bit genap → y = 8'h55 (verifikasi via sim).
