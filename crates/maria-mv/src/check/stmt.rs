@@ -236,6 +236,24 @@ pub(crate) fn check_stmt<'a>(
             }
             Ok(())
         }
+        // `foreach (arr[i]) { ... }` — arr harus sinyal dikenal; index var
+        // otomatis lokal di dalam body.
+        Stmt::Foreach { arr, inds, body } => {
+            if !scope.known(arr) {
+                return Err(err_at(
+                    0,
+                    0,
+                    "E2001",
+                    format!("undefined signal '{arr}' (foreach) — di '{}'", scope.env.mname),
+                ));
+            }
+            let mut inner = scope.clone();
+            for iv in inds {
+                inner.sigs.insert(iv.as_str());
+            }
+            inner.loop_depth += 1;
+            check_stmt(body, ctx, &mut inner, kind)
+        }
         Stmt::Repeat { count, body } => {
             check_expr(count, ctx, scope, 0)?;
             let mut inner = scope.clone();

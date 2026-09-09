@@ -252,6 +252,13 @@ pub enum Stmt {
         branches: Vec<Stmt>,
         join: ForkJoin,
     },
+    /// `foreach (arr[i]) { body }` / `foreach (mat[i][j]) ...` — loop per
+    /// elemen array unpacked (index var otomatis bertipe int).
+    Foreach {
+        arr: String,
+        inds: Vec<String>,
+        body: Box<Stmt>,
+    },
     /// `assert (cond) pass [else fail]`
     Assert {
         cond: Expr,

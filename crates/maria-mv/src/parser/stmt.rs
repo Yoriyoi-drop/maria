@@ -173,6 +173,24 @@ impl Parser {
                 self.eat(&Tok::Semi);
                 Ok(Stmt::EventTrigger(Expr::Ident(name, l, c)))
             }
+            // `foreach (arr[i]) { body }` — loop elemen array unpacked
+            Tok::Foreach => {
+                self.advance();
+                self.expect(&Tok::LParen)?;
+                let arr = self.expect_ident()?;
+                let mut inds = Vec::new();
+                while self.eat(&Tok::LBrack) {
+                    inds.push(self.expect_ident()?);
+                    self.expect(&Tok::RBrack)?;
+                }
+                self.expect(&Tok::RParen)?;
+                let body = self.parse_stmt()?;
+                Ok(Stmt::Foreach {
+                    arr,
+                    inds,
+                    body: Box::new(body),
+                })
+            }
             // F39: `fork { stmt* } { stmt* } ... join / join_any / join_none`
             // — branch konkurren, masing-masing blok `{ ... }`. Diakhiri salah
             // satu keyword join (bukan `}` lagi).

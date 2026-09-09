@@ -1072,6 +1072,33 @@ module tb {
 }
 
 #[test]
+fn test_mv_foreach_array_fill() {
+    // `foreach (rom[i]) { rom[i] = i }` di initial → SV foreach; engine
+    // mengisi array per-elemen (rom[3]=3).
+    let src = r#"
+module tb {
+    sig rom : logic[8][4]
+    sig chk : logic[7:0]
+    initial {
+        foreach (rom[i]) {
+            rom[i] = i
+        }
+        chk = rom[3]
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "fe").expect("transpile foreach OK");
+    assert!(
+        r.sv.contains("foreach (rom[i]) begin"),
+        "codegen foreach: {}",
+        r.sv
+    );
+    let sigs = simulate_signals(&r.sv, 5).unwrap();
+    let chk = sigs.iter().find(|(s, _)| s == "chk").unwrap().1.to_u64();
+    assert_eq!(chk, 3, "rom[3] = 3 via foreach");
+}
+
+#[test]
 fn test_mv_readmemh_rom() {
     // `.mv` `$readmemh("f", rom)` di initial — `$` di-lex sbg ident, Call
     // di-emit apa adanya; engine mengisi ROM dari file (regression: jangan

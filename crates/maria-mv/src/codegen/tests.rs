@@ -543,6 +543,36 @@ fn codegen_cast() {
 }
 
 #[test]
+fn codegen_foreach_array() {
+    // `foreach (rom[i]) { rom[i] = i }` → SV foreach (1 & multi index).
+    let src = r#"
+module m {
+    sig rom : logic[8][4]
+    sig mat : logic[8][2][2]
+    initial {
+        foreach (rom[i]) {
+            rom[i] = i
+        }
+        foreach (mat[i][j]) {
+            mat[i][j] = 0
+        }
+    }
+}
+"#;
+    let out = generate(&parse(src).unwrap(), "m");
+    assert!(
+        out.sv.contains("foreach (rom[i]) begin"),
+        "foreach 1-index: {}",
+        out.sv
+    );
+    assert!(
+        out.sv.contains("foreach (mat[i][j]) begin"),
+        "foreach multi-index: {}",
+        out.sv
+    );
+}
+
+#[test]
 fn codegen_inst_positional_param() {
     // Instance param POSITIONAL `inst fifo #(8) u (...)` — nama kosong dari
     // parser → emit `#(8)` (bukan `.8()`); campur `#(8, .DEPTH(4))` valid SV.

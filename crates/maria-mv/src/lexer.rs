@@ -81,6 +81,8 @@ pub enum Tok {
     Join,
     JoinAny,
     JoinNone,
+    /// `foreach (arr[i]) { ... }` — loop elemen array unpacked
+    Foreach,
 
     /// Escape hatch: `@sv { ... }` — teks SystemVerilog mentah yang di-emit
     /// verbatim (body diambil mentah dari source, ISOLASI dari lexer .mv —
@@ -218,6 +220,7 @@ fn keyword(s: &str) -> Option<Tok> {
         "join" => Tok::Join,
         "join_any" => Tok::JoinAny,
         "join_none" => Tok::JoinNone,
+        "foreach" => Tok::Foreach,
         "inside" => Tok::Inside,
         "dist" => Tok::Dist,
         "solve" => Tok::Solve,

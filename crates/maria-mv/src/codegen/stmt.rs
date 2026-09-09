@@ -120,6 +120,16 @@ pub(crate) fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             };
             line(out, indent, j);
         }
+        Stmt::Foreach { arr, inds, body } => {
+            let dims: String = inds.iter().map(|iv| format!("[{iv}]")).collect();
+            if let Some(s) = single_line_stmt(body) {
+                line(out, indent, &format!("foreach ({arr}{dims}) {s}"));
+            } else {
+                line(out, indent, &format!("foreach ({arr}{dims}) begin"));
+                emit_body(out, indent + 1, body);
+                line(out, indent, "end");
+            }
+        }
         Stmt::Repeat { count, body } => {
             if let Some(s) = single_line_stmt(body) {
                 line(out, indent, &format!("repeat ({}) {s}", emit_expr(count)));
