@@ -541,3 +541,28 @@ fn codegen_cast() {
     assert!(out.sv.contains("w = Word16'(a);"), "sv: {}", out.sv);
     assert!(out.sv.contains("b = logic'(a[0]);"), "sv: {}", out.sv);
 }
+
+#[test]
+fn codegen_inst_positional_param() {
+    // Instance param POSITIONAL `inst fifo #(8) u (...)` — nama kosong dari
+    // parser → emit `#(8)` (bukan `.8()`); campur `#(8, .DEPTH(4))` valid SV.
+    let src = r#"
+module top {
+    in clk : bit
+    out w   : logic[7:0]
+    inst fifo u1 #(8) (.clk(clk), .dout(w))
+    inst fifo u2 #(8, .DEPTH(4)) (.clk(clk), .dout(w))
+}
+"#;
+    let out = generate(&parse(src).unwrap(), "top");
+    assert!(
+        out.sv.contains("fifo u1 #(8) ("),
+        "positional: {}",
+        out.sv
+    );
+    assert!(
+        out.sv.contains("fifo u2 #(8, .DEPTH(4)) ("),
+        "campur positional+named: {}",
+        out.sv
+    );
+}

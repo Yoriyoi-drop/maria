@@ -288,6 +288,12 @@ fn check_module_item<'a>(
                 .unwrap_or(&[]);
             let mut seen_params: HashSet<&str> = HashSet::new();
             for (pn, e) in params {
+                // Parameter POSITIONAL `#(8)` (nama kosong dari parser) — hanya
+                // validasi ekspresi; tak ada nama utk dicocokkan/duplicate.
+                if pn.is_empty() {
+                    check_expr(e, ctx, scope, 0)?;
+                    continue;
+                }
                 // F32: override TYPE param (`.T(Word16)`) — nilai adalah TIPE.
                 let tp_known = target_known && tpnames.iter().any(|s| s == pn);
                 let tp_like = !target_known && super::expr::is_type_like(e, ctx);

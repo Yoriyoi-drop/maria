@@ -475,12 +475,19 @@ impl Parser {
         if self.eat(&Tok::Hash) {
             self.expect(&Tok::LParen)?;
             while !self.eat(&Tok::RParen) {
-                self.expect(&Tok::Dot)?;
-                let pname = self.expect_ident()?;
-                self.expect(&Tok::LParen)?;
-                let pval = self.parse_expr()?;
-                self.expect(&Tok::RParen)?;
-                params.push((pname, pval));
+                if self.peek() == &Tok::Dot {
+                    // named `.DEPTH(4)`
+                    self.advance();
+                    let pname = self.expect_ident()?;
+                    self.expect(&Tok::LParen)?;
+                    let pval = self.parse_expr()?;
+                    self.expect(&Tok::RParen)?;
+                    params.push((pname, pval));
+                } else {
+                    // positional `#(8, 4)` — nama kosong (marker)
+                    let pval = self.parse_expr()?;
+                    params.push((String::new(), pval));
+                }
                 self.eat(&Tok::Comma);
             }
         }

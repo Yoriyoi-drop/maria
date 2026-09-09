@@ -437,9 +437,17 @@ pub(crate) fn emit_inst(
         .unwrap_or_default();
     let mut head = format!("{module} {name}{dims_s}");
     if !params.is_empty() {
+        // positional `#(8)` (nama kosong) & named `#(.DEPTH(4))` — bisa campur
+        // (SV mengizinkan positional dulu, lalu named).
         let ps: Vec<String> = params
             .iter()
-            .map(|(n, e)| format!(".{n}({})", emit_expr(e)))
+            .map(|(n, e)| {
+                if n.is_empty() {
+                    emit_expr(e)
+                } else {
+                    format!(".{n}({})", emit_expr(e))
+                }
+            })
             .collect();
         head.push_str(&format!(" #({})", ps.join(", ")));
     }
