@@ -1,0 +1,529 @@
+//! Codegen — module/program & isinya: port, signal/reg/const/use, blok logika
+//! (seq/comb/always/latch/initial/final), instansi, generate, func/task.
+//! 1 file = 1 tanggung jawab.
+
+use super::{for_inc, line, emit_signal_decl};
+use super::expr::{emit_expr, emit_type};
+use crate::ast::*;
+
+/// Emit `module` atau `program` (testbench) — struktur badan sama, hanya
+/// keyword pembuka/penutup yang beda. `iface_names` = nama interface.
+pub(crate) fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) {
+    // header module
+    let mut head = format!("{kw} {} ", m.name);
+    if !m.params.is_empty() {
+        head.push_str("#(\n");
+        let params: Vec<String> = m
+            .params
+            .iter()
+            .map(|p| {
+                let ty = if p.type_default.is_some()
+                    || matches!(&p.ty, Some(MvType::Named(s, ..)) if s == "type")
+                {
+                    // F32: type param (marker `T : type = ...` ATAU bentuk kata
+                    // kunci `type T = ...` — ty=None, type_default terisi).
+                    format!(
+                        "parameter type {} = {}",
+                        p.name,
+                        p.type_default.as_ref().map(emit_type).unwrap_or_default()
+                    )
+                } else if let Some(t) = &p.ty {
+                    format!(
+                        "parameter {} {} = {}",
+                        emit_type(t),
+                        p.name,
+                        p.default.as_ref().map(emit_expr).unwrap_or_default()
+                    )
+                } else {
+                    format!(
+                        "parameter {} = {}",
+                        p.name,
+                        p.default.as_ref().map(emit_expr).unwrap_or_default()
+                    )
+                };
+                format!("    {ty}")
+            })
+            .collect();
+        head.push_str(&params.join(",\n"));
+        head.push_str("\n) ");
+    }
+    head.push_str("(\n");
+    // ports
+    let mut port_lines: Vec<String> = Vec::new();
+    for item in &m.items {
+        if let MItem::Port(p) = item {
+            let is_iface =
+                matches!(&p.ty, MvType::Named(n, ..) if iface_names.contains(&n.as_str()));
+            for n in &p.names {
+                if is_iface {
+                    // Port interface: `axi_lite axi_if` — tanpa arah (F26)
+                    let ty = emit_type(&p.ty);
+                    port_lines.push(format!("    {ty} {n}"));
+                } else {
+                    let dir = match p.dir {
+                        Dir::In => "input",
+                        Dir::Out => "output",
+                        Dir::Inout => "inout",
+                    };
+                    port_lines.push(format!("    {dir:<7}{}", emit_signal_decl(&p.ty, n)));
+                }
+            }
+        }
+    }
+    head.push_str(&port_lines.join(",\n"));
+    head.push_str("\n);");
+    line(out, 0, &head);
+
+    // Kumpulkan nama port (agar sig/reg dengan nama port tidak dideklarasi ulang)
+    let port_names: Vec<String> = m
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            MItem::Port(p) => Some(p.names.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
+    // deklarasi + blok + instansiasi — pertahankan urutan penulisan
+    for item in &m.items {
+        match item {
+            MItem::Port(_) => {}
+            MItem::Sig {
+                names, ty, init, ..
+            } => {
+                let fresh: Vec<String> = names
+                    .iter()
+                    .filter(|n| !port_names.contains(n))
+                    .cloned()
+                    .collect();
+                if !fresh.is_empty() {
+                    // F28: `sig x : iface` = instance interface → emit dgn paren
+                    // kosong (`axi_lite bus();`).
+                    let is_iface = match ty {
+                        MvType::Named(n, ..) => iface_names.contains(&n.as_str()),
+                        _ => false,
+                    };
+                    if is_iface {
+                        for nm in &fresh {
+                            line(out, 1, &format!("{} {}();", emit_type(ty), nm));
+                        }
+                    } else {
+                        let init_s = super::emit_init(init);
+                        line(
+                            out,
+                            1,
+                            &format!(
+                                "{}{};",
+                                fresh.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                                init_s
+                            ),
+                        );
+                    }
+                }
+            }
+            MItem::Reg {
+                names, ty, init, ..
+            } => {
+                let fresh: Vec<String> = names
+                    .iter()
+                    .filter(|n| !port_names.contains(n))
+                    .cloned()
+                    .collect();
+                if !fresh.is_empty() {
+                    let init_s = super::emit_init(init);
+                    line(
+                        out,
+                        1,
+                        &format!(
+                            "{}{};",
+                            fresh.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                            init_s
+                        ),
+                    );
+                }
+            }
+            MItem::Const {
+                name, ty, value, ..
+            } => {
+                let ty_s = ty
+                    .as_ref()
+                    .map(|t| format!("{} ", emit_type(t)))
+                    .unwrap_or_default();
+                line(
+                    out,
+                    1,
+                    &format!("localparam {ty_s}{name} = {};", emit_expr(value)),
+                );
+            }
+            MItem::Use { pkg, item } => {
+                line(out, 1, &format!("import {pkg}::{item};"));
+            }
+            MItem::Seq(spec, body) => {
+                line(out, 0, "");
+                line(out, 1, "// ── logika sekuensial ──");
+                emit_seq(out, 1, spec, body);
+            }
+            MItem::Comb(body) => {
+                line(out, 0, "");
+                line(out, 1, "// ── logika kombinasional ──");
+                line(out, 1, "always_comb begin");
+                super::stmt::emit_body(out, 2, body);
+                line(out, 1, "end");
+            }
+            MItem::Always(body) => {
+                line(out, 0, "");
+                line(out, 1, "// ── always ──");
+                line(out, 1, "always begin");
+                super::stmt::emit_body(out, 2, body);
+                line(out, 1, "end");
+            }
+            MItem::Latch(body) => {
+                line(out, 0, "");
+                line(out, 1, "// ── latch ──");
+                line(out, 1, "always_latch begin");
+                super::stmt::emit_body(out, 2, body);
+                line(out, 1, "end");
+            }
+            MItem::Initial(body) => {
+                line(out, 0, "");
+                line(out, 1, "// ── initial ──");
+                line(out, 1, "initial begin");
+                super::stmt::emit_body(out, 2, body);
+                line(out, 1, "end");
+            }
+            MItem::Final(body) => {
+                line(out, 0, "");
+                line(out, 1, "// ── final ──");
+                line(out, 1, "final begin");
+                super::stmt::emit_body(out, 2, body);
+                line(out, 1, "end");
+            }
+            MItem::Inst {
+                module,
+                name,
+                dims,
+                params,
+                conns,
+                ..
+            } => {
+                line(out, 0, "");
+                emit_inst(out, 1, module, name, dims, params, conns);
+            }
+            MItem::GenFor {
+                var,
+                from,
+                to,
+                step,
+                body,
+            } => {
+                line(out, 0, "");
+                line(out, 0, "generate");
+                line(
+                    out,
+                    1,
+                    &format!(
+                        "for (genvar {var} = {}; {var} < {}; {var} = {}) begin : gen_{var}",
+                        emit_expr(from),
+                        emit_expr(to),
+                        for_inc(var, step.as_ref())
+                    ),
+                );
+                for item in body {
+                    emit_module_item_at(out, 2, item, iface_names);
+                }
+                line(out, 1, "end");
+                line(out, 0, "endgenerate");
+            }
+            MItem::GenIf { cond, then, els } => {
+                line(out, 0, "");
+                line(out, 0, "generate");
+                line(
+                    out,
+                    1,
+                    &format!("if ({}) begin : gen_cond", emit_expr(cond)),
+                );
+                for item in then {
+                    emit_module_item_at(out, 2, item, iface_names);
+                }
+                line(out, 1, "end");
+                if !els.is_empty() {
+                    line(out, 1, "else begin : gen_cond_else");
+                    for item in els {
+                        emit_module_item_at(out, 2, item, iface_names);
+                    }
+                    line(out, 1, "end");
+                }
+                line(out, 0, "endgenerate");
+            }
+            MItem::Func(f) => emit_func(out, f),
+            MItem::Task(t) => emit_task(out, t),
+        }
+    }
+    line(out, 0, &format!("end{kw}"));
+}
+
+/// Emit satu item module di indentasi tertentu — dipakai di level module
+/// maupun di dalam blok generate.
+pub(crate) fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_names: &[&str]) {
+    match item {
+        MItem::Port(_) => {}
+        MItem::Sig {
+            names, ty, init, ..
+        } => {
+            let is_iface = match ty {
+                MvType::Named(n, ..) => iface_names.contains(&n.as_str()),
+                _ => false,
+            };
+            if is_iface {
+                for nm in names {
+                    line(out, indent, &format!("{} {}();", emit_type(ty), nm));
+                }
+            } else {
+                let init_s = super::emit_init(init);
+                line(
+                    out,
+                    indent,
+                    &format!(
+                        "{}{};",
+                        names.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                        init_s
+                    ),
+                );
+            }
+        }
+        MItem::Reg {
+            names, ty, init, ..
+        } => {
+            let init_s = super::emit_init(init);
+            line(
+                out,
+                indent,
+                &format!(
+                    "{}{};",
+                    names.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                    init_s
+                ),
+            );
+        }
+        MItem::Const {
+            name, ty, value, ..
+        } => {
+            let ty_s = ty
+                .as_ref()
+                .map(|t| format!("{} ", emit_type(t)))
+                .unwrap_or_default();
+            line(
+                out,
+                indent,
+                &format!("localparam {ty_s}{name} = {};", emit_expr(value)),
+            );
+        }
+        MItem::Use { pkg, item } => {
+            line(out, indent, &format!("import {pkg}::{item};"));
+        }
+        MItem::Seq(spec, body) => emit_seq(out, indent, spec, body),
+        MItem::Comb(body) => {
+            line(out, indent, "always_comb begin");
+            super::stmt::emit_body(out, indent + 1, body);
+            line(out, indent, "end");
+        }
+        MItem::Always(body) => {
+            line(out, indent, "always begin");
+            super::stmt::emit_body(out, indent + 1, body);
+            line(out, indent, "end");
+        }
+        MItem::Latch(body) => {
+            line(out, indent, "always_latch begin");
+            super::stmt::emit_body(out, indent + 1, body);
+            line(out, indent, "end");
+        }
+        MItem::Initial(body) => {
+            line(out, indent, "initial begin");
+            super::stmt::emit_body(out, indent + 1, body);
+            line(out, indent, "end");
+        }
+        MItem::Final(body) => {
+            line(out, indent, "final begin");
+            super::stmt::emit_body(out, indent + 1, body);
+            line(out, indent, "end");
+        }
+        MItem::Inst {
+            module,
+            name,
+            dims,
+            params,
+            conns,
+            ..
+        } => {
+            emit_inst(out, indent, module, name, dims, params, conns);
+        }
+        MItem::GenFor {
+            var,
+            from,
+            to,
+            step,
+            body,
+        } => {
+            line(out, indent, "generate");
+            line(
+                out,
+                indent + 1,
+                &format!(
+                    "for (genvar {var} = {}; {var} < {}; {var} = {}) begin : gen_{var}",
+                    emit_expr(from),
+                    emit_expr(to),
+                    for_inc(var, step.as_ref())
+                ),
+            );
+            for i in body {
+                emit_module_item_at(out, indent + 2, i, iface_names);
+            }
+            line(out, indent + 1, "end");
+            line(out, indent, "endgenerate");
+        }
+        MItem::GenIf { cond, then, els } => {
+            line(out, indent, "generate");
+            line(
+                out,
+                indent + 1,
+                &format!("if ({}) begin : gen_cond", emit_expr(cond)),
+            );
+            for i in then {
+                emit_module_item_at(out, indent + 2, i, iface_names);
+            }
+            line(out, indent + 1, "end");
+            if !els.is_empty() {
+                line(out, indent + 1, "else begin : gen_cond_else");
+                for i in els {
+                    emit_module_item_at(out, indent + 2, i, iface_names);
+                }
+                line(out, indent + 1, "end");
+            }
+            line(out, indent, "endgenerate");
+        }
+        MItem::Func(f) => emit_func(out, f),
+        MItem::Task(t) => emit_task(out, t),
+    }
+}
+
+pub(crate) fn emit_seq(out: &mut String, indent: usize, spec: &SeqSpec, body: &Stmt) {
+    let edge = if spec.neg_edge { "negedge" } else { "posedge" };
+    let mut event = format!("@({edge} {}", spec.clk);
+    if let Some((rname, active_low, sync)) = &spec.reset {
+        if !sync {
+            let re = if *active_low { "negedge" } else { "posedge" };
+            event.push_str(&format!(" or {re} {rname}"));
+        }
+    }
+    event.push(')');
+    line(out, indent, &format!("always_ff {event} begin"));
+    super::stmt::emit_body(out, indent + 1, body);
+    line(out, indent, "end");
+}
+
+pub(crate) fn emit_inst(
+    out: &mut String,
+    indent: usize,
+    module: &str,
+    name: &str,
+    dims: &Option<Expr>,
+    params: &[(String, Expr)],
+    conns: &[Conn],
+) {
+    let dims_s = dims
+        .as_ref()
+        .map(|d| format!("[{}]", emit_expr(d)))
+        .unwrap_or_default();
+    let mut head = format!("{module} {name}{dims_s}");
+    if !params.is_empty() {
+        let ps: Vec<String> = params
+            .iter()
+            .map(|(n, e)| format!(".{n}({})", emit_expr(e)))
+            .collect();
+        head.push_str(&format!(" #({})", ps.join(", ")));
+    }
+    if conns.is_empty() {
+        line(out, indent, &format!("{head};"));
+        return;
+    }
+    let named: Vec<&Conn> = conns
+        .iter()
+        .filter(|c| matches!(c, Conn::Named { .. }))
+        .collect();
+    let max_len = named
+        .iter()
+        .map(|c| match c {
+            Conn::Named { port, .. } => port.len(),
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0);
+    line(out, indent, &format!("{head} ("));
+    let n = conns.len();
+    for (i, c) in conns.iter().enumerate() {
+        let sep = if i + 1 == n { "" } else { "," };
+        match c {
+            Conn::Named { port, expr } => {
+                let e = expr.as_ref().map(emit_expr).unwrap_or_else(|| port.clone());
+                line(
+                    out,
+                    indent + 1,
+                    &format!(".{port}{}({e}){sep}", " ".repeat(max_len - port.len() + 1)),
+                );
+            }
+            Conn::Positional(e) => {
+                line(
+                    out,
+                    indent + 1,
+                    &format!("{}({}){sep}", " ".repeat(max_len), emit_expr(e)),
+                );
+            }
+        }
+    }
+    line(out, indent, ");");
+}
+
+pub(crate) fn emit_func(out: &mut String, f: &MFunc) {
+    let ret = f
+        .ret
+        .as_ref()
+        .map(emit_type)
+        .unwrap_or_else(|| "void".into());
+    let args = emit_args(&f.args, false);
+    line(
+        out,
+        0,
+        &format!("function {ret} {}({});", f.name, args.join(", ")),
+    );
+    for s in &f.body {
+        super::stmt::emit_stmt(out, 1, s);
+    }
+    line(out, 0, "endfunction");
+}
+
+pub(crate) fn emit_task(out: &mut String, t: &MTask) {
+    let args = emit_args(&t.args, true);
+    line(out, 0, &format!("task {}({});", t.name, args.join(", ")));
+    for s in &t.body {
+        super::stmt::emit_stmt(out, 1, s);
+    }
+    line(out, 0, "endtask");
+}
+
+/// Format daftar argumen `(nama, tipe, arah)` — dipakai emit_func/emit_task/
+/// emit_class (DRY). `default_inout`: arah default saat tidak ditulis.
+pub(crate) fn emit_args(args: &[(String, MvType, Option<Dir>)], default_inout: bool) -> Vec<String> {
+    args.iter()
+        .map(|(n, t, d)| {
+            let dir = match d {
+                Some(Dir::In) => "input",
+                Some(Dir::Out) => "output",
+                Some(Dir::Inout) => "inout",
+                None if default_inout => "inout",
+                None => "input",
+            };
+            format!("{dir} {}", emit_signal_decl(t, n))
+        })
+        .collect()
+}
