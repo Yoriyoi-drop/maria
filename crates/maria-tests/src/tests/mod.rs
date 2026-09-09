@@ -1072,6 +1072,59 @@ module tb {
 }
 
 #[test]
+fn test_mv_readmemh_rom() {
+    // `.mv` `$readmemh("f", rom)` di initial — `$` di-lex sbg ident, Call
+    // di-emit apa adanya; engine mengisi ROM dari file (regression: jangan
+    // rusak saat `$`-task diproses).
+    use std::io::Write;
+    let dir = std::env::temp_dir().join(format!("maria_mv_rh_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let hex_path = dir.join("rom.hex");
+    {
+        let mut f = std::fs::File::create(&hex_path).unwrap();
+        f.write_all(b"AA\nBB\nCC\nDD\n").unwrap();
+    }
+    let src = format!(
+        r#"
+module rom_dut {{
+    in  idx : logic[1:0]
+    out val : logic[7:0]
+    sig rom : logic[8][4]
+    initial {{
+        $readmemh("{}", rom)
+    }}
+    comb {{
+        val = rom[idx]
+    }}
+}}
+module tb {{
+    sig idx : logic[1:0]
+    sig val : logic[7:0]
+    inst rom_dut u (.idx(idx), .val(val))
+    initial {{
+        idx = 0
+        #2
+        idx = 3
+        #1
+    }}
+}}
+"#,
+        hex_path.display()
+    );
+    let r = maria_mv::transpile(&src, "rh").expect("transpile readmemh OK");
+    assert!(
+        r.sv.contains("$readmemh("),
+        "codegen harus emit $readmemh: {}",
+        r.sv
+    );
+    let sigs = simulate_signals(&r.sv, 10).unwrap();
+    let val = sigs.iter().find(|(s, _)| s == "val").unwrap().1.to_u64();
+    assert_eq!(val, 0xDD, "rom[3] dari file hex = DD");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_mv_named_arg_call() {
     // Named-arg call `.mv`: `scale(10, factor = 3)` → SV `.factor(3)`;
     // order bebas `scale(factor = 2, v = 5)`.
