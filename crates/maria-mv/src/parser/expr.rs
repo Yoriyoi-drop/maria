@@ -277,7 +277,7 @@ impl Parser {
                     self.advance();
                     let mut args = Vec::new();
                     while !self.eat(&Tok::RParen) {
-                        args.push(self.parse_expr()?);
+                        args.push(self.parse_call_arg()?);
                         self.eat(&Tok::Comma);
                     }
                     match e {
@@ -333,6 +333,22 @@ impl Parser {
             }
         }
         Ok(e)
+    }
+
+    /// Argumen call: normal ekspresi, atau NAMED `name = expr` (Ident + `=`)
+    /// → `Expr::NamedArg` (emisi SV `.name(expr)`). Assignment `=` bukan
+    /// ekspresi valid di argumen — deteksi aman.
+    pub(crate) fn parse_call_arg(&mut self) -> Result<Expr, MvError> {
+        if matches!(self.peek(), Tok::Ident(_)) && self.peek_at(1) == &Tok::BlockingAssign {
+            let name = self.expect_ident()?;
+            self.advance(); // `=`
+            let expr = self.parse_expr()?;
+            return Ok(Expr::NamedArg {
+                name,
+                expr: Box::new(expr),
+            });
+        }
+        self.parse_expr()
     }
 
     pub(crate) fn parse_primary(&mut self) -> Result<Expr, MvError> {

@@ -568,6 +568,34 @@ module top {
 }
 
 #[test]
+fn codegen_func_named_arg() {
+    // Named call arg `f(10, factor = 3)` → SV `.factor(3)` (order bebas).
+    let src = r#"
+func scale(v : int, factor : int) -> int {
+    return v * factor
+}
+module m {
+    out y : logic[31:0]
+    comb {
+        y = scale(10, factor = 3)
+        y = y + scale(factor = 2, v = 5)
+    }
+}
+"#;
+    let out = generate(&parse(src).unwrap(), "m");
+    assert!(
+        out.sv.contains("y = scale(10, .factor(3));"),
+        "named arg: {}",
+        out.sv
+    );
+    assert!(
+        out.sv.contains("scale(.factor(2), .v(5))"),
+        "named order bebas: {}",
+        out.sv
+    );
+}
+
+#[test]
 fn codegen_func_default_arg() {
     // Default arg function/task: `b : int = 4` → `input int b = 4`.
     let src = r#"

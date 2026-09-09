@@ -1072,6 +1072,34 @@ module tb {
 }
 
 #[test]
+fn test_mv_named_arg_call() {
+    // Named-arg call `.mv`: `scale(10, factor = 3)` → SV `.factor(3)`;
+    // order bebas `scale(factor = 2, v = 5)`.
+    let src = r#"
+func scale(v : int, factor : int) -> int {
+    return v * factor
+}
+module tb {
+    sig a, b : logic[31:0]
+    comb {
+        a = scale(10, factor = 3)
+        b = scale(factor = 2, v = 5)
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "na").expect("transpile named arg OK");
+    assert!(
+        r.sv.contains("scale(10, .factor(3))"),
+        "codegen named arg: {}",
+        r.sv
+    );
+    let sigs = simulate_signals(&r.sv, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("a"), 30, "scale(10, factor=3)");
+    assert_eq!(get("b"), 10, "scale(factor=2, v=5) — order bebas");
+}
+
+#[test]
 fn test_mv_for_step() {
     // `for i in 0..N step 2` — increment `i = i + 2` di behavioral &
     // generate; step 2 mengisi bit genap → y = 8'h55 (verifikasi via sim).

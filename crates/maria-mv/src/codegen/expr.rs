@@ -79,6 +79,8 @@ pub(crate) fn emit_expr(e: &Expr) -> String {
             let a: Vec<String> = args.iter().map(emit_expr).collect();
             format!("{name}({})", a.join(", "))
         }
+        // Named arg `f(10, factor = 4)` → SV `.factor(4)`.
+        Expr::NamedArg { name, expr } => format!(".{name}({})", emit_expr(expr)),
         Expr::MethodCall { obj, method, args } => {
             let a: Vec<String> = args.iter().map(emit_expr).collect();
             format!("{}.{method}({})", emit_expr(obj), a.join(", "))

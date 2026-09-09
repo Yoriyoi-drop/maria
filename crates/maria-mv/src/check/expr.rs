@@ -114,6 +114,9 @@ pub(crate) fn check_expr<'a>(
                 check_expr(a, ctx, scope, depth + 1)?;
             }
         }
+        // Named arg `f(x = 4)` — validasi ekspresi dalam; nama tidak divalidasi
+        // (bisa param function eksternal/UVM).
+        Expr::NamedArg { expr, .. } => check_expr(expr, ctx, scope, depth + 1)?,
         Expr::MethodCall {
             obj, method: _, args,
         } => {
@@ -438,6 +441,9 @@ pub(crate) fn expr_width(e: &Expr, ctx: &Ctx, scope: &Scope, depth: usize) -> Op
             }
         }
         Expr::Call(..) | Expr::MethodCall { .. } => None,
+        // Named arg — lebar dari ekspresi dalam (dipakai Call args? tidak
+        // dihitung E2002 utk call; None aman).
+        Expr::NamedArg { expr, .. } => expr_width(expr, ctx, scope, depth + 1),
         // F33: lebar cast = lebar tipe target.
         Expr::Cast { ty, .. } => {
             // Size cast via parameter — lebar = NILAI param.
