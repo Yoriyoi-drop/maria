@@ -5652,6 +5652,32 @@ endmodule
 }
 
 #[test]
+#[test]
+fn test_signed_lt_literal_zero() {
+    // signed signal vs literal 0: `s < 0` harus signed (SV: relational signed
+    // bila SALAH SATU operand signed). Bug: kondisi lama && (kedua signed)
+    // → literal 0 bukan signed → unsigned compare → 255 < 0 = false. Fix: ||.
+    let source = r#"
+module tb;
+    reg signed [7:0] s;
+    reg neg;
+    initial begin
+        s = -8'sd1;
+        neg = (s < 0);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let neg = sigs
+        .iter()
+        .find(|(n, _)| n == "neg")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(99);
+    assert_eq!(neg, 1, "signed -1 < 0 harus 1 (bukan unsigned 255<0)");
+}
+
+#[test]
 fn test_signed_relational() {
     let source = r#"
 module tb;

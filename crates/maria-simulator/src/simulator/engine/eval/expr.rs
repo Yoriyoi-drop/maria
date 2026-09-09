@@ -451,7 +451,7 @@ impl SimulationEngine {
                         | BinaryIrOp::Div
                         | BinaryIrOp::Mod
                 ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
-                    && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
+                    || is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else if matches!(op, BinaryIrOp::Sshr) {

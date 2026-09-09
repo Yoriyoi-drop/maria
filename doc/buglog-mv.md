@@ -17,6 +17,10 @@ bug di maria utama (parser/elaborator/simulator). Status: ✅ fixed / ⏳ open.
    re-trigger saat `idx` berubah (IR `ArrayIndex` sensitivity hanya collect
    signal dasar, index hilang). Fix: collect index juga.
 
+5. **Signed relational vs literal** — `signed [7:0] s; s=-1; s < 0` → false
+   (unsigned 255<0). Fix: SQL relational signed bila SALAH SATU operand signed
+   (&& → || di eval/expr.rs); Div/Mod ikut.
+
 ## ⏳ Open
 
 4. **Unpacked array MULTI-dimensi hanya 1 dim disimpan** — parser SV
@@ -27,3 +31,7 @@ bug di maria utama (parser/elaborator/simulator). Status: ✅ fixed / ⏳ open.
    (array_dims, width product) + engine index — skope besar.
    Reproduksi SV murni: `logic [7:0] mat [0:1][0:1] = '{{1,2},{3,4}};` →
    `mat[0][0]` = 0 (harus 1). `.mv`: `sig mat : logic[8][2][2] = ...`.
+   Catatan: engine juga belum dukung index 2-d (`mat[i][j]` → E1002).
+
+6. **Real arithmetic NaN** — `real r = 1.5 + 2.25;` → r = NaN (harus 3.75).
+   Evaluator biner tidak punya jalur real. Reproduksi: `t_rc`.
