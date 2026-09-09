@@ -1456,6 +1456,30 @@ endmodule
 }
 
 #[test]
+fn test_array_decl_pattern_init_order() {
+    // BUG maria utama (ditemukan via maria-mv pencari bug): decl-init array
+    // `'{e0, e1, e2, e3}` di-fold jadi Const → write utuh → unpacked storage
+    // elemen0 di bit terendah → array TERBALIK (rom[0]=e3). Fix: decompose
+    // Concat → per-elemen assign utk decl-init (pola sama dgn statement
+    // assign stmt.rs). Statement assign sudah benar; decl-init ikut.
+    let source = r#"
+module tb;
+    logic [7:0] rom [0:3] = '{8'h01, 8'h02, 8'h03, 8'h04};
+    wire [7:0] r0 = rom[0];
+    wire [7:0] r1 = rom[1];
+    wire [7:0] r2 = rom[2];
+    wire [7:0] r3 = rom[3];
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("r0"), 0x01, "rom[0] harus elemen pertama (1)");
+    assert_eq!(get("r1"), 0x02);
+    assert_eq!(get("r2"), 0x03);
+    assert_eq!(get("r3"), 0x04);
+}
+
+#[test]
 fn test_array_memory_simulation() {
     let source = r#"
 module tb;

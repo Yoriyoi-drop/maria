@@ -278,19 +278,23 @@ impl VcdWriter {
                 continue;
             } // skip dynamic/queue arrays before allocation
             if *array_depth > 1 {
+                // Elemen array: lebar var VCD = lebar TOTAL / jumlah elemen
+                // (bug: sebelumnya memakai `width` total → `rom[i]` 32-bit
+                // padahal elemen 8-bit; FST sudah benar, VCD tidak).
+                let elem_w = (*width / *array_depth).max(1);
                 for elem in 0..*array_depth {
                     let code = format!("s{:x}", entry_idx);
                     *entry_idx += 1;
                     let elem_name = format!("{}[{}]", bare_name, elem);
-                    let width_disp = if *width == 1 {
+                    let width_disp = if elem_w == 1 {
                         "1".to_string()
                     } else {
-                        width.to_string()
+                        elem_w.to_string()
                     };
-                    let range = if *width == 1 {
+                    let range = if elem_w == 1 {
                         String::new()
                     } else {
-                        format!(" [{}:0]", width - 1)
+                        format!(" [{}:0]", elem_w - 1)
                     };
                     self.write_raw(
                         format!(

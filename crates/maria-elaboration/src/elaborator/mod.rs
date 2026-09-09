@@ -5458,6 +5458,46 @@ impl Elaborator {
                         &signal_map,
                         &signals,
                     )?;
+
+                    // Unpacked array literal init — `rom [0:3] = '{e0, e1, e2, e3}`.
+                    // Concat membangun value MSB-first `{e0, e1, e2, e3}` tapi storage
+                    // unpacked punya element 0 di bit TERENDAH → fold ke Const lalu
+                    // write utuh menghasilkan array TERBALIK (bug: rom[0]=e3). Sama
+                    // dengan statement assign (stmt.rs:805): decompose ke per-elemen
+                    // assign `rom[i] = ei;` di level IR.
+                    let mut per_elem_stmts: Vec<IrStmt> = Vec::new();
+                    if let (Some(sid), Expr::Concat(elems)) = (lvalue_signal_id(&lhs), init_expr)
+                    {
+                        if let Some(sig) = signals.get(sid) {
+                            if sig.array_depth > 1 && elems.len() == sig.array_depth {
+                                for (i, elem) in elems.iter().enumerate() {
+                                    let ir_elem =
+                                        self.elaborate_expr(elem, &signal_map, &signals)?;
+                                    per_elem_stmts.push(IrStmt::BlockingAssign {
+                                        lhs: IrLValue::ArrayIndex {
+                                            sig_id: sid,
+                                            index: Box::new(IrExpr::Const(
+                                                LogicVec::from_u64(i as u64, 32),
+                                            )),
+                                            elem_width: sig.elem_width.max(1),
+                                        },
+                                        rhs: ir_elem,
+                                        delay: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if !per_elem_stmts.is_empty() {
+                        let proc_name = format_sym(b"decl_init_", proc_counter);
+                        processes.push(Process::Initial {
+                            name: proc_name,
+                            body: per_elem_stmts,
+                        });
+                        proc_counter += 1;
+                        continue;
+                    }
+
                     let mut rhs = self.elaborate_expr(init_expr, &signal_map, &signals)?;
                     // Lebar konteks untuk initializer deklarasi (LRM §11.8.1).
                     {
