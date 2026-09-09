@@ -135,11 +135,15 @@ pub fn collect_read_signals_stmt(stmt: &IrStmt, out: &mut Vec<SignalId>) {
 /// Kumpulkan semua signal yang dibaca dari satu IR expression.
 pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
     match expr {
-        IrExpr::Signal(id, _)
-        | IrExpr::RangeSelect(id, ..)
-        | IrExpr::BitSelect(id, _)
-        | IrExpr::ArrayIndex { sig_id: id, .. } => {
+        IrExpr::Signal(id, _) | IrExpr::RangeSelect(id, ..) | IrExpr::BitSelect(id, _) => {
             out.push(*id);
+        }
+        // ArrayIndex dynamic (`rom[idx]`) — index juga sinyal yang DIBACA:
+        // always_comb `val = rom[idx]` harus sensitivity ke {rom, idx}. Tanpa
+        // ini idx berubah → val tak recompute (stuck di nilai lama).
+        IrExpr::ArrayIndex { sig_id: id, index, .. } => {
+            out.push(*id);
+            collect_read_signals_expr(index, out);
         }
         IrExpr::Const(_) | IrExpr::String(_) | IrExpr::FillLit(_) => {}
         IrExpr::Concat(exprs) => {

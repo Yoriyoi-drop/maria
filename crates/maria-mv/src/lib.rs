@@ -304,6 +304,34 @@ module m {
     }
 
     #[test]
+    fn array_lit_unpacked_init() {
+        // F42: `'{e0, e1, ...}` — array literal (assignment pattern unpacked)
+        // di-emit `'{...}` (bukan concat `{...}`), untuk deklarasi ROM/LUT.
+        let src = r#"
+module m {
+    in clk : bit
+    out rom0 : logic[7:0]
+    out rom3 : logic[7:0]
+    sig rom : logic[8][4] = '{1, 2, 3, 4}
+    comb {
+        rom0 = rom[0]
+        rom3 = rom[3]
+    }
+}
+"#;
+        let r = transpile(src, "m").expect("transpile array literal");
+        assert!(
+            r.sv.contains("[0:3] = '{1, 2, 3, 4};"),
+            "emisi array init: {}",
+            r.sv
+        );
+        // concat biasa tetap `{...}` tanpa quote
+        let r2 = transpile("module m2 {\n out y : logic[15:0]\n comb { y = {8'h01, 8'h02} } }", "m2")
+            .expect("concat tetap");
+        assert!(r2.sv.contains("y = {8'h01, 8'h02};"), "concat: {}", r2.sv);
+    }
+
+    #[test]
     fn for_step_generate_and_behavioral() {
         // `for i in 0..N step 2` — increment `i = i + 2` di generate &
         // behavioral; tanpa step tetap `i = i + 1`.

@@ -96,6 +96,9 @@ pub enum Expr {
     Range(Box<Expr>, Box<Expr>, Box<Expr>),
     /// Concatenation `{a, b}`
     Concat(Vec<Expr>),
+    /// Array literal `'{e0, e1, ...}` (assignment pattern) — unpacked array
+    /// initializer/deklarasi ROM. Di-emit `'{...}` (bukan concat `{...}`).
+    ArrayLit(Vec<Expr>),
     /// Replication `{n{a}}`
     Replicate(Box<Expr>, Box<Expr>),
     /// Paren `(a + b)`

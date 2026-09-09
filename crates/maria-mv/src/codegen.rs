@@ -96,7 +96,7 @@ fn emit_interface(out: &mut String, indent: usize, ifc: &Interface) {
     // hanya modport yang membawa arah).
     for p in &ifc.ports {
         for n in &p.names {
-            line(out, indent + 1, &format!("{} {n};", emit_type(&p.ty)));
+            line(out, indent + 1, &format!("{};", emit_signal_decl(&p.ty, n)));
         }
     }
     for (names, ty, ..) in &ifc.sigs {
@@ -329,7 +329,7 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                         Dir::Inout => "inout",
                     };
                     // Rata kanan arah port: `input  bit clk` / `output logic [..] count`
-                    port_lines.push(format!("    {dir:<7}{ty} {n}"));
+                    port_lines.push(format!("    {dir:<7}{}", emit_signal_decl(&p.ty, n)));
                 }
             }
         }
@@ -378,7 +378,11 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                         line(
                             out,
                             1,
-                            &format!("{} {}{};", emit_type(ty), fresh.join(", "), init_s),
+                            &format!(
+                            "{}{};",
+                            fresh.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                            init_s
+                        ),
                         );
                     }
                 }
@@ -396,7 +400,11 @@ fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names: &[&str]) 
                     line(
                         out,
                         1,
-                        &format!("{} {}{};", emit_type(ty), fresh.join(", "), init_s),
+                        &format!(
+                            "{}{};",
+                            fresh.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                            init_s
+                        ),
                     );
                 }
             }
@@ -544,7 +552,11 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
                 line(
                     out,
                     indent,
-                    &format!("{} {}{};", emit_type(ty), names.join(", "), init_s),
+                    &format!(
+                    "{}{};",
+                    names.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                    init_s
+                ),
                 );
             }
         }
@@ -555,7 +567,11 @@ fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_name
             line(
                 out,
                 indent,
-                &format!("{} {}{};", emit_type(ty), names.join(", "), init_s),
+                &format!(
+                    "{}{};",
+                    names.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                    init_s
+                ),
             );
         }
         MItem::Const {
@@ -780,7 +796,7 @@ fn emit_args(args: &[(String, MvType, Option<Dir>)], default_inout: bool) -> Vec
                 None if default_inout => "inout",
                 None => "input",
             };
-            format!("{dir} {} {n}", emit_type(t))
+            format!("{dir} {}", emit_signal_decl(t, n))
         })
         .collect()
 }
@@ -1065,7 +1081,11 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             line(
                 out,
                 indent,
-                &format!("{} {}{};", emit_type(ty), names.join(", "), init_s),
+                &format!(
+                    "{}{};",
+                    names.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                    init_s
+                ),
             );
         }
         Stmt::Assert { cond, pass, fail } => {
@@ -1287,6 +1307,27 @@ fn for_inc(var: &str, step: Option<&Expr>) -> String {
     }
 }
 
+/// Deklarasi signal array unpacked yang BENAR utk SV:
+/// `logic[8][4]` → `logic [7:0] name [0:3]` (dims `[0:N-1]` SETELAH nama,
+/// bukan `logic [7:0] [4] name` yang di-parse SV sbg packed multi-dim).
+fn emit_signal_decl(ty: &MvType, name: &str) -> String {
+    let mut dims: Vec<&Expr> = Vec::new();
+    let mut elem = ty;
+    while let MvType::Array(inner, ds) = elem {
+        dims.extend(ds.iter());
+        elem = inner;
+    }
+    let mut s = format!("{} {name}", emit_type(elem));
+    for d in dims {
+        let n = match d {
+            Expr::Int(v) => format!("{}", v.saturating_sub(1)),
+            other => format!("{} - 1", emit_expr(other)),
+        };
+        s.push_str(&format!(" [0:{n}]"));
+    }
+    s
+}
+
 // ── Expressions ──
 
 /// Emit ekspresi SV.
@@ -1342,6 +1383,11 @@ pub fn emit_expr(e: &Expr) -> String {
         Expr::Concat(parts) => {
             let p: Vec<String> = parts.iter().map(emit_expr).collect();
             format!("{{{}}}", p.join(", "))
+        }
+        // Array literal `'{e0, e1, ...}` — assignment pattern unpacked array.
+        Expr::ArrayLit(items) => {
+            let p: Vec<String> = items.iter().map(emit_expr).collect();
+            format!("'{{{}}}", p.join(", "))
         }
         Expr::Replicate(n, inner) => format!("{{{}{{{}}}}}", emit_expr(n), emit_expr(inner)),
         Expr::Paren(inner) => format!("({})", emit_expr(inner)),

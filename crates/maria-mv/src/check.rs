@@ -1917,6 +1917,12 @@ fn check_expr<'a>(
                 check_expr(p, ctx, scope, depth + 1)?;
             }
         }
+        // Array literal `'{...}` — validasi tiap elemen (lebar/tipe).
+        Expr::ArrayLit(items) => {
+            for it in items {
+                check_expr(it, ctx, scope, depth + 1)?;
+            }
+        }
         Expr::Replicate(n, inner) => {
             check_expr(n, ctx, scope, depth + 1)?;
             check_expr(inner, ctx, scope, depth + 1)?;
@@ -2243,6 +2249,9 @@ fn expr_width(e: &Expr, ctx: &Ctx, scope: &Scope, depth: usize) -> Option<i64> {
         Expr::Paren(i) => expr_width(i, ctx, scope, depth + 1),
         // F12: inside/dist adalah predikat boolean → 1 bit
         Expr::Inside { .. } | Expr::Dist { .. } => Some(1),
+        // Array literal (unpacked) — bukan scalar, tidak punya lebar tunggal
+        // → lebar tak dikenal (E2002 tidak relevan untuk array).
+        Expr::ArrayLit(_) => None,
     }
 }
 

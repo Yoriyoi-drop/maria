@@ -2005,6 +2005,29 @@ impl Parser {
                 self.expect(&Tok::RParen)?;
                 Ok(Expr::Paren(Box::new(e)))
             }
+            // Array literal `'{e0, e1, ...}` — assignment pattern unpacked
+            // array (ROM/LUT). `Quote` utk cast `T'(x)` ditangani di arm
+            // Ident; di sini `'` diikuti `{`.
+            Tok::Quote => {
+                self.advance();
+                if self.peek() != &Tok::LBrace {
+                    // Quote tanpa `{` (mis. `logic[7:0]'(a)` tersisa `'(`) —
+                    // pesan error lama (F33): "ekspresi tidak valid".
+                    let (l, c) = self.pos_line();
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        format!("ekspresi tidak valid: {:?}", self.peek()),
+                    ));
+                }
+                self.advance();
+                let mut items = Vec::new();
+                while !self.eat(&Tok::RBrace) {
+                    items.push(self.parse_expr()?);
+                    self.eat(&Tok::Comma);
+                }
+                Ok(Expr::ArrayLit(items))
+            }
             Tok::LBrace => {
                 // concat `{a, b}` atau replication `{n{a}}`
                 self.advance();

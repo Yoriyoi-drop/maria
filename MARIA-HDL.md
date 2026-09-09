@@ -133,6 +133,7 @@ Aturan:
 ```mv
 sig : logic[8][4]        // 4 elemen, tiap 8-bit → logic [7:0] sig [0:3]
 mat : uint[8][8]         // matriks 8×8
+rom : logic[8][4] = '{1, 2, 3, 4}   // array literal (F42) → '{1, 2, 3, 4}
 ```
 
 `Type[N][M]` = array N×M (indeks 0..N-1, 0..M-1). Emisi: `[0:N-1][0:M-1]`.

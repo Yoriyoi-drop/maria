@@ -1480,6 +1480,31 @@ endmodule
 }
 
 #[test]
+fn test_always_comb_array_index_sensitivity() {
+    // BUG maria utama (ditemukan via maria-mv pencari bug): always_comb
+    // `val = rom[idx]` — sensitivity dihitung dari IR body; arm ArrayIndex
+    // hanya mengumpulkan signal dasar (rom), bukan index (idx) → idx berubah
+    // tak trigger recompute → val stuck. Wire assign selalu evaluasi — benar.
+    let source = r#"
+module tb;
+    logic [7:0] rom [0:3] = '{8'h01, 8'h02, 8'h03, 8'h04};
+    logic [1:0] idx;
+    logic [7:0] val;
+    always_comb val = rom[idx];
+    initial begin
+        idx = 0; #1
+        idx = 3; #1
+        idx = 1; #2 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 10).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    let final_val = get("val");
+    assert_eq!(final_val, 0x02, "always_comb harus re-eval saat idx berubah → rom[1]=2, dapat {final_val}");
+}
+
+#[test]
 fn test_array_memory_simulation() {
     let source = r#"
 module tb;

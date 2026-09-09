@@ -1,0 +1,41 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh F42 — array literal `'{e0, e1, ...}` (ROM/LUT).
+// Decl-init unpacked array via assignment pattern — engine maria
+// (fix decl_init decompose) menerapkan urutan elemen benar.
+// ─────────────────────────────────────────────────────────────
+
+module rom_dut {
+    in  idx : logic[1:0]
+    out val : logic[7:0]
+
+    // ROM 4×8-bit — init via array literal
+    sig rom : logic[8][4] = '{8'h01, 8'h02, 8'h03, 8'h04}
+
+    comb {
+        val = rom[idx]
+    }
+}
+
+module tb_rom {
+    sig idx : logic[1:0]
+    sig val : logic[7:0]
+
+    inst rom_dut u (.idx(idx), .val(val))
+
+    initial {
+        idx = 0
+        #1
+        if (val == 8'h01) {
+            $display("TB_ROM_OK idx0 val=%0h", val)
+        } else {
+            $display("TB_ROM_BROKEN0 val=%0h", val)
+        }
+        idx = 3
+        #1
+        $display("TB_ROM idx3 val=%0h", val)
+        idx = 1
+        #1
+        $display("TB_ROM idx1 val=%0h", val)
+        $finish
+    }
+}
