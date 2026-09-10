@@ -5706,6 +5706,29 @@ endmodule
 }
 
 #[test]
+#[test]
+fn test_real_arithmetic_literal_fold() {
+    // Bug #6: `1.5 + 2.25` → NaN (evaluator biner tak kenal real utk literal;
+    // hanya signal is_real). Fix: fold real literal+literal di elaborasi.
+    let source = r#"
+module tb;
+    real r, r2;
+    initial begin
+        r = 1.5 + 2.25;
+        r2 = 10.0 / 4.0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    let r = f64::from_bits(get("r")) as u32;
+    let r2 = f64::from_bits(get("r2")) as u32;
+    assert_eq!(r, 3, "1.5+2.25 = 3.75 (f64), dapat `{r}`");
+    assert_eq!(r2, 2, "10/4 = 2.5 (f64), dapat `{r2}`");
+}
+
+#[test]
 fn test_signed_relational() {
     let source = r#"
 module tb;

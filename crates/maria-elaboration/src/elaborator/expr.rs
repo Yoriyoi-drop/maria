@@ -468,6 +468,14 @@ impl Elaborator {
                 if let Some(folded) = self.try_fold_const(expr)? {
                     return Ok(folded);
                 }
+                // REAL literal fold: `1.5 + 2.25` — eval biner hanya kenal
+                // is_real utk operand SIGNAL; literal+literal jatuh jalur int
+                // → NaN. Fold real di sini (bug #6).
+                if let (Some(a), Some(b)) = (real_literal(lhs), real_literal(rhs)) {
+                    if let Some(v) = fold_binary_real(op, a, b) {
+                        return Ok(v);
+                    }
+                }
                 let lhs_expr = self.elaborate_expr(lhs, signal_map, signals)?;
                 let rhs_expr = self.elaborate_expr(rhs, signal_map, signals)?;
                 let ir_op = map_binary_op(op)?;
@@ -2768,3 +2776,35 @@ fn sub_elem_width_from_packed(
 //
 // CATATAN: parse_type_spec_str() sudah dipindahkan ke src/elaboration/util/type_util.rs
 // dan di-re-export via util/mod.rs.
+
+/// Nilai literal REAL pada ekspresi AST (`1.5`) — None bila bukan literal real.
+fn real_literal(e: &Expr) -> Option<f64> {
+    match e {
+        Expr::Value(Value::Real(v)) => Some(*v),
+        _ => None,
+    }
+}
+
+/// Fold binary REAL literal+literal selama elaborasi (bug #6): evaluator biner
+/// hanya kenal is_real utk operand SIGNAL; literal murni jatuh jalur integer
+/// → NaN. Aritmetik → Const real 64-bit; relasional → Const bool 32-bit.
+fn fold_binary_real(op: &maria_ast::BinaryOp, a: f64, b: f64) -> Option<IrExpr> {
+    use maria_ast::BinaryOp as B;
+    let real = |v: f64| IrExpr::Const(LogicVec::from_u64(v.to_bits(), 64));
+    let int = |v: bool| IrExpr::Const(LogicVec::from_u64(v as u64, 32));
+    match op {
+        B::Add => Some(real(a + b)),
+        B::Sub => Some(real(a - b)),
+        B::Mul => Some(real(a * b)),
+        B::Div => Some(real(a / b)),
+        B::Mod => Some(real(a % b)),
+        B::Power => Some(real(a.powf(b))),
+        B::Lt => Some(int(a < b)),
+        B::Le => Some(int(a <= b)),
+        B::Gt => Some(int(a > b)),
+        B::Ge => Some(int(a >= b)),
+        B::Eq | B::CaseEq | B::EqWild => Some(int(a == b)),
+        B::Neq | B::CaseNeq | B::NeqWild => Some(int(a != b)),
+        _ => None,
+    }
+}
