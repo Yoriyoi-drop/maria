@@ -86,8 +86,9 @@ pub struct RealHuntReport {
 /// "masih error" — error berbeda = konstruk berbeda terlibat).
 pub fn probe_file(path: &Path) -> Option<FileProbe> {
     let content = std::fs::read_to_string(path).ok()?;
-    // Artefak fuzz di-skip.
-    if content.contains("fz_") && content.contains("_fuzz") {
+    // Artefak fuzz di-skip — marker internal fuzzer: `fz_` (gen/grammar),
+    // `_fz_` (mirror/assert oracle), `_fuzz` (EMI/part-select).
+    if content.contains("fz_") || content.contains("_fz_") || content.contains("_fuzz") {
         return Some(FileProbe {
             path: path.to_path_buf(),
             code: String::new(),
@@ -243,12 +244,13 @@ mod tests {
 
     #[test]
     fn probe_compile_err_minimizes() {
-        // Konstruk tanpa dukungan: `parameter type` dgn class? coba constructs
-        // yang ELABORASI tolak: referensi sinyal undefined (E2xxx semantik).
+        // Error parse nyata (E1xxx): ref signal tak-dideklarasikan BUKAN error
+        // (implicit net valid SV — `assign a = undefined_sig` = Ok, revisi
+        // pra-migrasi). Source error keras: `=` tanpa operand RHS.
         let path = std::env::temp_dir().join("probe_err_check.sv");
         std::fs::write(
             &path,
-            "module err_t;\n  logic a;\n  assign a = undefined_sig;\nendmodule\n",
+            "module err_t;\n  logic a;\n  assign a = ;\nendmodule\n",
         )
         .unwrap();
         let p = probe_file(&path).unwrap();

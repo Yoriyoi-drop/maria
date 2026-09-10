@@ -2,6 +2,7 @@ use super::super::SequenceAttempt;
 use super::super::SimulationEngine;
 use crate::simulator::types::*;
 use crate::simulator::util::*;
+use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
 use maria_core::Symbol;
 use maria_ir::*;
@@ -10,6 +11,13 @@ use rand::Rng;
 /// Cap iterasi loop AST (method/task context) untuk mencegah hang ketika loop
 /// berisi blocking event (`@(...)`) yang tidak memajukan waktu simulasi.
 const AST_LOOP_ITER_CAP: u64 = 100_000;
+
+/// GUARD `#0` churn (BUG FIX fuZZ; requirement eksekusi <10s, ideal <1s):
+/// jumlah `#0`-zero-delay SAMA-WAKTU per time step sebelum abort InfiniteDelta.
+/// 4096 × ~400µs (debug, dgn kloning body) ≈ <2s — jauh di bawah delta-limit
+/// 100k yang baru kena setelah puluhan detik debug. `#0` tunggal (reset idiom)
+/// tidak pernah mendekati cap ini.
+pub(super) const ZERO_DELAY_EVENT_CAP: u64 = 4096;
 
 impl SimulationEngine {
     /// F26: mulai eksekusi branch fork — aktifkan fork id utk task body
@@ -258,6 +266,30 @@ impl SimulationEngine {
                 IrStmt::Delay { delay, body } => {
                     let delay_val = *delay as usize;
                     let delay_t = self.state.time as usize + delay_val;
+                    // ── Guard #0 churn (BUG FIX fuZZ; requirement <10s/<1s) ──
+                    // `#0` dalam loop = re-schedule Inactive sambil kloning
+                    // body — delta-limit 100k baru kena puluhan detik (debug).
+                    // Hitung `#0` SAMA-WAKTU per time step → abort cepat.
+                    if delay_val == 0 {
+                        if self.state.time != self.zero_delay_seen_t {
+                            self.zero_delay_seen_t = self.state.time;
+                            self.zero_delay_same_time = 0;
+                        }
+                        self.zero_delay_same_time += 1;
+                        if self.zero_delay_same_time
+                            > crate::simulator::engine::scheduler::block::ZERO_DELAY_EVENT_CAP
+                        {
+                            return Err(SimError::with_diag(
+                                DiagCode::InfiniteDelta,
+                                format!(
+                                    "#0-zero-delay churn: {} zero-delay events tanpa time advance di t={} — kemungkinan loop `#0` (mis. `forever #0 clk = ~clk`). Abort cepat (limit {}).",
+                                    self.zero_delay_same_time,
+                                    self.state.time,
+                                    crate::simulator::engine::scheduler::block::ZERO_DELAY_EVENT_CAP
+                                ),
+                            ));
+                        }
+                    }
                     self.ensure_events(delay_t);
                     let mut later: Vec<IrStmt> = body.clone();
                     let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();

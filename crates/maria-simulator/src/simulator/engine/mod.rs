@@ -489,6 +489,18 @@ pub struct SimulationEngine {
     pub signal_write_count: std::collections::HashMap<SignalId, u32>,
     /// Max delta cycles per time step before abort (configurable for testing)
     pub delta_limit: u64,
+    /// GUARD HANG-1 (fuZZ): `#0` zero-delay loop (`forever #0 clk = ~clk`) —
+    /// tiap `#0` dijadwalkan ulang (Inactive, delta-loop) sambil meng-clone
+    /// body loop; delta-limit 100k baru kena setelah >40s debug (kloning berat).
+    /// Guard: jumlah `#0` SAMA-WAKTU per time step — lewat cap → error
+    /// InfiniteDelta CEPAT (<10s; IDEAL <1s, task MARIA waktu eksekusi) —
+    /// bukan hang.
+    pub zero_delay_seen_t: u64,
+    pub zero_delay_same_time: u64,
+    /// GUARD HANG-2 (fuZZ): revisit time step SAMA (tanpa advance waktu) —
+    /// lapis kedua untuk zero-advance churn di luar delta-loop.
+    pub last_processed_t: u64,
+    pub same_time_revisits: u64,
     /// Oscillation detection: hash state sinyal yang berbeda-beda per delta
     /// (urutan state BERBEDA) dalam satu time step. State berulang non-kontigu
     /// = kombinational loop (cycle) → abort cepat, bukan menunggu delta_limit.

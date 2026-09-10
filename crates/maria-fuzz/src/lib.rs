@@ -24,10 +24,14 @@ pub mod grammar;
 pub mod guide;
 pub mod harness;
 pub mod interaction;
+pub mod mvgen;
+pub mod mv_lower;
+pub mod mv_mutate;
 pub mod oracle;
 pub mod real;
 pub mod semantic;
 pub mod sweep;
+pub mod testcase;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -44,6 +48,9 @@ use harness::RunStatus;
 pub struct FuzzConfig {
     /// Jumlah iterasi fuzz (tiap iterasi = 1+ eksekusi compile/simulasi).
     pub iters: u64,
+    /// Backend testcase: `Direct` (jalur lama — generator SV → Maria langsung)
+    /// atau `MvMediated` (scenario `.mv` → Maria-MV → HDL → Maria). Task §14.
+    pub backend: crate::testcase::Backend,
     /// Seed RNG — replikasi deterministik.
     pub seed: u64,
     /// `max_time` simulasi (siklus).
@@ -95,6 +102,7 @@ impl Default for FuzzConfig {
     fn default() -> Self {
         FuzzConfig {
             iters: 300,
+            backend: crate::testcase::Backend::Direct,
             seed: 0x6d61_7269_61,
             max_time: 100,
             hang_ms: 12_000,
@@ -129,8 +137,34 @@ pub enum BugKind {
 pub struct BugRecord {
     pub kind: BugKind,
     /// Source (sudah terminimalkan untuk Panic/Differential).
+    /// Backend MvMediated: HDL hasil lower (minimized) — MV canonical ada di `mv`.
     pub source: String,
     pub detail: String,
+    /// Metadata testcase MV (backend MvMediated): canonical `.mv` (reproducible).
+    pub mv: Option<String>,
+    /// HDL hasil lower testcase (sebelum minimasi) — task §8: simpan keduanya.
+    pub hdl: Option<String>,
+    /// Mutation history (op ids) — task §8/§9.
+    pub mv_history: Vec<String>,
+}
+
+impl BugRecord {
+    /// Bangun bug dgn metadata testcase MV (None utk backend Direct).
+    pub fn new(
+        kind: BugKind,
+        source: String,
+        detail: String,
+        tc: Option<&crate::testcase::Testcase>,
+    ) -> Self {
+        BugRecord {
+            kind,
+            source,
+            detail,
+            mv: tc.map(|t| t.mv.clone()),
+            hdl: tc.map(|t| t.hdl.clone()),
+            mv_history: tc.map(|t| t.history.clone()).unwrap_or_default(),
+        }
+    }
 }
 
 /// Laporan satu kampanye fuzzing.
@@ -139,6 +173,9 @@ pub struct FuzzReport {
     pub total: u64,
     pub compile_ok: u64,
     pub compile_err: u64,
+    /// Compile error dari HDL valid (lower-check-ok MV → HDL ditolak maria —
+    /// kandidat bug maria parser/elaborator / maria-mv lowering mismatch).
+    pub lower_good_compile_err: u64,
     pub sim_ok: u64,
     pub sim_err: u64,
     /// Runtime error (RT####) pada input parse-clean — kandidat bug engine.
@@ -183,6 +220,8 @@ pub struct FuzzReport {
     /// Statistik & bobot adaptif per operator mutasi (GAP-3) — untuk
     /// evaluasi palet & debug, bukan untuk determinisme laporan.
     pub op_stats: ast_mutate::OpStats,
+    /// Statistik operator mutasi MV (backend MvMediated) — setara op_stats.
+    pub mv_op_stats: mv_mutate::MvOpStats,
     pub bugs: Vec<BugRecord>,
 }
 
@@ -191,6 +230,7 @@ impl FuzzReport {
         self.total += other.total;
         self.compile_ok += other.compile_ok;
         self.compile_err += other.compile_err;
+        self.lower_good_compile_err += other.lower_good_compile_err;
         self.sim_ok += other.sim_ok;
         self.sim_err += other.sim_err;
         self.sim_err_clean += other.sim_err_clean;
@@ -211,6 +251,7 @@ impl FuzzReport {
             }
         }
         self.op_stats.merge(&other.op_stats);
+        self.mv_op_stats.merge(&other.mv_op_stats);
         self.bugs.extend(other.bugs.clone());
         self.corpus_gap_total += other.corpus_gap_total;
         self.corpus_tested += other.corpus_tested;
@@ -236,11 +277,12 @@ impl FuzzReport {
     /// Ringkasan satu-baris untuk konsole / merge.
     pub fn summary(&self) -> String {
         format!(
-            "iters={} compile_ok={} compile_err={} sim_ok={} sim_err={} sim_err_clean={} panics={} hangs={} \
+            "iters={} compile_ok={} compile_err={}(hdl_ok={}) sim_ok={} sim_err={} sim_err_clean={} panics={} hangs={} \
              new_features={} det_mismatch={} emi_mismatch={} meta_mismatch={} sig_anom={} prop_viol={} ref_mismatch={} covered={} bugs={}",
             self.total,
             self.compile_ok,
             self.compile_err,
+            self.lower_good_compile_err,
             self.sim_ok,
             self.sim_err,
             self.sim_err_clean,
@@ -380,13 +422,14 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
 
     // Re-seed bug lama (Paper #18: FSM-aware regressi): masukkan ke corpus
     // SEKAliGUS ke guide sebagai parent mutasi (is_bug=true → energi tinggi,
-    // guide.rs #20 bug-boosted). Sebelumnya hanya masuk corpus.seeds
-    // (dipakai fragment) → bug db tidak pernah jadi parent aktif = regressi
-    // tidak benar-benar diexercise lintas kampanye.
-    for src in bug_db.reseed_sources() {
-        corpus.seeds.push(src.clone());
-        let feats = feature::FeatureMap::extract(&src);
-        guide.add(src, feats, true);
+    // guide.rs #20 bug-boosted). HANYA backend Direct — MvMediated memakai
+    // sumber MV (lihat bootstrap MV di bawah).
+    if cfg.backend == crate::testcase::Backend::Direct {
+        for src in bug_db.reseed_sources() {
+            corpus.seeds.push(src.clone());
+            let feats = feature::FeatureMap::extract(&src);
+            guide.add(src, feats, true);
+        }
     }
     // ── Gap kepatuhan IEEE 1800 (Tahap: proyek NYATA): seed corpus SV nyata
     //    (test/, opentitan/, cva6/, examples/) yang maria TOLAK saat compile
@@ -399,7 +442,12 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
     let mut corpus_gap_samples: Vec<String> = Vec::new();
     let mut corpus_gap_codes: Vec<String> = Vec::new();
     let mut corpus_elab_reject: u64 = 0;
-    for seed in &corpus.seeds {
+    // Gap-check HANYA backend Direct: corpus SV nyata dipakai compile langsung.
+    // MvMediated memakai corpus MV (mvgen) — compile SV di main thread (stack
+    // kecil) atas file raksasa (regtop opentitan) = stack overflow (bug fuzz
+    // runner: main thread 8MB vs rekursi parser/elaborator dalam).
+    if cfg.backend == crate::testcase::Backend::Direct {
+        for seed in &corpus.seeds {
         if seed.contains("fz_") || seed.contains("_fuzz") {
             continue;
         }
@@ -421,6 +469,7 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
             } else {
                 corpus_elab_reject += 1;
             }
+        }
         }
     }
     let mut report = FuzzReport {
@@ -529,45 +578,68 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
 
     // ── Seed awal (Tahap: proyek NYATA, Paper #12/#18): corpus SV nyata
     //    (test/, opentitan/, cva6/, examples/) jadi parent mutasi utama —
-    //    bukan modul generated. Modul generated HANYA fallback bila corpus
-    //    kosong (mandiri/valid — mencegah starvation guide).
-    let real_seeds = corpus.sample_batch(&mut rng, 48);
-    if real_seeds.is_empty() {
-        for _ in 0..16 {
-            let s = gen.random_module(&mut rng);
+    //    bukan modul generated. HANYA backend Direct: MvMediated memakai
+    //    corpus MV (mvgen) — seed SV tak valid sebagai parent .mv.
+    if cfg.backend == crate::testcase::Backend::Direct {
+        let real_seeds = corpus.sample_batch(&mut rng, 48);
+        if real_seeds.is_empty() {
+            for _ in 0..16 {
+                let s = gen.random_module(&mut rng);
+                let feats = feature::FeatureMap::extract(&s);
+                guide.add(s, feats, false);
+            }
+        } else {
+            // Proyek nyata PRIMARY (48) + generator bootstrap (11) — campuran
+            // mencegah starvation fitur: dengan real-only, shape generator tak
+            // pernah masuk tilikan → fitur unreached (`<<`, `$clog2`, covergroup).
+            // SATU per shape (0..NUM_SHAPES) — deterministik: semua fitur shape
+            // ikut corpus, bukan keberuntungan sampling acak.
+            for s in real_seeds {
+                let feats = feature::FeatureMap::extract(&s);
+                guide.add(s, feats, false);
+            }
+            for k in 0..gen::NUM_SHAPES {
+                let s = gen.module_for_shape(&mut rng, k);
+                let feats = feature::FeatureMap::extract(&s);
+                guide.add(s, feats, false);
+            }
+            // Composed seeds — rakit dari INTERACTION GRAPH × SemanticPressure
+            // (P0 scheduler/concurrency dulu). Variasi dari assembly pool, bukan
+            // template: tiap campuran interaksi = modul struktur beda.
+            let pressure = semantic::SemanticPressure::scheduler_directed();
+            let graph = interaction::InteractionGraph::default();
+            let cw = [4usize, 8].choose(&mut rng).copied().unwrap_or(4);
+            for _ in 0..6 {
+                let ed = graph.sample(&mut rng, &pressure);
+                let s = gen.compose_from_interaction(&mut rng, cw, ed.a, ed.b);
+                let feats = feature::FeatureMap::extract(&s);
+                guide.add(s, feats, false);
+            }
+        }
+    }
+
+    // ── Backend MvMediated: guide di-seed dengan scenario `.mv` (mvgen),
+    //      bukan SV generated — parent mutasi MV harus MV canonical.
+    if cfg.backend == crate::testcase::Backend::MvMediated {
+        for k in 0..mvgen::NUM_MV_SHAPES {
+            let s = mvgen::gen_random_module(&mut rng, k);
             let feats = feature::FeatureMap::extract(&s);
             guide.add(s, feats, false);
         }
-    } else {
-        // Proyek nyata PRIMARY (48) + generator bootstrap (11) — campuran
-        // mencegah starvation fitur: dengan real-only, shape generator tak
-        // pernah masuk tilikan → fitur unreached (`<<`, `$clog2`, covergroup).
-        // SATU per shape (0..NUM_SHAPES) — deterministik: semua fitur shape
-        // ikut corpus, bukan keberuntungan sampling acak.
-        for s in real_seeds {
-            let feats = feature::FeatureMap::extract(&s);
-            guide.add(s, feats, false);
-        }
-        for k in 0..gen::NUM_SHAPES {
-            let s = gen.module_for_shape(&mut rng, k);
-            let feats = feature::FeatureMap::extract(&s);
-            guide.add(s, feats, false);
-        }
-        // Composed seeds — rakit dari INTERACTION GRAPH × SemanticPressure
-        // (P0 scheduler/concurrency dulu). Variasi dari assembly pool, bukan
-        // template: tiap campuran interaksi = modul struktur beda.
-        let pressure = semantic::SemanticPressure::scheduler_directed();
-        let graph = interaction::InteractionGraph::default();
-        let cw = [4usize, 8].choose(&mut rng).copied().unwrap_or(4);
-        for _ in 0..6 {
-            let ed = graph.sample(&mut rng, &pressure);
-            let s = gen.compose_from_interaction(&mut rng, cw, ed.a, ed.b);
-            let feats = feature::FeatureMap::extract(&s);
-            guide.add(s, feats, false);
+        // Bug lama (Paper #18 re-seed): source MV bila ada — HANYA yang
+        // ter-parse sebagai .mv (bugdb lintas-kampanye bisa menyimpan SV dari
+        // kampanye backend Direct; source SV bukan parent mutasi MV valid).
+        for src in bug_db.reseed_sources() {
+            if maria_api::mv::parser::parse(&src).is_err() {
+                continue;
+            }
+            let feats = feature::FeatureMap::extract(&src);
+            guide.add(src, feats, true);
         }
     }
     // Statistik & bobot adaptif palet mutasi (GAP-3).
     let mut op_stats = ast_mutate::OpStats::default();
+    let mut mv_op_stats = mv_mutate::MvOpStats::default();
     // Ambang hang adaptif (temuan seed 12345 — hang flaky: run valid lambat
     // 8–15s terklasifikasi Hang saat beban sistem naik; hang > 12000 ms
     // tercatat tapi tak ter-reproduksi di re-run). Ambang efektif per iterasi
@@ -593,54 +665,111 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
         // ── 1. pilih parent (energy schedule) ──
         let Some(parent) = guide.select() else { break };
 
-        // ── 2. rantai mutasi (1..3 op; tiap op dipilih adaptif) ──
-        // GATE validitas (audit compile_err): child mutasi yang gagal compile
-        // di-retry (maks 1×) dengan rantai mutasi FRESH. Sebagian besar
-        // kompilasi yang bisa dieksekusi → proporsi sim/reach naik. Bila
-        // retry tetap gagal, child invalid tetap dipakai (parser-robustness &
-        // corpus mutasi butuh seed invalid pun untuk menjelajah sintaks).
-        let chain = rng.gen_range(1..=2);
+        // ── 1b. Backend adaptation ──
+        // Direct (jalur lama, task §14): parent = SV → mutasi string → eksekusi.
+        // MvMediated: parent = canonical `.mv` → mutasi AST → lower → HDL
+        // eksekusi. Testcase MV (canonical + history) dilacak utk reproducibility,
+        // dan bug dibawa sebagai metadata (task §8/§9).
         let mut src = parent.clone();
-        let mut ops_used: Vec<usize> = Vec::with_capacity(chain as usize);
-        for _ in 0..chain {
-            let (op, next) = ast_mutate::mutate(&mut rng, &src, &corpus, &mut op_stats);
-            ops_used.push(op);
-            src = next;
-        }
-        if !harness::compile_only_isolated(&src, cfg.hang_ms).is_ok() {
-            let chain2 = rng.gen_range(1..=2);
-            let mut src2 = parent.clone();
-            let mut ops2: Vec<usize> = Vec::with_capacity(chain2 as usize);
-            for _ in 0..chain2 {
-                let (op, next) = ast_mutate::mutate(&mut rng, &src2, &corpus, &mut op_stats);
-                ops2.push(op);
-                src2 = next;
+        let mut ops_used: Vec<usize> = Vec::new();
+        let mut mv_tc: Option<crate::testcase::Testcase> = None;
+        let mut mv_hdl_checked = false;
+        if cfg.backend == crate::testcase::Backend::MvMediated {
+            let mut mv = parent.clone();
+            let mut hist: Vec<String> = Vec::new();
+            let chain = rng.gen_range(1..=2);
+            for _ in 0..chain {
+                let (op, next) = mv_mutate::mutate(&mut rng, &mv, &mut mv_op_stats);
+                hist.push(format!("mvop{op}"));
+                mv = next;
             }
-            if harness::compile_only_isolated(&src2, cfg.hang_ms).is_ok() {
-                src = src2;
-                ops_used = ops2;
+            match mv_lower::lower_mv(&mv, "fz_mv") {
+                mv_lower::LowerVerdict::Hdl(h) => {
+                    src = h;
+                    mv_hdl_checked = true;
+                    let cfg_fp = crate::testcase::hash_bytes(
+                        &format!("{}:{}", cfg.hang_ms, cfg.max_time).into_bytes(),
+                    );
+                    mv_tc = Some(crate::testcase::Testcase::from_mv(
+                        mv, src.clone(), cfg.seed, iter, hist, cfg_fp,
+                    ));
+                }
+                mv_lower::LowerVerdict::HdlNoCheck(h) => {
+                    src = h;
+                    let cfg_fp = crate::testcase::hash_bytes(
+                        &format!("{}:{}", cfg.hang_ms, cfg.max_time).into_bytes(),
+                    );
+                    mv_tc = Some(crate::testcase::Testcase::from_mv(
+                        mv, src.clone(), cfg.seed, iter, hist, cfg_fp,
+                    ));
+                }
+                mv_lower::LowerVerdict::MvReject { msg, .. } => {
+                    // BUKAN jalan ke Maria: source ditolak maria-mv (bug di
+                    // maria-mv atau fuzzer) — dicatat terpisah, bukan Panic/
+                    // Hang/Differential. Pipeline TIDAK melakukan silent fallback
+                    // ke direct (task acceptance).
+                    report.total += 1;
+                    report.compile_err += 1;
+                    if let Ok(dump_path) = std::env::var("MARIA_FUZZ_DUMP") {
+                        std::fs::write(&dump_path, &mv).ok();
+                    }
+                    let mvsnip: String = mv.lines().take(14).collect::<Vec<_>>().join("\n");
+                    eprintln!(
+                        "[fuzz] mv-reject iter {}: {} (seed {:#x}, {} bytes)",
+                        iter,
+                        msg.lines().next().unwrap_or(""),
+                        cfg.seed,
+                        mv.len()
+                    );
+                    continue;
+                }
             }
-        }
-
-        // ── 3. bias terarah (#17) ──
-        if let Some(t) = &cfg.target {
-            if !directed::is_relevant(&src, t) {
-                if let Some(b) = directed::bias_seed(&src, t) {
-                    src = b;
+        } else {
+            // ── 2. rantai mutasi (1..2 op; tiap op dipilih adaptif) ──
+            // GATE validitas (audit compile_err): child mutasi yang gagal
+            // compile di-retry (maks 1×) dengan rantai mutasi FRESH. Bila
+            // retry tetap gagal, child invalid tetap dipakai (parser-robustness).
+            let chain = rng.gen_range(1..=2);
+            ops_used = Vec::with_capacity(chain as usize);
+            for _ in 0..chain {
+                let (op, next) = ast_mutate::mutate(&mut rng, &src, &corpus, &mut op_stats);
+                ops_used.push(op);
+                src = next;
+            }
+            if !harness::compile_only_isolated(&src, cfg.hang_ms).is_ok() {
+                let chain2 = rng.gen_range(1..=2);
+                let mut src2 = parent.clone();
+                let mut ops2: Vec<usize> = Vec::with_capacity(chain2 as usize);
+                for _ in 0..chain2 {
+                    let (op, next) = ast_mutate::mutate(&mut rng, &src2, &corpus, &mut op_stats);
+                    ops2.push(op);
+                    src2 = next;
+                }
+                if harness::compile_only_isolated(&src2, cfg.hang_ms).is_ok() {
+                    src = src2;
+                    ops_used = ops2;
                 }
             }
         }
 
-        // ── 3b. steering CDG aktif (#20) — bila tan-pa --target, bias seed
-        //      ke fitur TRACKED yang belum tereksekusi (recomputed berkala;
-        //      hanya target steerable — snippet valid, audit GAP-8/CDG
-        //      report-only jadi aktif). Deterministik per seed RNG.
-        if cfg.target.is_none() && iter % 10 == 0 {
-            let unreached = cdg::plan_targets(&guide.coverage());
-            if let Some(t) = unreached.choose(&mut rng) {
-                if directed::is_steerable(t) && !directed::is_relevant(&src, t) {
+        // ── 3. bias terarah (#17) + steering CDG (#20) — HANYA backend Direct
+        //      (snippet SV pada HDL hasil lower MV bisa merusak korespondensi
+        //      MV canonical; perbesaran fitur pada jalur MV via mutasi AST).
+        if cfg.backend == crate::testcase::Backend::Direct {
+            if let Some(t) = &cfg.target {
+                if !directed::is_relevant(&src, t) {
                     if let Some(b) = directed::bias_seed(&src, t) {
                         src = b;
+                    }
+                }
+            }
+            if cfg.target.is_none() && iter % 10 == 0 {
+                let unreached = cdg::plan_targets(&guide.coverage());
+                if let Some(t) = unreached.choose(&mut rng) {
+                    if directed::is_steerable(t) && !directed::is_relevant(&src, t) {
+                        if let Some(b) = directed::bias_seed(&src, t) {
+                            src = b;
+                        }
                     }
                 }
             }
@@ -675,11 +804,12 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                     ) || cand.is_empty()
                 });
                 detail.push_str(&format!("\nminimized {} → {} bytes", src.len(), minimized.len()));
-                let bug = BugRecord {
-                    kind: BugKind::Panic,
-                    source: minimized,
+                let bug = BugRecord::new(
+                    BugKind::Panic,
+                    minimized,
                     detail,
-                };
+                    mv_tc.as_ref(),
+                );
                 report.bugs.push(bug.clone());
                 bug_db.push(&bug, cfg.seed, iter + 1);
             }
@@ -715,17 +845,18 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                         RunStatus::Hang
                     ) || cand.is_empty()
                 });
-                let bug = BugRecord {
-                    kind: BugKind::Hang,
-                    source: minimized.clone(),
-                    detail: format!(
+                let bug = BugRecord::new(
+                    BugKind::Hang,
+                    minimized.clone(),
+                    format!(
                         "hang > {} ms ({}); minimized {} → {} bytes",
                         cfg.hang_ms,
                         out.duration_ms,
                         src.len(),
                         minimized.len()
                     ),
-                };
+                    mv_tc.as_ref(),
+                );
                 report.bugs.push(bug.clone());
                 bug_db.push(&bug, cfg.seed, iter + 1);
             }
@@ -760,12 +891,13 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                             },
                                         );
                                         let mlen = minimized.len();
-                                        report.bugs.push(BugRecord {
-                                            kind: BugKind::Differential,
-                                            source: minimized,
-                                            detail: format!("determinism: {}; minimized {}→{} bytes",
+                                        report.bugs.push(BugRecord::new(
+                                            BugKind::Differential,
+                                            minimized,
+                                            format!("determinism: {}; minimized {}→{} bytes",
                                                 d, src.len(), mlen),
-                                        });
+                                            mv_tc.as_ref(),
+                                        ));
                                         if let Some(b) = report.bugs.last() {
                                             bug_db.push(b, cfg.seed, iter + 1);
                                         }
@@ -796,12 +928,13 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                             },
                                         );
                                         let mlen = minimized.len();
-                                        report.bugs.push(BugRecord {
-                                            kind: BugKind::Differential,
-                                            source: minimized,
-                                            detail: format!("emi: {}; minimized {}→{} bytes",
+                                        report.bugs.push(BugRecord::new(
+                                            BugKind::Differential,
+                                            minimized,
+                                            format!("emi: {}; minimized {}→{} bytes",
                                                 d, src.len(), mlen),
-                                        });
+                                            mv_tc.as_ref(),
+                                        ));
                                         if let Some(b) = report.bugs.last() {
                                             bug_db.push(b, cfg.seed, iter + 1);
                                         }
@@ -836,12 +969,13 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                             },
                                         );
                                         let mlen = minimized.len();
-                                        report.bugs.push(BugRecord {
-                                            kind: BugKind::Differential,
-                                            source: minimized,
-                                            detail: format!("meta-identity: {}; minimized {}→{} bytes",
+                                        report.bugs.push(BugRecord::new(
+                                            BugKind::Differential,
+                                            minimized,
+                                            format!("meta-identity: {}; minimized {}→{} bytes",
                                                 d, src.len(), mlen),
-                                        });
+                                            mv_tc.as_ref(),
+                                        ));
                                         if let Some(b) = report.bugs.last() {
                                             bug_db.push(b, cfg.seed, iter + 1);
                                         }
@@ -859,12 +993,13 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                         &mut |cand| oracle::sim_signal_check(cand, cfg.max_time).is_some(),
                                     );
                                     let mlen = minimized.len();
-                                    report.bugs.push(BugRecord {
-                                        kind: BugKind::Differential,
-                                        source: minimized,
-                                        detail: format!("sim-sig: {}; minimized {}→{} bytes",
+                                    report.bugs.push(BugRecord::new(
+                                        BugKind::Differential,
+                                        minimized,
+                                        format!("sim-sig: {}; minimized {}→{} bytes",
                                             info, src.len(), mlen),
-                                    });
+                                        mv_tc.as_ref(),
+                                    ));
                                     if let Some(b) = report.bugs.last() {
                                         bug_db.push(b, cfg.seed, iter + 1);
                                     }
@@ -895,16 +1030,17 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                         },
                                     );
                                     let mlen = minimized.len();
-                                    report.bugs.push(BugRecord {
-                                        kind: BugKind::Differential,
-                                        source: minimized,
-                                        detail: format!(
+                                    report.bugs.push(BugRecord::new(
+                                        BugKind::Differential,
+                                        minimized,
+                                        format!(
                                             "property: {}; minimized {}→{} bytes",
                                             viol,
                                             src.len(),
                                             mlen
                                         ),
-                                    });
+                                        mv_tc.as_ref(),
+                                    ));
                                     if let Some(b) = report.bugs.last() {
                                         bug_db.push(b, cfg.seed, iter + 1);
                                     }
@@ -953,10 +1089,10 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                     },
                                 );
                                 let mlen = minimized.len();
-                                report.bugs.push(BugRecord {
-                                    kind: BugKind::Differential,
-                                    source: minimized,
-                                    detail: format!(
+                                report.bugs.push(BugRecord::new(
+                                    BugKind::Differential,
+                                    minimized,
+                                    format!(
                                         "runtime-error pada input parse-clean: {}{};\
                                          minimized {}→{} bytes",
                                         sim.code,
@@ -964,7 +1100,8 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                         src.len(),
                                         mlen
                                     ),
-                                });
+                                    mv_tc.as_ref(),
+                                ));
                                 if let Some(b) = report.bugs.last() {
                                     bug_db.push(b, cfg.seed, iter + 1);
                                 }
@@ -997,14 +1134,15 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                                     },
                                 );
                                 let mlen = minimized.len();
-                                report.bugs.push(BugRecord {
-                                    kind: BugKind::Differential,
-                                    source: minimized,
-                                    detail: format!(
+                                report.bugs.push(BugRecord::new(
+                                    BugKind::Differential,
+                                    minimized,
+                                    format!(
                                         "assert-oracle: {}{} — ekspresi identik dievaluasi beda; minimized {}→{} bytes",
                                         sim.code, sim.message, src.len(), mlen
                                     ),
-                                });
+                                    mv_tc.as_ref(),
+                                ));
                                 if let Some(b) = report.bugs.last() {
                                     bug_db.push(b, cfg.seed, iter + 1);
                                 }
@@ -1013,6 +1151,34 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                     }
                 } else {
                     report.compile_err += 1;
+                    // ── Triase compile-err (task tambahan: perbaiki error
+                    // compile maria) — MV yang LOLOS type-check maria-mv
+                    // (LowerVerdict::Hdl) tapi HDL-nya DITOLAK maria =
+                    // BUG lowering maria-mv atau parser/elab maria → catat
+                    // sebagai bug kandidat (bukan buang diam).
+                    if cfg.backend == crate::testcase::Backend::MvMediated && mv_hdl_checked {
+                        report.lower_good_compile_err += 1;
+                        if let Some(tc) = &mv_tc {
+                            let v = harness::compile_only_isolated(&tc.hdl, cfg.hang_ms);
+                            let code = match v {
+                                Ok(m) => m.lines().next().unwrap_or("").chars().take(40).collect::<String>(),
+                                Err(e) => format!("panic:{e}"),
+                            };
+                            std::fs::create_dir_all("/tmp/opencode/mv_compile_triage").ok();
+                            let _ = std::fs::write(
+                                format!("/tmp/opencode/mv_compile_triage/iter{}.mv", iter),
+                                &tc.mv,
+                            );
+                            let _ = std::fs::write(
+                                format!("/tmp/opencode/mv_compile_triage/iter{}.sv", iter),
+                                &tc.hdl,
+                            );
+                            eprintln!(
+                                "[fuzz] compile-err hdl-ok iter {} seed {:#x} code: {}",
+                                iter, cfg.seed, code
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1047,16 +1213,17 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                         )
                     });
                     let mlen = minimized.len();
-                    report.bugs.push(BugRecord {
-                        kind: BugKind::Differential,
-                        source: minimized,
-                        detail: format!(
+                    report.bugs.push(BugRecord::new(
+                        BugKind::Differential,
+                        minimized,
+                        format!(
                             "reference(iverilog): {}; minimized {}→{} bytes",
                             d,
                             core.len(),
                             mlen
                         ),
-                    });
+                        mv_tc.as_ref(),
+                    ));
                     if let Some(b) = report.bugs.last() {
                         bug_db.push(b, cfg.seed, iter + 1);
                     }
@@ -1086,7 +1253,14 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
                 report.new_features += 1;
                 // Seed menarik (fitur eksekusi baru) masuk corpus utk mutasi
                 // lanjut (mencegah corpus saturation & starvation).
-                guide.add(src.clone(), exec_feats, false);
+                // Backend MvMediated: simpan parent MV CANONICAL (testcase.mv),
+                // BUKAN HDL hasil lower — HDL sebagai parent .mv = reject
+                // (pipeline korpus MV murni; task: fuzzing di level MV).
+                let seed_for_corpus = match &mv_tc {
+                    Some(t) => t.mv.clone(),
+                    None => src.clone(),
+                };
+                guide.add(seed_for_corpus, exec_feats, false);
                 // Atribusi: parent yang memicu novelty dapat dorongan energi.
                 guide.boost_source(&parent);
             }
@@ -1114,6 +1288,7 @@ pub fn run_fuzz(cfg: &FuzzConfig) -> FuzzReport {
     report.cdg_info = Some(cdg::report(&cov_map));
     report.unreached_targets = cdg::plan_targets(&cov_map);
     report.op_stats = op_stats;
+    report.mv_op_stats = mv_op_stats;
 
     // Simpan bug DB persisten (Paper #18) — sebelum emit_bugs supaya
     // entri baru tercatat di disk. Direktori emit dibuat DULUAN: kampanye
@@ -1164,6 +1339,8 @@ fn collect_sv_paths(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
 }
 
 /// Tulis bug ke direktori (1 file per bug) — dev-reporting, bukan edit kode.
+/// Backend MvMediated: tulis BOTH canonical `.mv` dan HDL `.sv` (task §8:
+/// simpan MV DSL testcase + generated HDL; `.mv` = reproducible sumber).
 fn emit_bugs(dir: &std::path::Path, report: &FuzzReport) {
     let _ = std::fs::create_dir_all(dir);
     for (i, b) in report.bugs.iter().enumerate() {
@@ -1172,8 +1349,14 @@ fn emit_bugs(dir: &std::path::Path, report: &FuzzReport) {
             BugKind::Hang => "hang",
             BugKind::Differential => "diff",
         };
-        let path = dir.join(format!("bug_{:04}_{}.sv", i, kind));
-        let _ = std::fs::write(&path, &b.source);
+        let base = dir.join(format!("bug_{:04}_{}", i, kind));
+        let _ = std::fs::write(format!("{}.sv", base.display()), &b.source);
+        if let Some(mv) = &b.mv {
+            let _ = std::fs::write(format!("{}.mv", base.display()), mv);
+        }
+        if let Some(hdl) = &b.hdl {
+            let _ = std::fs::write(format!("{}.hdl.sv", base.display()), hdl);
+        }
     }
 }
 

@@ -93,11 +93,14 @@ impl BugDb {
         Ok(())
     }
 
-    /// Append satu bug ke DB (clone isi).
+    /// Append satu bug ke DB (clone isi). Backend MvMediated: simpan canonical
+    /// MV sebagai source re-seed (bukan HDL minimized) — bug db = corpus MV
+    /// lintas kampanye (Paper #18; task §8/§9 reproducible).
     pub fn push(&mut self, bug: &BugRecord, seed: u64, iter: u64) {
+        let src = bug.mv.clone().unwrap_or_else(|| bug.source.clone());
         self.entries.push(BugDbEntry {
             kind: bug.kind.clone(),
-            source: bug.source.clone(),
+            source: src,
             detail: bug.detail.clone(),
             seed,
             iter,

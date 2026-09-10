@@ -111,6 +111,16 @@ impl HierarchicalTimingWheel {
     /// O(1) — computes the correct level and bucket via shift and mask.
     /// Events in higher levels store a sub-offset remainder for precise
     /// redistribution during cascade.
+    ///
+    /// # Indexing (BUG FIX)
+    ///
+    /// Bucket index & remainder dihitung dari waktu ABSOLUT `time`
+    /// (`time & WHEEL_MASK`, `time >> 8`, ...) — konsisten dgn `advance()`
+    /// yang drain dari bucket `current_time & WHEEL_MASK` dan dgn cascade
+    /// (remainder = bit-rendah waktu absolut). Sebelumnya memakai `offset`
+    /// RELATIF (`time - current_time`) → event yang di-add saat current ≠ 0
+    /// masuk bucket salah: dijadwalkan ulang ke waktu keliru / hilang sama
+    /// sekali (regresi deep-differential: jalur timing-wheel ≠ vector queue).
     pub fn add_event(&mut self, time: usize, region: EventRegion, event: EventKind) {
         if time < self.current_time {
             // Event in the past — schedule at current time
@@ -125,30 +135,26 @@ impl HierarchicalTimingWheel {
         let offset = time - self.current_time;
 
         if offset < WHEEL_SIZE {
-            // Level 0: within next 256 time units
-            let idx = offset & WHEEL_MASK;
+            // Level 0: within next 256 time units — bucket = bit-rendah ABSOLUT
+            let idx = time & WHEEL_MASK;
             self.levels[0][idx]
                 .events
                 .push((0, RegionEvent { region, event }));
             self.levels[0][idx].populated = true;
         } else if offset < (WHEEL_SIZE * WHEEL_SIZE) {
             // Level 1: within next 65536 time units
-            let idx = (offset >> LEVEL1_SHIFT) & WHEEL_MASK;
-            // Note: Level 1 bucket 0 is effectively unused because offsets 0-255 go to Level 0.
-            // Bucket 1 covers offsets [256, 512), bucket 2 covers [512, 768), etc.
-            // The remainder `offset & 0xFF` preserves the exact position within the bucket.
-            let remainder = (offset & WHEEL_MASK) as u32;
+            let idx = (time >> LEVEL1_SHIFT) & WHEEL_MASK;
+            // Remainder = bit-rendah 8 ABSOLUT — presisi posisi dalam bucket.
+            let remainder = (time & WHEEL_MASK) as u32;
             self.levels[1][idx]
                 .events
                 .push((remainder, RegionEvent { region, event }));
             self.levels[1][idx].populated = true;
         } else {
             // Level 2: beyond 65536 time units
-            let idx = (offset >> LEVEL2_SHIFT) & WHEEL_MASK;
-            // The remainder stores the full offset within the level 2 bucket's range.
-            // Level 2 bucket idx covers offsets [idx << 16, (idx+1) << 16).
-            // The remainder `offset & 0xFFFF` preserves the exact position (16 bits).
-            let remainder = (offset & 0xFFFF) as u32;
+            let idx = (time >> LEVEL2_SHIFT) & WHEEL_MASK;
+            // Remainder = 16 bit-rendah ABSOLUT.
+            let remainder = (time & 0xFFFF) as u32;
             self.levels[2][idx]
                 .events
                 .push((remainder, RegionEvent { region, event }));
@@ -277,7 +283,8 @@ impl HierarchicalTimingWheel {
         }
         let offset = time - self.current_time;
         if offset < WHEEL_SIZE {
-            let idx = offset & WHEEL_MASK;
+            // Bucket indeks ABSOLUT (konsisten dgn add_event — lihat doc di sana).
+            let idx = time & WHEEL_MASK;
             self.levels[0][idx].populated
         } else {
             // Events in higher levels haven't been cascaded yet,
@@ -566,5 +573,67 @@ mod tests {
         }
         let t800 = wheel.advance(800);
         assert_eq!(t800.len(), 1, "event at time 800 should fire");
+    }
+
+    #[test]
+    fn test_add_during_advance_absolute_index() {
+        // REGRESI (deep-differential fuZZ): event yang di-add saat current ≠ 0
+        // dulu diindeks RELATIF (`offset & MASK`) → masuk bucket salah / hilang.
+        // Sekarang indeks ABSOLUT `time & MASK` — event t=50 dari current=45
+        // harus tepat di drain saat advance(50).
+        let mut wheel = HierarchicalTimingWheel::new();
+        for t in 0..=45 {
+            let _ = wheel.advance(t);
+        }
+        wheel.add_event(50, EventRegion::Active, EventKind::EvalProcess(50));
+        for t in 46..50 {
+            let e = wheel.advance(t);
+            assert!(e.is_empty(), "event tak boleh fire sebelum t=50 (t={})", t);
+        }
+        let at50 = wheel.advance(50);
+        assert_eq!(at50.len(), 1, "event t=50 harus fire tepat di t=50");
+    }
+
+    #[test]
+    fn test_fifo_order_same_bucket() {
+        // Urutan FIFO dalam satu bucket (time sama): finish (push duluan) harus
+        // diproses sebelum toggle — konsisten dgn vector-queue standard path.
+        let mut wheel = HierarchicalTimingWheel::new();
+        wheel.add_event(50, EventRegion::Active, EventKind::EvalProcess(0)); // $finish
+        // Simulasikan push t=50 KEDUA saat current=45 (toggle clock).
+        for t in 1..=45 {
+            let _ = wheel.advance(t);
+        }
+        wheel.add_event(50, EventRegion::Active, EventKind::EvalProcess(1)); // toggle
+        for t in 46..50 {
+            let _ = wheel.advance(t);
+        }
+        let at50 = wheel.advance(50);
+        assert_eq!(at50.len(), 2);
+        match &at50[0].event {
+            EventKind::EvalProcess(x) => assert_eq!(*x, 0, "FIFO: finish duluan"),
+            _ => panic!("expected EvalProcess"),
+        }
+        match &at50[1].event {
+            EventKind::EvalProcess(x) => assert_eq!(*x, 1, "FIFO: toggle kedua"),
+            _ => panic!("expected EvalProcess"),
+        }
+    }
+
+    #[test]
+    fn test_add_during_advance_level1() {
+        // Event jauh (t=300) di-add saat current=200 (bukan 0) — level 1,
+        // indeks/remainder harus dari waktu ABSOLUT.
+        let mut wheel = HierarchicalTimingWheel::new();
+        for t in 0..=200 {
+            let _ = wheel.advance(t);
+        }
+        wheel.add_event(300, EventRegion::Active, EventKind::EvalProcess(300));
+        for t in 201..300 {
+            let e = wheel.advance(t);
+            assert!(e.is_empty(), "event tak boleh fire sebelum 300 (t={})", t);
+        }
+        let at300 = wheel.advance(300);
+        assert_eq!(at300.len(), 1, "event t=300 saat current=200 harus tepat");
     }
 }

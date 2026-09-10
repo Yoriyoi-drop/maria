@@ -20,6 +20,7 @@
 **/.maria/database/
 **/.mdme_corpus
 **/.codegraph
+**/.maria-fuzz-bugs
 /obj_dir
 # Waveform artifacts (FST dari simulasi/test)
 *.fst

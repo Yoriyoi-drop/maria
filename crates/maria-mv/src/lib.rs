@@ -15,6 +15,7 @@ pub mod check;
 pub mod codegen;
 pub mod lexer;
 pub mod parser;
+pub mod print;
 
 use crate::ast::MvFile;
 use std::fmt;

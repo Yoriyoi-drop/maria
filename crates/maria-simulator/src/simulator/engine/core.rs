@@ -147,6 +147,10 @@ impl SimulationEngine {
             covergroup_prev: HashMap::new(),
             covergroup_const_bins: HashMap::new(),
             ast_loop_iters: 0,
+            zero_delay_seen_t: 0,
+            zero_delay_same_time: 0,
+            last_processed_t: 0,
+            same_time_revisits: 0,
             plusargs: HashMap::new(),
             debug_mode: DebugMode::Normal,
             breakpoints: Vec::new(),
@@ -950,6 +954,37 @@ impl SimulationEngine {
         {
             let step_start_events = self.sim_perf.counters.events_processed;
             let t = self.state.time as usize;
+
+            // ── Guard HANG-1: zero-advance time-step revisit (BUG FIX fuZZ) ──
+            // `#0`/zero-delay di dalam loop (`forever #0 clk = ~clk`) tidak
+            // pernah maju waktu; event-nya diproses di iterasi OUTER berikutnya
+            // (delta_count di-reset tiap iterasi, line 1034) sehingga delta-limit
+            // 100k tidak pernah kena → simulasi hang sejati (>12s, terkonfirmasi
+            // fuzz MV: `forever { #0 clk = ~clk }`). Guard: akumulasi revisit
+            // SAME-TIME; lewat delta_limit → InfiniteDelta (sama dgn delta-kap).
+            if t as u64 == self.last_processed_t {
+                self.same_time_revisits += 1;
+                if self.same_time_revisits > self.delta_limit {
+                    let mut diag = Diagnostic::new(
+                        DiagLevel::Error,
+                        DiagCode::InfiniteDelta,
+                        format!(
+                            "simulation exceeded zero-advance time-step limit ({}) at time {} — kemungkinan loop dengan `#0`/delay nol tanpa time advance (mis. `forever #0 clk = ~clk`). Periksa desain atau naikkan limit via set_delta_limit()",
+                            self.delta_limit, self.state.time
+                        ),
+                    );
+                    diag = diag.with_runtime_context(
+                        RuntimeContext::new()
+                            .with_time(format!("{} ns", self.state.time))
+                            .with_delta(self.same_time_revisits)
+                            .with_module(self.current_instance_path.as_deref().unwrap_or("top")),
+                    );
+                    return Err(SimError::Diagnostic(diag));
+                }
+            } else {
+                self.same_time_revisits = 0;
+                self.last_processed_t = t as u64;
+            }
 
             // ── Layer resource guard (MARIA-SIM-34): poll RSS tiap interval
             // untuk mencegah kernel OOM-kill pada design besar (OpenTitan).

@@ -448,7 +448,10 @@ impl Parser {
             let rname = self.expect_ident()?;
             let active_low = rname.ends_with("_n") || rname.ends_with("_N");
             let mut sync = false;
-            if self.eat(&Tok::Comma) && matches!(self.peek(), Tok::Ident(s) if s == "sync") {
+            // BUG FIX: `sync` di-lex sebagai Tok::Sync (keyword), bukan Ident —
+            // sebelumnya `matches!(_, Tok::Ident(s) if s == "sync")` selalu
+            // false → `seq(clk, rst, sync)` tak pernah ter-parse (regresi F??).
+            if self.eat(&Tok::Comma) && matches!(self.peek(), Tok::Sync) {
                 sync = true;
                 self.advance();
             }

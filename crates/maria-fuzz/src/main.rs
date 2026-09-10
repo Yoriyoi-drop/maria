@@ -20,6 +20,8 @@ USAGE:
 OPTIONS:
   --iters N          Jumlah iterasi (env MARIA_FUZZ_N, default 300)
   --seed N           Seed RNG (default 0x6d61726961)
+  --backend K        direct (jalur lama: generator SV → Maria) | maria-mv
+                     (baru: scenario .mv → Maria-MV → HDL → Maria; default direct)
   --max-time T       max_time simulasi (default 100)
   --hang-ms M        ambang hang per eksekusi (default 12000; harus > settle
                      delta-storm engine ~10s debug, agar delta-storm yang
@@ -87,6 +89,17 @@ fn main() {
             "--iters" => {
                 i += 1;
                 cfg.iters = parse_u64(&args[i], "--iters");
+            }
+            "--backend" => {
+                i += 1;
+                cfg.backend = match args[i].as_str() {
+                    "direct" => maria_fuzz::testcase::Backend::Direct,
+                    "maria-mv" | "mv" | "mvm" => maria_fuzz::testcase::Backend::MvMediated,
+                    other => {
+                        eprintln!("error: --backend harus direct|maria-mv, dapat '{}'", other);
+                        std::process::exit(2);
+                    }
+                };
             }
             "--seed" => {
                 i += 1;
@@ -200,43 +213,58 @@ fn main() {
     );
 
     let started = Instant::now();
-    let report = if cfg.workers <= 1 {
-        run_fuzz(&cfg)
-    } else {
-        // Kampanye paralel: tiap worker seed berbeda (Paper #14 scale).
-        // Corpus seed bersama (Paper #12): load sekali, bagi ke semua worker
-        // supaya semua worker putar dari corpus yang sama.
-        let shared_corpus = corpus::Corpus::from_dirs(&cfg.corpus_dirs);
-        let cfg = Arc::new(cfg);
-        let shared_corpus = Arc::new(shared_corpus);
-        let handles: Vec<std::thread::JoinHandle<FuzzReport>> = (0..cfg.workers)
-            .map(|w| {
-                let cfg = Arc::clone(&cfg);
-                let corpus = Arc::clone(&shared_corpus);
-                std::thread::Builder::new()
-                    .name(format!("fuzz-worker-{}", w))
-                    .stack_size(maria_fuzz::harness::WORKER_STACK_BYTES)
-                    .spawn(move || {
-                        let mut c = (*cfg).clone();
-                        c.seed = c.seed.wrapping_add(w as u64 * 0x9E37_79B9);
-                        c.workers = 1;
-                        // Per-worker corpus dir — hindari race tulis seed_N.sv.
-                        c.save_corpus_dir = c.save_corpus_dir.map(|d| d.join(format!("w{}", w)));
-                        // Inject corpus bersama ke worker ini.
-                        c.corpus = Some((*corpus).clone());
-                        run_fuzz(&c)
+    // Kampanye dijalankan pada thread ber-stack BESAR (BUG FIX fuZZ): main
+    // thread default 8MB — project sweep / gap-check / real-hunt memanggil
+    // compile_str DI thread ini atas file korpus raksasa (regtop opentitan,
+    // cva6) → rekursi deep parser/elaborator = stack overflow + abort proses
+    // (terjadi sejak jalur MV dan berlaku juga Direct saat corpus nyata).
+    // Stack 256MB reserved-commit-on-use (sama dgn harness worker).
+    let report = std::thread::Builder::new()
+        .name("fuzz-main".into())
+        .stack_size(maria_fuzz::harness::WORKER_STACK_BYTES)
+        .spawn(move || {
+            if cfg.workers <= 1 {
+                run_fuzz(&cfg)
+            } else {
+                // Kampanye paralel: tiap worker seed berbeda (Paper #14 scale).
+                // Corpus seed bersama (Paper #12): load sekali, bagi ke semua worker
+                // supaya semua worker putar dari corpus yang sama.
+                let shared_corpus = corpus::Corpus::from_dirs(&cfg.corpus_dirs);
+                let cfg = Arc::new(cfg);
+                let shared_corpus = Arc::new(shared_corpus);
+                let handles: Vec<std::thread::JoinHandle<FuzzReport>> = (0..cfg.workers)
+                    .map(|w| {
+                        let cfg = Arc::clone(&cfg);
+                        let corpus = Arc::clone(&shared_corpus);
+                        std::thread::Builder::new()
+                            .name(format!("fuzz-worker-{}", w))
+                            .stack_size(maria_fuzz::harness::WORKER_STACK_BYTES)
+                            .spawn(move || {
+                                let mut c = (*cfg).clone();
+                                c.seed = c.seed.wrapping_add(w as u64 * 0x9E37_79B9);
+                                c.workers = 1;
+                                // Per-worker corpus dir — hindari race tulis seed_N.sv.
+                                c.save_corpus_dir =
+                                    c.save_corpus_dir.map(|d| d.join(format!("w{}", w)));
+                                // Inject corpus bersama ke worker ini.
+                                c.corpus = Some((*corpus).clone());
+                                run_fuzz(&c)
+                            })
+                            .expect("spawn fuzz worker")
                     })
-                    .expect("spawn fuzz worker")
-            })
-            .collect();
-        let mut merged = FuzzReport::default();
-        for h in handles {
-            if let Ok(r) = h.join() {
-                merged.merge(&r);
+                    .collect();
+                let mut merged = FuzzReport::default();
+                for h in handles {
+                    if let Ok(r) = h.join() {
+                        merged.merge(&r);
+                    }
+                }
+                merged
             }
-        }
-        merged
-    };
+        })
+        .expect("spawn fuzz-main")
+        .join()
+        .unwrap_or_default();
 
     let elapsed = started.elapsed();
     // Ringkasan akhir.

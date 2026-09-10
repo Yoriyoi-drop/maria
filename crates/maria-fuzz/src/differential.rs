@@ -1053,6 +1053,72 @@ endmodule"#;
 
     // ── Deep differential: jalur eksekusi internal ──
 
+/// Deep differential (jalur internal): jalankan source dgn flag jalur
+/// evaluasi (packed/DAG/timing-wheel/MIR) vs jalur standard — fingerprint
+/// WAJIB identik utk input sama; beda = bug internal engine (SIM-28 dll.).
+const PATH_HANG_MS: u64 = 3000;
+
+/// Bandingkan fingerprint jalur ber-flag vs jalur standard.
+fn path_flag_diff(source: &str, max_time: u64, flags: maria_api::EngineFlags) -> DiffVerdict {
+    let f1 = harness::fingerprint_isolated_flags(source, max_time, PATH_HANG_MS, flags);
+    let f2 = harness::fingerprint_isolated(source, max_time, PATH_HANG_MS);
+    match (f1, f2) {
+        (Some(a), Some(b)) if a == b => DiffVerdict::Same,
+        (Some(a), Some(b)) => DiffVerdict::Mismatch(format!("path-flag:\n  {}\n  {}", a, b)),
+        _ => DiffVerdict::Skip,
+    }
+}
+
+/// packed-eval vs evaluator standard.
+fn path_packed_vs_standard(source: &str, max_time: u64) -> DiffVerdict {
+    path_flag_diff(
+        source,
+        max_time,
+        maria_api::EngineFlags {
+            use_packed_eval: true,
+            ..maria_api::EngineFlags::default()
+        },
+    )
+}
+
+/// timing-wheel vs vector queue.
+fn path_timing_wheel_vs_vec(source: &str, max_time: u64) -> DiffVerdict {
+    path_flag_diff(
+        source,
+        max_time,
+        maria_api::EngineFlags {
+            use_timing_wheel: true,
+            ..maria_api::EngineFlags::default()
+        },
+    )
+}
+
+/// DAG-parallel vs serial evaluasi.
+fn path_dag_vs_serial(source: &str, max_time: u64) -> DiffVerdict {
+    path_flag_diff(
+        source,
+        max_time,
+        maria_api::EngineFlags {
+            use_dag_parallel: true,
+            ..maria_api::EngineFlags::default()
+        },
+    )
+}
+
+/// MIR JIT vs interpreter.
+fn path_mir_jit_vs_interpreted(source: &str, max_time: u64) -> DiffVerdict {
+    path_flag_diff(
+        source,
+        max_time,
+        maria_api::EngineFlags {
+            use_mir_jit: true,
+            ..maria_api::EngineFlags::default()
+        },
+    )
+}
+
+    // ── Deep differential: jalur eksekusi internal ──
+
     #[test]
     fn path_packed_vs_standard_same() {
         let src = "module p; logic [7:0] a,b,y; assign a=8'hF0; assign b=8'h0F; assign y = a & b; initial #5 $finish; endmodule";

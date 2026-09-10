@@ -356,27 +356,6 @@ fn get_sig_width(b: &Builder, name: &str) -> usize {
         .unwrap_or(4)
 }
 
-/// Lebar register acak.
-fn random_reg_width(b: &Builder) -> usize {
-    let regs: Vec<&Sig> = b
-        .sigs
-        .iter()
-        .filter(|s| s.name.starts_with('r') || s.name.starts_with("v"))
-        .collect();
-    if regs.is_empty() {
-        return 4;
-    }
-    regs.choose(b.rng).unwrap().width
-}
-
-/// Lebar sinyal acak (termasuk input).
-fn random_signal_width(b: &Builder) -> usize {
-    if b.sigs.is_empty() {
-        return 4;
-    }
-    b.sigs.choose(b.rng).unwrap().width
-}
-
 // ──────────────────────────────────────────────────────────────────────
 // Expression builder — 100% valid (hanya ref sinyal dideklarasikan + literal).
 // ──────────────────────────────────────────────────────────────────────
@@ -411,6 +390,16 @@ fn atom(b: &mut Builder, w: usize) -> String {
             sig.name.clone()
         }
     }
+}
+
+/// Ref sinyal polos (tanpa literal/select) — argumen `$size`/`$bits` yang
+/// WAJIB berupa signal (maria tolak literal E3001). Fallback `a` (port selalu
+/// ter-deklarasi).
+fn sig_ref(b: &mut Builder) -> String {
+    if b.sigs.is_empty() {
+        return "a".to_string();
+    }
+    b.sigs.choose(b.rng).map(|s| s.name.clone()).unwrap_or_else(|| "a".to_string())
 }
 
 /// Literal bertipe — ukuran sesuai lebar konteks (Paper #15).
@@ -484,11 +473,15 @@ fn expr(b: &mut Builder, w: usize, d: u8) -> String {
             }
         }
         6 => {
-            // System sizing functions — KONSTAN agar compile ok:
+            // System sizing functions — KONSTAN agar compile ok.
+            // BUG FIX (fuZZ): `$size`/`$bits` di maria menolak argumen LITERAL
+            // (E3001 `$size argument must resolve to a signal` — mis-labeled
+            // module-not-found). Hanya SIGNAAL yang sah → `$size(ref)`/`$bits(ref)`.
+            // `$clog2(konst)` tetap konstanta (constant-fold).
             match b.rng.gen_range(0..3u32) {
                 0 => format!("$clog2({})", b.rng.gen_range(1..=64)),
-                1 => format!("$bits({})", atom(b, w)),
-                _ => format!("$size({})", atom(b, w)),
+                1 => format!("$bits({})", sig_ref(b)),
+                _ => format!("$size({})", sig_ref(b)),
             }
         }
         7 => {
@@ -597,28 +590,26 @@ fn stmt(b: &mut Builder, w: usize, d: u8, nba: bool) -> String {
         }
         3 => {
             // for loop — bound kecil, counter dideklarasikan lokal.
+            // NOTE (FUZZ fix): counter TIDAK di-push ke b.sigs — deklarasi
+            // `for (integer fcN ...)` berlaku hanya di dalam loop; memasukkannya
+            // ke pool module-scope membuat atom/reg pick memakai fcN di luar
+            // scope → E2001 undefined signal (generator tidak lagi 100% valid).
             let n = b.rng.gen_range(1..=5);
             let cn = fresh_name(b, "fc");
-            b.sigs.push(Sig {
-                name: cn.clone(),
-                width: 32,
-            });
             let body = stmt(b, w, d - 1, nba);
             format!(
                 "    for (integer {cn} = 0; {cn} < {n}; {cn} = {cn} + 1) begin\n{body}\n    end"
             )
         }
         4 => {
-            // while loop — bound kecil.
+            // while loop — bound kecil. Counter DEKLARASIKAN di dalam blok
+            // (`integer wcN;` block-scoped) — sebelumnya dipakai tanpa
+            // deklarasi → E2001 undefined signal.
             let cn = fresh_name(b, "wc");
             let limit = b.rng.gen_range(1..=4);
-            b.sigs.push(Sig {
-                name: cn.clone(),
-                width: 32,
-            });
             let body = stmt(b, w, d - 1, nba);
             format!(
-                "    {cn} = 0;\n    while ({cn} < {limit}) begin\n{body}\n      {cn} = {cn} + 1;\n    end"
+                "    integer {cn};\n    {cn} = 0;\n    while ({cn} < {limit}) begin\n{body}\n      {cn} = {cn} + 1;\n    end"
             )
         }
         5 => {
@@ -697,10 +688,9 @@ fn stmt(b: &mut Builder, w: usize, d: u8, nba: bool) -> String {
             // + delay suspend + resume lintas loop nesting level. Sering
             // memicu bug scheduler: engine harus resume loop dalam setelah
             // delay selesai tanpa kehilangan state loop luar.
+            // Counter TIDAK di-push ke b.sigs (loop-scoped saja — lihat case 3).
             let cn1 = fresh_name(b, "fc");
             let cn2 = fresh_name(b, "fc");
-            b.sigs.push(Sig { name: cn1.clone(), width: 32 });
-            b.sigs.push(Sig { name: cn2.clone(), width: 32 });
             let n1 = b.rng.gen_range(1..=3);
             let n2 = b.rng.gen_range(1..=3);
             let inner = stmt(b, w, d.saturating_sub(1), nba);
@@ -864,11 +854,6 @@ fn gen_stimulus(b: &mut Builder, w: usize, use_rst: bool) -> String {
 /// `passive = true` → TANPA stimulus/clock internal (tb eksternal drive).
 fn build_module(b: &mut Builder, w: usize, passive: bool) -> String {
     let mut s = String::new();
-    let bw = if b.rng.gen_bool(b.b.wide) {
-        (w * 2).max(8)
-    } else {
-        w
-    };
     let use_rst = b.rng.gen_bool(0.7);
     let has_mem = b.rng.gen_bool(b.b.ty * 0.7);
 
@@ -960,17 +945,16 @@ fn build_module(b: &mut Builder, w: usize, passive: bool) -> String {
     }
 
     // ── Memory arrays (opsional, untuk evaluator mem stress) ──
+    // BUG FIX (fuZZ): sebelumnya hanya SATU dari {mem, mem2} yang di-declare
+    // (pilihan random), padahal `proc` bisa menulis mem ATAU mem2 tergantung
+    // rand-nya sendiri → mem/mem2 yang lain = E2001 undefined signal. Sekarang
+    // keduanya selalu ter-declare saat has_mem (proc tetap bebas memilih).
+    // Index maks 3 (mem[0:3]) atau mem2[0:3][0:3] — semua akses ≤ 3 valid.
     if has_mem {
-        if b.rng.gen_bool(0.3) {
-            let d1 = b.rng.gen_range(1..=3);
-            let d2 = b.rng.gen_range(1..=3);
-            s.push_str(&format!(
-                "  logic [15:0] mem2 [0:{d1}][0:{d2}];\n"
-            ));
-        } else {
-            let d = b.rng.gen_range(1..=3);
-            s.push_str(&format!("  logic [15:0] mem [0:{d}];\n"));
-        }
+        let d1 = b.rng.gen_range(1..=3);
+        let d2 = b.rng.gen_range(1..=3);
+        s.push_str(&format!("  logic [15:0] mem [0:{d1}];\n"));
+        s.push_str(&format!("  logic [15:0] mem2 [0:{d1}][0:{d2}];\n"));
         b.sigs
             .push(Sig { name: "mem".to_string(), width: 16 });
         b.sigs
@@ -1155,10 +1139,13 @@ mod tests {
     #[test]
     fn debug_error_code_histogram() {
         // DIAGNOSTIK: histogram error code seed generated — sekarang harus 100% ok.
+        // Simpan satu sample source per error code utk triage (undefined signal
+        // dll.) — dicetak saat fail agar bug generator/elaborator terlacak.
         let n = 120u32;
         let mut rng = StdRng::seed_from_u64(42);
         let g = Generator::new(42);
         let mut codes: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut samples: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut ok = 0u32;
         for _ in 0..n {
             let src = g.random_module(&mut rng);
@@ -1167,6 +1154,7 @@ mod tests {
                 ok += 1;
             } else {
                 *codes.entry(v.code.clone()).or_insert(0) += 1;
+                samples.entry(v.code.clone()).or_insert_with(|| src.clone());
             }
         }
         eprintln!("[debug] compile ok {}/{}", ok, n);
@@ -1174,6 +1162,9 @@ mod tests {
         rows.sort_by(|a, b| b.1.cmp(&a.1));
         for (c, cnt) in rows.iter().take(12) {
             eprintln!("[debug]   {} : {}", c, cnt);
+            if let Some(s) = samples.get(c) {
+                eprintln!("[debug]   sample:\n{}", s);
+            }
         }
         assert_eq!(ok, n, "diagnostic: SEMUA harus compile ok ({}/{})", ok, n);
     }
