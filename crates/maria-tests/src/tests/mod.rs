@@ -5729,6 +5729,29 @@ endmodule
 }
 
 #[test]
+#[test]
+fn test_signed_div_mod() {
+    // Bug #7: `s = -4; sd = s / 2` → 126 (unsigned 252/2) — operand sinyal
+    // zero-extend ke 32 (Cast) sebelum eval signed. Fix: clip ke lebar asli
+    // signal utk Div/Mod (signed_raw_operand).
+    let source = r#"
+module tb;
+    reg signed [7:0] s, sd, sm;
+    initial begin
+        s = -8'sd4;
+        sd = s / 2;
+        sm = s % 3;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64() as i8;
+    assert_eq!(get("sd"), -2, "-4/2 = -2 (0xFE), bukan 126");
+    assert_eq!(get("sm"), -1, "-4 % 3 = -1 (0xFF)");
+}
+
+#[test]
 fn test_signed_relational() {
     let source = r#"
 module tb;

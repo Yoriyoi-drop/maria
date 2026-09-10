@@ -26,6 +26,11 @@ bug di maria utama (parser/elaborator/simulator). Status: ✅ fixed / ⏳ open.
    fold real literal+literal di elaborasi (`fold_binary_real`); vs signal
    (variable + literal) sudah jalan via jalur is_real.
 
+7. **Signed Div/Mod vs literal** — `s = -4; sd = s / 2` → 126 (unsigned 252/2).
+   Operand sinyal di-cast zero-extend ke 32 oleh konteks (`Cast{32, Signal}`)
+   sebelum eval signed → l=252. Fix: clip operand Div/Mod ke lebar ASLI signal
+   (signed_raw_operand menembus Cast/Signed wrapper) → -4/2 = -2 (0xFE).
+
 ## ⏳ Open
 
 4. **Unpacked array MULTI-dimensi hanya 1 dim disimpan** — parser SV

@@ -381,16 +381,8 @@ pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> Log
             LogicVec::from_u64(if l >= r { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Div => {
-            let l = if max_width > 64 && max_width <= 128 {
-                to_i128_signed(&lhs_ext)
-            } else {
-                lhs_ext.to_i64() as i128
-            };
-            let r = if max_width > 64 && max_width <= 128 {
-                to_i128_signed(&rhs_ext)
-            } else {
-                rhs_ext.to_i64() as i128
-            };
+            let l = to_i128_signed(&lhs_ext);
+            let r = to_i128_signed(&rhs_ext);
             if r == 0 {
                 LogicVec {
                     bits: vec![LogicVal::X; max_width],
@@ -407,16 +399,8 @@ pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> Log
             }
         }
         BinaryIrOp::Mod => {
-            let l = if max_width > 64 && max_width <= 128 {
-                to_i128_signed(&lhs_ext)
-            } else {
-                lhs_ext.to_i64() as i128
-            };
-            let r = if max_width > 64 && max_width <= 128 {
-                to_i128_signed(&rhs_ext)
-            } else {
-                rhs_ext.to_i64() as i128
-            };
+            let l = to_i128_signed(&lhs_ext);
+            let r = to_i128_signed(&rhs_ext);
             if r == 0 {
                 LogicVec {
                     bits: vec![LogicVal::X; max_width],
