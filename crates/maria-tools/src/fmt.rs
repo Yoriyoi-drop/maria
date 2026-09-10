@@ -371,13 +371,26 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
         return true;
     }
 
-    // `#` param list `#(...)` atau angka `#1`
-    if matches!(prev, Hash) || matches!(cur, Hash) {
+    // `#` — dua kasus: param list `foo #(...)` (spasi setelah nama
+    // module/interface/class/ident), atau delay `#5` (tanpa spasi).
+    if matches!(prev, Hash) {
         return false;
     }
-    // `@(posedge ...)`
-    if matches!(prev, At) || matches!(cur, At) {
+    if matches!(cur, Hash) {
+        let prev_is_name = matches!(prev, Ident(_))
+            || matches!(
+                prev,
+                Module | Interface | Program | Class | Package | Function | Task
+            );
+        return prev_is_name;
+    }
+    // `@(posedge ...)` — spasi setelah ident (`cb @(posedge`), tanpa spasi
+    // setelah keyword (sudah ditangani rule awal: `always_ff @(`) / di awal.
+    if matches!(prev, At) {
         return false;
+    }
+    if matches!(cur, At) {
+        return matches!(prev, Ident(_));
     }
     // `'` cast: `int'(x)`
     if matches!(prev, Quote) || matches!(cur, Quote) {
@@ -393,10 +406,18 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
         return matches!(next, Some(&LParen));
     }
 
-    // Angka → ident/angka/`[` tanpa spasi
+    // Angka → ident/angka/`[` tanpa spasi — TAPI angka + keyword wajib spasi
+    // (`1'b1 end` → tanpa spasi jadi satu token `1'b1end` = number invalid di
+    // base b — input valid jadi tak parseable; bug ditemukan fuzzer O3).
     let cur_is_number = matches!(cur, Number { .. } | RealNum(_));
     let prev_is_number = matches!(prev, Number { .. } | RealNum(_));
     if cur_is_number || prev_is_number {
+        if prev_is_number && is_keyword(cur) {
+            return true;
+        }
+        if cur_is_number && is_keyword(prev) {
+            return true;
+        }
         return false;
     }
 
@@ -671,7 +692,12 @@ fn token_text(tok: &Token) -> String {
             }
         }
         Token::RealNum(s) => s.as_str().to_string(),
-        Token::StringLit(s) => s.as_str().to_string(),
+        Token::StringLit(s) => {
+            // Nilai tersimpan TANPA kutip — render ulang dengan `"..."`.
+            // Tanpa ini mfmt merusak string literal (`"maria"` → `maria`)
+            // dan hasilnya tidak parseable (bug ditemukan fuzzer O3).
+            format!("\"{}\"", s.as_str())
+        }
         Token::FillLit(v) => format!(
             "'{}",
             match v {

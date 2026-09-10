@@ -47,8 +47,8 @@
 *.dat
 *.trx
 *.json
-
-
+*.txt
+/fuzz/reports/*.txt
 # Artifact laporan coverage (mcov/msim) — dihasilkan saat testing
 /covtest.coverage.html
 /covtest.ucis.xml

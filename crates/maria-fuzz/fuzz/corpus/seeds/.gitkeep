@@ -1,0 +1,4 @@
+# Seed corpus maria-fuzz — seed self-contained SystemVerilog (01_counter.sv..30_axi_lite.sv).
+# Catatan: *.sv global di-ignore oleh .gitignore — hanya file non-.sv yang
+# ter-track. Seed dibuat ulang via generator mandiri (1 file = 1 modul lengkap,
+# tanpa dependensi eksternal).

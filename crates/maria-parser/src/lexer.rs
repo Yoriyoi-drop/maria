@@ -412,6 +412,52 @@ impl fmt::Display for Token {
             Token::Type => write!(f, "type"),
             Token::Program => write!(f, "program"),
             Token::EndProgram => write!(f, "endprogram"),
+            // ── Keyword yang sebelumnya jatuh ke `{:?}` (casing salah:
+            //    `Interface`, `ModPort`, dll.) — mfmt non-idempotent karena
+            //    pass 2 meng-lex ulang teks salah-casing sebagai Ident.
+            Token::Function => write!(f, "function"),
+            Token::EndFunction => write!(f, "endfunction"),
+            Token::Task => write!(f, "task"),
+            Token::EndTask => write!(f, "endtask"),
+            Token::Auto => write!(f, "automatic"),
+            Token::Static => write!(f, "static"),
+            Token::Real => write!(f, "real"),
+            Token::WReal => write!(f, "shortreal"),
+            Token::Time => write!(f, "time"),
+            Token::RealTime => write!(f, "realtime"),
+            Token::String => write!(f, "string"),
+            Token::Class => write!(f, "class"),
+            Token::EndClass => write!(f, "endclass"),
+            Token::Virtual => write!(f, "virtual"),
+            Token::Extends => write!(f, "extends"),
+            Token::This => write!(f, "this"),
+            Token::New => write!(f, "new"),
+            Token::Void => write!(f, "void"),
+            Token::Break => write!(f, "break"),
+            Token::Continue => write!(f, "continue"),
+            Token::Null => write!(f, "null"),
+            Token::None => write!(f, "none"),
+            Token::Some_ => write!(f, "some"),
+            Token::And => write!(f, "and"),
+            Token::Xor => write!(f, "xor"),
+            Token::Nand => write!(f, "nand"),
+            Token::Nor => write!(f, "nor"),
+            Token::Xnor => write!(f, "xnor"),
+            Token::Buf => write!(f, "buf"),
+            Token::NotGate => write!(f, "not"),
+            Token::Module_ => write!(f, "module"),
+            Token::Interface => write!(f, "interface"),
+            Token::EndInterface => write!(f, "endinterface"),
+            Token::ModPort => write!(f, "modport"),
+            Token::Bit => write!(f, "bit"),
+            Token::Enum => write!(f, "enum"),
+            Token::Typedef => write!(f, "typedef"),
+            Token::Byte => write!(f, "byte"),
+            Token::Shortint => write!(f, "shortint"),
+            Token::Longint => write!(f, "longint"),
+            Token::Struct => write!(f, "struct"),
+            Token::Union => write!(f, "union"),
+            Token::EndEnum => write!(f, "endenum"),
             Token::HashHash => write!(f, "##"),
             Token::PipeArrow => write!(f, "|->"),
             Token::Ident(s) => write!(f, "'{}'", s.as_str()),
@@ -856,7 +902,31 @@ impl Lexer {
                     // This is a cast: 22'(expr). Leave ' for the next token (Quote).
                     break;
                 }
-                // Could be sized format like 8'b1010
+                // Sized format seperti 8'b1010 / 'sd12. HANYA konsumsi `'` +
+                // base char bila base VALID (b/o/d/h, atau s + b/o/d/h).
+                // Sebelumnya base char APAPUN dimakan (`4'abc` → `a` jadi
+                // "base", value menjadi "bc" — data hilang, token number
+                // salah). Invalid base (mis. `4'ways_ff` dari mutasi fuzz)
+                // harus berhenti: `'` jadi Quote, sisa di-lex terpisah.
+                // Posisi saat ini MASIH di `'` (belum di-advance) → base char
+                // ada di peek_next(), signed-base check butuh pos+2.
+                let bn = self.peek_next();
+                let bn2 = self.chars.get(self.pos + 2).copied();
+                let direct_base = matches!(
+                    bn,
+                    Some('b') | Some('B') | Some('o') | Some('O') | Some('d') | Some('D')
+                        | Some('h') | Some('H')
+                );
+                let signed_base = matches!(bn, Some('s') | Some('S'))
+                    && matches!(
+                        bn2,
+                        Some('b') | Some('B') | Some('o') | Some('O') | Some('d') | Some('D')
+                            | Some('h') | Some('H')
+                    );
+                if !direct_base && !signed_base {
+                    // Bukan literal berpola width'base — `'` bukan bagian number.
+                    break;
+                }
                 s.push(self.advance());
                 // Read base character
                 if self.peek().is_some() {

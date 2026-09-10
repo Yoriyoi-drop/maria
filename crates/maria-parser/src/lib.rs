@@ -172,7 +172,18 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
         }
     }
     if file.is_empty() || file == self.source_file {
-        self.source_lines.get(display_line).cloned()
+        // Konvensi header-aligned: source_lines[0] = `line directive, konten
+        // baris N di [N]. Jalur tanpa directive (FastLexer/API lama) = 0-based:
+        // coba display_line, lalu display_line-1 sebagai fallback.
+        if let Some(l) = self.source_lines.get(display_line) {
+            return Some(l.clone());
+        }
+        if display_line > 0 {
+            if let Some(l) = self.source_lines.get(display_line - 1) {
+                return Some(l.clone());
+            }
+        }
+        None
     } else {
         None
     }
@@ -284,8 +295,20 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
     fn err(&self, msg: impl Into<String>) -> SimError {
         let msg_str = msg.into();
         let cumulative_line = self.peek_line();
-        let col = self.peek_col();
-        let (display_file, display_line) = self.resolve_source_file(cumulative_line);
+        let mut col = self.peek_col();
+        let (display_file, mut display_line) = self.resolve_source_file(cumulative_line);
+
+        // Error di EOF (pos >= token len → peek_line 0): resolve_source_file
+        // mengembalikan display_line 0 → TANPA source snippet → render tidak
+        // punya file:line:col (fuzzer O2 salah klasifikasi; UX buruk).
+        // Arahkan ke baris TERAKHIR file + col = akhir baris.
+        if display_line == 0 && !self.source_lines.is_empty() {
+            let last_idx = self.source_lines.len().saturating_sub(1);
+            if let Some(last) = self.source_lines.get(last_idx) {
+                display_line = last_idx;
+                col = last.chars().count().saturating_add(1);
+            }
+        }
 
         // Tentukan DiagCode berdasarkan pesan error
         let code = if msg_str.contains("unexpected token") || msg_str.contains("Unexpected") {
@@ -388,7 +411,10 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
             }
         } else if display_line > 0 && display_line <= self.source_lines.len() {
             // Fallback: gunakan display_line jika cumulative_line tidak valid
-            let sl = &self.source_lines[display_line - 1];
+            // (index header-aligned: baris N di [N]).
+            let Some(sl) = self.source_lines.get(display_line) else {
+                return SimError::from_parse_diagnostic(diag);
+            };
             match code {
                 DiagCode::ExpectedSemi => {
                     let trimmed = sl.trim_end();

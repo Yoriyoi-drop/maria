@@ -156,6 +156,16 @@ impl Elaborator {
             }
         };
 
+        // Lokasi fallback: event pertama yang punya expr — agar error
+        // "no clock edge" render dengan file:line:col (bukan tanpa lokasi).
+        let event_loc: (usize, usize) = events
+            .iter()
+            .find_map(|e| match e {
+                SensitivityEvent::Iff { event, .. } => event_loc_of(event),
+                other => event_loc_of(other),
+            })
+            .unwrap_or((0, 0));
+
         let mut clock_edge = None;
         let mut reset = None;
         // LANG-27: guard `iff (cond)` dari event clock utama.
@@ -239,12 +249,32 @@ impl Elaborator {
         }
 
         let ce = clock_edge.ok_or_else(|| {
-            self.elab_diag(
+            self.elab_diag_at(
                 DiagCode::ModuleNotFound,
                 "always_ff must have at least one clock edge",
+                event_loc.0,
+                event_loc.1,
             )
         })?;
         Ok((ce, reset, iff))
+    }
+}
+
+/// Lokasi event sensitivitas (unwrap Iff), dari expr pembawa.
+fn event_loc_of(e: &SensitivityEvent) -> Option<(usize, usize)> {
+    match e {
+        SensitivityEvent::Iff { event, .. } => event_loc_of(event),
+        SensitivityEvent::PosEdge(expr)
+        | SensitivityEvent::NegEdge(expr)
+        | SensitivityEvent::Level(expr) => {
+            let (l, c) = crate::util::generate::expr_location(expr);
+            if l > 0 || c > 0 {
+                Some((l, c))
+            } else {
+                None
+            }
+        }
+        SensitivityEvent::Wildcard => None,
     }
 }
 

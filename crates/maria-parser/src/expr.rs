@@ -1217,8 +1217,8 @@ impl Parser {
                 }
             }
             ref other => {
-                let line = self.peek_line();
-                let col = self.peek_col();
+                // Lokasi diambil err() sendiri (peek_line/peek_col internal),
+                // jadi tidak perlu diambil manual di sini.
                 Err(self.err(format!("expected expression, found {:?}", other)))
             }
         }

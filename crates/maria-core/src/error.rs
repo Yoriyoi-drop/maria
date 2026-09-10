@@ -321,7 +321,8 @@ impl std::fmt::Display for SimError {
             SimError::Debugger(msg) => write!(f, "{}", msg),
             SimError::Io(kind, msg) => write!(f, "I/O error ({}): {}", kind, msg),
             SimError::Diagnostic(diag) => {
-                // Sertakan file:line:col dari source_snippet jika ada
+                // Sertakan file:line:col dari source_snippet jika ada;
+                // fallback ke span pertama bila snippet kosong.
                 match &diag.source_snippet {
                     Some(ss) if ss.line > 0 => {
                         write!(
@@ -329,6 +330,17 @@ impl std::fmt::Display for SimError {
                             "{}[{}]: {}\n  --> {}:{}:{}",
                             diag.level, diag.code, diag.message, ss.file, ss.line, ss.col
                         )
+                    }
+                    None => {
+                        if let Some(sp) = diag.spans.first() {
+                            write!(
+                                f,
+                                "{}[{}]: {}\n  --> {}:{}:{}",
+                                diag.level, diag.code, diag.message, sp.file, sp.start, sp.end
+                            )
+                        } else {
+                            write!(f, "{}[{}]: {}", diag.level, diag.code, diag.message)
+                        }
                     }
                     _ => write!(f, "{}[{}]: {}", diag.level, diag.code, diag.message),
                 }

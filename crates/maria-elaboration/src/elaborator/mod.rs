@@ -2681,7 +2681,19 @@ impl Elaborator {
                     None => return (0, 0),
                 }
             }
-            None => return (0, 0),
+            None => {
+                // Pesan dengan string literal (mis. `invalid lvalue expression:
+                // string literal "fz.sv"`) memakai double-quote — ambil isinya
+                // agar posisi bisa ditemukan di source.
+                let Some(s) = message.find('"') else {
+                    return (0, 0);
+                };
+                let rest = &message[s + 1..];
+                match rest.find('"') {
+                    Some(e) => &rest[..e],
+                    None => return (0, 0),
+                }
+            }
         };
         if name.is_empty() || name.len() > 128 {
             return (0, 0);

@@ -607,8 +607,14 @@ fn compile_str_inner(source: &str, quiet: bool) -> Result<maria_ir::IrDesign, Si
     } else {
         file_line_map[0].2.clone()
     };
+    // source_lines harus header-aligned (konsisten dgn jalur CLI main.rs yang
+    // prepend `` `line 1 "file" ``): `source_lines[0] = directive`, konten
+    // baris N di [N]. Tanpa ini snippet_source_line(display_line=N) salah
+    // index (off-by-one) → error EOF/di akhir file render tanpa file:line:col.
+    let header_line = format!("`line 1 \"{}\"", first_source);
+    let source_with_header = format!("{}\n{}", header_line, preprocessed);
     let mut parser = Parser::new(tokens, &first_source)
-        .with_source_lines(&preprocessed)
+        .with_source_lines(&source_with_header)
         .with_file_line_map(file_line_map);
     let mut design = match parser.parse_design() {
         Ok(d) => d,

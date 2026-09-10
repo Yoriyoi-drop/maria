@@ -35,6 +35,26 @@ fn ir_const_u64(e: &IrExpr) -> Option<u64> {
     }
 }
 
+/// Deskripsi singkat ekspresi untuk pesan "invalid lvalue" — tanpa Debug repr
+/// (`String("x")` bocor ke user). Menampilkan bentuk yang bisa dibaca manusia.
+fn describe_lvalue_expr(expr: &Expr) -> String {
+    match expr {
+        Expr::String(s) => format!("string literal \"{s}\""),
+        Expr::Value(v) => format!("literal {v:?}"),
+        Expr::FillLit(_) => "fill literal ('0/'1/'x/'z)".to_string(),
+        Expr::Ident { name, .. } => name.as_str().to_string(),
+        Expr::UnaryOp { op, .. } => format!("{op:?} expression"),
+        Expr::Concat(_) => "concatenation {…}".to_string(),
+        Expr::Replicate { .. } => "replication {n{…}}".to_string(),
+        Expr::TernaryOp { .. } => "ternary ?: expression".to_string(),
+        Expr::BinaryOp { op, .. } => format!("{op:?} expression"),
+        Expr::FuncCall { .. } => "function call".to_string(),
+        Expr::MethodCall { .. } => "method call".to_string(),
+        Expr::Null => "null".to_string(),
+        _ => "expression".to_string(),
+    }
+}
+
 /// Apakah konstanta (u64) muat dalam `w` bit — unsigned ATAU sebagai nilai
 /// negatif two's complement (sign bit di lebar asli konstanta). Dipakai untuk
 /// context sizing literal unsized: `cnt + 1` (1 default 32-bit) seharusnya
@@ -2792,7 +2812,7 @@ impl Elaborator {
                 }
                 Err(self.elab_diag_at(
                     DiagCode::InvalidSyntax,
-                    format!("invalid lvalue expression: {:?}", expr),
+                    format!("invalid lvalue expression: {}", describe_lvalue_expr(expr)),
                     expr_location(expr).0,
                     expr_location(expr).1,
                 ))
