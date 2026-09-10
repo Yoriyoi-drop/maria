@@ -159,6 +159,10 @@ pub(crate) fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names
             MItem::Use { pkg, item } => {
                 line(out, 1, &format!("import {pkg}::{item};"));
             }
+            // typedef lokal module (scope-lokal SV) — emisi di indent badan
+            MItem::Typedef(td) => {
+                super::defs::emit_typedef(out, 1, td);
+            }
             MItem::Seq(spec, body) => {
                 line(out, 0, "");
                 line(out, 1, "// ── logika sekuensial ──");
@@ -321,6 +325,9 @@ pub(crate) fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem,
         }
         MItem::Use { pkg, item } => {
             line(out, indent, &format!("import {pkg}::{item};"));
+        }
+        MItem::Typedef(td) => {
+            super::defs::emit_typedef(out, indent, td);
         }
         MItem::Seq(spec, body) => emit_seq(out, indent, spec, body),
         MItem::Comb(body) => {

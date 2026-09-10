@@ -84,6 +84,9 @@ pub(crate) struct Scope<'a> {
     pub(crate) type_params: HashMap<&'a str, Option<&'a MvType>>,
     /// tipe deklarasi sinyal/port (untuk lebar bit)
     pub(crate) types: HashMap<&'a str, &'a MvType>,
+    /// typedef LOKAL module (`type X = ...` di badan module) — nama tipe →
+    /// definisi; sah sbg tipe di dalam module (bukan ctx global).
+    pub(crate) local_types: HashMap<&'a str, &'a Typedef>,
     pub(crate) enum_members: &'a HashMap<&'a str, i64>,
     /// konstanta package (terlihat sebagai ident di ekspresi)
     pub(crate) consts: &'a HashSet<&'a str>,
@@ -600,6 +603,7 @@ pub(crate) fn new_scope<'a>(ctx: &'a Ctx<'a>, mname: &'a str) -> Scope<'a> {
         params: HashMap::new(),
         type_params: HashMap::new(),
         types: HashMap::new(),
+        local_types: HashMap::new(),
         enum_members: &ctx.enum_members,
         consts: &ctx.consts,
         env: Env {

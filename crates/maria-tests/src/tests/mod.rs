@@ -1099,6 +1099,34 @@ module tb {
 }
 
 #[test]
+fn test_mv_typedef_local_module() {
+    // typedef lokal module (.mv): type/enum di badan module → scope-lokal SV;
+    // member enum td `.mv` dikenal (E2001 lolos).
+    let src = r#"
+module tb {
+    type Word8 = logic[7:0]
+    enum Mode { OFF, ON }
+    sig val : Word8
+    sig m   : Mode
+    comb {
+        val = 8'h5A
+        m   = ON
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "tl").expect("transpile typedef lokal OK");
+    assert!(
+        r.sv.contains("typedef logic [7:0] Word8;"),
+        "codegen typedef lokal: {}",
+        r.sv
+    );
+    let sigs = simulate_signals(&r.sv, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("val"), 0x5A);
+    assert_eq!(get("m"), 1, "enum member ON = 1");
+}
+
+#[test]
 fn test_mv_readmemh_rom() {
     // `.mv` `$readmemh("f", rom)` di initial — `$` di-lex sbg ident, Call
     // di-emit apa adanya; engine mengisi ROM dari file (regression: jangan

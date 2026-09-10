@@ -461,6 +461,9 @@ pub struct MClass {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MItem {
     Port(Port),
+    /// `typedef` lokal module — `type X = ...` / `packed struct S {...}` /
+    /// `enum E {...}` di dalam badan module (tipe scope-lokal, SV valid).
+    Typedef(Typedef),
     /// `sig x : logic[7:0]` — posisi (line, col) untuk E2007/E2005 (F11).
     Sig {
         names: Vec<String>,

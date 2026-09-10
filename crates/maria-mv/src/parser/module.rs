@@ -322,6 +322,12 @@ impl Parser {
                     col: c,
                 })
             }
+            // typedef lokal module: `type X = ...` / `packed struct S` /
+            // `enum E` / `union U` di dalam badan module.
+            Tok::Type => Ok(MItem::Typedef(self.parse_typedef_alias()?)),
+            Tok::Packed | Tok::Struct | Tok::Enum | Tok::Union => {
+                Ok(MItem::Typedef(self.parse_typedef()?))
+            }
             Tok::Use => {
                 self.advance();
                 let pkg = self.expect_ident()?;

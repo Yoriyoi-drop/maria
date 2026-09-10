@@ -169,6 +169,26 @@ pub(crate) fn check_module<'a>(m: &'a Module, ctx: &'a Ctx<'a>) -> Result<(), Mv
                 scope.sigs.insert(name.as_str());
             }
             MItem::Initial(_) | MItem::Final(_) => {}
+            // typedef lokal module — daftarkan nama tipe + validasi isi
+            MItem::Typedef(td) => {
+                super::defs::check_typedef(td, ctx)?;
+                let n = super::td_name(td);
+                if scope.local_types.contains_key(n) {
+                    return Err(err_at(
+                        super::td_pos(td).0,
+                        super::td_pos(td).1,
+                        "E2007",
+                        format!("tipe '{n}' dideklarasikan dua kali di module '{}'", m.name),
+                    ));
+                }
+                scope.local_types.insert(n, td);
+                // enum lokal: member dikenal sbg ident di module
+                if let Typedef::Enum { members, .. } = td {
+                    for mem in members {
+                        scope.sigs.insert(mem.name.as_str());
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -194,6 +214,7 @@ fn check_module_item<'a>(
 ) -> Result<(), MvError> {
     match item {
         MItem::Port(_) => Ok(()), // port tidak valid di dalam generate — abaikan
+        MItem::Typedef(_) => Ok(()), // sudah divalidasi pass-1 module
         MItem::Sig {
             names, ty, init, ..
         }

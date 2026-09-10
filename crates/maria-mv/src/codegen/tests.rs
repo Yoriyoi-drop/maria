@@ -543,6 +543,34 @@ fn codegen_cast() {
 }
 
 #[test]
+fn codegen_typedef_local_module() {
+    // typedef lokal module: `type X` / `enum E` di badan module → emit
+    // typedef scope-lokal SV di indent badan (bukan .svh).
+    let src = r#"
+module m {
+    type Word8 = logic[7:0]
+    enum Mode { OFF, ON }
+    out val : Word8
+    comb {
+        val = ON
+    }
+}
+"#;
+    let out = generate(&parse(src).unwrap(), "m");
+    assert!(
+        out.sv.contains("typedef logic [7:0] Word8;"),
+        "typedef lokal: {}",
+        out.sv
+    );
+    assert!(
+        out.sv.contains("typedef enum logic [1:0] { OFF, ON } Mode;"),
+        "enum lokal: {}",
+        out.sv
+    );
+    assert!(out.svh.is_empty(), "tanpa definisi bersama, svh kosong");
+}
+
+#[test]
 fn codegen_foreach_array() {
     // `foreach (rom[i]) { rom[i] = i }` → SV foreach (1 & multi index).
     let src = r#"

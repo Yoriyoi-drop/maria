@@ -240,6 +240,10 @@ pub(crate) fn check_type_scope(
                 if sc.type_params.contains_key(n.as_str()) {
                     return Ok(());
                 }
+                // typedef lokal module (`type X = ...` di badan module)
+                if sc.local_types.contains_key(n.as_str()) {
+                    return Ok(());
+                }
             }
             if let Some((pkg, item)) = n.split_once("::") {
                 if let Some(p) = ctx.packages.get(pkg) {
