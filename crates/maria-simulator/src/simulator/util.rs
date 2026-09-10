@@ -168,6 +168,10 @@ pub fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
 pub fn is_signed_expr(expr: &IrExpr, signals: &[SignalInfo]) -> bool {
     match expr {
         IrExpr::Signed(_) => true,
+        // Cast wrapper (konteks aritmetik me-resize literal/sinyal signed ke
+        // lebar umum via `Cast`) — signedness berasal dari sinyal DALAM
+        // (bug #8: `a >>> 1` gagal aritmetik krn lhs = Cast{32, Signal}).
+        IrExpr::Cast { expr: inner, .. } => is_signed_expr(inner, signals),
         IrExpr::Signal(id, _) | IrExpr::BitSelect(id, _) | IrExpr::RangeSelect(id, ..) => {
             signals.get(*id).map(|s| s.is_signed).unwrap_or(false)
         }

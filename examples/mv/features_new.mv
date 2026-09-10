@@ -1,0 +1,48 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh fitur terbaru .mv:
+//   - typedef LOKAL module (type/enum di badan module)
+//   - default-arg function `factor : int = 4`
+//   - named-arg call `scale(10, factor = 3)`
+//   - foreach (rom[i]) utk isi ROM
+// Simulasi: maria features_new.sv --top tb_fn -T 50
+// ─────────────────────────────────────────────────────────────
+
+func scale(v : int, factor : int = 4) -> int {
+    return v * factor
+}
+
+module fn_dut {
+    type Word8 = logic[7:0]
+    enum Mode { OFF, ON }
+
+    out val : Word8
+    out m   : Mode
+    sig rom : logic[8][4]
+
+    initial {
+        foreach (rom[i]) {
+            rom[i] = i
+        }
+    }
+
+    comb {
+        val = scale(10, factor = 3)          // named-arg override → 30
+        m   = ON
+    }
+}
+
+module tb_fn {
+    sig val : logic[7:0]
+    sig m   : logic[0:0]
+    inst fn_dut u (.val(val), .m(m))
+
+    initial {
+        #2
+        if (val == 8'h1E && m == 1) {        // 30 = 0x1E
+            $display("TB_FN_OK val=%0d m=%0d", val, m)
+        } else {
+            $display("TB_FN_BROKEN val=%0d m=%0d", val, m)
+        }
+        $finish
+    }
+}

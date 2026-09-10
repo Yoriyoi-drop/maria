@@ -33,6 +33,12 @@ bug di maria utama (parser/elaborator/simulator). Status: ✅ fixed / ⏳ open.
 
 ## ⏳ Open
 
+8. **`>>>` arithmetic shift signed salah** — `signed [7:0] a=-5; a >>> 1`
+   → 125 (harus -3/0xFD); jalur evaluasi utk ekspresi ini tidak melalui
+   jalur IR/AST binary yang dikenal (debug tak pernah terpanggil — kemungkinan
+   evaluasi langsung/const-fold lain). Fix is_signed_expr(Cast) sudah masuk
+   tapi jalur tersebut tak tereksekusi utk kasus ini. Reproduksi: t_p2.
+
 4. **Unpacked array MULTI-dimensi hanya 1 dim disimpan** — parser SV
    (`maria-parser/src/decl.rs` skip blind) hanya menyimpan SATU dimensi
    unpacked; `logic [7:0] mat [0:1] [0:1]` menjadi width 16 / 2 elemen
