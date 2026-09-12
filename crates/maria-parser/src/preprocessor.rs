@@ -322,7 +322,10 @@ impl Preprocessor {
                 "elsif" => {
                     let frame = cond_stack.last_mut().ok_or_else(|| {
                         SimError::preprocessor(format!(
-                            "line {}: `elsif without matching `ifdef/`ifndef",
+                            "{}:{}:{}: line {}: `elsif without matching `ifdef/`ifndef",
+                            self.cur_path.as_deref().unwrap_or("<string>"),
+                            i + 1,
+                            1,
                             i + 1
                         ))
                     })?;
@@ -340,7 +343,10 @@ impl Preprocessor {
                 "else" => {
                     let frame = cond_stack.last_mut().ok_or_else(|| {
                         SimError::preprocessor(format!(
-                            "line {}: `else without matching `ifdef/`ifndef",
+                            "{}:{}:{}: line {}: `else without matching `ifdef/`ifndef",
+                            self.cur_path.as_deref().unwrap_or("<string>"),
+                            i + 1,
+                            1,
                             i + 1
                         ))
                     })?;
@@ -355,7 +361,10 @@ impl Preprocessor {
                 "endif" => {
                     cond_stack.pop().ok_or_else(|| {
                         SimError::preprocessor(format!(
-                            "line {}: `endif without matching `ifdef/`ifndef",
+                            "{}:{}:{}: line {}: `endif without matching `ifdef/`ifndef",
+                            self.cur_path.as_deref().unwrap_or("<string>"),
+                            i + 1,
+                            1,
                             i + 1
                         ))
                     })?;

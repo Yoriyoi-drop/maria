@@ -10,12 +10,379 @@ Rust-based SystemVerilog simulator. Pipeline: preprocessor → lexer → parser 
 
 **Berlaku untuk SEMUA agent dan subagent yang bekerja di project ini, tanpa terkecuali.**
 
-Aturan:
-1. **Semua perubahan file WAJIB manual** via editor (str_replace / write_file), satu per satu, dengan konteks yang diverifikasi.
-2. **Tidak boleh menulis script** (apa pun bahasanya) untuk melakukan mass-edit, batch-replace, atau transformasi kode otomatis.
-3. **Tidak boleh menjalankan script** yang menulis ke file project (mis. `cargo fix`, `cargo clippy --fix`, `rustfmt`, formatter otomatis massal, sed/awk `-i`, python write). Tidak ada pengecualian dari agent/subagent mana pun. Satu-satunya jalur penggunaan script adalah jika user memerintahkannya secara eksplisit dan tertulis di percakapan; jika instruksinya ambigu, konfirmasi dulu sebelum eksekusi. Script temporer di `/tmp` yang hasilnya disalin ke project juga termasuk pelanggaran.
-4. Alasan: script mass-edit merusak tipe/borrow-check (mis. menghapus `.clone()` pada `Symbol`/Copy yang butuh deref, menambahkan `*` di receiver yang salah) dan menimbulkan 100+ error build yang butuh waktu lama dipulihkan.
-5. Boleh digunakan untuk **membaca/menganalisis** (grep, awk print, sed read-only) — tidak boleh untuk **menulis**.
+# Aturan Modifikasi Project
+
+## 1. Prinsip utama
+
+Semua perubahan pada source code project harus dilakukan secara **terkontrol, terukur, dan dapat diverifikasi**.
+
+Agent tidak boleh melakukan perubahan massal hanya demi mempercepat pekerjaan. Keamanan correctness lebih penting daripada kecepatan editing.
+
+Prioritas:
+
+1. Jangan merusak kode yang sudah bekerja.
+2. Ubah sekecil mungkin.
+3. Verifikasi konteks sebelum mengubah.
+4. Build/test setelah perubahan yang berisiko.
+5. Jangan melakukan perubahan otomatis apabila struktur kode belum dipahami.
+
+---
+
+## 2. Perubahan manual adalah default
+
+Untuk perubahan yang menyentuh:
+
+- ownership / borrowing Rust
+- trait
+- generic
+- lifetime
+- `Deref` / `DerefMut`
+- `Copy` / `Clone`
+- `Arc` / `Rc`
+- `Option` / `Result`
+- macro
+- parser / lexer
+- AST
+- semantic analysis
+- elaboration
+- evaluator / simulator
+- concurrency / parallel evaluation
+- unsafe code
+- API publik
+
+**WAJIB menggunakan perubahan manual yang terkontrol**, misalnya:
+
+- `str_replace`
+- `write_file`
+- editor
+- patch kecil yang secara eksplisit menargetkan lokasi tertentu
+
+Perubahan harus dilakukan **satu logical change pada satu waktu**.
+
+---
+
+## 3. Automated edit hanya diperbolehkan untuk perubahan LOW-RISK
+
+Script atau tool otomatis boleh digunakan hanya apabila perubahan memenuhi seluruh kondisi berikut:
+
+- pola perubahan sangat jelas;
+- tidak mengubah semantic Rust;
+- tidak menyentuh ownership/borrowing;
+- tidak mengubah tipe;
+- tidak mengubah control flow;
+- tidak mengubah API;
+- tidak mengubah macro;
+- tidak melakukan transformasi struktural;
+- target file dan jumlah perubahan dapat diverifikasi sebelum eksekusi.
+
+Contoh yang masih dapat dianggap LOW-RISK:
+
+- perubahan literal/string tertentu;
+- pembaruan komentar;
+- perubahan metadata sederhana;
+- perubahan konfigurasi yang formatnya sudah diketahui;
+- perubahan nama pada file/data non-source-code apabila tidak memengaruhi referensi kode;
+- regenerasi file yang memang secara eksplisit merupakan generated artifact dan memiliki generator resmi.
+
+Namun, **LOW-RISK tetap harus diverifikasi sebelum dan sesudah perubahan**.
+
+---
+
+## 4. Automated source-code transformation dilarang secara default
+
+Agent **tidak boleh secara default** menggunakan:
+
+- `sed -i`
+- `awk` untuk menulis source
+- Python script yang menulis source
+- Perl replacement
+- shell mass-replacement
+- regex mass-edit
+- codemod
+- AST transformation otomatis
+- script `/tmp` yang hasilnya kemudian disalin ke project
+- tool otomatis lain yang melakukan perubahan source-code secara massal
+
+Larangan ini berlaku terutama terhadap perubahan yang dapat memengaruhi:
+
+- `&T` vs `T`
+- `&mut T` vs `T`
+- `*x`
+- `.clone()`
+- ownership
+- borrowing
+- lifetime
+- trait resolution
+- generic type
+- pattern matching
+- `async` / `await`
+- concurrency
+- unsafe code
+
+---
+
+## 5. Formatter dan fixer otomatis
+
+Tool seperti:
+
+- `cargo fix`
+- `cargo clippy --fix`
+- formatter otomatis
+- automated refactoring
+
+**tidak boleh digunakan untuk memodifikasi source-code secara otomatis** kecuali user memberikan izin eksplisit untuk penggunaan tool tersebut pada perubahan yang sedang dikerjakan.
+
+Perintah read-only tetap diperbolehkan.
+
+Contoh:
+
+```bash
+cargo check
+cargo test
+cargo test --no-run
+cargo clippy
+cargo fmt --check
+```
+
+Sedangkan tool yang melakukan rewrite source harus dianggap sebagai **write operation** dan memerlukan izin sesuai aturan di atas.
+
+---
+
+## 6. Read-only analysis selalu diperbolehkan
+
+Agent boleh menggunakan tool/script untuk membaca dan menganalisis project.
+
+Contoh:
+
+```bash
+grep
+rg
+awk
+sed
+find
+git diff
+git status
+cargo check
+cargo test
+cargo metadata
+```
+
+Dengan syarat command tersebut **tidak menulis atau memodifikasi file project**.
+
+Read-only analysis justru dianjurkan sebelum melakukan perubahan.
+
+---
+
+## 7. Sebelum mengubah file
+
+Agent harus terlebih dahulu:
+
+1. Membaca konteks kode yang relevan.
+2. Menentukan fungsi/module yang terdampak.
+3. Mencari semua reference penting jika perubahan menyentuh API atau tipe.
+4. Memahami tipe yang terlibat.
+5. Menentukan risiko perubahan.
+6. Menentukan file yang benar-benar perlu diubah.
+
+Jangan melakukan replacement hanya berdasarkan satu baris yang ditemukan oleh `grep`.
+
+---
+
+## 8. Perubahan harus sekecil mungkin
+
+Gunakan prinsip:
+
+> **Minimal Patch**
+
+Jangan memperbaiki 20 hal sekaligus apabila masalah sebenarnya hanya membutuhkan perubahan 3 baris.
+
+Setiap perubahan harus memiliki tujuan yang jelas.
+
+Hindari:
+
+- refactor sambil memperbaiki bug;
+- rename besar sambil memperbaiki type error;
+- formatting seluruh repository;
+- cleanup kode yang tidak berhubungan;
+- perubahan arsitektur dalam patch bug kecil.
+
+---
+
+## 9. Verifikasi setelah perubahan
+
+Setelah perubahan source-code:
+
+1. Periksa `git diff`.
+2. Pastikan hanya file yang diharapkan berubah.
+3. Jalankan pemeriksaan/build yang relevan.
+4. Jalankan test yang berkaitan.
+5. Jika perubahan menyentuh subsystem penting, lakukan test yang lebih luas.
+
+Jika jumlah error meningkat drastis setelah perubahan:
+
+> **STOP. Jangan melakukan patch berikutnya secara membabi buta.**
+
+Kembali ke `git diff`, identifikasi perubahan yang menyebabkan regresi, lalu perbaiki secara manual.
+
+---
+
+## 10. Perubahan massal membutuhkan izin khusus
+
+Jika agent menemukan bahwa perubahan massal benar-benar diperlukan, agent **tidak boleh langsung menjalankannya**.
+
+Agent harus terlebih dahulu menjelaskan:
+
+- file yang akan terkena;
+- jumlah perubahan;
+- pola perubahan;
+- alasan perubahan massal diperlukan;
+- risiko terhadap type/borrow/API;
+- metode yang akan digunakan;
+- cara rollback;
+- verifikasi setelah perubahan.
+
+Tanpa izin eksplisit dari user, gunakan pendekatan manual atau patch kecil.
+
+---
+
+## 11. Git sebagai safety boundary
+
+Sebelum perubahan besar:
+
+```bash
+git status
+git diff
+```
+
+Setelah perubahan:
+
+```bash
+git diff
+git status
+```
+
+Agent harus memastikan tidak ada perubahan tidak sengaja pada file lain.
+
+Jika repository memiliki perubahan user yang belum di-commit, **jangan menghapus, reset, checkout, atau overwrite perubahan tersebut** tanpa izin eksplisit.
+
+Dilarang menggunakan operasi destruktif seperti:
+
+```bash
+git reset --hard
+git checkout -- .
+git clean -fd
+```
+
+tanpa izin eksplisit dari user.
+
+---
+
+## 12. Tingkat risiko perubahan
+
+Gunakan klasifikasi berikut:
+
+### LOW
+Contoh:
+
+- komentar;
+- string;
+- metadata;
+- konfigurasi sederhana;
+- perubahan satu literal yang tidak memengaruhi tipe/control flow.
+
+→ Automated edit dapat digunakan secara terbatas setelah verifikasi.
+
+### MEDIUM
+Contoh:
+
+- perubahan beberapa fungsi;
+- rename identifier;
+- perubahan API internal;
+- perubahan struktur data;
+- perubahan parser rule sederhana.
+
+→ Gunakan patch kecil/manual. Automated edit hanya jika pola benar-benar deterministik dan telah diverifikasi.
+
+### HIGH
+Contoh:
+
+- ownership;
+- borrowing;
+- lifetime;
+- trait;
+- generic;
+- macro;
+- parser/AST;
+- evaluator;
+- simulator;
+- concurrency;
+- unsafe;
+- perubahan arsitektur.
+
+→ **Manual edit wajib.**
+
+### CRITICAL
+Contoh:
+
+- perubahan yang menyentuh core execution engine;
+- parallel evaluation;
+- memory model;
+- simulator semantics;
+- parser/semantic correctness;
+- perubahan yang berpotensi menghasilkan silent miscompilation atau incorrect simulation.
+
+→ Manual edit + verifikasi bertahap + test khusus wajib.
+
+---
+
+## 13. Jangan menganggap "compile error" sebagai satu-satunya indikator
+
+Source-code yang berhasil compile belum tentu benar.
+
+Untuk project seperti simulator/parser/compiler, agent harus memperhatikan:
+
+- regression test;
+- semantic correctness;
+- behavioral correctness;
+- differential testing;
+- fuzzing;
+- deterministic output;
+- race/concurrency behavior;
+- waveform/output correctness;
+- perubahan performa yang tidak diharapkan.
+
+Jika perubahan membuat build berhasil tetapi behavior berubah tanpa alasan yang jelas, perubahan dianggap **belum tervalidasi**.
+
+---
+
+## 14. Aturan untuk agent dan subagent
+
+Semua aturan ini berlaku sama terhadap:
+
+- agent utama;
+- subagent;
+- autonomous coding agent;
+- tool invocation;
+- script yang dibuat agent;
+- command yang dijalankan agent.
+
+Subagent tidak boleh menggunakan celah dengan cara membuat script sendiri untuk melakukan perubahan yang dilarang oleh aturan utama.
+
+---
+
+## 15. Prinsip akhir
+
+**Kecepatan bukan alasan untuk mengorbankan correctness.**
+
+Gunakan automated tooling untuk **menganalisis sebanyak mungkin**, tetapi gunakan perubahan otomatis hanya ketika risikonya rendah dan dapat diverifikasi.
+
+Untuk kode inti Rust yang sensitif terhadap ownership, type system, parser, evaluator, simulator, dan concurrency:
+
+> **Understand → Inspect → Minimal Patch → Diff → Build/Test → Verify**
+
+Jangan:
+
+> **Search → Replace Everything → Cargo Check → Panic**
 
 ## Build & Test
 

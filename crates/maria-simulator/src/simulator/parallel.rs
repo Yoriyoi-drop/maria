@@ -366,7 +366,68 @@ pub fn evaluate_expr_simple(
             }
             Ok(LogicVec::from_u64(0, 1))
         }
+        // HierRef read: nama interface-flatten (`bus.req` → `b.req`).
+        // Resolve sama seperti write (parallel.rs HierRef write) —
+        // fallback `_` di bawah memberi X 32-bit → slave baca `bus.req`
+        // jadi X → beda dari serial (interface differential).
+        IrExpr::HierRef(name) => {
+            match resolve_hier_signal(name.as_str(), sig_info) {
+                Some(id) => Ok(signals
+                    .get(id)
+                    .map(|a| (**a).clone())
+                    .unwrap_or_else(|| LogicVec::new(1))),
+                None => Ok(LogicVec::new(32)),
+            }
+        }
         _ => Ok(LogicVec::new(32)),
+    }
+}
+
+/// Resolve nama hierarkis ke SignalId: exact → suffix `.name` → last-segment
+/// unik. Dipakai read & write parallel (interface flatten `bus.req` = `b.req`).
+fn resolve_hier_signal(name: &str, sig_info: &[SignalInfo]) -> Option<usize> {
+    let id = sig_info
+        .iter()
+        .position(|s| s.name.as_str() == name);
+    if let Some(id) = id {
+        return Some(id);
+    }
+    let suffix = format!(".{}", name);
+    let id = sig_info
+        .iter()
+        .position(|s| s.name.as_str().ends_with(&suffix));
+    if let Some(id) = id {
+        return Some(id);
+    }
+    let last = name.rsplit('.').next().unwrap_or(name);
+    if last.is_empty() {
+        return None;
+    }
+    let seg_suffix = format!(".{}", last);
+    let id = sig_info
+        .iter()
+        .position(|s| s.name.as_str().ends_with(&seg_suffix));
+    if let Some(id) = id {
+        return Some(id);
+    }
+    // Unik per last-segment.
+    let candidates: Vec<usize> = sig_info
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| {
+            s.name
+                .as_str()
+                .rsplit('.')
+                .next()
+                .map(|seg| seg == last)
+                .unwrap_or(false)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if candidates.len() == 1 {
+        Some(candidates[0])
+    } else {
+        None
     }
 }
 
@@ -733,6 +794,45 @@ fn write_lvalue_simple(
                 };
                 write_lvalue_simple(item, sub_val, signals, writes, sig_info)?;
             }
+        }
+        // HierRef: nama signal sudah ter-flatten di design (mis. interface
+        // field `b.req` → signal `__iface_...`). Cari di sig_info by name,
+        // tulis lewat Signal. Tanpa ini DAG-parallel meng-drop interface
+        // assign (`bus.req = 1'b1` di master) → b.req tetap X/0 (ditemukan
+        // fuzzer differential).
+        IrLValue::HierRef(name) => {
+            // Nama interface-flatten (`bus.req` signal = `b.req`).
+            let Some(id) = resolve_hier_signal(name.as_str(), sig_info) else {
+                if std::env::var("MARIA_DBG_HIER").is_ok() {
+                    let names: Vec<String> = sig_info
+                        .iter()
+                        .map(|s| s.name.as_str().to_string())
+                        .take(60)
+                        .collect();
+                    eprintln!(
+                        "[DBG-HIER] '{}' not found. signals={}",
+                        name.as_str(),
+                        names.join(", ")
+                    );
+                }
+                return Err(maria_core::error::SimError::runtime(format!(
+                    "hierarchical signal '{}' not found for write (parallel)",
+                    name.as_str()
+                )));
+            };
+            let target_width = signals.get(id).map(|s| s.width).unwrap_or(1);
+            let resized = if val.width != target_width {
+                val.resize(target_width)
+            } else {
+                val
+            };
+            let resized = if resized.width > 0 && resized.bits.is_empty() {
+                LogicVec::fill(LogicVal::X, resized.width)
+            } else {
+                resized
+            };
+            signals.set(id, Arc::new(resized.clone()));
+            writes.push((id, resized));
         }
         _ => {}
     }

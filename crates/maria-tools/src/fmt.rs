@@ -382,7 +382,10 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
                 prev,
                 Module | Interface | Program | Class | Package | Function | Task
             );
-        return prev_is_name;
+        // `forever #5`, `repeat #(...)` — delay setelah keyword timing wajib
+        // spasi (tanpa ini `forever#5clk` merge jadi token aneh).
+        let prev_is_timing = matches!(prev, Forever | Repeat);
+        return prev_is_name || prev_is_timing;
     }
     // `@(posedge ...)` — spasi setelah ident (`cb @(posedge`), tanpa spasi
     // setelah keyword (sudah ditangani rule awal: `always_ff @(`) / di awal.
@@ -729,6 +732,10 @@ fn token_text(tok: &Token) -> String {
         Token::Percent => "%".into(),
         Token::Eq => "==".into(),
         Token::Neq => "!=".into(),
+        // Lexer memetakan `===` literal ke Token::Equiv (BUKAN CaseEq yang
+        // untuk `==?`) — tanpa arm ini mfmt render `Equiv` (Debug) merusak
+        // `count === count` → `countEquivcount` (ditemukan fuzzer, golden).
+        Token::Equiv => "===".into(),
         Token::CaseEq => "===".into(),
         Token::CaseNeq => "!==".into(),
         Token::WildcardEq => "==*".into(),

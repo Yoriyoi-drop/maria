@@ -668,6 +668,62 @@ fn compile_str_inner(source: &str, quiet: bool) -> Result<maria_ir::IrDesign, Si
     Ok(ir_design)
 }
 
+/// Compile SystemVerilog source string — versi ANALISIS (recovery): mesh
+/// source multi-modul TANPA top / dengan error partial tetap mengembalikan
+/// IrDesign (mode `AnalysisRecovery`, bukan `StrictSimulation`).
+///
+/// Dipakai maria-fuzz: seed RTL murni (`03_mux_decoder.sv` berisi mux+decoder
+/// tanpa testbench) tidak punya top → StrictSimulation gagal E3006 padahal
+/// setiap module valid. Recovery membiarkan elaborasi selesai + error dicatat
+/// (didapat via `flush_diagnostics`), hasilnya bisa dianalisis.
+pub fn compile_str_analyze(source: &str) -> Result<maria_ir::IrDesign, SimError> {
+    let mut pp = Preprocessor::new();
+    let preprocessed = pp.preprocess(source, None).map_err(|e| {
+        SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor: {}", e))
+    })?;
+    let timescale = pp.timescale.clone();
+    let mut lexer = Lexer::new(&preprocessed);
+    let mut tokens = Vec::new();
+    loop {
+        let (tok, line, col) = lexer.next_token();
+        if tok == maria_parser::lexer::Token::Eof {
+            break;
+        }
+        tokens.push((tok, line, col));
+    }
+
+    let file_line_map = lexer.file_line_map.clone();
+    let first_source = if file_line_map.is_empty() {
+        "<string>".to_string()
+    } else {
+        file_line_map[0].2.clone()
+    };
+    // source_lines harus header-aligned (lihat compile_str_inner).
+    let header_line = format!("`line 1 \"{}\"", first_source);
+    let source_with_header = format!("{}\n{}", header_line, preprocessed);
+    let mut parser = Parser::new(tokens, &first_source)
+        .with_source_lines(&source_with_header)
+        .with_file_line_map(file_line_map);
+    let mut design = match parser.parse_design() {
+        Ok(d) => d,
+        Err(e) => return Err(e),
+    };
+    if parser.errors.iter().any(|d| d.is_error()) {
+        // Parse error fatal — recovery tetap lanjut bila modul masih utuh.
+    }
+    design.timescale = timescale;
+
+    let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
+    let mut elaborator =
+        maria_elaboration::Elaborator::with_source(design, source_lines, first_source);
+    let ir_design =
+        elaborator.elaborate(None, maria_elaboration::ElaborateMode::AnalysisRecovery)?;
+
+    let mut ir_design = ir_design;
+    ir_design.coverage_exclusions = pp.coverage_exclusions.clone();
+    Ok(ir_design)
+}
+
 /// Run simulation on compiled IR
 pub fn run_simulation(ir_design: maria_ir::IrDesign, max_time: u64) -> Result<(), SimError> {
     let mut engine = simulator::SimulationEngine::new(ir_design, max_time);

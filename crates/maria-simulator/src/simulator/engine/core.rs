@@ -1200,7 +1200,19 @@ impl SimulationEngine {
                                         }
                                     }
 
-                                    // Process non-EvalProcess events sequentially
+                                    // Process non-EvalProcess events (sequential, initial, always-with-delay)
+                                    // TERLEBIH DAHULU: initial menulis input
+                                    // (mis. `a = 8'hF0`) yang DIBACA process comb
+                                    // parallel di delta yg sama — snapshot comb
+                                    // harus dapat nilai BARU. Reorder parallel-
+                                    // dulu (percobaan utk reset-counter) SILAH
+                                    // SAAT comb membaca initial-write: comb
+                                    // baca stale (0/X) → hasil salah (generate
+                                    // `b[i]=~a[i]` DAG=0 vs default=15).
+                                    // Reset-counter justru ter-fix oleh
+                                    // initial-timing-serial (EventControl/Delay
+                                    // → is_process_parallelizable=false), bukan
+                                    // urutan ini.
                                     for re in other_events {
                                         self.process_event(re.event, t)?;
                                     }
@@ -2001,15 +2013,6 @@ impl SimulationEngine {
                 return Ok(());
             }
         };
-        // Snapshot Arc: per-process `signals.to_vec()` = Arc clone (cheap,
-        // tanpa deep-copy semua sinyal) — deep-copy hanya sinyal yang diakses.
-        let signal_snapshot: Vec<Arc<LogicVec>> = self
-            .state
-            .signals
-            .iter()
-            .map(|lv| Arc::new(lv.clone()))
-            .collect();
-
         // Evaluate each layer sequentially (processes WITHIN a layer are parallel)
         // Pass process_body_cache langsung — zero clone per cycle
         let body_cache = &self.process_body_cache;
@@ -2019,13 +2022,34 @@ impl SimulationEngine {
                 continue;
             }
 
+            // Snapshot FRESH per layer: layer WAW-dependency terpisah (bit/range
+            // berbeda sinyal sama) harus lihat hasil layer SEBELUMNYA — snapshot
+            // sekali sebelum loop = basi → setiap proses baca X di bit lain →
+            // apply berurutan menimpa → cuma bit terakhir hidup (generate
+            // `b[i] = ~a[i]` DAG=128 utk 8 bit, ditemukan fuzzer).
+            // Baca nilai PENDING (next_signals bila changed) — write_signal
+            // antar layer menulis ke delta-pending, state.signals belum commit.
+            let signal_snapshot: Vec<Arc<LogicVec>> = self
+                .state
+                .signals
+                .iter()
+                .enumerate()
+                .map(|(i, committed)| {
+                    if self.state.changed[i] {
+                        Arc::new(self.state.next_signals[i].clone())
+                    } else {
+                        Arc::new(committed.clone())
+                    }
+                })
+                .collect();
+
             // Evaluate all processes in this layer in parallel via rayon
             // Each worker gets its own signal clone + body reference
-            // body_cache langsung digunakan — tidak ada clone body per cycle
             let writes = crate::scheduler::sim_dag::evaluate_bodies_parallel(
                 &layer_pids,
                 body_cache,
                 &signal_snapshot,
+                &self.design.top.signals,
             )?;
 
             // Apply writes back to state (no borrow conflicts, all data cloned)

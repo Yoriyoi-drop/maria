@@ -672,6 +672,7 @@ pub fn evaluate_bodies_parallel(
     layer_pids: &[&usize],
     body_map: &std::collections::HashMap<usize, Vec<IrStmt>>,
     signals: &[Arc<LogicVec>],
+    sig_info: &[maria_ir::SignalInfo],
 ) -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
     use rayon::prelude::*;
 
@@ -694,7 +695,7 @@ pub fn evaluate_bodies_parallel(
                     body,
                     &mut view,
                     &mut writes,
-                    &[],
+                    sig_info,
                 )?;
                 Ok(writes)
             },
@@ -713,10 +714,17 @@ pub fn evaluate_bodies_parallel(
 /// Check if a process type is suitable for DAG-parallel evaluation.
 /// Sequential and AlwaysWithDelay processes have timing/state that
 /// makes parallel evaluation unsafe — skip them.
+///
+/// Initial blocks (termasuk decl-init `string name = "..."`) TIDAK
+/// di-paralelkan: one-shot (manfaat paralel minimal) tapi resiko semantik
+/// besar — parallel.rs meng-skip `@(posedge ...)`, `$display`, `$finish`,
+/// dan representasi string/real beda jalur → hasil divergen (fuzzer
+/// differential: `string name` kosong → `$sformatf("hello %s", name)`
+/// = "hello "). Serial = referensi benar.
 pub fn is_process_parallelizable(process: &Process) -> bool {
     matches!(
         process,
-        Process::Combinational { .. } | Process::CombReactive { .. } | Process::Initial { .. }
+        Process::Combinational { .. } | Process::CombReactive { .. }
     )
 }
 

@@ -2124,6 +2124,7 @@ version = "0.1.0"
 dependencies = [
  "maria-api",
  "maria-ir",
+ "maria-parser",
  "rand",
  "serde",
  "serde_json",

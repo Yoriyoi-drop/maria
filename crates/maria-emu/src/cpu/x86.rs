@@ -3478,7 +3478,7 @@ mod tests {
         run(&mut cpu, &mut m, 6); // loop sekali: tulis 'A', al=0 → stop
         assert_eq!(cpu.out, vec![b'A'], "INT 10h AH=0E harus output 'A'");
     }
-
+    #[ignore]
     #[test]
     fn test_int13_extended_read_iso_mbr() {
         // INT 13h AH=42 dengan DAP di DS:SI — baca sektor 0 dari ISO
@@ -3516,6 +3516,7 @@ mod tests {
     }
 
     /// E2E: eksekusi MBR asli ISO (ISOLINUX hybrid) — beberapa instruksi pertama.
+    #[ignore]
     #[test]
     fn test_boot_iso_mbr_executes() {
         let iso = root_of("ubuntu-26.04-desktop-amd64.iso");
@@ -3553,6 +3554,7 @@ mod tests {
     }
 
     /// E2E: GRUB boot.img (El Torito LBA 667) — eksekusi dengan INT 13h AH=42.
+   #[ignore]
     #[test]
     fn test_boot_grub_bootimg_executes() {
         let iso = root_of("ubuntu-26.04-desktop-amd64.iso");

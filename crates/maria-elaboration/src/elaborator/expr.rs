@@ -2283,6 +2283,61 @@ impl Elaborator {
         // adalah nama instance interface, bukan signal). Buat handle wire
         // 64-bit (lebar = port interface) agar flatten bisa mencocokkan port;
         // field diakses lewat hier_signal_map, handle ini tak pernah dibaca.
+        // Juga handle `b.master` (MemberAccess modport): `master u_m(b.master)`
+        // — obj `b` interface instance, modport `.master`.
+        if let Expr::MemberAccess { obj, .. } = expr {
+            if let Expr::Ident { name, .. } = obj.as_ref() {
+                if !signal_map.contains_key(name) && self.is_interface_instance(name.as_str()) {
+                    let iface_hint = hint_name.replace('.', "_");
+                    let sig_name = format!("__iface_{}", iface_hint);
+                    if !signal_map.contains_key(&Symbol::intern(&sig_name)) {
+                        let class_name = Some(*name);
+                        let sid = *next_id;
+                        *next_id += 1;
+                        signals.push(SignalInfo {
+                            name: Symbol::intern(&sig_name),
+                            width: 64,
+                            kind: SignalKind::Wire,
+                            net_type: NetType::Wire,
+                            multi_driver: false,
+                            init_val: maria_ir::LogicVec::new(64),
+                            array_depth: 1,
+                            elem_width: 64,
+                            array_dims: vec![],
+                            class_name,
+                            is_string: false,
+                            is_mailbox: false,
+                            is_semaphore: false,
+                            is_real: false,
+                            is_2state: true,
+                            is_dynamic: false,
+                            is_queue: false,
+                            is_associative: false,
+                            is_signed: false,
+                            is_const: false,
+                            msb: 63,
+                            lsb: 0,
+                            struct_fields: vec![],
+                            packed_dims: vec![],
+                            delay_rise: None,
+                            delay_fall: None,
+                            iface_type: None,
+                            iface_modport: None,
+                        });
+                        return Ok(sid);
+                    }
+                    return signal_map
+                        .get(&Symbol::intern(&sig_name))
+                        .copied()
+                        .ok_or_else(|| {
+                            self.elab_diag(
+                                maria_core::diagnostics::diagnostic::DiagCode::UndefinedSignal,
+                                format!("interface handle '{}' not found", sig_name),
+                            )
+                        });
+                }
+            }
+        }
         if let Expr::Ident { name, .. } = expr {
             if !signal_map.contains_key(name) && self.is_interface_instance(name.as_str()) {
                 // Nama unik per koneksi (hint = `inst.port`) agar dua koneksi

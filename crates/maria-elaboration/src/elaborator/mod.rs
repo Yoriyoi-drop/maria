@@ -2678,7 +2678,7 @@ impl Elaborator {
                 let rest = &message[s + 1..];
                 match rest.find('\'') {
                     Some(e) => &rest[..e],
-                    None => return (0, 0),
+                    None => return self.find_literal_in_source(message),
                 }
             }
             None => {
@@ -2686,17 +2686,17 @@ impl Elaborator {
                 // string literal "fz.sv"`) memakai double-quote — ambil isinya
                 // agar posisi bisa ditemukan di source.
                 let Some(s) = message.find('"') else {
-                    return (0, 0);
+                    return self.find_literal_in_source(message);
                 };
                 let rest = &message[s + 1..];
                 match rest.find('"') {
                     Some(e) => &rest[..e],
-                    None => return (0, 0),
+                    None => return self.find_literal_in_source(message),
                 }
             }
         };
         if name.is_empty() || name.len() > 128 {
-            return (0, 0);
+            return self.find_literal_in_source(message);
         }
         // Nama yang TIDAK plausibel sebagai token source (mengandung spasi,
         // kurung kurawal, dll. — mis. debug-format `Ident { name: Symbol(...)
@@ -2710,7 +2710,7 @@ impl Elaborator {
             .chars()
             .all(|c| c.is_alphanumeric() || matches!(c, '_' | ':' | '.' | '[' | ']' | '$' | '-'))
         {
-            return (0, 0);
+            return self.find_literal_in_source(message);
         }
         // Pure function dari source_lines — memoize per nama. Tanpa ini setiap
         // diagnostic tanpa lokasi meng-scan seluruh merged source (1.1M baris
@@ -2732,6 +2732,34 @@ impl Elaborator {
         })();
         self.source_name_loc.borrow_mut().insert(sym, result);
         result
+    }
+
+    /// Fallback: pesan tanpa nama-quoted (mis. `fill literal ('0/'1/'x/'z)`)
+    /// — cari pola literal di source (baris/lokasi assignment paling dekat).
+    fn find_literal_in_source(&self, message: &str) -> (usize, usize) {
+        // Cari pola literal yang mungkin muncul di pesan: `'0`, `'1`, `'x`, `'z`.
+        let targets = ["'0", "'1", "'x", "'z", "'X", "'Z"];
+        let mut best: Option<(usize, usize)> = None;
+        for (i, line) in self.source_lines.iter().enumerate() {
+            if line.trim_start().starts_with('`') {
+                continue;
+            }
+            let fits = targets.iter().find(|t| line.contains(**t));
+            if let Some(t) = fits {
+                if let Some(col) = line.find(t) {
+                    // Pilih lokasi PALING BELAKANG di source (assignment
+                    // biasanya di baris akhir blok) — memoize per-pesan tak
+                    // perlu di sini (pesan literal jarang).
+                    best = Some((i + 1, col + 1));
+                }
+            }
+        }
+        // Tidak menemukan literal — pakai baris terakhir source sebagai
+        // anker (masih lebih baik dari tanpa lokasi).
+        best.unwrap_or_else(|| {
+            let n = self.source_lines.len();
+            if n > 0 { (n, 1) } else { (0, 0) }
+        })
     }
 
     /// Buat error diagnostic dengan posisi source.
@@ -4841,15 +4869,7 @@ impl Elaborator {
                         (Ok(lhs), Ok(mut rhs)) => {
                             // Propagasi lebar konteks LHS → operand
                             // context-determined RHS (LRM §11.8.1).
-                            let lhs_w = match &lhs {
-                                IrLValue::RangeSelect(_, hi, lo) => {
-                                    hi.saturating_sub(*lo).saturating_add(1)
-                                }
-                                _ => lvalue_signal_id(&lhs)
-                                    .and_then(|sid| signals.get(sid))
-                                    .map(|s| s.width)
-                                    .unwrap_or(0),
-                            };
+                            let lhs_w = crate::elaborator::stmt::lvalue_width(&lhs, &signals);
                             if lhs_w > 0 {
                                 // Whole-RHS konstanta → fold langsung pada
                                 // lebar konteks (hindari fold bertingkat pada

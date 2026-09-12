@@ -744,25 +744,14 @@ impl Parser {
 
             let tok = self.peek().clone();
             match tok {
+                // `.name` / `.name(expr)` adalah sintaks KONEKSI INSTANCE,
+                // bukan deklarasi di module port list. `module top (.x);`
+                // TIDAK valid (IEEE 1800 §23.2.1) — error.
                 Token::Dot => {
-                    self.advance();
-                    match self.peek() {
-                        Token::Ident(_) => {
-                            self.advance();
-                        }
-                        _ => return Err(self.err("expected port name")),
-                    }
-                    // IEEE 1800 §23.3.2.2: `.clk_i` TANPA kurung = koneksi
-                    // IMPLISIT (nama port = nama sinyal sama). Umum di
-                    // OpenTitan (`u_bound_if (.clk_i, .rst_ni);`). Kurung =
-                    // koneksi eksplisit `.p(expr)`.
-                    if self.peek() == &Token::LParen {
-                        self.advance();
-                        if self.peek() != &Token::RParen {
-                            self.parse_expr(0)?;
-                        }
-                        self.expect(Token::RParen)?;
-                    }
+                    return Err(self.err(
+                        "unexpected `.` di port list module — koneksi named-port \
+                         hanya valid di instance (`.clk_i`), bukan deklarasi port",
+                    ));
                 }
                 Token::Comma => {
                     self.advance(); // skip stray comma

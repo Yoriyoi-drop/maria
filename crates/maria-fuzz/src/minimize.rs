@@ -16,106 +16,61 @@ pub fn ddmin(source: &str, predicate: Predicate) -> String {
 }
 
 fn phase_lines(source: &str, predicate: Predicate<'_>) -> String {
-    let parts: Vec<&str> = source.lines().collect();
-    if parts.is_empty() {
+    let mut parts: Vec<String> = source.lines().map(str::to_owned).collect();
+    if parts.len() < 2 {
         return source.to_string();
     }
-    let mut n = parts.len();
-    let mut granularity = 1usize;
-    let mut work = source.to_string();
+    let mut granularity = 2usize;
 
-    while granularity < n {
-        let mut i = 0usize;
-        while i < n {
-            let chunk: Vec<&str> = parts[i..(i + granularity).min(n)].to_vec();
-            let candidate = drop_chunks(&work, &chunk);
-            if candidate.is_empty() {
-                i += granularity;
-                continue;
+    while parts.len() >= 2 {
+        let chunk_size = parts.len().div_ceil(granularity);
+        let mut reduced = false;
+        let mut start = 0usize;
+        while start < parts.len() {
+            let end = (start + chunk_size).min(parts.len());
+            let mut candidate_parts = parts.clone();
+            candidate_parts.drain(start..end);
+            let candidate = candidate_parts.join("\n") + "\n";
+            if !candidate_parts.is_empty() && predicate(&candidate) {
+                parts = candidate_parts;
+                granularity = granularity.saturating_sub(1).max(2);
+                reduced = true;
+                break;
             }
-            if predicate(&candidate) {
-                work = candidate;
-                n = work.lines().count();
-                granularity = granularity.max(1);
-                i = i.saturating_sub(granularity);
-            } else {
-                i += granularity;
-            }
+            start = end;
         }
-        granularity *= 2;
+        if !reduced {
+            if granularity >= parts.len() {
+                break;
+            }
+            granularity = (granularity * 2).min(parts.len());
+        }
     }
-    work
+
+    parts.join("\n") + "\n"
 }
 
 fn phase_bytes(source: &str, predicate: Predicate<'_>) -> String {
-    let mut work = source.to_string();
-    let mut gran = work.len() / 2;
+    let mut chars: Vec<char> = source.chars().collect();
+    let mut gran = chars.len() / 2;
     while gran >= 1 {
         let mut i = 0usize;
-        while i < work.len() {
-            let end = (i + gran).min(work.len());
-            let mut candidate = String::with_capacity(work.len() - gran);
-            candidate.push_str(&work[..i]);
-            candidate.push_str(&work[end..]);
+        while i < chars.len() {
+            let end = (i + gran).min(chars.len());
+            let mut candidate_chars = chars.clone();
+            candidate_chars.drain(i..end);
+            let candidate: String = candidate_chars.iter().collect();
             if predicate(&candidate) {
-                work = candidate;
+                chars = candidate_chars;
             } else {
                 i += gran;
             }
         }
         gran /= 2;
     }
-    let mut trimmed = work.trim().to_string();
+    let mut trimmed: String = chars.iter().collect::<String>().trim().to_string();
     trimmed.push('\n');
     trimmed
-}
-
-fn drop_chunks(source: &str, chunk: &[&str]) -> String {
-    let mut lines = source.lines();
-    let mut out = String::new();
-    let mut skip_next = 0usize;
-    for line in lines.by_ref() {
-        if skip_next > 0 {
-            skip_next -= 1;
-            continue;
-        }
-        if chunk.first() == Some(&line) {
-            // cocok awal chunk: lewati semua baris chunk
-            let mut rest = source.lines().skip(out.lines().count() + 1);
-            let mut in_chunk = true;
-            let mut chunk_idx = 1usize;
-            while in_chunk {
-                if let Some(l) = rest.next() {
-                    if chunk_idx < chunk.len() && l == chunk[chunk_idx] {
-                        chunk_idx += 1;
-                        skip_next += 1;
-                    } else {
-                        in_chunk = false;
-                        // tidak sederhana — fallback: jangan hapus
-                        out.push_str(line);
-                        out.push('\n');
-                        skip_next = 0;
-                    }
-                } else {
-                    in_chunk = false;
-                }
-            }
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    if out.contains(&chunk[0]) {
-        out
-    } else {
-        // hapus chunk dengan pendekatan sederhana
-        source
-            .lines()
-            .filter(|l| !chunk.contains(l))
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n"
-    }
 }
 
 #[cfg(test)]

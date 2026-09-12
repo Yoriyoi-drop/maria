@@ -449,12 +449,16 @@ impl SimulationEngine {
                         | BinaryIrOp::Gt
                         | BinaryIrOp::Ge
                 ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
-                    || is_signed_expr(rhs.as_ref(), &self.design.top.signals))
+                    && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
+                    // LRM §11.8.2 any-unsigned: perbandingan UNSIGNED bila SATU
+                    // operand unsigned (mis. `logic [1:0] m = 3; m > 2` →
+                    // 3 > 2 = 1, bukan sign-extend 2-bit 11 → -1 > 2 = 0).
+                    // Pakai eval_binary_signed HANYA jika KEDUANYA signed.
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else if matches!(op, BinaryIrOp::Div | BinaryIrOp::Mod)
                     && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
-                        || is_signed_expr(rhs.as_ref(), &self.design.top.signals))
+                        && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
                     // Div/Mod signed: operand sinyal mungkin SUDAH zero-extend ke
                     // lebar konteks saat evaluate (bug #7: 8-bit -4 → 0x000000FC

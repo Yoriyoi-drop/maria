@@ -17,11 +17,18 @@ required-features = ["dev"]
 # Fitur `dev`: seluruh isi crate (lib) HANYA aktif saat feature ini diaktifkan.
 # `cargo build` di workspace default = crate kosong (tidak menarik maria-api).
 # `cargo run -p maria-fuzz --features dev` / `cargo test -p maria-fuzz --features dev`.
-dev = ["dep:maria-api", "dep:maria-ir", "dep:rand", "dep:serde"]
+dev = [
+    "dep:maria-api",
+    "dep:maria-ir",
+    "dep:maria-parser",
+    "dep:rand",
+    "dep:serde",
+]
 
 [dependencies]
 maria-api = { path = "../maria-api", optional = true }
 maria-ir = { path = "../maria-ir", optional = true }
+maria-parser = { path = "../maria-parser", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"

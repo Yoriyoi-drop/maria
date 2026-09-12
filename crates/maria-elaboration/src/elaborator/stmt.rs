@@ -25,6 +25,27 @@ pub(crate) fn lvalue_signal_id(lv: &IrLValue) -> Option<SignalId> {
     }
 }
 
+/// Lebar total sebuah lvalue (untuk context-width RHS).
+/// Concat = jumlah lebar semua part (LRM §11.8.1 concat lvalue context size).
+pub(crate) fn lvalue_width(lv: &IrLValue, signals: &[SignalInfo]) -> usize {
+    match lv {
+        IrLValue::RangeSelect(_, hi, lo) => hi.saturating_sub(*lo).saturating_add(1),
+        IrLValue::Concat(items) => items
+            .iter()
+            .map(|p| {
+                lvalue_signal_id(p)
+                    .and_then(|sid| signals.get(sid))
+                    .map(|s| s.width)
+                    .unwrap_or(0)
+            })
+            .sum(),
+        _ => lvalue_signal_id(lv)
+            .and_then(|sid| signals.get(sid))
+            .map(|s| s.width)
+            .unwrap_or(0),
+    }
+}
+
 /// Ambil nilai konstanta dari IrExpr bila berupa literal — dipakai untuk
 /// part-select width yang tidak ter-fold saat elaborasi (base dinamis seperti
 /// `sig[i*32 +: 32]` → width tetap `Const(32)`).

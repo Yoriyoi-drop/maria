@@ -5,11 +5,14 @@
 //! Kampanye: ambil seed nyata → mutasi 0-4x → evaluasi oracle.
 
 pub mod corpus;
+pub mod directed;
 pub mod minimize;
 pub mod mutator;
 pub mod oracle;
+pub mod oracle_icarus;
 pub mod runner;
 pub mod triage;
+pub mod validate;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -27,6 +30,11 @@ pub enum Target {
     Simulator,
     Fmt,
     Cli,
+    /// Preprocessor: directive `ifdef/`define/`include — determinisme +
+    /// kebocoran macro + stack imbalance.
+    Preproc,
+    /// Transpiler MV → SV: determinisme + output parseable.
+    Mv,
 }
 
 impl Target {
@@ -37,6 +45,8 @@ impl Target {
         Target::Simulator,
         Target::Fmt,
         Target::Cli,
+        Target::Preproc,
+        Target::Mv,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -48,6 +58,8 @@ impl Target {
             Target::Simulator => "sim",
             Target::Fmt => "fmt",
             Target::Cli => "cli",
+            Target::Preproc => "preproc",
+            Target::Mv => "mv",
         }
     }
 
@@ -60,6 +72,8 @@ impl Target {
             "sim" | "simulator" | "run" => Some(Target::Simulator),
             "fmt" => Some(Target::Fmt),
             "cli" => Some(Target::Cli),
+            "preproc" | "pp" => Some(Target::Preproc),
+            "mv" | "transpile" => Some(Target::Mv),
             _ => None,
         }
     }
@@ -88,11 +102,18 @@ pub enum Category {
     GuardBypass,
     /// Differential: hasil beda antar engine path.
     Differential,
+    /// Hasil sim VALID secara konsistensi (det+diff ok) TAPI perlu perhatian
+    /// manusia: stimulus ada namun banyak signal tetap X/Z di akhir sim —
+    /// bisa wajar (undriven) atau bukti state-propagation bug. BUKAN hard bug.
+    Suspicious,
 }
 
 impl Category {
     pub fn is_bug(self) -> bool {
-        !matches!(self, Category::Ok | Category::CleanError)
+        !matches!(
+            self,
+            Category::Ok | Category::CleanError | Category::Suspicious
+        )
     }
 
     pub fn label(self) -> &'static str {
@@ -107,6 +128,7 @@ impl Category {
             Category::NonDeterministic => "nondeterministic",
             Category::GuardBypass => "guard_bypass",
             Category::Differential => "differential",
+            Category::Suspicious => "suspicious",
         }
     }
 
@@ -122,6 +144,7 @@ impl Category {
             "nondeterministic" => Some(Category::NonDeterministic),
             "guard_bypass" => Some(Category::GuardBypass),
             "differential" => Some(Category::Differential),
+            "suspicious" => Some(Category::Suspicious),
             _ => None,
         }
     }
@@ -310,6 +333,118 @@ pub fn run(cfg: FuzzConfig) -> FuzzReport {
     }
 }
 
+/// Concat sumber tb dengan module pasangannya (`tb_<mod>.sv` → cari
+/// `<mod>.sv`/`<mod>.mv` di corpus). Bila pasangan tidak ada, gunakan tb apa
+/// adanya (bisa jadi tb mandiri).
+fn combine_tb_with_module(
+    tb_path: &std::path::Path,
+    tb_src: &str,
+    corpus: &corpus::Corpus,
+) -> String {
+    let tb_name = tb_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let module_name = tb_name.strip_prefix("tb_").unwrap_or(&tb_name).to_string();
+
+    // Cari pasangan module di corpus (path lain).
+    for i in 0..corpus.len() {
+        if let Some(p) = corpus.seed_at(i) {
+            if p == tb_path {
+                continue;
+            }
+            let name = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if name == module_name {
+                if let Ok(mod_src) = std::fs::read_to_string(p) {
+                    let mod_src = if p
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e == "mv")
+                        .unwrap_or(false)
+                    {
+                        // MV pasangan — transpile via jalur yang sama.
+                        crate::corpus::transpile_seed(p).unwrap_or(mod_src)
+                    } else {
+                        mod_src
+                    };
+                    return format!("{}\n{}", mod_src, strip_duplicate_modules(tb_src, &mod_src));
+                }
+            }
+        }
+    }
+    tb_src.to_string()
+}
+
+/// Strip deklarasi module/interface dari TB yang sudah ada di mod_src
+/// (Hapus `module <name> ... endmodule` untuk semua nama yang muncul di mod_src
+///  supaya concat menghasilkan 1 set module tak duplikat).
+fn strip_duplicate_modules(tb_src: &str, mod_src: &str) -> String {
+    // Kumpulkan semua nama module/interface di mod_src.
+    let mut defined = std::collections::HashSet::new();
+    for line in mod_src.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("module ") {
+            if let Some(name) = rest.split(|c: char| c.is_whitespace()).next() {
+                if !name.is_empty() && !name.starts_with('#') {
+                    defined.insert(name.to_string());
+                }
+            }
+        }
+        if let Some(rest) = t.strip_prefix("interface ") {
+            if let Some(name) = rest.split(|c: char| c.is_whitespace()).next() {
+                if !name.is_empty() && !name.starts_with('#') {
+                    defined.insert(name.to_string());
+                }
+            }
+        }
+    }
+    if defined.is_empty() {
+        return tb_src.to_string();
+    }
+    // Bersihkan blok `module <dup_name> ... endmodule` / `interface <dup> ... endinterface`.
+    let mut out = String::with_capacity(tb_src.len());
+    let mut skip_until_end: Option<&str> = None; // "module"/"interface"
+    for line in tb_src.lines() {
+        let t = line.trim();
+        if skip_until_end.is_some() {
+            // Skip sampai keyword penutup modul/interface yang sesuai.
+            if t.starts_with("endmodule") || t.starts_with("endinterface") {
+                skip_until_end = None;
+            }
+            continue;
+        }
+        let stripped_for_check = t.trim_start();
+        let mut should_skip = false;
+        for (kw, close) in [("module", "endmodule"), ("interface", "endinterface")] {
+            if let Some(rest) = stripped_for_check.strip_prefix(kw) {
+                if rest.starts_with(char::is_whitespace) || rest.starts_with('(') {
+                    // `module X ...` or `module #(P) X ...`
+                    let name_token = rest.trim_start()
+                        .split(|c: char| c.is_whitespace() || c == '#' || c == '(')
+                        .next()
+                        .unwrap_or("");
+                    if defined.contains(name_token) {
+                        should_skip = true;
+                        skip_until_end = Some(if kw == "module" { "module" } else { "interface" });
+                        break;
+                    }
+                }
+            }
+        }
+        if should_skip {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 fn run_single(cfg: FuzzConfig) -> FuzzReport {
     use std::collections::BTreeMap;
 
@@ -330,22 +465,80 @@ fn run_single(cfg: FuzzConfig) -> FuzzReport {
     let mut seen_sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for i in 0..cfg.cases {
-        // Ambil seed nyata dari corpus (100% — tanpa template sintetis)
-        let base_source = if corpus.is_empty() {
+        // Ambil seed nyata dari corpus (100% — tanpa template sintetis).
+        // `.mv` return RAW source, transpile setelah mutasi.
+        // Target MV HANYA pakai seed `.mv` (SV di-feed ke transpile = noise).
+        let base_seed = if corpus.is_empty() {
             break;
         } else {
-            corpus.random_seed(&mut rng).unwrap_or_default()
+            match corpus.random_seed(&mut rng) {
+                Some(src) => {
+                    if cfg.target == Target::Mv && !src.is_mv {
+                        // Skip seed non-MV untuk target MV — coba lagi.
+                        match corpus.random_seed(&mut rng) {
+                            Some(mv_src) if mv_src.is_mv => mv_src,
+                            _ => break,
+                        }
+                    } else {
+                        src
+                    }
+                }
+                None => break,
+            }
+        };
+        let is_mv = base_seed.is_mv;
+
+        // Siapkan base source:
+        //   .sv + tb_pair → concat modul+tb
+        //   lainnya → mentah (terhitung .mv juga — mutasi menyentuh .mv)
+        let mut base_source = if !is_mv {
+            let is_tb = base_seed
+                .path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|n| n.starts_with("tb_"))
+                .unwrap_or(false);
+            if is_tb {
+                combine_tb_with_module(&base_seed.path, &base_seed.text, &corpus)
+            } else {
+                base_seed.text
+            }
+        } else {
+            // MV: simpan raw; transpile terjadi SETELAH mutasi
+            base_seed.text
         };
 
         // Mutasi 0-4x (mutator dibuat per-iterasi agar borrow rng singkat)
         let n_mut = rng.below(5);
-        let mut source = base_source.clone();
         {
             let mut mutator = mutator::Mutator::new(&mut rng);
             for _ in 0..n_mut {
-                source = mutator.mutate(&source, &corpus);
+                base_source = mutator.mutate(&base_source, &corpus);
             }
         }
+
+        // Directed mutation: 30% kasus — serangan terarah SETELAH mutasi acak
+        if rng.chance(30) {
+            let mut dir = directed::DirectedMutator::new(&mut rng);
+            base_source = dir.mutate(&base_source);
+        }
+
+        // MV → transpile mutated MV ke SV sebelum evaluasi
+        let source = if is_mv {
+            let base_name = base_seed
+                .path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("design")
+                .to_string();
+            corpus::transpile_mv_string(&base_source, &base_name).unwrap_or_else(|_| {
+                // Transpile gagal (mutasi merusak sintaks MV) — jadikan
+                // placeholder error-clean agar tak terhitung sebagai bug.
+                "// mv transpile failed\nmodule fz_mv_transpile_err; endmodule".to_string()
+            })
+        } else {
+            base_source
+        };
 
         // Env hook: tulis source pre-eval untuk repro
         if let Ok(trace_path) = std::env::var("MARIA_FUZZ_TRACE") {

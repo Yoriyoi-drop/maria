@@ -1,0 +1,35 @@
+// Seed 12: divider restoring — loop + integer
+module divider #(parameter W = 8) (
+  input  logic clk, rst_n,
+  input  logic start,
+  input  logic [W-1:0] dividend, divisor,
+  output logic [W-1:0] quotient,
+  output logic done
+);
+  logic [W-1:0] q;
+  logic [2*W-1:0] rem;
+  integer i;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      q <= '0; rem <= '0; done <= 1'b0; i <= 0;
+    end else if (start) begin
+      rem <= {W'b0, dividend};
+      i <= 0;
+      done <= 1'b0;
+    end else if (i < W) begin
+      rem = {rem[2*W-2:0], 1'b0};
+      if (rem[2*W-1:W] >= divisor) begin
+        rem = rem - {divisor, W'b0};
+        q = (q << 1) | 1'b1;
+      end else begin
+        q = q << 1;
+      end
+      i <= i + 1;
+    end else begin
+      done <= 1'b1;
+    end
+  end
+
+  assign quotient = q;
+endmodule

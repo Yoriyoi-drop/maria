@@ -272,6 +272,32 @@ impl Parser {
             let is_never = matches!(self.peek(), Token::Ident(s) if s.as_str() == "never");
             self.advance(); // always / never
             self.expect(Token::LParen)?;
+            // PSL operator temporal (`a |-> b`, `a until b`) — lexer/expr tak
+            // support → skip assertion sampai `;` (modul tetap parse).
+            if self.body_has_psl_operator() {
+                let mut depth = 0usize;
+                loop {
+                    match self.peek() {
+                        Token::Eof => break,
+                        Token::Semi if depth == 0 => {
+                            self.advance();
+                            break;
+                        }
+                        Token::LParen | Token::LBrace | Token::LBrack => {
+                            depth += 1;
+                            self.advance();
+                        }
+                        Token::RParen | Token::RBrace | Token::RBrack => {
+                            depth = depth.saturating_sub(1);
+                            self.advance();
+                        }
+                        _ => {
+                            self.advance();
+                        }
+                    }
+                }
+                return Ok(Stmt::Null);
+            }
             let expr = self.parse_expr(0)?;
             self.expect(Token::RParen)?;
             let clock_event = if self.peek() == &Token::At {
@@ -1142,6 +1168,39 @@ impl Parser {
                 }
                 Token::LBrace | Token::LBrack => depth += 1,
                 Token::RBrace | Token::RBrack => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Deteksi operator temporal PSL di body paren assertion (`a |-> b`,
+    /// `a until b`, `a before b`) — lexer/expr parser tidak support.
+    /// Precondition: pos di dalam `(` (setelah expect LParen di LANG-03 path).
+    fn body_has_psl_operator(&self) -> bool {
+        let mut depth = 0i32;
+        let mut i = self.pos.get();
+        while i < self.tokens.len() {
+            let tok = &self.tokens[i].0;
+            match tok {
+                Token::Eof => break,
+                Token::LParen | Token::LBrace | Token::LBrack => depth += 1,
+                Token::RParen | Token::RBrace | Token::RBrack => {
+                    depth -= 1;
+                    if depth < 0 {
+                        break;
+                    }
+                }
+                Token::PipeArrow => return true,
+                Token::Ident(s)
+                    if s.as_str() == "until"
+                        || s.as_str() == "before"
+                        || s.as_str() == "next"
+                        || s.as_str() == "within" =>
+                {
+                    return true;
+                }
                 _ => {}
             }
             i += 1;

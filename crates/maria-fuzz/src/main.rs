@@ -18,6 +18,7 @@ fn main() {
         "triage" => cmd_triage(&args[2..]),
         "minimize" => cmd_minimize(&args[2..]),
         "report" => cmd_report(&args[2..]),
+        "verify" => cmd_verify(&args[2..]),
         "help" | "-h" | "--help" => {
             print_help();
             0
@@ -40,6 +41,7 @@ USAGE:
   maria-fuzz replay  <file.sv> [--target <t>] [--timeout <ms>]
   maria-fuzz triage  <dir>
   maria-fuzz minimize <file.sv> [--target <t>] [--timeout <ms>]
+  maria-fuzz verify  [<corpus-dir>] [--timeout <ms>]   # differential vs iverilog atas seed corpus
   maria-fuzz report  [<dir>]
   maria-fuzz help
 
@@ -257,6 +259,105 @@ fn cmd_minimize(args: &[String]) -> i32 {
     let _ = std::fs::write(&out, &min);
     eprintln!("tersimpan: {out}");
     0
+}
+
+/// VERIFY: differential reference vs iverilog atas seed corpus.
+///
+/// Untuk setiap seed module `NN_name.sv` yang punya pasangan `tb_NN_name.sv`,
+/// concat module+tb → run `oracle_icarus::evaluate` → klasifikasi hasil:
+/// MATCH (hasil maria == iverilog), MISMATCH (semantic divergence),
+/// REF-N/A (iverilog cannot compile), MARIA-BUG.
+///
+/// Ini jawab pertanyaan "hasil sim maria CORRECT?": bukan jasta no-crash /
+/// konsisten internal O4/O5, tapi compare terhadap reference eksternal
+/// independen (Icarus Verilog).
+fn cmd_verify(args: &[String]) -> i32 {
+    let (timeout_s, rest) = take_flag(args, "--timeout");
+    let timeout = timeout_s.and_then(|s| s.parse().ok()).unwrap_or(4000);
+    let dir = rest
+        .first()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_corpus_dir);
+
+    eprintln!("VERIFY vs iverilog: corpus={} timeout={}ms", dir.display(), timeout);
+
+    let mut seed_sources: Vec<(String, String)> = Vec::new(); // (name, combined)
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        let mut names: Vec<String> = entries
+            .flatten()
+            .map(|e| e.path().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        let mut tbs: Vec<String> = names
+            .iter()
+            .filter(|n| n.contains("tb_") && n.ends_with(".sv"))
+            .map(|n| n.clone())
+            .collect();
+        // Harus sort deterministik
+        tbs.sort();
+        for tb in &tbs {
+            // tb_<N>_<name>.sv → module <N>_<name>.sv (ding kursa tb_ prefix)
+            let fname = tb.split("/").last().unwrap_or(tb).to_string();
+            let module_name = fname.strip_prefix("tb_").unwrap_or_default().to_string();
+            let module_path = dir.join(&module_name);
+            if !module_path.exists() {
+                eprintln!("  ~ skip {fname}: module pasangan {module_name} tidak ada");
+                continue;
+            }
+            let module_src = std::fs::read_to_string(&module_path).unwrap_or_default();
+            let tb_src = std::fs::read_to_string(tb).unwrap_or_default();
+            if module_src.is_empty() || tb_src.is_empty() {
+                continue;
+            }
+            seed_sources.push((fname.clone(), format!("{}\n{}", module_src, tb_src)));
+        }
+    } else {
+        eprintln!("corpus dir tidak ada: {}", dir.display());
+        return 1;
+    }
+
+    eprintln!("{} seed pair (module+tb) ditemui\n", seed_sources.len());
+
+    let mut n_match = 0usize;
+    let mut n_mismatch = 0usize;
+    let mut n_n_a = 0usize;
+    for (name, combined) in &seed_sources {
+        let r = maria_fuzz::oracle_icarus::evaluate_icarus(&combined, timeout);
+        match r.verdict {
+            maria_fuzz::oracle_icarus::Verdict::Match => {
+                eprintln!("  [MATCH  ] {name}: {}", r.detail);
+                n_match += 1;
+            }
+            maria_fuzz::oracle_icarus::Verdict::Mismatch => {
+                eprintln!(
+                    "  [MISMATCH] {name}:\n    {}",
+                    r.detail.lines().collect::<Vec<_>>().join("\n    ")
+                );
+                n_mismatch += 1;
+            }
+            maria_fuzz::oracle_icarus::Verdict::RefUnavailable => {
+                eprintln!("  [REF-N/A] {name}: {}", r.detail);
+                n_n_a += 1;
+            }
+            maria_fuzz::oracle_icarus::Verdict::MariaBug => {
+                eprintln!("  [MARIA-BUG] {name}: {}", r.detail);
+                n_mismatch += 1;
+            }
+        }
+    }
+
+    println!(
+        "\nVERIFY SUMARRY: match={} mismatch={} ref-n/a={} total={}",
+        n_match,
+        n_mismatch,
+        n_n_a,
+        seed_sources.len()
+    );
+    if n_mismatch == 0 {
+        0
+    } else {
+        1
+    }
 }
 
 fn cmd_report(args: &[String]) -> i32 {

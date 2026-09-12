@@ -35,12 +35,13 @@ impl<'r> Mutator<'r> {
         Self { rng }
     }
 
-    /// Terapkan 1 operasi mutasi random (12 opsi).
+    /// Terapkan 1 operasi mutasi random (16 opsi — 12 lama + 4 baru area
+    /// preprocessor/delay/macro/width belum tersentuh).
     pub fn mutate(&mut self, source: &str, corpus: &Corpus) -> String {
         if source.is_empty() {
             return String::new();
         }
-        match self.rng.below(12) {
+        match self.rng.below(16) {
             0 => self.splice_from_corpus(source, corpus),
             1 => self.replace_keyword(source),
             2 => self.delete_chunk(source),
@@ -49,7 +50,139 @@ impl<'r> Mutator<'r> {
             5 => self.insert_garbage(source),
             6 => self.remove_line(source),
             7 => self.flip_char(source),
+            // ── Area baru: preprocessor / delay / macro / width ──
+            8 => self.insert_directive(source),
+            9 => self.dup_ifdef(source),
+            10 => self.inject_delay(source),
+            11 => self.dup_macro_call(source),
+            12 => self.extreme_width(source),
+            13 => self.inject_include(source),
             _ => source.to_string(), // no-op
+        }
+    }
+
+    /// Sisipkan directive preprocessor di posisi acak (`` `ifdef ``+`` `endif ``
+    /// tak seimbang / `` `define `` baris tengah).
+    fn insert_directive(&mut self, source: &str) -> String {
+        let directives = [
+            "`ifdef FZ_UNDEF\n`endif\n",
+            "`ifndef FZ_UNDEF\n`endif\n",
+            "`define FZ_MACRO 32'hDEADBEEF\n",
+            "`else\n",
+            "`elsif FZ_FLAG\n",
+        ];
+        let chars: Vec<char> = source.chars().collect();
+        if chars.is_empty() {
+            return String::new();
+        }
+        let at = self.rng.below(chars.len() + 1);
+        let d = self.rng.pick(&directives);
+        let mut out: String = chars[..at].iter().collect();
+        out.push_str(d);
+        out.extend(&chars[at..]);
+        out
+    }
+
+    /// Duplikasikan satu baris `` `ifdef ``/`` `ifndef `` (ifdef ganda tanpa
+    /// endif — preprocessor stack stress).
+    fn dup_ifdef(&mut self, source: &str) -> String {
+        let mut out = String::new();
+        let mut done = false;
+        for line in source.lines() {
+            out.push_str(line);
+            out.push('\n');
+            if !done {
+                let t = line.trim_start();
+                if t.starts_with("`ifdef") || t.starts_with("`ifndef") {
+                    out.push_str(line);
+                    out.push('\n');
+                    done = true;
+                }
+            }
+        }
+        if done { out } else { source.to_string() }
+    }
+
+    /// Sisipkan delay `#N` di depan satu statement (event scheduling stress).
+    fn inject_delay(&mut self, source: &str) -> String {
+        let mut out = String::new();
+        let mut done = false;
+        for line in source.lines() {
+            let t = line.trim_start();
+            if !done
+                && t.starts_with("assign")
+                && !t.starts_with("assign #")
+            {
+                let indent: String = line.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+                out.push_str(&format!("{}assign #1 {};\n", indent, t.trim_end_matches(';')));
+                done = true;
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        if done { out } else { source.to_string() }
+    }
+
+    /// Duplikasi panggilan macro/`$display` di akhir baris.
+    fn dup_macro_call(&mut self, source: &str) -> String {
+        let mut out = String::new();
+        let mut done = false;
+        for line in source.lines() {
+            out.push_str(line);
+            out.push('\n');
+            if !done {
+                let t = line.trim();
+                if t.starts_with('`') && t.ends_with(')') {
+                    out.push_str(line);
+                    out.push('\n');
+                    done = true;
+                }
+            }
+        }
+        if done { out } else { source.to_string() }
+    }
+
+    /// Ekstremisasi lebar literal: `8'hFF` → lebar tak wajar (1, 128, 64'd…).
+    fn extreme_width(&mut self, source: &str) -> String {
+        let mut chars: Vec<char> = source.chars().collect();
+        let mut idx = 0usize;
+        while idx + 2 < chars.len() {
+            if chars[idx].is_ascii_digit() && chars[idx + 1] == '\'' {
+                let mut start = idx;
+                while start > 0 && chars[start - 1].is_ascii_digit() {
+                    start -= 1;
+                }
+                if start < idx {
+                    let widths = [1usize, 128, 512, 4096];
+                    let w = self.rng.pick(&widths);
+                    let mut out: String = chars[..start].iter().collect();
+                    out.push_str(&w.to_string());
+                    out.extend(&chars[idx..]);
+                    return out;
+                }
+            }
+            idx += 1;
+        }
+        source.to_string()
+    }
+
+    /// Sisipkan `` `include "fz.svh" `` di baris acak (include tak ada).
+    fn inject_include(&mut self, source: &str) -> String {
+        let mut out = String::new();
+        let mut done = false;
+        for line in source.lines() {
+            if !done
+                && (line.trim_start().starts_with("module") || line.trim_start().starts_with("assign"))
+            {
+                out.push_str("`include \"fz_undefined_inc.svh\"\n");
+                done = true;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        if done { out } else {
+            format!("`include \"fz_undefined_inc.svh\"\n{source}")
         }
     }
 
@@ -58,6 +191,7 @@ impl<'r> Mutator<'r> {
         let Some(donor) = corpus.random_seed(self.rng) else {
             return source.to_string();
         };
+        let donor = &donor.text;
         if donor.is_empty() {
             return source.to_string();
         }

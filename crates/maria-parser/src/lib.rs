@@ -2076,29 +2076,40 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
             }
             Token::Nettype => {
                 // LANG-08: `nettype <type> <name>;` (IEEE 1800-2017 §6.10).
-                // Parse tipe dasar + nama; klausa `with resolution_fn` di-skip.
+                // parse_type_expr MEMBUANG range `[7:0]` (decl.rs:1495) —
+                // nettype butuh range utk lebar tipe. Parse base + range
+                // MANUAL (tanpa parse_type_expr).
                 self.advance(); // consume 'nettype'
-                let base = self.parse_type_expr()?;
-                // Range packed `[msb:lsb]` — parse_type_expr TIDAK mengonsumsi
-                // range (hanya base type); `nettype logic [7:0] mynet;` butuh
-                // range agar lebar tipe benar.
+                let base = match self.peek() {
+                    Token::Bit => { self.advance(); DataType::Bit }
+                    Token::Logic => { self.advance(); DataType::Logic }
+                    Token::Int => { self.advance(); DataType::Int }
+                    Token::Integer => { self.advance(); DataType::Integer }
+                    Token::Byte => { self.advance(); DataType::Byte }
+                    Token::Shortint => { self.advance(); DataType::Shortint }
+                    Token::Longint => { self.advance(); DataType::Longint }
+                    Token::Real => { self.advance(); DataType::Real }
+                    Token::Ident(name) => {
+                        let name = *name;
+                        self.advance();
+                        DataType::UserDefined(name)
+                    }
+                    _ => return Err(self.err("expected base type after nettype")),
+                };
+                // Range packed `[msb:lsb]` — `nettype logic [7:0] mynet;`.
                 let range = if self.peek() == &Token::LBrack {
                     self.parse_range()?
                 } else {
                     None
                 };
                 let name = self.expect_ident()?;
-                // Klausa `with resolution_fn` — `with` adalah Ident biasa.
-                if matches!(self.peek(), Token::Ident(s) if *s == Symbol::intern("with")) {
-                    self.advance(); // 'with'
-                                    // resolution function: ident optional, konsumsi sampai ';'
+                if matches!(self.peek(), Token::Ident(s) if s.as_str() == "with") {
+                    self.advance();
                     while !matches!(self.peek(), Token::Semi | Token::Eof) {
                         self.advance();
                     }
                 }
                 self.skip_semi();
-                // Daftarkan nama nettype agar `mynet x;` di-parse sebagai
-                // deklarasi (UserDefined), bukan instance `mynet x(...)`.
                 self.module_type_params.insert(name);
                 return Ok(Some(ModuleItem::Nettype(NettypeDecl { name, base, range })));
             }

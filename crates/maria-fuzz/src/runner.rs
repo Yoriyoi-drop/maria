@@ -80,18 +80,28 @@ pub fn find_maria() -> String {
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            // Release dulu (LTO — startup/eksekusi jauh lebih cepat)
-            let rel = dir.join("release/maria");
-            if rel.exists() {
-                return rel.to_string_lossy().to_string();
+            // current_exe = target/{debug,release}/maria-fuzz → dir = target/{debug,release}.
+            // RELEASE dulu (LTO cepat), lalu debug, lalu sibling same-dir.
+            if let Some(target) = dir.parent() {
+                // target/release dan target/debug adalah PASANGAN dari dir ini
+                let rel = target.join("release/maria");
+                let dbg = target.join("debug/maria");
+                if rel.exists() {
+                    return rel.to_string_lossy().to_string();
+                }
+                if dbg.exists() {
+                    return dbg.to_string_lossy().to_string();
+                }
             }
-            let candidate = dir.join("maria");
-            if candidate.exists() {
-                return candidate.to_string_lossy().to_string();
+            // Fallback same-dir (binary diinstall berdampingan)
+            let cand = dir.join("maria");
+            if cand.exists() {
+                return cand.to_string_lossy().to_string();
             }
         }
     }
-    // Workspace root walk (cari Cargo.toml dengan [workspace])
+    // Workspace root walk (cari Cargo.toml dengan [workspace]),
+    // RELEASE dulu (LTO — startup/eksekusi jauh lebih cepat).
     let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     loop {
         let release = dir.join("target/release/maria");

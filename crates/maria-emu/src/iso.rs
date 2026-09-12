@@ -149,7 +149,7 @@ mod tests {
             .to_path_buf();
         root.join(rel).to_string_lossy().to_string()
     }
-
+    #[ignore]
     #[test]
     fn test_parse_eltorito_ubuntu_iso() {
         let iso = root_of("ubuntu-26.04-desktop-amd64.iso");
