@@ -394,6 +394,13 @@ pub struct Elaborator {
     /// mem::take(&mut self.design.modules) di elaboration loop mengosongkan
     /// modules → is_dpi selalu false → semua DPI function jadi hard error E3001.
     pub dpi_import_names: std::collections::HashSet<Symbol>,
+    /// Index `module name → index di design.modules`, dibangun SEKALI di
+    /// `elaborate()` sebelum loop elaborasi. design.modules TIDAK berubah
+    /// selama loop, jadi index aman di-reuse. Sebelumnya di-rebuild untuk
+    /// SETIAP module di `elaborate_module_with_params_and_type` → O(n²)
+    /// (4002 module × 4002 insert = 16M hash insert ≈ 62% total instruction
+    /// elaborate di desain besar — confirmed callgrind demo3200 4.8G instr).
+    pub module_idx: HashMap<Symbol, usize>,
 }
 
 impl Elaborator {
@@ -631,6 +638,7 @@ impl Elaborator {
             param_ir_cache: HashMap::new(),
             opt_stats: super::util::OptStats::default(),
             dpi_import_names,
+            module_idx: HashMap::new(),
         }
     }
 
@@ -1133,6 +1141,21 @@ impl Elaborator {
             reachable
         };
         self.reachable = reachable.clone();
+
+        // ── Index module name → design.modules (SEKALI, bukan per-module) ──
+        // design.modules tidak berubah lagi setelah titik ini (bind/import/
+        // inline/generate expansion sudah selesai) — bangun peta name→index
+        // sekali dan reuse di elaborate_module_with_params_and_type untuk
+        // resolve instance → target module. Sebelumnya dibangun ulang di
+        // dalam pemanggilan per-module → O(n²): 4002 module × 4002 insert =
+        // 16M hash insert (62% waktu elaborate di desain besar).
+        self.module_idx = self
+            .design
+            .modules
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.name, i))
+            .collect();
 
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!(
@@ -2903,13 +2926,6 @@ impl Elaborator {
             }
         };
         let mut effective_params = param_vals.clone();
-        let module_idx: HashMap<Symbol, usize> = self
-            .design
-            .modules
-            .iter()
-            .enumerate()
-            .map(|(i, m)| (m.name, i))
-            .collect();
 
         // Process $unit parameters (top-level param declarations)
         for param in &self.design.unit_params {
@@ -4592,7 +4608,8 @@ impl Elaborator {
             let ModuleItem::Instance(pre_inst) = pre_item else {
                 continue;
             };
-            let pre_target = module_idx
+            let pre_target = self
+                .module_idx
                 .get(&pre_inst.module_name)
                 .and_then(|&i| self.design.modules.get(i));
             let Some(pre_tm) = pre_target else {
@@ -5147,7 +5164,8 @@ impl Elaborator {
                         }
                         let mut port_map = HashMap::new();
                         // Look up target module to get port order for positional connections
-                        let target_module: Option<&Module> = module_idx
+                        let target_module: Option<&Module> = self
+                            .module_idx
                             .get(&inst.module_name)
                             .and_then(|&i| self.design.modules.get(i));
                         for (i, conn) in inst.port_conns.iter().enumerate() {
