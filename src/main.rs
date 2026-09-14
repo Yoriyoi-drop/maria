@@ -949,7 +949,12 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 if let Ok(ft) = entry.file_type() {
                     let path = entry.path();
                     if ft.is_dir() && depth < 4 {
-                        collect_sv_dirs(&path, base_pp, seen, depth + 1);
+                        // Dedup direktori (seen dipakai bersama utk file dan
+                        // ancestor) — tanpa ini, dir yang sama di-scan ulang
+                        // dari setiap ancestor path yang tumpang tindih.
+                        if seen.insert(path.clone()) {
+                            collect_sv_dirs(&path, base_pp, seen, depth + 1);
+                        }
                     } else if ft.is_file() {
                         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                         if (ext == "svh" || ext == "sv") && seen.insert(path.clone()) {
@@ -964,7 +969,16 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     }
     for src_dir in &src_dirs {
         let mut anc = Some(src_dir.clone());
+        // Cap ascend utk project non-git (mis. /home/<user>/proj tanpa .git):
+        // tanpa batas, crawl naik sampai root dan meng-scan seluruh HOME
+        // depth-4 → run terlihat hang. Projek pribadi (AetherX dst.) memakai
+        // .git/.maria/symlink — batas 10 aman untuk include tree normal.
+        let mut ascend = 0usize;
         while let Some(ref d) = anc {
+            if ascend >= 10 {
+                break;
+            }
+            ascend += 1;
             if !seen_dirs.insert(d.clone()) {
                 break;
             }
@@ -981,7 +995,17 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                     }
                 }
             }
-            anc = d.parent().map(|p| p.to_path_buf());
+            // FIX: stop ascend di project root — root proyek sudah di-scan (descend
+            // depth 0..4 utk include headers), naik lebih jauh = crawl keluar
+            // proyek (single-file run dari dalam repo sempat naik sampai
+            // `/home/<user>` dan meng-scan seluruh HOME depth 4 — jutaan file,
+            // run terlihat hang). Marker root: `.git` (repo) ATAU `.maria`
+            // (project maria tanpa git — mis. AetherX milik user).
+            if d.join(".git").exists() || d.join(".maria").exists() {
+                break;
+            }
+            let parent = d.parent().map(|p| p.to_path_buf());
+            anc = parent;
         }
     }
 

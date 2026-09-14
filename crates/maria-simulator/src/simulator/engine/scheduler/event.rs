@@ -532,6 +532,72 @@ fn apply_parallel_writes(&mut self, writes: &[(SignalId, LogicVec)]) {
     }
 }
 
+/// Pisahkan process comb jadi kelompok independen (tanpa conflict antar
+/// anggota). Greedy: ambil sebanyak mungkin process yang saling bebas per
+/// kelompok. Kelompok dieval SEQUENTIAL (apply antar kelompok), di dalam
+/// kelompok PARALEL. Menghilangkan ketergantungan implisit urutan thread
+/// saat process ber-WAW/RAW dalam delta yang sama.
+fn layered_groups(comb_indices: &[usize], access: &[crate::scheduler::sim_dag::SignalAccess]) -> Vec<Vec<usize>> {
+    // Debug multi-writer: dua process nulis signal sama → WAW.
+    if std::env::var("MARIA_DBG_MW").is_ok() {
+        for i in 0..access.len() {
+            for j in (i + 1)..access.len() {
+                let w = access[i].writes.iter().copied().collect::<std::collections::HashSet<_>>();
+                let ow = access[j].writes.iter().copied().collect::<std::collections::HashSet<_>>();
+                let inter: Vec<usize> = w.intersection(&ow).copied().collect();
+                if !inter.is_empty() && comb_indices.contains(&i) && comb_indices.contains(&j) {
+                    eprintln!("[DBG-MW] proc{i} & proc{j} both write sig {:?}", inter);
+                }
+            }
+        }
+    }
+    let conflict = |a: &crate::scheduler::sim_dag::SignalAccess,
+                    b: &crate::scheduler::sim_dag::SignalAccess| {
+        a.writes.iter().any(|sig| b.reads.contains(sig))
+            || b.writes.iter().any(|sig| a.reads.contains(sig))
+            || a.writes.iter().any(|sig| b.writes.contains(sig))
+    };
+
+    let mut remaining: std::collections::HashSet<usize> = comb_indices.iter().copied().collect();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    while !remaining.is_empty() {
+        let mut group: Vec<usize> = Vec::new();
+        let mut taken = std::collections::HashSet::new();
+        // Ambil semua process yang tidak konflik dengan yang sudah di-grup.
+        loop {
+            let mut added = false;
+            for &pid in remaining.clone().iter() {
+                if taken.contains(&pid) {
+                    continue;
+                }
+                let pa = access.get(pid);
+                let pa = match pa {
+                    Some(a) => a,
+                    None => continue,
+                };
+                let free = group
+                    .iter()
+                    .all(|&other| !conflict(pa, access.get(other).unwrap_or(pa)));
+                if free {
+                    group.push(pid);
+                    taken.insert(pid);
+                    added = true;
+                }
+            }
+            if !added {
+                break;
+            }
+        }
+        for pid in &group {
+            remaining.remove(pid);
+        }
+        if !group.is_empty() {
+            groups.push(group);
+        }
+    }
+    groups
+}
+
 pub(crate) fn trigger_sensitive_processes(
         &mut self,
         changed: &[(usize, LogicVec, LogicVec)],
@@ -668,127 +734,149 @@ pub(crate) fn trigger_sensitive_processes(
                     .unwrap_or(true)
             });
 
+            // ── LAYERING: pisah process comb yang conflict (RAW/WAR/WAW)
+            //    jadi kelompok independen, eval+apply tiap kelompok suksesif,
+            //    refresh snapshot antar kelompok. Tanpa ini semua process
+            //    sekaligus eval dari snapshot tunggal → sesuai urutan thread
+            //    (mis. `lsu_pipe_vld` = `0xx` default vs `xx0` DAG — fuzzer
+            //    differential OpenC910 ct_had_dbg_info).
+            let groups: Vec<Vec<usize>> = Self::layered_groups(&comb_indices, &self.comb_access);
             let dbg_t = self.current_time;
             let dbg_delta = self.current_delta;
-            if needs_full {
-                // ── Mode FULL: snapshot seluruh sinyal (Arc, clone sekali) ──
+            for group in &groups {
+                let group: Vec<usize> = group.clone();
+                if group.is_empty() {
+                    continue;
+                }
+                // Snapshot per-kelompok dari state TERKINI (pending applied
+                // setelah kelompok sebelumnya).
                 let snapshot: Vec<Arc<LogicVec>> = (0..signal_count)
-                    .map(|i| Arc::new(self.state.read_signal(i).clone()))
-                    .collect();
-                let identity: Vec<Option<usize>> = (0..signal_count).map(Some).collect();
-                crate::dbg_sim!(
-                    2,
-                    "  sparse=off (unresolved access) full-snapshot {} sig",
-                    signal_count
-                );
-                let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
-                    .par_iter()
-                    .map(|&pid| {
-                        let use_packed = self.use_packed_eval;
-                        if let Process::Combinational { body, .. } = &self.design.top.processes[pid]
-                        {
-                            crate::dbg_sim!(
-                                3,
-                                "t={} delta={} par-eval pid={}",
-                                dbg_t,
-                                dbg_delta,
-                                pid
-                            );
-                            let mut overlay = std::collections::HashMap::new();
-                            let mut view =
-                                parallel::SignalView::new(&snapshot, &identity, &mut overlay);
-                            let mut writes = Vec::new();
-                            match parallel::with_packed_eval(use_packed, || {
-                                parallel::evaluate_stmt_block_parallel(
-                                    body,
-                                    &mut view,
-                                    &mut writes,
-                                    &self.design.top.signals,
-                                )
-                            }) {
-                                Ok(()) => Ok(writes),
-                                Err(e) => Err(SimError::with_diag(
-                                    DiagCode::InternalError,
-                                    format!("parallel eval error: {}", e),
-                                )),
-                            }
+                    .map(|i| {
+                        // Baca PENDING (next) bila changed — konsisten dgn
+                        // evaluate_eval_processes_parallel.
+                        if self.state.changed[i] {
+                            Arc::new(self.state.next_signals[i].clone())
                         } else {
-                            Ok(Vec::new())
+                            Arc::new(self.state.signals[i].clone())
                         }
                     })
                     .collect();
-                for result in results {
-                    let writes = result?;
-                    self.apply_parallel_writes(&writes);
-                }
-            } else {
-                // ── Mode SPARSE: base = union sinyal yang diakses ──
-                let mut needed = vec![false; signal_count];
-                for &pid in &comb_indices {
-                    if let Some(a) = self.comb_access.get(pid) {
-                        for &r in &a.reads {
-                            if r < signal_count {
-                                needed[r] = true;
+
+                let eval_group = if needs_full {
+                    let identity: Vec<Option<usize>> = (0..signal_count).map(Some).collect();
+                    let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = group
+                        .par_iter()
+                        .map(|&pid| {
+                            let use_packed = self.use_packed_eval;
+                            if let Process::Combinational { body, .. } =
+                                &self.design.top.processes[pid]
+                            {
+                                crate::dbg_sim!(
+                                    3,
+                                    "t={} delta={} par-eval pid={}",
+                                    dbg_t,
+                                    dbg_delta,
+                                    pid
+                                );
+                                let mut overlay = std::collections::HashMap::new();
+                                let mut view = parallel::SignalView::new(
+                                    &snapshot,
+                                    &identity,
+                                    &mut overlay,
+                                );
+                                let mut writes = Vec::new();
+                                match parallel::with_packed_eval(use_packed, || {
+                                    parallel::evaluate_stmt_block_parallel(
+                                        body,
+                                        &mut view,
+                                        &mut writes,
+                                        &self.design.top.signals,
+                                    )
+                                }) {
+                                    Ok(()) => Ok(writes),
+                                    Err(e) => Err(SimError::with_diag(
+                                        DiagCode::InternalError,
+                                        format!("parallel eval error: {}", e),
+                                    )),
+                                }
+                            } else {
+                                Ok(Vec::new())
                             }
-                        }
-                        for &w in &a.writes {
-                            if w < signal_count {
-                                needed[w] = true;
+                        })
+                        .collect();
+                    results
+                } else {
+                    // ── Mode SPARSE: base = union sinyal yang diakses ──
+                    let mut needed = vec![false; signal_count];
+                    for &pid in &group {
+                        if let Some(a) = self.comb_access.get(pid) {
+                            for &r in &a.reads {
+                                if r < signal_count {
+                                    needed[r] = true;
+                                }
+                            }
+                            for &w in &a.writes {
+                                if w < signal_count {
+                                    needed[w] = true;
+                                }
                             }
                         }
                     }
-                }
-                let mut id_map: Vec<Option<usize>> = vec![None; signal_count];
-                let mut base: Vec<Arc<LogicVec>> = Vec::new();
-                for i in 0..signal_count {
-                    if needed[i] {
-                        id_map[i] = Some(base.len());
-                        base.push(Arc::new(self.state.read_signal(i).clone()));
-                    }
-                }
-                crate::dbg_sim!(
-                    2,
-                    "  sparse: base {} sig dari {} (union akses), {} process",
-                    base.len(),
-                    signal_count,
-                    comb_indices.len()
-                );
-                let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
-                    .par_iter()
-                    .map(|&pid| {
-                        let use_packed = self.use_packed_eval;
-                        if let Process::Combinational { body, .. } = &self.design.top.processes[pid]
-                        {
-                            crate::dbg_sim!(
-                                3,
-                                "t={} delta={} par-eval pid={}",
-                                dbg_t,
-                                dbg_delta,
-                                pid
-                            );
-                            let mut overlay = std::collections::HashMap::new();
-                            let mut view = parallel::SignalView::new(&base, &id_map, &mut overlay);
-                            let mut writes = Vec::new();
-                            match parallel::with_packed_eval(use_packed, || {
-                                parallel::evaluate_stmt_block_parallel(
-                                    body,
-                                    &mut view,
-                                    &mut writes,
-                                    &self.design.top.signals,
-                                )
-                            }) {
-                                Ok(()) => Ok(writes),
-                                Err(e) => Err(SimError::with_diag(
-                                    DiagCode::InternalError,
-                                    format!("parallel eval error: {}", e),
-                                )),
-                            }
-                        } else {
-                            Ok(Vec::new())
+                    let mut id_map: Vec<Option<usize>> = vec![None; signal_count];
+                    let mut base: Vec<Arc<LogicVec>> = Vec::new();
+                    for i in 0..signal_count {
+                        if needed[i] {
+                            id_map[i] = Some(base.len());
+                            base.push(snapshot[i].clone());
                         }
-                    })
-                    .collect();
-                for result in results {
+                    }
+                    crate::dbg_sim!(
+                        2,
+                        "  sparse: base {} sig dari {} (union akses), {} process",
+                        base.len(),
+                        signal_count,
+                        group.len()
+                    );
+                    let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = group
+                        .par_iter()
+                        .map(|&pid| {
+                            let use_packed = self.use_packed_eval;
+                            if let Process::Combinational { body, .. } =
+                                &self.design.top.processes[pid]
+                            {
+                                crate::dbg_sim!(
+                                    3,
+                                    "t={} delta={} par-eval pid={}",
+                                    dbg_t,
+                                    dbg_delta,
+                                    pid
+                                );
+                                let mut overlay = std::collections::HashMap::new();
+                                let mut view =
+                                    parallel::SignalView::new(&base, &id_map, &mut overlay);
+                                let mut writes = Vec::new();
+                                match parallel::with_packed_eval(use_packed, || {
+                                    parallel::evaluate_stmt_block_parallel(
+                                        body,
+                                        &mut view,
+                                        &mut writes,
+                                        &self.design.top.signals,
+                                    )
+                                }) {
+                                    Ok(()) => Ok(writes),
+                                    Err(e) => Err(SimError::with_diag(
+                                        DiagCode::InternalError,
+                                        format!("parallel eval error: {}", e),
+                                    )),
+                                }
+                            } else {
+                                Ok(Vec::new())
+                            }
+                        })
+                        .collect();
+                    results
+                };
+                for result in eval_group {
                     let writes = result?;
                     self.apply_parallel_writes(&writes);
                 }

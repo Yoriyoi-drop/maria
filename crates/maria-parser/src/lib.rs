@@ -775,6 +775,33 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                 if self.peek() == &Token::Semi {
                     self.advance();
                 }
+            } else if self.peek() == &Token::Constraint {
+                // Eksternal constraint `constraint C::name { ... }` di level
+                // top (bukan dalam class body) — IEEE 1800 §18.4. Skip bersih
+                // di first pass (sebelumnya jatuh ke warning "skipping top-level
+                // construct" → skip_to_next_top_level bisa salah lompat).
+                self.advance(); // 'constraint'
+                while matches!(self.peek(), Token::Ident(_) | Token::Scope | Token::Hash) {
+                    self.advance();
+                }
+                match self.peek() {
+                    Token::LBrace => {
+                        self.advance(); // '{'
+                        let mut depth = 1i32;
+                        while depth > 0 && self.peek() != &Token::Eof {
+                            match self.peek() {
+                                Token::LBrace => depth += 1,
+                                Token::RBrace => depth -= 1,
+                                _ => {}
+                            }
+                            self.advance();
+                        }
+                    }
+                    Token::Semi => {
+                        self.advance();
+                    }
+                    _ => {}
+                }
             } else if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
                 // Skip (* ... *) attributes
                 self.skip_attribute();
@@ -1084,6 +1111,10 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                     }
                     match self.peek() {
                         Token::LBrace => {
+                            // Konsumsi `{` DULU (sama dgn arm package.rs —
+                            // parse_constraint_items berterminasi di RBrace,
+                            // mengharapkan peek di item pertama).
+                            self.advance();
                             let _ = self.parse_constraint_items();
                             if self.peek() == &Token::RBrace {
                                 self.advance();

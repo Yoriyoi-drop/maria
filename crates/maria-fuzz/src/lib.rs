@@ -5,6 +5,7 @@
 //! Kampanye: ambil seed nyata → mutasi 0-4x → evaluasi oracle.
 
 pub mod corpus;
+pub mod deps;
 pub mod directed;
 pub mod minimize;
 pub mod mutator;
@@ -35,6 +36,10 @@ pub enum Target {
     Preproc,
     /// Transpiler MV → SV: determinisme + output parseable.
     Mv,
+    /// VCD waveform pipeline: mwave (stats/tree/search/export/compare/
+    /// filter/merge/get) atas VCD hasil sim yang di-mutasi — parser VCD
+    /// robustness + determinisme.
+    Vcd,
 }
 
 impl Target {
@@ -47,6 +52,7 @@ impl Target {
         Target::Cli,
         Target::Preproc,
         Target::Mv,
+        Target::Vcd,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -60,6 +66,7 @@ impl Target {
             Target::Cli => "cli",
             Target::Preproc => "preproc",
             Target::Mv => "mv",
+            Target::Vcd => "vcd",
         }
     }
 
@@ -74,6 +81,7 @@ impl Target {
             "cli" => Some(Target::Cli),
             "preproc" | "pp" => Some(Target::Preproc),
             "mv" | "transpile" => Some(Target::Mv),
+            "vcd" | "wave" => Some(Target::Vcd),
             _ => None,
         }
     }

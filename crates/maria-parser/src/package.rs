@@ -357,6 +357,13 @@ impl Parser {
                             }
                             match self.peek() {
                                 Token::LBrace => {
+                                    // Konsumsi `{` DULU — parse_constraint_items
+                                    // mengharapkan peek di ITEM PERTAMA (loop
+                                    // berterminasi di RBrace). Tanpa advance,
+                                    // iterasi pertama melihat LBrace →
+                                    // parse_expr({...) error → parser desync
+                                    // (constraint external vseq DV).
+                                    self.advance();
                                     let _ = self.parse_constraint_items();
                                     if self.peek() == &Token::RBrace {
                                         self.advance();

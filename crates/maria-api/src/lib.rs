@@ -195,6 +195,24 @@ pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
             p.to_string_lossy().to_string()
         })
         .collect();
+    // Dedup inode: file yang sama bisa terdaftar DUA KALI lewat path symlink
+    // (mis. project pribadi AetherX: `rtl/core/core → rtl/core`). Tanpa ini
+    // file digabung dua kali → module duplikat + MICD entry kembar. Path
+    // PERTAMA dipakai apa adanya (display konsisten), sisanya dibuang.
+    let files: Vec<String> = {
+        let mut seen_inode: std::collections::HashSet<std::path::PathBuf> =
+            std::collections::HashSet::new();
+        let mut dedup: Vec<String> = Vec::with_capacity(files.len());
+        for f in files {
+            let canon = std::path::Path::new(&f)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(&f));
+            if seen_inode.insert(canon) {
+                dedup.push(f);
+            }
+        }
+        dedup
+    };
     if skipped_templates > 0 {
         eprintln!(
             "warning: filelist '{}': melewati {} file template (*.tpl*) — bukan SystemVerilog",

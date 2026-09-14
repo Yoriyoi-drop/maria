@@ -2196,6 +2196,7 @@ dependencies = [
  "maria-elaboration",
  "maria-ir",
  "maria-parser",
+ "parking_lot",
  "rand",
  "rayon",
  "wavefst",

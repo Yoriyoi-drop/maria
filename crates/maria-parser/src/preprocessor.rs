@@ -18,6 +18,13 @@ struct CondFrame {
     branch_taken: bool,
 }
 
+/// Nama direktif kondisional — saat muncul DI DALAM body macro (bukan awal
+/// baris file), backtick harus dipertahankan agar post-processing
+/// (`fold_expanded_conditionals`) bisa mengevaluasinya.
+fn is_cond_directive(name: &str) -> bool {
+    matches!(name, "ifdef" | "ifndef" | "elsif" | "else" | "endif")
+}
+
 #[derive(Clone)]
 struct MacroDef {
     value: String,
@@ -120,7 +127,16 @@ impl Preprocessor {
                 // berikutnya `` `endif `` tetap directive nyata) — perlakuan
                 // `\`-in-comment sebagai continuation (sebelumnya) menelan
                 // `` `endif `` sehingga ifdef tak seimbang dan module hilang.
-                if !trailing_backslash_is_continuation(&raw_line) {
+                // KECUALI kita sedang di dalam body `` `define ``: body define
+                // SV boleh memuat baris KOMENTAR yang berakhiran `\` (mis.
+                // ASSERT_INIT_NET prim_assert: baris `// When a net is
+                // assigned... \`). Menerapkan rule aon_osc di sini memotong
+                // body define → sisa baris BOCOK ke output sebagai kode →
+                // direct-error parser ("skipping Hash" / expected-*; ratusan
+                // file RTL/DV OpenTitan). Dalam body define, per LRM 1800
+                // §22.5.1 backslash-newline tetap di-delete.
+                let in_define_body = raw_line.trim_start().starts_with("`define");
+                if !in_define_body && !trailing_backslash_is_continuation(&raw_line) {
                     break;
                 }
                 let te = raw_line.trim_end();
@@ -160,12 +176,17 @@ impl Preprocessor {
             if !trimmed.starts_with('`') {
                 if emitting {
                     let expanded = self.expand_inline_macros(&raw_line);
-                    output.push_str(&expanded);
+                    // Post-ekspansi: fold direktif kondisional yang muncul di
+                    // DALAM body macro (`` `ifdef/`else/`endif `` ASSERT_ERROR
+                    // prim_assert). Tanpa fold: direktif jadi teks polos → parser
+                    // rusak (~586 file RTL OpenTitan, direct in macro).
+                    let folded = self.fold_expanded_conditionals(&expanded);
+                    output.push_str(&folded);
                     output.push('\n');
                     // Body macro multi-baris (with `\` kontinuasi) menambah
                     // baris FISIK → nilai line token berikut drift. Re-sync
                     // ke baris file induk berikut (i+2, 1-based).
-                    if expanded.contains('\n') {
+                    if folded.contains('\n') {
                         if let Some(ref p) = self.cur_path {
                             output.push_str(&format!("`line {}\"{}\"\n", i + 2, p));
                         }
@@ -185,10 +206,11 @@ impl Preprocessor {
             // statement lain di awal baris tidak pernah dieksekusi).
             if emitting && self.defines.contains_key(cmd) {
                 let expanded = self.expand_inline_macros(&raw_line);
-                output.push_str(&expanded);
+                let folded = self.fold_expanded_conditionals(&expanded);
+                output.push_str(&folded);
                 output.push('\n');
                 // Sama — macro invocation multi-baris: re-sync physical line.
-                if expanded.contains('\n') {
+                if folded.contains('\n') {
                     if let Some(ref p) = self.cur_path {
                         output.push_str(&format!("`line {}\"{}\"\n", i + 2, p));
                     }
@@ -683,6 +705,110 @@ impl Preprocessor {
         self.expand_inline_macros_depth(line, 0)
     }
 
+    /// Fold direktif kondisional (`` `ifdef/`ifndef/`elsif/`else/`endif ``) yang
+    /// muncul DI DALAM hasil ekspansi macro — bukan di awal baris file (yang
+    /// sudah ditangani loop utama line-based). Body macro SV boleh memuat
+    /// direktif (mis. ASSERT_ERROR di prim_assert.sv memuat `` `ifdef UVM ...
+    /// `else ... `endif ``); setelah ekspansi, teks direktif menyatu ke baris
+    /// panggil. Tanpa fold, direktif jadi teks polos → parser rusak dan blok
+    /// ifdef tak pernah ditutup. Stack LOKAL (scope macro): direktif dalam body
+    /// macro dievaluasi dengan defines saat ini, independen dari cond_stack
+    /// file — sesuai LRM 1800 §22.5.1 (direktif di-scan ulang setelah
+    /// substitusi macro).
+    fn fold_expanded_conditionals(&self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut stack: Vec<CondFrame> = Vec::new();
+        let mut rest = text;
+        loop {
+            // Cari direktif berikutnya: backtick + nama direktif di token boundary.
+            let Some(bt) = rest.find('`') else { break };
+            let after = &rest[bt + 1..];
+            let name_len = after
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .map(char::len_utf8)
+                .sum::<usize>();
+            let name = &after[..name_len];
+            if !is_cond_directive(name) {
+                // Bukan direktif kondisional — biarkan (macro lain / literal).
+                out.push_str(&rest[..bt + 1]);
+                rest = after;
+                continue;
+            }
+            // Segmen sebelum direktif: emisi sesuai state saat ini.
+            if stack.iter().all(|f| f.taking_branch) {
+                out.push_str(&rest[..bt]);
+            }
+            let after_dir = &after[name_len..];
+            match name {
+                "ifdef" | "ifndef" => {
+                    // Arg direktif: bila ada newline → satu baris penuh;
+                    // tanpa newline (body macro joined) → token pertama.
+                    let arg_text = after_dir.trim_start();
+                    let (expr, rest_of_line) = match arg_text.find('\n') {
+                        Some(nl) => (&arg_text[..nl], &arg_text[nl..]),
+                        None => {
+                            let end = arg_text
+                                .find(|c: char| c.is_whitespace())
+                                .unwrap_or(arg_text.len());
+                            (&arg_text[..end], &arg_text[end..])
+                        }
+                    };
+                    let defined = self.eval_ifdef_expr(expr.trim());
+                    let taking = if name == "ifdef" { defined } else { !defined };
+                    stack.push(CondFrame {
+                        taking_branch: taking,
+                        branch_taken: taking,
+                    });
+                    rest = rest_of_line;
+                }
+                "elsif" => {
+                    if let Some(frame) = stack.last_mut() {
+                        if frame.branch_taken {
+                            frame.taking_branch = false;
+                        } else {
+                            let arg_text = after_dir.trim_start();
+                            let (expr, rest_of_line) = match arg_text.find('\n') {
+                                Some(nl) => (&arg_text[..nl], &arg_text[nl..]),
+                                None => {
+                                    let end = arg_text
+                                        .find(|c: char| c.is_whitespace())
+                                        .unwrap_or(arg_text.len());
+                                    (&arg_text[..end], &arg_text[end..])
+                                }
+                            };
+                            if self.eval_ifdef_expr(expr.trim()) {
+                                frame.taking_branch = true;
+                                frame.branch_taken = true;
+                            }
+                            rest = rest_of_line;
+                        }
+                    }
+                }
+                "else" => {
+                    if let Some(frame) = stack.last_mut() {
+                        if frame.branch_taken {
+                            frame.taking_branch = false;
+                        } else {
+                            frame.taking_branch = true;
+                            frame.branch_taken = true;
+                        }
+                    }
+                    rest = after_dir;
+                }
+                "endif" => {
+                    stack.pop();
+                    rest = after_dir;
+                }
+                _ => unreachable!("is_cond_directive guard"),
+            }
+        }
+        if stack.iter().all(|f| f.taking_branch) {
+            out.push_str(rest);
+        }
+        out
+    }
+
     /// Expand inline macros with recursive depth tracking.
     /// to prevent infinite recursion from circular macro definitions.
     fn expand_inline_macros_depth(&self, line: &str, depth: usize) -> String {
@@ -740,6 +866,18 @@ impl Preprocessor {
                     i += 1;
                 }
                 let name = &line[start..i];
+                // Direktif kondisional bawaan body macro (`` `ifdef/`else/`endif
+                // `` — pola ASSERT_ERROR prim_assert.sv). JANGAN perlakukan
+                // sebagai macro tak dikenal: backtick yang di-strip membuat
+                // direktif jadi teks polos → modul rusak + ifdef tak tertutup
+                // (~586 file RTL OpenTitan: "skipping top-level construct:
+                // Hash"). Pertahankan backtick; `fold_expanded_conditionals`
+                // yang mengevaluasinya.
+                if is_cond_directive(name) {
+                    result.push('`');
+                    result.push_str(name);
+                    continue;
+                }
                 if let Some(mdef) = self.defines.get(name) {
                     // Batas ukuran hasil: ekspansi eksponensial (`define A `A `A`)
                     // menggandakan output tiap level — input kecil selalu, jadi
@@ -884,30 +1022,41 @@ impl Preprocessor {
                                     && pos + param.len() <= val_bytes.len()
                                     && &val_bytes[pos..pos + param.len()] == param.as_bytes()
                                 {
-                                    expanded.push_str(arg);
-                                    pos += param.len();
-                                    // Paste sufiks: `PARAM_``_SUFFIX` — backtick
-                                    // langsung setelah param diikuti alpha/_ →
-                                    // buang run, rekatkan ke teks berikutnya
-                                    // (I2C_GET_MIN_PARAM: `PARAM_NAME_``_MINSTANDARD`).
-                                    // Dot juga: `PARAM``.member` (pola
-                                    // ASSERT_IBEX_CORE_ERROR_TRIGGER_ALERT di
-                                    // rv_core_ibex autogen) — paste ke dot.
-                                    if pos < val_bytes.len() && val_bytes[pos] == b'`' {
-                                        let mut r = pos;
-                                        while r < val_bytes.len() && val_bytes[r] == b'`' {
-                                            r += 1;
+                                    // Token-boundary: param satu huruf (`i`, `j`)
+                                    // TIDAK boleh match di dalam kata literal
+                                    // (`if`, `begin`, `sim` — bug FORCE_OTP_PART
+                                    // _LOCK_WITH_RAND_NON_MUBI_VAL di otp_ctrl_if:
+                                    // `if` → `i`+`f` jadi ter-paste). Batas: karakter
+                                    // sebelum/selepas param bukan ident-char.
+                                    let p_end = pos + param.len();
+                                    let before_ok = pos == 0 || !val_bytes[pos - 1].is_ascii_alphanumeric();
+                                    let after_ok = p_end >= val_bytes.len() || !val_bytes[p_end].is_ascii_alphanumeric();
+                                    if before_ok && after_ok {
+                                        expanded.push_str(arg);
+                                        pos += param.len();
+                                        // Paste sufiks: `PARAM_``_SUFFIX` — backtick
+                                        // langsung setelah param diikuti alpha/_ →
+                                        // buang run, rekatkan ke teks berikutnya
+                                        // (I2C_GET_MIN_PARAM: `PARAM_NAME_``_MINSTANDARD`).
+                                        // Dot juga: `PARAM``.member` (pola
+                                        // ASSERT_IBEX_CORE_ERROR_TRIGGER_ALERT di
+                                        // rv_core_ibex autogen) — paste ke dot.
+                                        if pos < val_bytes.len() && val_bytes[pos] == b'`' {
+                                            let mut r = pos;
+                                            while r < val_bytes.len() && val_bytes[r] == b'`' {
+                                                r += 1;
+                                            }
+                                            if r < val_bytes.len()
+                                                && (val_bytes[r].is_ascii_alphabetic()
+                                                    || val_bytes[r] == b'_'
+                                                    || val_bytes[r] == b'.')
+                                            {
+                                                pos = r;
+                                            }
                                         }
-                                        if r < val_bytes.len()
-                                            && (val_bytes[r].is_ascii_alphabetic()
-                                                || val_bytes[r] == b'_'
-                                                || val_bytes[r] == b'.')
-                                        {
-                                            pos = r;
-                                        }
+                                        matched = true;
+                                        break;
                                     }
-                                    matched = true;
-                                    break;
                                 }
                             }
                             // OpenTitan token-paste extension dalam body macro:
@@ -1081,6 +1230,7 @@ fn split_args_string_aware(args_str: &str, expected_count: usize) -> Vec<String>
     let mut args = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
+    let mut brace_depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;
     for c in args_str.chars() {
@@ -1108,7 +1258,21 @@ fn split_args_string_aware(args_str: &str, expected_count: usize) -> Vec<String>
                 depth = depth.saturating_sub(1);
                 current.push(c);
             }
-            ',' if depth == 0 => {
+            // Argumen macro bisa memuat `{ ... }` dengan koma di dalamnya
+            // (mis. `ASSERT_INIT(N, Width inside {25, 50, 100})` prim_keccak
+            // atau constraint dist `{0 :/ 5, [1:10] :/ 5}`). Tanpa depth
+            // kurung kurawal, koma dalam `{...}` memecah ARGUMEN → ekspansi
+            // korup ("expected RBrace, found RParen" di ratusan assert
+            // inside/constraint OpenTitan).
+            '{' => {
+                brace_depth += 1;
+                current.push(c);
+            }
+            '}' => {
+                brace_depth = brace_depth.saturating_sub(1);
+                current.push(c);
+            }
+            ',' if depth == 0 && brace_depth == 0 => {
                 args.push(current.trim().to_string());
                 current.clear();
             }

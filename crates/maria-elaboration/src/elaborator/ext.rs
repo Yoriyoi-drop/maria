@@ -162,9 +162,7 @@ impl Elaborator {
         for stmt in stmts {
             match stmt {
                 IrStmt::BlockingAssign { lhs, .. } | IrStmt::NonBlockingAssign { lhs, .. } => {
-                    if let IrLValue::Signal(id, _) = lhs {
-                        driven.insert(*id);
-                    }
+                    Self::lv_driven(lhs, driven);
                 }
                 IrStmt::Block { stmts: body } | IrStmt::NamedBlock { stmts: body, .. } => {
                     Self::collect_driven_signals(body, driven);
@@ -199,6 +197,34 @@ impl Elaborator {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Extract signal ID yang di-drive sebuah lvalue (termasuk part-select,
+    /// bit-select, array index, concat — `ff1_pred_10_9[3:0]` = RangeSelect).
+    /// Sebelumnya hanya Signal → multi-driver tak terdeteksi utk part-select →
+    /// resolver net tak diaktifkan → last-write-wins race antar driver
+    /// (fuzzer nondeterminism OpenC910 ct_fadd_close_s0_h).
+    fn lv_driven(lv: &IrLValue, driven: &mut HashSet<usize>) {
+        match lv {
+            IrLValue::Signal(id, _)
+            | IrLValue::RangeSelect(id, _, _)
+            | IrLValue::BitSelect(id, _)
+            | IrLValue::ExprPartSelect { sig_id: id, .. }
+            | IrLValue::ArrayIndex { sig_id: id, .. }
+            | IrLValue::ArrayRangeSelect { sig_id: id, .. }
+            | IrLValue::ArrayBitSelect { sig_id: id, .. } => {
+                driven.insert(*id);
+            }
+            IrLValue::Concat(items) => {
+                for it in items {
+                    Self::lv_driven(it, driven);
+                }
+            }
+            IrLValue::ObjectField { sig_id, .. } => {
+                driven.insert(*sig_id);
+            }
+            _ => {}
         }
     }
 }

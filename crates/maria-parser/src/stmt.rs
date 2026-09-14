@@ -2438,6 +2438,44 @@ impl Parser {
         } else {
             None
         };
+        // Multi-var init `int i = 0, StateEnumT t = t.first();` (IEEE §12.8)
+        // — item lanjutan dipisah koma. Tanpa ini: "expected Semi, found
+        // Comma" → function/modul gagal (prim_sparse_fsm_flop, keccak_2share).
+        while self.peek() == &Token::Comma {
+            self.advance();
+            while matches!(
+                self.peek(),
+                Token::Int
+                    | Token::Integer
+                    | Token::Bit
+                    | Token::Logic
+                    | Token::Reg
+                    | Token::Longint
+                    | Token::Shortint
+                    | Token::Byte
+                    | Token::Time
+                    | Token::Signed
+                    | Token::Unsigned
+            ) {
+                self.advance();
+            }
+            if self.peek() == &Token::LBrack {
+                self.advance();
+                let _ = self.parse_expr(0)?;
+                self.expect(Token::Colon)?;
+                let _ = self.parse_expr(0)?;
+                self.expect(Token::RBrack)?;
+            }
+            // tipe user-defined `, StateEnumT t = ...`
+            if matches!(self.peek(), Token::Ident(_)) && matches!(self.peek_ahead(1), Token::Ident(_)) {
+                self.advance();
+            }
+            self.expect_ident()?;
+            if self.peek() == &Token::BlockingAssign {
+                self.advance();
+                let _ = self.parse_expr(0)?;
+            }
+        }
         self.expect(Token::Semi)?;
         let cond = if self.peek() != &Token::Semi {
             Some(self.parse_expr(0)?)
@@ -2584,6 +2622,26 @@ impl Parser {
         } else {
             None
         };
+        // Multi-step `i += 1, t = t.next()` (IEEE §12.8) — sisa step dipisah
+        // koma; konsumsi `, ident =/+= expr` lanjutan.
+        while self.peek() == &Token::Comma {
+            self.advance();
+            if matches!(self.peek(), Token::Ident(_)) {
+                self.advance();
+                match self.peek() {
+                    Token::Increment | Token::Decrement => {
+                        self.advance();
+                    }
+                    Token::BlockingAssign | Token::PlusAssign | Token::MinusAssign => {
+                        self.advance();
+                        let _ = self.parse_expr(0)?;
+                    }
+                    _ => {}
+                }
+            } else {
+                let _ = self.parse_expr(0)?;
+            }
+        }
         self.expect(Token::RParen)?;
         let stmts = self.parse_stmt_block()?;
         Ok(Stmt::LoopFor {
@@ -2783,6 +2841,18 @@ impl Parser {
                     });
                 }
                 Token::Eof => return Err(self.err("unexpected EOF in fork block")),
+                // DV style (macro wait/SPINWAIT): `fork ... end join` / 
+                // `... end join_any` — `end` sebelum join menutup block ENCLOSING
+                // (fork tanpa begin di dalam begin luar). Toleransi: konsumsi
+                // `end` bila join menyusul.
+                Token::End
+                    if matches!(
+                        self.peek_ahead(1),
+                        Token::Join | Token::JoinAny | Token::JoinNone
+                    ) =>
+                {
+                    self.advance();
+                }
                 _ => {
                     processes.push(self.parse_stmt()?);
                 }

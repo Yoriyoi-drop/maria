@@ -17,6 +17,9 @@ rand = "0.8"
 rayon = "1"
 wavefst = { version = "0.1", default-features = false, features = ["gzip"] }
 
+# Arena thread-safety (pool Mutex utk alokasi lintas thread evaluator)
+parking_lot = "0.12"
+
 # WAV-04: Compressed waveform database (gzip VCD output)
 flate2 = "1"
 

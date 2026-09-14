@@ -342,6 +342,15 @@ pub struct Elaborator {
     /// banyak module) — tanpa cache, setiap query meng-scan 1.1M baris merged
     /// source (~1.5-2s) yang menjadi bottleneck terbesar di desain besar.
     pub source_name_loc: std::cell::RefCell<HashMap<Symbol, (usize, usize)>>,
+    /// Cache hasil `find_literal_in_source` — hasilnya KONSTAN per source
+    /// (targets literal tetap, message tidak memengaruhi hasil). Sebelumnya
+    /// dihitung ulang untuk SETIAP panggilan fallback error-path
+    /// (elab_diag_at line=0,col=0 → nama tidak plausibel → literal scan):
+    /// desain besar (OpenTitan) memicu ribuan panggilan × scan penuh 1.1M
+    /// baris merged source (~1.5-2s per panggilan) → run terlihat hang
+    /// (100% CPU, tidak pernah selesai). Memoize SEKALI per Elaborator
+    /// (source_lines immutable selama elaborasi).
+    pub source_literal_loc: std::cell::RefCell<Option<(usize, usize)>>,
     /// SIM-29: peta baris statement untuk line coverage exclusion — key
     /// `format!("{}.{:?}", process_name, discriminant)` SAMA dengan key
     /// `record_line_hit` di engine. Diisi saat menerjemahkan statement
@@ -609,6 +618,7 @@ impl Elaborator {
             source_lines,
             source_file,
             source_name_loc: std::cell::RefCell::new(HashMap::new()),
+            source_literal_loc: std::cell::RefCell::new(None),
             stmt_lines: std::cell::RefCell::new(HashMap::new()),
             current_proc_name: std::cell::RefCell::new(None),
             current_module: None,
@@ -2737,6 +2747,15 @@ impl Elaborator {
     /// Fallback: pesan tanpa nama-quoted (mis. `fill literal ('0/'1/'x/'z)`)
     /// — cari pola literal di source (baris/lokasi assignment paling dekat).
     fn find_literal_in_source(&self, message: &str) -> (usize, usize) {
+        // Hasil scan HANYA bergantung pada source_lines: targets literal
+        // tetap (['0,'1,'x,'z,'X,'Z) dan message tidak dipakai untuk memilih
+        // baris — jadi hasil konstan per Elaborator. Lihat komentar field
+        // `source_literal_loc` (hotspot gdb: 3 sample identik, 100% CPU di
+        // sini pada run OpenTitan).
+        let _ = message;
+        if let Some(loc) = *self.source_literal_loc.borrow() {
+            return loc;
+        }
         // Cari pola literal yang mungkin muncul di pesan: `'0`, `'1`, `'x`, `'z`.
         let targets = ["'0", "'1", "'x", "'z", "'X", "'Z"];
         let mut best: Option<(usize, usize)> = None;
@@ -2749,17 +2768,19 @@ impl Elaborator {
                 if let Some(col) = line.find(t) {
                     // Pilih lokasi PALING BELAKANG di source (assignment
                     // biasanya di baris akhir blok) — memoize per-pesan tak
-                    // perlu di sini (pesan literal jarang).
+                    // perlu di sini (hasil konstan per source).
                     best = Some((i + 1, col + 1));
                 }
             }
         }
         // Tidak menemukan literal — pakai baris terakhir source sebagai
         // anker (masih lebih baik dari tanpa lokasi).
-        best.unwrap_or_else(|| {
+        let loc = best.unwrap_or_else(|| {
             let n = self.source_lines.len();
             if n > 0 { (n, 1) } else { (0, 0) }
-        })
+        });
+        *self.source_literal_loc.borrow_mut() = Some(loc);
+        loc
     }
 
     /// Buat error diagnostic dengan posisi source.

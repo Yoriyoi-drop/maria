@@ -281,12 +281,14 @@ pub fn evaluate_icarus(source: &str, timeout_ms: u64) -> IcarusResult {
 mod tests {
     use super::*;
 
-    /// Marker extraction: cross-sim token stream.
+    /// Marker extraction: cross-sim token stream. Marker MUTLAK punya `=<val>`
+    /// (`ASRT_...=<val>`) — token tanpa `=` ("ASRT_START tb") bukan bagian
+    /// kontrak cross-sim dan tidak di-extract.
     #[test]
     fn extract_asrt_markers() {
         let s = "ASRT_START tb\ncount=0\nASRT_SUM=<7>\nASRT_BAD=<9>\nplain\n";
         let m = extract_markers(s);
-        assert!(m.iter().any(|t| t == "ASRT_START tb"));
+        assert!(!m.iter().any(|t| t == "ASRT_START tb"));
         assert!(m.iter().any(|t| t == "ASRT_SUM=<7>"));
         assert!(m.iter().any(|t| t == "ASRT_BAD=<9>"));
         assert!(!m.iter().any(|t| t == "count=0"));

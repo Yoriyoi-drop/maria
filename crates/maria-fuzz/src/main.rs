@@ -41,11 +41,12 @@ USAGE:
   maria-fuzz replay  <file.sv> [--target <t>] [--timeout <ms>]
   maria-fuzz triage  <dir>
   maria-fuzz minimize <file.sv> [--target <t>] [--timeout <ms>]
-  maria-fuzz verify  [<corpus-dir>] [--timeout <ms>]   # differential vs iverilog atas seed corpus
+  maria-fuzz verify  [<corpus-dir>] [--timeout <ms>]      # differential vs iverilog atas seed corpus
+  maria-fuzz verify  --cases <n> [--seed <n>] [--timeout]  # differential vs iverilog atas hasil MUTASI
   maria-fuzz report  [<dir>]
   maria-fuzz help
 
-TARGETS: all | lexer | parser | elab | sim | fmt | cli
+TARGETS: all | lexer | parser | elab | sim | fmt | cli | preproc | mv | vcd
 Default: all (2000 cases/target). Corpus default: {corpus}
 Bug output: {bugs}
 "#,
@@ -261,19 +262,33 @@ fn cmd_minimize(args: &[String]) -> i32 {
     0
 }
 
-/// VERIFY: differential reference vs iverilog atas seed corpus.
+/// VERIFY: differential reference vs iverilog atas seed corpus ATAU hasil
+/// mutasi (mode `--cases N`).
 ///
-/// Untuk setiap seed module `NN_name.sv` yang punya pasangan `tb_NN_name.sv`,
-/// concat module+tb → run `oracle_icarus::evaluate` → klasifikasi hasil:
-/// MATCH (hasil maria == iverilog), MISMATCH (semantic divergence),
-/// REF-N/A (iverilog cannot compile), MARIA-BUG.
+/// Mode seed (default): untuk setiap seed module `NN_name.sv` yang punya
+/// pasangan `tb_NN_name.sv`, concat module+tb → run `oracle_icarus::evaluate`
+/// → klasifikasi: MATCH (hasil maria == iverilog), MISMATCH (semantic
+/// divergence), REF-N/A (iverilog cannot compile), MARIA-BUG.
 ///
-/// Ini jawab pertanyaan "hasil sim maria CORRECT?": bukan jasta no-crash /
-/// konsisten internal O4/O5, tapi compare terhadap reference eksternal
-/// independen (Icarus Verilog).
+/// Mode mutasi (`--cases N`): ambil N seed nyata dari corpus (termasuk
+/// project real), mutasi 0-2x, icarus-compare — differential EKSTERNAL atas
+/// kasus fuzz, bukan hanya seed bersih. Ini area yang belum tersentuh: sim
+/// oracle hanya membuktikan konsistensi INTERNAL (O4/O5), bukan kebenaran
+/// vs reference independen.
 fn cmd_verify(args: &[String]) -> i32 {
     let (timeout_s, rest) = take_flag(args, "--timeout");
+    let (cases_s, rest) = take_flag(&rest, "--cases");
+    let (seed_s, rest) = take_flag(&rest, "--seed");
     let timeout = timeout_s.and_then(|s| s.parse().ok()).unwrap_or(4000);
+
+    if let Some(cases_s) = cases_s {
+        let cases: usize = cases_s.parse().unwrap_or(200);
+        let seed: u64 = seed_s
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0x1CA_2026);
+        return verify_mutated(cases, seed, timeout);
+    }
+
     let dir = rest
         .first()
         .map(PathBuf::from)
@@ -354,6 +369,139 @@ fn cmd_verify(args: &[String]) -> i32 {
         seed_sources.len()
     );
     if n_mismatch == 0 {
+        0
+    } else {
+        1
+    }
+}
+
+/// VERIFY mode mutasi: N kasus fuzz (corpus penuh + mutasi 0-2x) di-compare
+/// vs iverilog. MARIA-BUG/MISMATCH = bug nyata (hasil sim beda dari reference
+/// eksternal, atau maria crash).
+fn verify_mutated(cases: usize, seed: u64, timeout_ms: u64) -> i32 {
+    use maria_fuzz::corpus;
+    // Fokus ke corpus SELF-CONTAINED (seeds + mv — dirancang utk sim mandiri
+    // + punya marker `ASRT_`/`$display`). Project real (cva6/openc910/
+    // opentitan) kebanyakan RTL tanpa tb/marker + interdependen → compare
+    // iverilog vakum/noise.
+    let base_dir = std::path::PathBuf::from("crates/maria-fuzz/fuzz/corpus/seeds");
+    let corpus = if base_dir.exists() {
+        corpus::Corpus::load(Some(&base_dir))
+    } else {
+        corpus::Corpus::load(None)
+    };
+    if corpus.is_empty() {
+        eprintln!("WARNING: corpus kosong");
+        return 1;
+    }
+    let mut rng = maria_fuzz::Rng::new(seed);
+    let mut n_match = 0usize;
+    let mut n_mismatch = 0usize;
+    let mut n_ref_na = 0usize;
+    let mut n_mariabug = 0usize;
+    let mut n_clean = 0usize;
+
+    eprintln!(
+        "VERIFY-MUTATED vs iverilog: cases={} seed={:#x} timeout={}ms — corpus {} seeds",
+        cases,
+        seed,
+        timeout_ms,
+        corpus.len()
+    );
+
+    for i in 0..cases {
+        let Some(base_seed) = corpus.random_seed(&mut rng) else {
+            break;
+        };
+        let mut base_source = base_seed.text;
+        let is_mv = base_seed.is_mv;
+
+        // Mutasi 0-2x
+        let n_mut = rng.below(3);
+        if n_mut > 0 {
+            let mut mutator = maria_fuzz::mutator::Mutator::new(&mut rng);
+            for _ in 0..n_mut {
+                base_source = mutator.mutate(&base_source, &corpus);
+            }
+        }
+
+        // MV → transpile dulu (transpiled SV lah yang dibandingkan).
+        let source = if is_mv {
+            let base_name = base_seed
+                .path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("design")
+                .to_string();
+            corpus::transpile_mv_string(&base_source, &base_name).unwrap_or_else(|_| {
+                "// mv transpile failed\nmodule fz_mv_transpile_err; endmodule".to_string()
+            })
+        } else {
+            base_source
+        };
+
+        // Jangan buang waktu icarus untuk source tanpa MARKER ASRT_ — kontrak
+        // marker kosong dua sisi = "match" vakum (tak bermakna). Filter:
+        // hanya source yang punya marker (TB fuzz) ATAU design berstimulus
+        // ($display) — untuk real RTL tanpa tb, compare vakum.
+        if !source.contains("ASRT_") && !source.contains("$display") && !source.contains("$finish") {
+            n_clean += 1;
+            continue;
+        }
+
+        let r = maria_fuzz::oracle_icarus::evaluate_icarus(&source, timeout_ms);
+        match r.verdict {
+            maria_fuzz::oracle_icarus::Verdict::Match => {
+                n_match += 1;
+            }
+            maria_fuzz::oracle_icarus::Verdict::Mismatch => {
+                n_mismatch += 1;
+                eprintln!("  [MISMATCH] #{}: {}", i, r.detail.lines().next().unwrap_or(""));
+                let _ = std::fs::create_dir_all(maria_fuzz::bugs_dir());
+                let path = maria_fuzz::bugs_dir().join(format!("verify_bad_{:04}.sv", i));
+                let _ = std::fs::write(&path, &source);
+            }
+            maria_fuzz::oracle_icarus::Verdict::RefUnavailable => {
+                n_ref_na += 1;
+            }
+            maria_fuzz::oracle_icarus::Verdict::MariaBug => {
+                // MARIA-BUG asli = panic/abort/hang (maria crash/corrupt).
+                // Verdict::MariaBug dgn category CleanError = maria menolak
+                // source mutasi invalid secara benar → reference N/A dua sisi,
+                // BUKAN bug maria. Filter di sini (oracle_icarus mengklasifikasi
+                // semua non-Ok sebagai MariaBug dgn category asli).
+                match r.category {
+                    maria_fuzz::Category::Panic
+                    | maria_fuzz::Category::Abort
+                    | maria_fuzz::Category::Hang => {
+                        n_mariabug += 1;
+                        eprintln!("  [MARIA-BUG] #{}: {}", i, r.detail.lines().next().unwrap_or(""));
+                        let _ = std::fs::create_dir_all(maria_fuzz::bugs_dir());
+                        let path = maria_fuzz::bugs_dir().join(format!("verify_bug_{:04}.sv", i));
+                        let _ = std::fs::write(&path, &source);
+                    }
+                    _ => {
+                        n_clean += 1;
+                    }
+                }
+            }
+        }
+        if (i + 1) % 100 == 0 {
+            eprintln!("  [{}/{}] match={} mismatch={} refNA={} mariaBug={}",
+                i + 1, cases, n_match, n_mismatch, n_ref_na, n_mariabug);
+        }
+    }
+
+    println!(
+        "\nVERIFY-MUTATED SUMARRY: match={} mismatch={} ref-n/a={} maria-bug={} skipped_no_marker={} total={}",
+        n_match,
+        n_mismatch,
+        n_ref_na,
+        n_mariabug,
+        n_clean,
+        cases
+    );
+    if n_mismatch + n_mariabug == 0 {
         0
     } else {
         1

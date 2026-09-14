@@ -437,6 +437,9 @@ impl Parser {
             }
             _ => None,
         };
+        if self.peek() == &Token::Signed {
+            self.advance();
+        }
         if self.peek() == &Token::Unsigned {
             self.advance();
         }
@@ -1397,6 +1400,49 @@ impl Parser {
                 let _init = if self.peek() != &Token::Semi {
                     self.expect(Token::BlockingAssign)?;
                     let init_expr = self.parse_expr(0)?;
+                    // Multi-var init generate-for (IEEE 1800 §12.7.1):
+                    // `for (int i = 0, StateEnumT t = t.first(); ...)` —
+                    // komma mengawali assignment var berikutnya. Parser
+                    // mengharapkan `;` di sini (sebelumnya "expected Semi,
+                    // found Comma" → seluruh module gagal; prim_sparse_fsm_flop).
+                    while self.peek() == &Token::Comma {
+                        self.advance();
+                        // Tipe variabel optional di init kedua:
+                        // `, int j = 0`, `, StateEnumT t = ...`, `, int unsigned k = ...`
+                        while matches!(
+                            self.peek(),
+                            Token::Int
+                                | Token::Integer
+                                | Token::Bit
+                                | Token::Logic
+                                | Token::Reg
+                                | Token::Byte
+                                | Token::Shortint
+                                | Token::Longint
+                                | Token::Time
+                                | Token::Signed
+                                | Token::Unsigned
+                        ) {
+                            self.advance();
+                        }
+                        if self.peek() == &Token::LBrack {
+                            self.advance();
+                            let _ = self.parse_expr(0)?;
+                            self.expect(Token::Colon)?;
+                            let _ = self.parse_expr(0)?;
+                            self.expect(Token::RBrack)?;
+                        }
+                        // Nama tipe user-defined: `, StateEnumT t = ...` —
+                        // Ident diikuti Ident = nama tipe; skip.
+                        if matches!(self.peek(), Token::Ident(_))
+                            && matches!(self.peek_ahead(1), Token::Ident(_))
+                        {
+                            self.advance();
+                        }
+                        self.expect_ident()?;
+                        self.expect(Token::BlockingAssign)?;
+                        self.parse_expr(0)?;
+                    }
                     self.expect(Token::Semi)?;
                     Some(Stmt::BlockingAssign {
                         lhs: Expr::Ident {
@@ -1422,7 +1468,14 @@ impl Parser {
                 };
                 // Parse step
                 let step = if self.peek() != &Token::RParen {
-                    Some(self.parse_stmt()?)
+                    let first = self.parse_stmt()?;
+                    // Multi-step: `i += 1, t = t.next()` (generate-for §12.7.1) —
+                    // konsumsi statement lanjutan dipisah koma.
+                    while self.peek() == &Token::Comma {
+                        self.advance();
+                        let _ = self.parse_stmt()?;
+                    }
+                    Some(first)
                 } else {
                     None
                 };

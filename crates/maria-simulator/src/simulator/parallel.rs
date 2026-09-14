@@ -379,6 +379,16 @@ pub fn evaluate_expr_simple(
                 None => Ok(LogicVec::new(32)),
             }
         }
+        // MemberAccess pada struct signal yang TIDAK punya objek (field tak
+        // ditemukan saat elaborasi — tipe unresolved, mis. `bkdr_loader_pkg::
+        // bkdr_req_t` dari OpenTitan prim_rom yang di-mutasi fuzz). Serial
+        // engine eval/expr.rs:2046 get_object gagal → LogicVec::new(1) (1-bit
+        // X). Sebelumnya DAG jatuh ke `_ => new(32)` = 32-bit SEMUA X →
+        // addr_bkdr = X,X,X vs serial X,0,0 → differential (fuzzer sim seed
+        // 11 prim_rom). Mirror serial: obj/field tak relevan di path paralel
+        // (objek class TIDAK di-parallel-kan — hanya Combinational).
+        IrExpr::MemberAccess { .. } => Ok(LogicVec::new(1)),
+        IrExpr::MethodCall { .. } => Ok(LogicVec::new(32)),
         _ => Ok(LogicVec::new(32)),
     }
 }
@@ -710,8 +720,12 @@ fn write_lvalue_simple(
                 .get(*sig_id)
                 .map(|a| (**a).clone())
                 .unwrap_or_else(|| LogicVec::new(1));
+            // LRM: `y[msb:lsb] = val` — val bit i → y bit (start+i), TANPA
+            // reversal (konsisten serial lvalue.rs:285). Reversal lama
+            // (`end - i`) menulis terbalik → `y[2:0] = 0xx` jadi `xx0`
+            // (ditemukan fuzzer differential OpenC910 ct_had_dbg_info).
             for i in start..=end.min(existing.width.saturating_sub(1)) {
-                let src_idx = if *msb > *lsb { end - i } else { i - start };
+                let src_idx = (i - start).min(val.bits.len().saturating_sub(1));
                 existing.bits[i] = val.bits.get(src_idx).copied().unwrap_or(LogicVal::X);
             }
             signals.set(*sig_id, Arc::new(existing.clone()));
@@ -744,6 +758,59 @@ fn write_lvalue_simple(
                 if start + i < existing.width {
                     existing.bits[start + i] = val.bits.get(i).copied().unwrap_or(LogicVal::X);
                 }
+            }
+            signals.set(*sig_id, Arc::new(existing.clone()));
+            writes.push((*sig_id, existing));
+        }
+        IrLValue::ArrayRangeSelect {
+            sig_id,
+            index,
+            elem_width,
+            msb,
+            lsb,
+        } => {
+            let idx_val = evaluate_expr_simple(index, signals, sig_info)?;
+            let idx = idx_val.to_u64() as usize;
+            let base = idx * elem_width;
+            let (start, end) = if *msb > *lsb {
+                (*lsb, *msb)
+            } else {
+                (*msb, *lsb)
+            };
+            let mut existing = signals
+                .get(*sig_id)
+                .map(|a| (**a).clone())
+                .unwrap_or_else(|| LogicVec::new(1));
+            // `arr[i][msb:lsb] = val` — val LSB → bit abs_start, tanpa
+            // reversal (konsisten serial lvalue.rs:397).
+            let abs_start = base + start;
+            let max_end = base + end.min(existing.width.saturating_sub(1).saturating_sub(base));
+            for i in start..=end.min(existing.width.saturating_sub(1).saturating_sub(base)) {
+                let src_idx = (i - start).min(val.bits.len().saturating_sub(1));
+                let abs = base + i;
+                if abs <= max_end && abs < existing.width {
+                    existing.bits[abs] = val.bits.get(src_idx).copied().unwrap_or(LogicVal::X);
+                }
+            }
+            signals.set(*sig_id, Arc::new(existing.clone()));
+            writes.push((*sig_id, existing));
+        }
+        IrLValue::ArrayBitSelect {
+            sig_id,
+            index,
+            elem_width,
+            bit,
+        } => {
+            let bit_val = evaluate_expr_simple(bit, signals, sig_info)?;
+            let idx_val = evaluate_expr_simple(index, signals, sig_info)?;
+            let idx = idx_val.to_u64() as usize;
+            let abs = idx * elem_width + bit_val.to_u64() as usize;
+            let mut existing = signals
+                .get(*sig_id)
+                .map(|a| (**a).clone())
+                .unwrap_or_else(|| LogicVec::new(1));
+            if abs < existing.width {
+                existing.bits[abs] = val.bits.first().copied().unwrap_or(LogicVal::X);
             }
             signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));

@@ -69,6 +69,10 @@ impl Drop for ArenaGuard {
 
 /// Alokasi LogicVec dari thread-local arena (jika ada).
 /// Dipanggil oleh LogicVec::new() dan LogicVec::fill().
+/// Aman lintas thread: arena internal di-protect Mutex utk pool + counters
+/// (worker rayon dan main thread bisa alloc bersamaan — data race pada
+/// bits_pool/alloc_count menyebabkan nilai LogicVec korup flappy, ditemukan
+/// fuzzer nondeterminism OpenC910 ct_fadd_close_s0_h).
 pub fn try_alloc_logicvec(width: usize, init: LogicVal) -> Option<LogicVec> {
     CYCLE_ARENA.with(|cell| {
         let borrow = cell.borrow_mut();
@@ -85,15 +89,20 @@ pub fn try_alloc_logicvec(width: usize, init: LogicVal) -> Option<LogicVec> {
 ///
 /// Setiap SimulationEngine memiliki satu instance SimulationArena yang di-reset
 /// setiap siklus simulasi.
+///
+/// Pool Vec + counters diproteksi `parking_lot::Mutex` — worker rayon dan main
+/// thread mengalokasi secara bersamaan lewat pointer thread-local yang sama.
 pub struct SimulationArena {
-    /// Bump arena untuk alokasi raw memory.
+    /// Bump arena untuk alokasi raw memory (sudah thread-safe via BumpArena).
     bump: BumpArena,
-    /// Pool Vec<LogicVal> — reuse backing storage LogicVec.
-    /// Menghindari alloc/free berulang untuk Vec yang sering dibuat/dibuang.
+    /// Pool Vec<LogicVal> + counters — di-protect Mutex utk akses lintas thread.
+    pool: parking_lot::Mutex<PoolInner>,
+}
+
+/// Bagian pool yang bisa diakses lintas thread.
+struct PoolInner {
     bits_pool: ObjectPool<Vec<LogicVal>>,
-    /// Jumlah LogicVec yang dialokasi siklus ini.
     alloc_count: usize,
-    /// Jumlah LogicVec yang di-reuse dari pool.
     reuse_count: usize,
 }
 
@@ -102,9 +111,11 @@ impl SimulationArena {
     pub fn new() -> Self {
         SimulationArena {
             bump: BumpArena::with_initial_size(1024 * 1024), // 1MB initial
-            bits_pool: ObjectPool::new(),
-            alloc_count: 0,
-            reuse_count: 0,
+            pool: parking_lot::Mutex::new(PoolInner {
+                bits_pool: ObjectPool::new(),
+                alloc_count: 0,
+                reuse_count: 0,
+            }),
         }
     }
 
@@ -112,26 +123,29 @@ impl SimulationArena {
     pub fn with_bump_size(size: usize) -> Self {
         SimulationArena {
             bump: BumpArena::with_initial_size(size),
-            bits_pool: ObjectPool::new(),
-            alloc_count: 0,
-            reuse_count: 0,
+            pool: parking_lot::Mutex::new(PoolInner {
+                bits_pool: ObjectPool::new(),
+                alloc_count: 0,
+                reuse_count: 0,
+            }),
         }
     }
 
     /// Allocate a temporary LogicVec with given width, initialized to a value.
     ///
     /// Jika ada Vec<LogicVal> tersedia di pool, kita reuse backing storage-nya
-    /// (hanya resize, tidak re-allocate). Ini menghindari heap alloc/free.
+    /// (hanya resize, tidak re-allocate). Thread-safe via pool Mutex.
     pub fn alloc_logicvec(&mut self, width: usize, init: LogicVal) -> LogicVec {
         let w = if width > 1_000_000 { 1 } else { width };
-        let pool_hit = self.bits_pool.available() > 0;
-        let mut bits = self.bits_pool.get(|| Vec::with_capacity(w));
+        let mut inner = self.pool.lock();
+        let pool_hit = inner.bits_pool.available() > 0;
+        let mut bits = inner.bits_pool.get(|| Vec::with_capacity(w));
         bits.clear();
         bits.resize(w, init);
         if pool_hit {
-            self.reuse_count += 1;
+            inner.reuse_count += 1;
         } else {
-            self.alloc_count += 1;
+            inner.alloc_count += 1;
         }
         LogicVec { width: w, bits }
     }
@@ -141,7 +155,8 @@ impl SimulationArena {
     pub fn alloc_logicvec_fresh(&mut self, width: usize, init: LogicVal) -> LogicVec {
         let w = if width > 1_000_000 { 1 } else { width };
         let bits = vec![init; w];
-        self.alloc_count += 1;
+        let mut inner = self.pool.lock();
+        inner.alloc_count += 1;
         LogicVec { width: w, bits }
     }
 
@@ -157,23 +172,23 @@ impl SimulationArena {
     }
 
     /// Allocate a LogicVec as a clone of an existing LogicVec.
-    /// Uses bump arena for the backing storage instead of heap.
     pub fn alloc_logicvec_clone(&mut self, other: &LogicVec) -> LogicVec {
         let w = other.width.max(1);
-        let mut bits = self.bits_pool.get(|| Vec::with_capacity(w));
+        let mut inner = self.pool.lock();
+        let mut bits = inner.bits_pool.get(|| Vec::with_capacity(w));
         bits.clear();
         bits.extend_from_slice(&other.bits);
-        self.alloc_count += 1;
+        inner.alloc_count += 1;
         LogicVec { width: w, bits }
     }
 
     /// Return a LogicVec's backing storage to the pool for reuse.
-    /// Call this when a temp LogicVec is no longer needed.
     pub fn reclaim_logicvec(&mut self, lv: LogicVec) {
         let mut bits = lv.bits;
         bits.clear();
-        self.bits_pool.put(bits);
-        self.reuse_count += 1;
+        let mut inner = self.pool.lock();
+        inner.bits_pool.put(bits);
+        inner.reuse_count += 1;
     }
 
     /// Allocate raw memory from the bump arena.
@@ -187,14 +202,14 @@ impl SimulationArena {
     ///
     /// - Bump arena: reset pointer ke awal — O(1), semua memori reusable instan
     /// - Object pool: Vec<LogicVal> **tidak di-clear** — backing storage tetap hidup
-    ///   dan siap di-reuse oleh siklus berikutnya. Ini adalah inti dari
-    ///   zero-deallocation: alokasi heap tidak pernah di-free antar siklus.
+    ///   dan siap di-reuse oleh siklus berikutnya.
     pub fn reset_cycle(&mut self) {
         self.bump.reset();
-        // JANGAN panggil self.bits_pool.clear() — Vec backing storage harus tetap
-        // hidup untuk zero-deallocation. Pool Vecs akan di-reuse oleh alloc_logicvec().
-        self.alloc_count = 0;
-        self.reuse_count = 0;
+        {
+            let mut inner = self.pool.lock();
+            inner.alloc_count = 0;
+            inner.reuse_count = 0;
+        }
     }
 
     /// Total memory used by the bump arena.
@@ -204,21 +219,22 @@ impl SimulationArena {
 
     /// Total LogicVec allocations this cycle.
     pub fn alloc_count(&self) -> usize {
-        self.alloc_count
+        self.pool.lock().alloc_count
     }
 
     /// Total LogicVec reuses from pool this cycle.
     pub fn reuse_count(&self) -> usize {
-        self.reuse_count
+        self.pool.lock().reuse_count
     }
 
     /// Reuse rate as percentage.
     pub fn reuse_rate(&self) -> f64 {
-        let total = self.alloc_count + self.reuse_count;
+        let inner = self.pool.lock();
+        let total = inner.alloc_count + inner.reuse_count;
         if total == 0 {
             0.0
         } else {
-            self.reuse_count as f64 / total as f64
+            inner.reuse_count as f64 / total as f64
         }
     }
 }
@@ -256,7 +272,7 @@ mod tests {
         arena.reclaim_logicvec(lv1);
         // Next allocation should reuse the Vec from pool
         let lv2 = arena.alloc_logicvec(32, LogicVal::One);
-        assert!(arena.reuse_count > 0, "should have reused from pool");
+        assert!(arena.reuse_count() > 0, "should have reused from pool");
         assert_eq!(lv2.width, 32);
         assert!(lv2.bits.iter().all(|b| *b == LogicVal::One));
     }
@@ -271,7 +287,7 @@ mod tests {
             "bump arena should have memory after alloc_raw"
         );
         let _lv1 = arena.alloc_logicvec(128, LogicVal::X);
-        assert!(arena.alloc_count > 0);
+        assert!(arena.alloc_count() > 0);
         arena.reset_cycle();
         // Bump arena reset -> memory_used = 0
         assert_eq!(arena.memory_used(), 0, "memory should be 0 after reset");

@@ -378,6 +378,18 @@ impl Parser {
                     let mut is_queue = false;
                     let mut is_associative = false;
                     let mut assoc_key_type: Option<DataType> = None;
+                    // `[]` langsung setelah nama walaupun TANPA decl_expr_range
+                    // (mis. `typedef logic state_t[];` — patung DV). Sebelumnya
+                    // hanya diproses bila decl_expr_range Some → parse_decl
+                    // tersandung di `[` ("expected wire/reg/...").
+                    if decl_expr_range.is_none()
+                        && self.peek() == &Token::LBrack
+                        && self.peek_ahead(1) == &Token::RBrack
+                    {
+                        self.advance();
+                        self.advance();
+                        is_dynamic = true;
+                    }
                     let (var_expr_range, array_range, array_size_expr) = if decl_expr_range
                         .is_some()
                     {

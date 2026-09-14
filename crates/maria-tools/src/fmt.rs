@@ -350,11 +350,15 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
         return true;
     }
 
-    // `~` di depan `(`/ident: bitwise not
-    if matches!(prev, Tilde | Not | Amp | Pipe | Caret) {
+    // `~` / `!` unary → no-space sebelum operand. Amp|Pipe|Caret TIDAK di sini:
+    // biner (`a & b`) maupun reduction (`&a`) sama-sama valid, dan spasi
+    // dua sisi selalu aman + idempotent. (Sebelumnya Pipe ikut no-space →
+    // `a||b` render `a|` — ditemukan fuzzer roundtrip mismatch OpenTitan
+    // h8_bry0_32||h8_bry0_16 setelah unicode garbage di-skip jadi Pipe,Pipe.)
+    if matches!(prev, Tilde | Not) {
         return false;
     }
-    if matches!(cur, Tilde | Not | Amp | Pipe | Caret) {
+    if matches!(cur, Tilde | Not) {
         return false;
     }
 
@@ -431,6 +435,12 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
     if matches!(prev, Number { .. } | Ident(_)) && matches!(cur, Ident(_)) {
         return true;
     }
+    // `pinmu 64'd0` — ident diikuti literal bernomor wajib spasi (kalau tidak
+    // lexer number makan ident lanjutan utk literal `...d0pinmux` — ditemukan
+    // fuzzer roundtrip mismatch OpenTitan pinmux bind: `64'd0pinmux` satu token).
+    if matches!(prev, Ident(_) | RParen | RBrack) && matches!(cur, Number { .. }) {
+        return true;
+    }
 
     // Keyword `if`/`while`/`case` diikuti `(` — spasi
     if matches!(
@@ -438,6 +448,14 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
         If | While | Case | CaseX | CaseZ | Repeat | For | Function | Task | Module | Interface
     ) && matches!(cur, LParen)
     {
+        return true;
+    }
+
+    // Nama module ala Yosys/synthesis `module $_DLATCH_P_` ($-prefixed) —
+    // `module` + `$` wajib spasi, kalau tidak lexer jadi satu token
+    // `module$_DLATCH_P_` → tidak parseable (ditemukan fuzzer golden,
+    // OpenTitan map latch primitive).
+    if matches!(prev, Module | Interface | Program) && matches!(cur, Dollar | Ident(_)) {
         return true;
     }
 

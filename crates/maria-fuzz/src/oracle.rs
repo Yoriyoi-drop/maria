@@ -13,7 +13,9 @@ use maria_api::{
 /// via runner subprocess untuk target yang butuh izin eksekusi penuh.
 pub fn evaluate(target: Target, source: &str, timeout_ms: u64) -> CaseResult {
     match target {
-        Target::Lexer | Target::Parser | Target::Elaborator => {
+        Target::Lexer => evaluate_lexer(source),
+        Target::Vcd => evaluate_vcd(source, timeout_ms),
+        Target::Parser | Target::Elaborator => {
             evaluate_compile(target, source)
         }
         Target::Simulator => evaluate_sim(source, timeout_ms),
@@ -55,7 +57,32 @@ fn is_global_error(msg: &str) -> bool {
 }
 
 /// O1 + O2 untuk compile pipeline (lexer/parser/elaborator).
+///
+/// Dijalankan dalam thread stack BESAR (256MB) — parser rekursif pada
+/// expression dalam hasil mutasi (contoh: `x0|x1|...` rantai panjang) bisa
+/// overflow stack default 8MB (ditemukan fuzzer seed 7: stack overflow di
+/// parser). Konsisten dgn simulate_in_thread.
 fn evaluate_compile(target: Target, source: &str) -> CaseResult {
+    let source_owned = source.to_string();
+    let result: Option<CaseResult> = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .name("maria-fuzz-compile".into())
+        .spawn(move || compile_in_thread(target, &source_owned))
+        .ok()
+        .and_then(|h| h.join().ok());
+    match result {
+        Some(r) => r,
+        None => mk(
+            target,
+            Oracle::O1NoCrash,
+            Category::Panic,
+            "thread compile gagal (join err)",
+            source,
+        ),
+    }
+}
+
+fn compile_in_thread(target: Target, source: &str) -> CaseResult {
     // O1: no-crash — panic di compile = bug
     let caught = std::panic::catch_unwind(|| maria_api::compile_str_quiet(source));
     let ir_design = match caught {
@@ -136,6 +163,60 @@ fn evaluate_compile(target: Target, source: &str) -> CaseResult {
             Oracle::O4Determinism,
             Category::NonDeterministic,
             "compile kedua panic/error — non-deterministik",
+            source,
+        ),
+    }
+}
+
+/// Fuzzing LEXER khusus (area belum tersentuh — target Lexer lama memakai
+/// pipeline compile yang sama, bukan oracle token):
+/// - lex dua kali segar → stream token (kind+line+col) harus identik
+///   (non-determinisme token = bug)
+/// - panic saat lex input gila = bug
+fn evaluate_lexer(source: &str) -> CaseResult {
+    use maria_parser::lexer::Lexer;
+    let lex_once = || -> Vec<(String, usize, usize)> {
+        let mut lx = Lexer::new(source);
+        let mut toks = Vec::new();
+        loop {
+            let (tok, line, col) = lx.next_token();
+            if tok == maria_parser::lexer::Token::Eof {
+                break;
+            }
+            toks.push((format!("{:?}", tok), line, col));
+        }
+        toks
+    };
+    let r1 = std::panic::catch_unwind(lex_once);
+    let r2 = std::panic::catch_unwind(lex_once);
+    match (r1, r2) {
+        (Ok(t1), Ok(t2)) => {
+            if t1 != t2 {
+                return mk(
+                    Target::Lexer,
+                    Oracle::O4Determinism,
+                    Category::NonDeterministic,
+                    &format!(
+                        "lexer non-deterministik: dua lex identik hasil beda ({} vs {} tokens)",
+                        t1.len(),
+                        t2.len()
+                    ),
+                    source,
+                );
+            }
+            mk(
+                Target::Lexer,
+                Oracle::O1NoCrash,
+                Category::Ok,
+                &format!("lexer ok ({} token)", t1.len()),
+                source,
+            )
+        }
+        (Err(_), _) | (_, Err(_)) => mk(
+            Target::Lexer,
+            Oracle::O1NoCrash,
+            Category::Panic,
+            "panic saat lex",
             source,
         ),
     }
@@ -222,25 +303,53 @@ fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
         }
     }
 
+    // ── 2-6. In-process compile/determinism/differential/trace/evidence
+    //         dijalankan dalam thread stack BESAR (256MB, konsisten dgn
+    //         main.rs yang membungkus sim dgn stack besar) — evaluator
+    //         rekursif pada chain BinaryOp panjang (`x0|x1|...|x63` di
+    //         OpenC910 ct_rtu_encode_64) overflow stack default 8MB
+    //         ("thread 'main' has overflowed its stack", ditemukan fuzzer).
+    let source_owned = source.to_string();
+    let t_ms = timeout_ms;
+    let result: Option<CaseResult> = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .name("maria-fuzz-sim".into())
+        .spawn(move || simulate_in_thread(&source_owned, t_ms))
+        .ok()
+        .and_then(|h| h.join().ok())
+        .flatten();
+    if let Some(r) = result {
+        return r;
+    }
+    mk(
+        Target::Simulator,
+        Oracle::O1NoCrash,
+        Category::Panic,
+        "thread sim gagal (join err)",
+        source,
+    )
+}
+
+/// Jalankan seluruh validasi sim in-process dalam thread stack besar.
+fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
+    let mk_r = |c: Category, o: Oracle, d: &str| {
+        Some(mk(Target::Simulator, o, c, d, source))
+    };
     // ── 2. In-process compile check (O1) ──
     let compile_result = std::panic::catch_unwind(|| maria_api::compile_str_quiet(source));
     match compile_result {
         Ok(Err(e)) => {
-            return mk(
-                Target::Simulator,
-                Oracle::O1NoCrash,
+            return mk_r(
                 Category::CleanError,
+                Oracle::O1NoCrash,
                 &format!("compile gagal: {e}"),
-                source,
             );
         }
         Err(_) => {
-            return mk(
-                Target::Simulator,
-                Oracle::O1NoCrash,
+            return mk_r(
                 Category::Panic,
+                Oracle::O1NoCrash,
                 "panic saat compile in-process",
-                source,
             );
         }
         _ => {} // compile ok
@@ -263,47 +372,45 @@ fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
 
     match (&r1, &r2) {
         (Ok(Ok(sigs1)), Ok(Ok(sigs2))) => {
-            if sigs1 != sigs2 {
-                return mk(
-                    Target::Simulator,
-                    Oracle::O4Determinism,
+            // Compare sebagai MAP (nama→nilai) — urutan Vec bisa beda antar
+            // run (iterasi HashMap) walau isi sama → false nondeterminism.
+            let map1: std::collections::BTreeMap<&str, &maria_ir::LogicVec> =
+                sigs1.iter().map(|(n, v)| (n.as_str(), v)).collect();
+            let map2: std::collections::BTreeMap<&str, &maria_ir::LogicVec> =
+                sigs2.iter().map(|(n, v)| (n.as_str(), v)).collect();
+            if map1 != map2 {
+                return mk_r(
                     Category::NonDeterministic,
+                    Oracle::O4Determinism,
                     &format!(
                         "sim non-deterministik: {} != {} signal values (2 run identik)",
                         signal_summary(sigs1),
                         signal_summary(sigs2)
                     ),
-                    source,
                 );
             }
         }
         (Ok(Err(e1)), Ok(Err(_e2))) => {
             // Keduanya error — error deterministik, bukan bug
-            return mk(
-                Target::Simulator,
-                Oracle::O1NoCrash,
+            return mk_r(
                 Category::CleanError,
+                Oracle::O1NoCrash,
                 &format!("sim error deterministik: {e1}"),
-                source,
             );
         }
         (Ok(Err(e)), _) | (_, Ok(Err(e))) => {
             // Salah satu error, satu ok — non-deterministik error
-            return mk(
-                Target::Simulator,
-                Oracle::O4Determinism,
+            return mk_r(
                 Category::NonDeterministic,
+                Oracle::O4Determinism,
                 &format!("sim error non-deterministik: {e}"),
-                source,
             );
         }
         (Err(_), _) | (_, Err(_)) => {
-            return mk(
-                Target::Simulator,
-                Oracle::O4Determinism,
+            return mk_r(
                 Category::NonDeterministic,
+                Oracle::O4Determinism,
                 "sim panic tidak deterministik",
-                source,
             );
         }
     }
@@ -335,42 +442,65 @@ fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
             use_mir_jit: true,
             ..default_flags
         }),
+        // ── Kombinasi (interaksi flag) — validate.rs sudah definisikan 8 jalur
+        // tapi oracle lama hanya bandingkan single-flag → kombinasi
+        // packed+dag/packed+timing/dag+timing TIDAK pernah di-fuzz. Tambah
+        // sekarang: interaksi antar jalur engine bisa memicu race/ordering
+        // yang tidak terlihat pada jalur tunggal.
+        ("packed+dag", EngineFlags {
+            use_packed_eval: true,
+            use_dag_parallel: true,
+            ..default_flags
+        }),
+        ("packed+timing", EngineFlags {
+            use_packed_eval: true,
+            use_timing_wheel: true,
+            ..default_flags
+        }),
+        ("dag+timing", EngineFlags {
+            use_dag_parallel: true,
+            use_timing_wheel: true,
+            ..default_flags
+        }),
     ];
     for (name, flags) in alternate_flags {
         let result = std::panic::catch_unwind(|| {
             simulate_signals_with_flags_quiet(source, 1_000, &flags)
         });
         match result {
-            Ok(Ok(signals)) if signals == sigs_default => {}
+            Ok(Ok(signals))
+                if {
+                    // Compare map (urutan-insensitive) — urutan Vec bisa beda
+                    // antar jalur engine walau isi sama.
+                    let m_def: std::collections::BTreeMap<&str, &maria_ir::LogicVec> =
+                        sigs_default.iter().map(|(n, v)| (n.as_str(), v)).collect();
+                    let m_alt: std::collections::BTreeMap<&str, &maria_ir::LogicVec> =
+                        signals.iter().map(|(n, v)| (n.as_str(), v)).collect();
+                    m_def == m_alt
+                } => {}
             Ok(Ok(signals)) => {
-                return mk(
-                    Target::Simulator,
-                    Oracle::O5Differential,
+                return mk_r(
                     Category::Differential,
+                    Oracle::O5Differential,
                     &format!(
                         "differential default vs {name}: {} != {}",
                         signal_summary(&sigs_default),
                         signal_summary(&signals)
                     ),
-                    source,
                 );
             }
             Ok(Err(e)) => {
-                return mk(
-                    Target::Simulator,
-                    Oracle::O5Differential,
+                return mk_r(
                     Category::Differential,
+                    Oracle::O5Differential,
                     &format!("{name} path error, default ok: {e}"),
-                    source,
                 );
             }
             Err(_) => {
-                return mk(
-                    Target::Simulator,
-                    Oracle::O5Differential,
+                return mk_r(
                     Category::Differential,
+                    Oracle::O5Differential,
                     &format!("{name} path panic, default ok"),
-                    source,
                 );
             }
         }
@@ -384,15 +514,13 @@ fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
     match trace_result {
         Ok(Ok((sigs_trace, trace))) => {
             if trace.is_empty() {
-                return mk(
-                    Target::Simulator,
-                    Oracle::O1NoCrash,
+                return mk_r(
                     Category::Ok,
+                    Oracle::O1NoCrash,
                     &format!(
                         "sim ok, no trace ({} signals)",
                         sigs_trace.len()
                     ),
-                    source,
                 );
             }
 
@@ -402,30 +530,30 @@ fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
                 .filter(|t| !t.is_empty() && !t.trim().is_empty())
                 .collect();
             if meaningful_traces.is_empty() {
-                return mk(
-                    Target::Simulator,
-                    Oracle::O1NoCrash,
+                return mk_r(
                     Category::Ok,
+                    Oracle::O1NoCrash,
                     &format!(
                         "sim ok, trace kosong ({} entries, {} signals)",
                         trace.len(),
                         sigs_trace.len()
                     ),
-                    source,
                 );
             }
 
-            if sigs_trace != sigs_default {
-                return mk(
-                    Target::Simulator,
-                    Oracle::O5Differential,
+            let m_tr: std::collections::BTreeMap<&str, &maria_ir::LogicVec> =
+                sigs_trace.iter().map(|(n, v)| (n.as_str(), v)).collect();
+            let m_d: std::collections::BTreeMap<&str, &maria_ir::LogicVec> =
+                sigs_default.iter().map(|(n, v)| (n.as_str(), v)).collect();
+            if m_tr != m_d {
+                return mk_r(
                     Category::Differential,
+                    Oracle::O5Differential,
                     &format!(
                         "trace final state berbeda: {} != {}",
                         signal_summary(&sigs_default),
                         signal_summary(&sigs_trace)
                     ),
-                    source,
                 );
             }
 
@@ -440,33 +568,27 @@ fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
                 let ic = crate::oracle_icarus::evaluate_icarus(source, timeout_ms);
                 match ic.verdict {
                     crate::oracle_icarus::Verdict::Mismatch => {
-                        return mk(
-                            Target::Simulator,
-                            Oracle::O5Differential,
+                        return mk_r(
                             Category::Differential,
+                            Oracle::O5Differential,
                             &ic.detail,
-                            source,
                         );
                     }
                     crate::oracle_icarus::Verdict::MariaBug => {
-                        return mk(
-                            Target::Simulator,
-                            Oracle::O1NoCrash,
+                        return mk_r(
                             Category::Panic,
+                            Oracle::O1NoCrash,
                             &ic.detail,
-                            source,
                         );
                     }
                     crate::oracle_icarus::Verdict::Match => {
-                        return mk(
-                            Target::Simulator,
-                            Oracle::O5Differential,
+                        return mk_r(
                             Category::Ok,
+                            Oracle::O5Differential,
                             &format!(
                                 "sim VERIFIED vs Icarus reference ({}) — hasil identik",
                                 ic.detail
                             ),
-                            source,
                         );
                     }
                     crate::oracle_icarus::Verdict::RefUnavailable => {
@@ -492,50 +614,40 @@ fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
 
             if is_passive {
                 // Design TANPA blok prosedural — X/Z wajar (undriven).
-                return mk(
-                    Target::Simulator,
-                    Oracle::O1NoCrash,
+                return mk_r(
                     Category::Ok,
+                    Oracle::O1NoCrash,
                     &format!("{detail} — design pasif (0 proses), X/Z wajar"),
-                    source,
                 );
             }
             if x_heavy {
                 // Stimulus ada tapi signal dominan X → butuh perhatian:
                 // bisa wajar (X-latch) atau bukti state-propagation bug.
-                return mk(
-                    Target::Simulator,
-                    Oracle::O1NoCrash,
+                return mk_r(
                     Category::Suspicious,
+                    Oracle::O1NoCrash,
                     &format!("{detail} — stimulus ada ({}) namun X/Z dominan ({}/{})", ev.process_count, ev.x_remain + ev.z_remain, ev.signal_count),
-                    source,
                 );
             }
 
-            mk(
-                Target::Simulator,
-                Oracle::O1NoCrash,
+            mk_r(
                 Category::Ok,
+                Oracle::O1NoCrash,
                 &detail,
-                source,
             )
         }
         Ok(Err(e)) => {
-            return mk(
-                Target::Simulator,
-                Oracle::O5Differential,
+            return mk_r(
                 Category::Differential,
+                Oracle::O5Differential,
                 &format!("trace gagal setelah sim default sukses: {e}"),
-                source,
             );
         }
         Err(_) => {
-            return mk(
-                Target::Simulator,
-                Oracle::O5Differential,
+            return mk_r(
                 Category::Differential,
+                Oracle::O5Differential,
                 "trace panic setelah sim default sukses",
-                source,
             );
         }
     }
@@ -581,7 +693,29 @@ fn detect_violation(output: &str) -> Option<String> {
 
 /// O3: fmt round-trip (jika tool fmt tersedia via maria_api::tools).
 fn evaluate_fmt(source: &str) -> CaseResult {
-    // Fmt target dijalankan in-process — round-trip check
+    // Fmt target dijalankan in-process — round-trip check. Thread stack besar
+    // (lexer/parser rekursif bisa overflow pada input mutasi — ditemukan fuzzer
+    // seed 7 stack overflow di fmt ~kasus 500, sama dgn compile/sim).
+    let source_owned = source.to_string();
+    let result: Option<CaseResult> = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .name("maria-fuzz-fmt".into())
+        .spawn(move || fmt_in_thread(&source_owned))
+        .ok()
+        .and_then(|h| h.join().ok());
+    match result {
+        Some(r) => r,
+        None => mk(
+            Target::Fmt,
+            Oracle::O1NoCrash,
+            Category::Panic,
+            "thread fmt gagal (join err)",
+            source,
+        ),
+    }
+}
+
+fn fmt_in_thread(source: &str) -> CaseResult {
     let caught = std::panic::catch_unwind(|| fmt_roundtrip(source));
     match caught {
         Ok(Ok(())) => mk(Target::Fmt, Oracle::O3Roundtrip, Category::Ok, "fmt ok", source),
@@ -685,53 +819,363 @@ fn fmt_roundtrip(source: &str) -> Result<(), FmtError> {
 
 /// Target CLI: jalankan maria binary dengan arg random di cwd temp.
 fn evaluate_cli(source: &str, timeout_ms: u64) -> CaseResult {
-    let _ = source;
-    let args = gen_cli_args();
+    // CLI/tool dijalankan ATAS source mutasi nyata — sebelum ini argumen acak
+    // tanpa file (`let _ = source`), jadi tools (mcheck/melab/msim/...) dan
+    // flag pipeline tak pernah tersentuh source yang dimutasi. Tulis source ke
+    // temp file → jalankan `maria <file> <flags>` / `maria <tool> <file>`.
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "mariafzcli_{}_{}.sv",
+        std::process::id(),
+        crate::next_crash_seq()
+    ));
+    if std::fs::write(&path, source).is_err() {
+        return mk(
+            Target::Cli,
+            Oracle::O1NoCrash,
+            Category::CleanError,
+            "gagal tulis temp file",
+            source,
+        );
+    }
+
+    // RNG deterministik per-case (hash source) → kombinasi flags reproducible.
+    let mut h: u64 = 0x9E3779B97F4A7C15;
+    for b in source.bytes() {
+        h = h.rotate_left(5) ^ u64::from(b).wrapping_mul(0x100000001B3);
+        h = h.wrapping_mul(0x9E3779B97F4A7C15);
+    }
+    let mut rng = crate::Rng::new(h);
+
+    let args = gen_cli_args(&mut rng, &path, source);
     let outcome = crate::runner::run_args(&args, timeout_ms);
+    let _ = std::fs::remove_file(&path);
+
+    let args_desc = args.join(" ");
+
+    // Double-run determinisme utk tool STATIS (mfmt/mcheck/mlint/minspect —
+    // output logis harus identik antar run; baris timing di-strip). Msm/melab
+    // punya timing output — tidak di-double-run. Oracle O4 atas tool CLI.
+    let is_static_tool = matches!(
+        args.first().map(String::as_str),
+        Some("mfmt") | Some("mcheck") | Some("mlint") | Some("minspect")
+    );
+    if is_static_tool && outcome.kind == crate::runner::Kind::Ok && rng.chance(40) {
+        let second = crate::runner::run_args(&args, timeout_ms);
+        if second.kind == crate::runner::Kind::Ok {
+            let strip = |s: &str| -> Vec<String> {
+                s.lines()
+                    .filter(|l| {
+                        !l.contains("time") && !l.contains("µs") && !l.contains("ms)")
+                    })
+                    .map(|l| l.trim().to_string())
+                    .collect()
+            };
+            if strip(&outcome.stdout) != strip(&second.stdout) {
+                return mk(
+                    Target::Cli,
+                    Oracle::O4Determinism,
+                    Category::NonDeterministic,
+                    &format!("cli {args_desc}: tool output beda antar 2 run identik"),
+                    source,
+                );
+            }
+        }
+    }
+
     match outcome.kind {
         crate::runner::Kind::Ok => mk(
             Target::Cli,
             Oracle::O1NoCrash,
             Category::Ok,
-            &format!("cli ok: {}", args.join(" ")),
-            "",
+            &format!("cli ok: {args_desc}"),
+            source,
         ),
         crate::runner::Kind::CleanError => mk(
             Target::Cli,
             Oracle::O1NoCrash,
             Category::CleanError,
-            &outcome.stderr,
-            "",
+            &format!("cli {args_desc}: {}", outcome.stderr),
+            source,
         ),
         crate::runner::Kind::Panic => mk(
             Target::Cli,
             Oracle::O1NoCrash,
             Category::Panic,
-            &outcome.stderr,
-            "",
+            &format!("cli {args_desc}: {}", outcome.stderr),
+            source,
         ),
         crate::runner::Kind::Abort => mk(
             Target::Cli,
             Oracle::O1NoCrash,
             Category::Abort,
-            &outcome.stderr,
-            "",
+            &format!("cli {args_desc}: {}", outcome.stderr),
+            source,
         ),
         crate::runner::Kind::Crash(code) => mk(
             Target::Cli,
             Oracle::O1NoCrash,
             Category::Panic,
-            &format!("crash code {code}"),
-            "",
+            &format!("cli {args_desc}: crash code {code}: {}", outcome.stderr),
+            source,
         ),
         crate::runner::Kind::Hang => mk(
             Target::Cli,
             Oracle::O1NoCrash,
             Category::Hang,
-            &format!("hang > {} ms", timeout_ms),
-            "",
+            &format!("cli {args_desc}: hang > {} ms", timeout_ms),
+            source,
         ),
     }
+}
+
+/// Fuzzing VCD WAVEFORM PIPELINE (area belum tersentuh — mwave/tools VCD
+/// tidak pernah di-fuzz):
+/// 1. Generate VCD base dari source yang sim-ok via `maria msim <sv> -o <vcd>`.
+/// 2. Mutasi VCD (teks) 0-1x — VCD parser stress (format rusak, scope tak
+///    seimbang, timestamp acak, dll).
+/// 3. Jalankan subcommand mwave (stats/tree/search/export/compare/filter/merge/
+///    get) atas VCD mutasi → O1 no-crash (panic/abort/hang di tool VCD = bug).
+/// 4. O4: stats double-run → output harus identik.
+fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
+    use std::path::PathBuf;
+    let mk_v = |c: Category, o: Oracle, d: &str| {
+        mk(Target::Vcd, o, c, d, source)
+    };
+
+    // Hash source → RNG deterministik per-case.
+    let mut h: u64 = 0x9E3779B97F4A7C15;
+    for b in source.bytes() {
+        h = h.rotate_left(5) ^ u64::from(b).wrapping_mul(0x100000001B3);
+        h = h.wrapping_mul(0x9E3779B97F4A7C15);
+    }
+    let mut rng = crate::Rng::new(h);
+
+    // ── 1. Generate VCD base ──
+    let dir = std::env::temp_dir();
+    let stem = format!("mariafzv_{}_{}", std::process::id(), crate::next_crash_seq());
+    let sv = dir.join(format!("{stem}.sv"));
+    let vcd_base = dir.join(format!("{stem}_base.vcd"));
+    let vcd_mut = dir.join(format!("{stem}_mut.vcd"));
+    let vcd_out = dir.join(format!("{stem}_out.vcd"));
+    if std::fs::write(&sv, source).is_err() {
+        return mk_v(Category::CleanError, Oracle::O1NoCrash, "gagal tulis temp sv");
+    }
+    let args = vec![
+        "msim".to_string(),
+        sv.to_string_lossy().to_string(),
+        "-T".to_string(),
+        "200".to_string(),
+        "-o".to_string(),
+        vcd_base.to_string_lossy().to_string(),
+    ];
+    let outcome = crate::runner::run_args(&args, timeout_ms);
+    let _ = std::fs::remove_file(&sv);
+    if outcome.kind != crate::runner::Kind::Ok {
+        // Source tidak sim-ok (mutasi merusak sintaks/elab) — bukan area VCD.
+        let _ = std::fs::remove_file(&vcd_base);
+        return mk_v(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            "sim pendahulu gagal — VCD tidak dihasilkan",
+        );
+    }
+    let vcd_src = match std::fs::read_to_string(&vcd_base) {
+        Ok(s) if s.trim().len() >= 32 => s,
+        _ => {
+            let _ = std::fs::remove_file(&vcd_base);
+            return mk_v(Category::CleanError, Oracle::O1NoCrash, "VCD kosong/tidak terbentuk");
+        }
+    };
+
+    // ── 2. Mutasi VCD 0-1x (tanpa splice corpus — Corpus kosong) ──
+    let empty_corpus = crate::corpus::Corpus::load(Some(&PathBuf::from("/nonexistent-fz-vcd")));
+    let mut vcd_target = vcd_src;
+    if rng.chance(70) {
+        let mut mutator = crate::mutator::Mutator::new(&mut rng);
+        vcd_target = mutator.mutate(&vcd_target, &empty_corpus);
+    }
+    if std::fs::write(&vcd_mut, &vcd_target).is_err() {
+        let _ = std::fs::remove_file(&vcd_base);
+        return mk_v(Category::CleanError, Oracle::O1NoCrash, "gagal tulis VCD mutasi");
+    }
+
+    let mcmd = |args2: Vec<String>| -> crate::runner::Outcome {
+        crate::runner::run_args(&args2, timeout_ms)
+    };
+    let vcd_mut_s = vcd_mut.to_string_lossy().to_string();
+    let vcd_base_s = vcd_base.to_string_lossy().to_string();
+    let vcd_out_s = vcd_out.to_string_lossy().to_string();
+
+    // ── 3. Kombinasi mwave subcommand (2 acak dari 8) ──
+    let cmds: [Vec<String>; 8] = [
+        vec!["mwave".into(), "stats".into(), vcd_mut_s.clone()],
+        vec!["mwave".into(), "tree".into(), vcd_mut_s.clone()],
+        vec!["mwave".into(), "search".into(), vcd_mut_s.clone(), "*".into()],
+        vec!["mwave".into(), "export".into(), vcd_mut_s.clone()],
+        vec!["mwave".into(), "compare".into(), vcd_base_s.clone(), vcd_mut_s.clone()],
+        vec!["mwave".into(), "filter".into(), vcd_mut_s.clone(), "q".into(), "clk".into()],
+        vec![
+            "mwave".into(),
+            "merge".into(),
+            vcd_base_s.clone(),
+            vcd_mut_s.clone(),
+            "-o".into(),
+            vcd_out_s.clone(),
+        ],
+        vec!["mwave".into(), "get".into(), vcd_mut_s.clone(), "--at".into(), "0".into()],
+    ];
+    let n = 1 + rng.below(2);
+    for _ in 0..n {
+        let idx = rng.below(cmds.len());
+        let o = mcmd(cmds[idx].clone());
+        match o.kind {
+            crate::runner::Kind::Ok => {}
+            crate::runner::Kind::CleanError => {
+                // VCD korup → error parser wajar (bukan bug).
+                let _ = std::fs::remove_file(&vcd_base);
+                let _ = std::fs::remove_file(&vcd_mut);
+                return mk_v(Category::CleanError, Oracle::O1NoCrash, "mwave clean error (VCD invalid)");
+            }
+            crate::runner::Kind::Panic => {
+                let _ = std::fs::remove_file(&vcd_base);
+                let _ = std::fs::remove_file(&vcd_mut);
+                return mk_v(Category::Panic, Oracle::O1NoCrash, &format!("mwave panic: {}", o.stderr));
+            }
+            crate::runner::Kind::Abort => {
+                let _ = std::fs::remove_file(&vcd_base);
+                let _ = std::fs::remove_file(&vcd_mut);
+                return mk_v(Category::Abort, Oracle::O1NoCrash, &format!("mwave abort: {}", o.stderr));
+            }
+            crate::runner::Kind::Crash(code) => {
+                let _ = std::fs::remove_file(&vcd_base);
+                let _ = std::fs::remove_file(&vcd_mut);
+                return mk_v(Category::Panic, Oracle::O1NoCrash, &format!("mwave crash code {code}: {}", o.stderr));
+            }
+            crate::runner::Kind::Hang => {
+                let _ = std::fs::remove_file(&vcd_base);
+                let _ = std::fs::remove_file(&vcd_mut);
+                return mk_v(Category::Hang, Oracle::O1NoCrash, &format!("mwave hang > {} ms", timeout_ms));
+            }
+        }
+    }
+
+    // ── 4. O4 stats double-run (output identik antar run) ──
+    let stats_args = vec!["mwave".into(), "stats".into(), vcd_mut_s.clone()];
+    let o1 = mcmd(stats_args.clone());
+    let o2 = mcmd(stats_args);
+    if o1.kind == crate::runner::Kind::Ok && o2.kind == crate::runner::Kind::Ok {
+        if o1.stdout != o2.stdout {
+            let _ = std::fs::remove_file(&vcd_base);
+            let _ = std::fs::remove_file(&vcd_mut);
+            return mk_v(
+                Category::NonDeterministic,
+                Oracle::O4Determinism,
+                "mwave stats non-deterministik: dua run identik hasil beda",
+            );
+        }
+    }
+
+    let _ = std::fs::remove_file(&vcd_base);
+    let _ = std::fs::remove_file(&vcd_mut);
+    let _ = std::fs::remove_file(&vcd_out);
+    mk_v(Category::Ok, Oracle::O1NoCrash, "vcd pipeline ok: mwave robust + deterministic")
+}
+
+/// Argumen CLI untuk satu kasus fuzz: tool subcommand ATAU pipeline flags,
+/// atas satu file temp. RNG per-case (bukan global) → deterministik.
+fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> Vec<String> {
+    let file = path.to_string_lossy().to_string();
+    let mut args = Vec::new();
+
+    // 50%: tool subcommand `maria <tool> <file> [flags]` — area maria-tools
+    // (mcheck/melab/msim/mfmt/mlint/minspect/mprof) tak pernah di-fuzz atas
+    // source mutasi sebelumnya. mbench/mcov/mwave/synth sengaja dilewatkan
+    // (berat/butuh VCD — timeout palsu).
+    if rng.chance(50) {
+        let tools = [
+            "mcheck", "melab", "msim", "mfmt", "mlint", "minspect", "mprof",
+        ];
+        let t = tools[rng.below(tools.len())];
+        args.push(t.to_string());
+        args.push(file.clone());
+        match t {
+            "msim" => {
+                args.push("-T".to_string());
+                args.push(["50", "100", "200", "1000"][rng.below(4)].to_string());
+            }
+            "mfmt" => {
+                if rng.chance(25) {
+                    args.push("--check".to_string());
+                }
+            }
+            _ => {}
+        }
+        return args;
+    }
+
+    // Pipeline: `maria <file> [-T N] <flags>` — flag nondestruktif.
+    // --debug/--step dulu dilewatkan (interaktif) — diuji manual: semua flag
+    // debug keluar EXIT 0 dgn stdin-null, tak hang. Tambah sekarang:
+    // --deep-debug/--break-cycle/--timeline/--print-signal/--snap-interval/
+    // --watch/--debug = area debugger yang belum pernah di-fuzz.
+    args.push(file.clone());
+    if rng.chance(70) {
+        args.push("-T".to_string());
+        args.push(["50", "100", "200", "1000"][rng.below(4)].to_string());
+    }
+    // mode run_fast: 20% jalur MICD penuh (beda pipeline vs `maria run`).
+    if rng.chance(20) {
+        args.insert(0, "run_fast".to_string());
+    }
+
+    let flags = [
+        "--ast", "--tokens", "--tree", "--print-state", "--coverage", "--fast",
+        "--recompile", "--deep-debug", "--debug",
+    ];
+    let n = 1 + rng.below(3);
+    for _ in 0..n {
+        if rng.chance(55) {
+            args.push(flags[rng.below(flags.len())].to_string());
+        }
+    }
+    // Flag debug bernilai: break-cycle / snap-interval / timeline / print-signal
+    if rng.chance(45) {
+        let cv = rng.below(3);
+        match cv {
+            0 => {
+                args.push("--break-cycle".to_string());
+                args.push(format!("{}", 1 + rng.below(50)));
+            }
+            1 => {
+                args.push("--snap-interval".to_string());
+                args.push(format!("{}", 10 + rng.below(200)));
+            }
+            _ => {
+                // --timeline/--print-signal/--watch butuh nama signal — pilih
+                // ident pendek dari source (nama signal nyata bila ada).
+                let mut name = "q".to_string();
+                'outer: for w in source.split([' ', '\n', '\t', '(', ')', ',', ';', '[', ']', '.']) {
+                    let w = w.trim();
+                    if w.len() >= 2
+                        && w.len() <= 16
+                        && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        && !w.is_empty()
+                    {
+                        name = w.to_string();
+                        break 'outer;
+                    }
+                }
+                let kind = rng.below(3);
+                match kind {
+                    0 => { args.push("--timeline".to_string()); args.push(name.clone()); }
+                    1 => { args.push("--print-signal".to_string()); args.push(name.clone()); }
+                    _ => { args.push("--watch".to_string()); args.push(name.clone()); }
+                }
+            }
+        }
+    }
+    args
 }
 
 /// Fuzzing PREPROCESSOR (area belum tersentuh):
@@ -851,35 +1295,4 @@ fn has_num_colon(msg: &str) -> bool {
         i += 1;
     }
     false
-}
-
-/// Argumen CLI random untuk target Cli.
-fn gen_cli_args() -> Vec<String> {
-    let mut rng = crate::Rng::new(0xDEADBEEF);
-    let cmds = [
-        "compile", "simulate", "run", "run_fast", "check", "lint",
-        "elaborate", "wave", "bench", "prof", "synth",
-    ];
-    let flags = [
-        "--ast", "--tokens", "--tree", "--print-state", "--debug",
-        "--deep-debug", "--fast", "--recompile", "--coverage",
-    ];
-    let paths = [
-        "fz_top.sv", "tb_top.sv", "test.sv", "a.sv", "b.sv",
-        ".", "..", "/tmp/fz_input.sv",
-    ];
-
-    let n = rng.below(6);
-    let mut args = Vec::new();
-    if rng.chance(70) {
-        args.push(cmds[rng.below(cmds.len())].to_string());
-    }
-    for _ in 0..n {
-        if rng.chance(50) {
-            args.push(flags[rng.below(flags.len())].to_string());
-        } else {
-            args.push(paths[rng.below(paths.len())].to_string());
-        }
-    }
-    args
 }

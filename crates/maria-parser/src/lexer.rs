@@ -928,9 +928,21 @@ impl Lexer {
                     break;
                 }
                 s.push(self.advance());
-                // Read base character
-                if self.peek().is_some() {
+                // Read base character — signed `'sB`: consume `s` + base char.
+                // Sebelumnya hanya satu char (`s`) → base `b` jatuh ke value loop,
+                // base_char last = 's' → desimal → `1'sb0` jadi base 10 signed
+                // (ditemukan fuzzer roundtrip mismatch: `1'sb0` → `1'sdb0` →
+                // `1'sddb0` tiap pass tambah `d`).
+                let first = self.peek();
+                if let Some(c0) = first {
                     s.push(self.advance());
+                    if matches!(c0, 's' | 'S') {
+                        if let Some(c1) = self.peek() {
+                            if matches!(c1, 'b' | 'B' | 'o' | 'O' | 'd' | 'D' | 'h' | 'H') {
+                                s.push(self.advance());
+                            }
+                        }
+                    }
                 }
                 // Skip whitespace before value (e.g., 32'h 0000_0000)
                 while let Some(c) = self.peek() {
@@ -940,16 +952,32 @@ impl Lexer {
                         break;
                     }
                 }
-                // Read the value part
+                // Read the value part — charset sesuai BASE (b/o/d/h). Sebelumnya semua
+                // alphanumeric dimakan → `64'd0pinmux` jadi satu token number
+                // value "0pinmux" (invalid, fmt korup — ditemukan fuzzer roundtrip
+                // mismatch OpenTitan pinmux bind). Huruf invalid → token pecah
+                // (Number + Ident terpisah).
+                let base_char = s.chars().last().unwrap_or('d');
+                let valid_char = |c: char| -> bool {
+                    match base_char.to_ascii_lowercase() {
+                        'b' => matches!(
+                            c,
+                            '0' | '1' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'
+                        ),
+                        'o' => matches!(
+                            c,
+                            '0'..='7' | '8'..='9' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'
+                        ),
+                        'h' => {
+                            c.is_ascii_hexdigit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
+                        }
+                        _ => {
+                            c.is_ascii_digit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
+                        }
+                    }
+                };
                 while let Some(c) = self.peek() {
-                    if c.is_ascii_alphanumeric()
-                        || c == '_'
-                        || c == 'x'
-                        || c == 'z'
-                        || c == 'X'
-                        || c == 'Z'
-                        || c == '?'
-                    {
+                    if valid_char(c) {
                         s.push(self.advance());
                     } else {
                         break;
@@ -1400,14 +1428,24 @@ impl Lexer {
                             }
                         }
                         let mut value = String::new();
+                        // Charset sesuai base — `'d0pinmux` harus pecah jadi
+                        // Number('d0) + Ident(pinmux), bukan value "0pinmux"
+                        // (fuzzer roundtrip mismatch OpenTitan pinmux bind).
+                        let valid_uc = |c: char, b: u32| -> bool {
+                            match b {
+                                2 => matches!(c, '0' | '1' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'),
+                                8 => matches!(c, '0'..='9' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'),
+                                16 => {
+                                    c.is_ascii_hexdigit()
+                                        || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
+                                }
+                                _ => {
+                                    c.is_ascii_digit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
+                                }
+                            }
+                        };
                         while let Some(c) = self.peek() {
-                            if c.is_ascii_alphanumeric()
-                                || c == '_'
-                                || c == 'x'
-                                || c == 'z'
-                                || c == 'X'
-                                || c == 'Z'
-                            {
+                            if valid_uc(c, base as u32) {
                                 value.push(self.advance());
                             } else {
                                 break;
