@@ -18,7 +18,15 @@ use maria_core::intern::Symbol;
 impl Parser {
     pub(crate) fn parse_clocking_block(&mut self) -> Result<ClockingBlock, SimError> {
         self.advance(); // consume 'clocking'
-        let name = self.expect_ident()?;
+        // Bentuk `default clocking @(posedge clk); endclocking` — clocking
+        // block ANONIM (tanpa nama, LRM 1800 §14.3): `clocking` langsung
+        // diikuti `@`, bukan nama. Pola ini muncul dalam generate block
+        // interface (keymgr_if OpenTitan) sebagai clocking default.
+        let name = if self.peek() == &Token::At {
+            Symbol::intern("")
+        } else {
+            self.expect_ident()?
+        };
 
         // Parse clock event: @(posedge clk) or @(negedge clk) or @(clk)
         self.expect(Token::At)?;
@@ -41,6 +49,10 @@ impl Parser {
                 sig = Symbol::intern(&format!("{}.{}", sig, seg));
             }
             ClockEvent::Negedge(sig)
+        } else if self.peek() == &Token::RParen {
+            // Event kosong `clocking cb @();` — jarang, terima agar tidak
+            // error (event nyata tidak dipakai simulator).
+            ClockEvent::Edge(Symbol::intern(""))
         } else {
             let mut sig = self.expect_ident()?;
             while self.peek() == &Token::Dot {
@@ -83,6 +95,35 @@ impl Parser {
                     break;
                 }
                 Token::Default => {
+                    // `default clocking @(posedge clk); endclocking` inline —
+                    // satu baris berisi `default clocking` + event + `;` +
+                    // `endclocking`. Setelah `default`, `clocking` menandai
+                    // bentuk ini (default skew biasa diikuti input/output).
+                    if self.peek_ahead(1) == &Token::Clocking {
+                        self.advance(); // 'default'
+                        self.advance(); // 'clocking'
+                        // Event: `@(posedge clk)` dsb. Event expression
+                        // dilewati balance-aware sampai `;`.
+                        if self.peek() == &Token::At {
+                            self.advance();
+                            if self.peek() == &Token::LParen {
+                                self.skip_balanced_paren()?;
+                            }
+                        }
+                        self.skip_semi();
+                        // `endclocking` (dengan label opsional) di baris yang
+                        // sama — konsumsi dan keluar dari blok.
+                        if self.peek() == &Token::EndClocking {
+                            self.advance();
+                            if self.peek() == &Token::Colon {
+                                self.advance();
+                                if matches!(self.peek(), Token::Ident(_)) {
+                                    self.advance();
+                                }
+                            }
+                        }
+                        break;
+                    }
                     // default input/output #skew;
                     self.advance();
                     if self.peek() == &Token::Input {

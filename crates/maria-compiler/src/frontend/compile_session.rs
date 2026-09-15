@@ -403,12 +403,14 @@ impl CompileSession {
                 let combined = combined_opt.unwrap_or_default();
                 let base = base_offsets[file_idx];
                 let path_str = path.to_string_lossy();
+                // file_line_map: tracks `line directive mappings for resolve_source_file.
+                // Positions are CUMULATIVE in the per-file combined (same as token lines).
+                // Adjusted by base offset after lexing, same as tokens.
+                let mut file_line_map: Vec<(usize, usize, String)> = Vec::new();
                 let tokens = if use_fast_lexer {
-                    // FastLexer mereset line counter ke nilai deklarasi `line directive
-                    // (biasanya 1), sehingga posisi per-file bersifat file-relative
-                    // (baris directive tidak ikut dihitung). Karena merged source
-                    // memasukkan baris directive itu, tambahkan +1 agar posisi global
-                    // menunjuk baris yang benar di source gabungan.
+                    // FastLexer keeps cumulative line numbers; content after the
+                    // initial `line 1 "file" directive starts at internal line 2,
+                    // so global position = line + base (mirrors merged source).
                     let mut lexer = FastLexer::new(&combined, &path_str);
                     let mut toks = Vec::new();
                     loop {
@@ -416,8 +418,14 @@ impl CompileSession {
                         if tok == Token::Eof {
                             break;
                         }
-                        toks.push((tok, line + base + 1, col));
+                        toks.push((tok, line + base, col));
                     }
+                    // Adjust file_line_map positions by the same base offset as tokens
+                    file_line_map = lexer
+                        .file_line_map
+                        .into_iter()
+                        .map(|(pos, val, file)| (pos + base, val, file))
+                        .collect();
                     tokens_lexed.fetch_add(toks.len() as u64, std::sync::atomic::Ordering::Relaxed);
                     toks
                 } else {
@@ -432,6 +440,12 @@ impl CompileSession {
                         }
                         toks.push((tok, line + base, col));
                     }
+                    // Adjust file_line_map positions by the same base offset as tokens
+                    file_line_map = lexer
+                        .file_line_map
+                        .into_iter()
+                        .map(|(pos, val, file)| (pos + base, val, file))
+                        .collect();
                     tokens_lexed.fetch_add(toks.len() as u64, std::sync::atomic::Ordering::Relaxed);
                     toks
                 };
@@ -467,7 +481,8 @@ impl CompileSession {
                 let mut parser = Parser::new(tokens, &path_str)
                     .with_global_type_names(&global_classes, &global_typedefs)
                     .with_source_lines(&combined)
-                    .with_line_base(base + 1); // +1 karena FastLexer line dimulai dari 1 (directive)
+                    .with_file_line_map(file_line_map)
+                    .with_line_base(base); // token global = line + base (cumulative)
                 let design = parser.parse_design()?;
                 let parse_errors = parser.errors;
                 if std::env::var("MARIA_DEBUG_PARSE").is_ok() && !parse_errors.is_empty() {

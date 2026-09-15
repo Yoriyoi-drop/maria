@@ -1942,17 +1942,7 @@ impl Parser {
                                             args.push(self.parse_expr(0)?);
                                         }
                                         if self.peek() == &Token::Comma {
-                                            let ahead = self.peek_ahead(1).clone();
-                                            let is_new_port = ahead == Token::Input
-                                                || ahead == Token::Output
-                                                || ahead == Token::Inout
-                                                || (matches!(&ahead, Token::Ident(_))
-                                                    && matches!(self.peek_ahead(2), Token::Scope));
-                                            if !is_new_port {
-                                                self.advance();
-                                            } else {
-                                                break;
-                                            }
+                                            self.advance();
                                         } else {
                                             break;
                                         }

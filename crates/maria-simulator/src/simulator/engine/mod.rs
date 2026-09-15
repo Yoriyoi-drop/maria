@@ -115,6 +115,12 @@ pub struct SimulationEngine {
     pub design: IrDesign,
     pub state: SimulationState,
     pub sim_limit: SimulationLimit,
+    /// PERF-16: cache lookup nama sinyal flatten → SignalId. Dibangun lazy
+    /// SEKALI (top.signals + hier_signal_map statis setelah elaborasi) dan
+    /// menggantikan scan linear O(S) per akses hierarkis di `find_signal`
+    /// (hot path runtime — O(N·S) per cycle = O(N²) pada desain besar yang
+    /// mengakses sinyal hierarkis, mis. `bus.arr[k]`, per cycle).
+    pub signal_lookup: std::sync::OnceLock<std::collections::HashMap<Symbol, usize>>,
     /// Aktifkan laporan progres berkala (tiap 1M tick) + deteksi stall ke
     /// stderr. Di-set true oleh CLI (default false agar output library/test
     /// tetap bersih).

@@ -125,7 +125,7 @@ where
     let mut guard = 0usize;
     loop {
         guard += 1;
-        if guard > 100_000 {
+        if guard > 4096 {
             return Ok(None);
         }
         let keep = match cmp_op {

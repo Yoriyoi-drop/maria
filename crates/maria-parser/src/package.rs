@@ -200,15 +200,29 @@ impl Parser {
                                     _ => break,
                                 };
                                 // Skip unpacked array dimension(s) after name:
-                                // name [N] atau name [msb:lsb] (multi-dimensi diperbolehkan)
+                                // name [N], name [msb:lsb], name [] (dynamic),
+                                // name [$] (queue). Multi-dimensi diperbolehkan.
                                 while self.peek() == &Token::LBrack {
                                     self.advance();
-                                    self.parse_expr(0)?;
-                                    if self.peek() == &Token::Colon {
+                                    if self.peek() == &Token::RBrack {
+                                        // `[]` kosong — dynamic array
                                         self.advance();
+                                    } else if self.peek() == &Token::Dollar {
+                                        // `[$]` / `[$:N]` — queue
+                                        self.advance();
+                                        if self.peek() == &Token::Colon {
+                                            self.advance();
+                                            let _ = self.parse_expr(0);
+                                        }
+                                        self.expect(Token::RBrack)?;
+                                    } else {
                                         self.parse_expr(0)?;
+                                        if self.peek() == &Token::Colon {
+                                            self.advance();
+                                            self.parse_expr(0)?;
+                                        }
+                                        self.expect(Token::RBrack)?;
                                     }
-                                    self.expect(Token::RBrack)?;
                                 }
                                 let default = if self.peek() == &Token::BlockingAssign {
                                     self.advance();

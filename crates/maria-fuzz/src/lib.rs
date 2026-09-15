@@ -4,6 +4,12 @@
 //! opentitan). Semua seed dari RTL asli — TANPA template sintetis.
 //! Kampanye: ambil seed nyata → mutasi 0-4x → evaluasi oracle.
 
+// Sesuai desain Cargo.toml: seluruh isi crate HANYA aktif saat feature `dev`
+// (deps maria-api/maria-ir/maria-parser optional, di-gate oleh `dev`).
+// Tanpa gate ini `cargo test --workspace` (tanpa --features dev) compile
+// lib maria-fuzz polos → unresolved import `maria_api`/`maria_ir`/`maria_parser`.
+#![cfg(feature = "dev")]
+
 pub mod corpus;
 pub mod deps;
 pub mod directed;

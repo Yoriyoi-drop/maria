@@ -1361,7 +1361,15 @@ impl Parser {
                     None
                 };
                 let extra_packed_dims = self.parse_extra_packed_dims()?;
-                if let Token::Ident(name) = self.peek() {
+                if matches!(self.peek(), Token::Semi) {
+                    // `typedef name;` — alias ke NAMA SENDIRI (LRM 1800 §6.18:
+                    // "identical alias"). Muncul di package yang di-include
+                    // dua kali via guard berbeda (otbn_model_agent_pkg:
+                    // `typedef otbn_model_item;` dengan tipe belum tersedia
+                    // saat parse file tunggal). Registrasi no-op — JANGAN
+                    // error; typedef lengkap sesungguhnya yang menang.
+                    (type_name, dtype, None, Vec::new())
+                } else if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
                     // Queue typedef: `name [$]` / `name [$:N]` (unbounded /
@@ -1386,6 +1394,9 @@ impl Parser {
             }
             _ => return Err(self.err("expected type after typedef")),
         };
+        // Unpacked dims SETELAH nama typedef (`[]`, `[$]`, `[type]`, `[N]`)
+        // — konsumsi untuk semua branch (logic/bit/int/enum/struct/user-defined).
+        self.skip_typedef_unpacked_dims()?;
         self.skip_semi();
         Ok(TypedefDecl {
             name,
@@ -1736,6 +1747,40 @@ impl Parser {
     /// Dipakai di typedef agar `typedef logic [W-1:0][N-1:0] name;` tidak gagal parse.
     pub(crate) fn skip_extra_packed_dims(&mut self) -> Result<(), SimError> {
         let _ = self.parse_extra_packed_dims()?;
+        Ok(())
+    }
+
+    /// Consume UNPACKED dimensions setelah nama typedef — `[]` (dynamic),
+    /// `[$]` / `[$:N]` (queue), `[type_t]` / `[type_t:type_t]` (associative),
+    /// `[N]` (fixed unpacked). Bentuk `typedef logic state_t[];`,
+    /// `typedef logic [7:0] fq_t[$];`, `typedef data_t mem_t[addr_t];`
+    /// (umum di DV OpenTitan). Isi bracket dilewati balance-aware terhadap
+    /// bracket bersarang dan kurung ekspresi.
+    pub(crate) fn skip_typedef_unpacked_dims(&mut self) -> Result<(), SimError> {
+        while self.peek() == &Token::LBrack {
+            let mut depth: i64 = 0;
+            loop {
+                match self.peek() {
+                    Token::Eof => {
+                        return Err(self.err("unexpected EOF in typedef unpacked dimension"))
+                    }
+                    Token::LBrack => {
+                        depth += 1;
+                        self.advance();
+                    }
+                    Token::RBrack => {
+                        depth -= 1;
+                        self.advance();
+                        if depth <= 0 {
+                            break;
+                        }
+                    }
+                    _ => {
+                        self.advance();
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

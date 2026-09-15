@@ -32,6 +32,7 @@ impl SimulationEngine {
             stmt_lines: design.stmt_lines.clone(),
             design,
             sim_limit,
+            signal_lookup: std::sync::OnceLock::new(),
             report_progress: false,
             running: true,
             fatal_hit: false,

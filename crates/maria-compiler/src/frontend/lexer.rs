@@ -17,6 +17,9 @@ pub struct FastLexer<'a> {
     pos: usize,
     line: usize,
     col: usize,
+    /// `line directive mapping: (cumulative_line_at_directive, directive_value, file_path).
+    /// Populated during lexing; consumed by CompileSession → parser via with_file_line_map.
+    pub file_line_map: Vec<(usize, usize, String)>,
 }
 
 impl<'a> FastLexer<'a> {
@@ -27,6 +30,7 @@ impl<'a> FastLexer<'a> {
             pos: 0,
             line: 1,
             col: 1,
+            file_line_map: Vec::new(),
         }
     }
 
@@ -37,6 +41,7 @@ impl<'a> FastLexer<'a> {
             pos: 0,
             line: 1,
             col: 1,
+            file_line_map: Vec::new(),
         }
     }
 
@@ -236,19 +241,30 @@ impl<'a> FastLexer<'a> {
         }
         // Parse line number
         let after_cmd = trimmed[5..].trim();
-        let num_str = if let Some(quote_pos) = after_cmd.find('\"') {
-            after_cmd[..quote_pos].trim()
+        let (num_str, path) = if let Some(quote_pos) = after_cmd.find('\"') {
+            let p = after_cmd[quote_pos + 1..]
+                .split('"')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            (after_cmd[..quote_pos].trim().to_string(), p)
         } else {
-            after_cmd.trim()
+            (after_cmd.trim().to_string(), String::new())
         };
 
         if let Ok(new_line) = num_str.parse::<usize>() {
-            // Consume newline WITHOUT incrementing self.line
+            // Track directive for resolve_source_file (same as legacy Lexer).
+            // Position is CUMULATIVE line (we do NOT reset self.line) so
+            // tokens get globally unique line numbers after base offset.
+            if !path.is_empty() {
+                self.file_line_map.push((self.line, new_line, path));
+            }
+            // Consume newline, keep cumulative line counter
             if self.pos < self.input.len() && self.input[self.pos] == b'\n' {
                 self.pos += 1;
+                self.line += 1;
+                self.col = 1;
             }
-            self.line = new_line;
-            self.col = 1;
             return true;
         }
 
@@ -1236,7 +1252,11 @@ mod tests {
         let mut lexer = FastLexer::new(input, "");
         let (tok, line, col) = lexer.next_token();
         assert_eq!(tok, Token::Module);
-        assert_eq!(line, 42); // line directive should set line to 42
+        // Cumulative line: directive at line 1, content starts at line 2
+        assert_eq!(line, 2);
+        // file_line_map records (position, directive value, path)
+        assert_eq!(lexer.file_line_map.len(), 1);
+        assert_eq!(lexer.file_line_map[0], (1, 42, "test.sv".to_string()));
     }
 
     #[test]

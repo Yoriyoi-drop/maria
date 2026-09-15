@@ -1070,6 +1070,12 @@ impl Parser {
         self.expect(Token::LParen)?;
         if self.peek() != &Token::RParen {
             loop {
+                // Trailing comma: `#(.A(1), .B(2),)` (kmac_reduced_tb) —
+                // setelah koma langsung `)`. Toleransi agar tidak error
+                // "expected expression, found RParen".
+                if self.peek() == &Token::RParen {
+                    break;
+                }
                 if self.peek() == &Token::Dot {
                     self.advance();
                     let pname_tok = self.peek().clone();

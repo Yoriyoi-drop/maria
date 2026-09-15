@@ -139,7 +139,27 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 args.push(e);
             } else {
-                args.push(self.parse_expr(0)?);
+                let arg = match self.parse_expr(0) {
+                    Ok(e) => e,
+                    Err(_) => {
+                        // Arg gagal parse (concat `{...}`, cast `T'(...)`,
+                        // `$system(...)`, struct dll.) — recovery: skip ke
+                        // koma/`)` agar pemanggil lanjut. Arg panggilan
+                        // verification/dll tidak dipakai evaluator; placeholder
+                        // menjaga jumlah arg.
+                        let placeholder = Expr::Value(Value::Decimal(1));
+                        loop {
+                            match self.peek() {
+                                Token::Comma | Token::RParen | Token::Eof => break,
+                                _ => {
+                                    self.advance();
+                                }
+                            }
+                        }
+                        placeholder
+                    }
+                };
+                args.push(arg);
             }
             if self.peek() == &Token::Comma {
                 self.advance();

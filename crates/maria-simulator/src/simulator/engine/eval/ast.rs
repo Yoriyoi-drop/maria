@@ -1092,17 +1092,19 @@ impl SimulationEngine {
     }
 
     pub(crate) fn find_signal(&self, name: &str) -> Option<usize> {
-        self.design
-            .top
-            .signals
-            .iter()
-            .position(|s| s.name == name)
-            .or_else(|| {
-                self.design
-                    .hier_signal_map
-                    .get(&Symbol::intern(name))
-                    .copied()
-            })
+        // PERF-16: cache lookup dibangun lazy SEKALI. Design top.signals dan
+        // hier_signal_map STATIS setelah elaborasi → map aman di-cache.
+        // Sebelumnya: scan linear O(S) per akses hierarkis (HierRef /
+        // HierRefIndex) — O(N²) pada desain besar (lihat perf/REPORT).
+        let map = self.signal_lookup.get_or_init(|| {
+            let mut m: std::collections::HashMap<Symbol, usize> =
+                self.design.hier_signal_map.clone();
+            for (i, s) in self.design.top.signals.iter().enumerate() {
+                m.entry(s.name).or_insert(i);
+            }
+            m
+        });
+        map.get(&Symbol::intern(name)).copied()
     }
 
     pub(crate) fn build_hier_name(obj: &Expr, field: &str) -> String {
