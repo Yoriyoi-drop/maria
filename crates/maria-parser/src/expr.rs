@@ -721,7 +721,19 @@ impl Parser {
                         if self.peek() == &Token::RParen {
                             break;
                         }
-                        type_specs.push(self.parse_type_expr()?);
+                        // Named param `.P(VALUE)` — pola DV UVM
+                        // `Class#(.DeviceDataWidth(8))::type::new`. Item ini
+                        // BUKAN tipe — parse `expr` (eksi `parse_type_expr`
+                        // yang gagal dgn "expected type" pada Dot).
+                        if self.peek() == &Token::Dot {
+                            self.advance();
+                            let _ = self.expect_ident()?;
+                            self.expect(Token::LParen)?;
+                            let _ = self.parse_expr(0)?;
+                            self.expect(Token::RParen)?;
+                        } else {
+                            type_specs.push(self.parse_type_expr()?);
+                        }
                         if self.peek() == &Token::Comma {
                             self.advance();
                         } else {

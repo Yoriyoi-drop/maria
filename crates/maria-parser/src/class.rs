@@ -116,6 +116,44 @@ impl Parser {
                 body.push(ConstraintItem::If { cond, then, els });
                 continue;
             }
+            // `foreach (arr[i]) { constraints }` di dalam dengan-block /
+            // constraint body (pola umum UVM randomize-with). ConstraintItem
+            // TIDAK punya variant foreach — parse body (recursive) & BUANG
+            // (parsing resilience; body tidak dipakai engine).
+            if self.peek() == &Token::Foreach {
+                self.advance();
+                if self.peek() == &Token::LParen {
+                    // Foreach header `(arr[i])` — balanced.
+                    let mut depth = 0i32;
+                    loop {
+                        match self.peek() {
+                            Token::Eof => break,
+                            Token::LParen => {
+                                depth += 1;
+                                self.advance();
+                            }
+                            Token::RParen => {
+                                depth -= 1;
+                                self.advance();
+                                if depth <= 0 {
+                                    break;
+                                }
+                            }
+                            _ => self.advance(),
+                        }
+                    }
+                }
+                if self.peek() == &Token::LBrace {
+                    self.advance();
+                    let _ = self.parse_constraint_items();
+                    if self.peek() == &Token::RBrace {
+                        self.advance();
+                    }
+                } else {
+                    let _ = self.skip_until_semi_or_end();
+                }
+                continue;
+            }
             // `soft expr;` (LANG-31) — constraint soft (best-effort): boleh
             // dilanggar bila bertentangan dengan hard constraint.
             if self.peek() == &Token::Soft {
