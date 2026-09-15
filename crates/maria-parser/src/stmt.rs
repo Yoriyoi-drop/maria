@@ -56,6 +56,28 @@ impl Parser {
             }
             let mut stmts = Vec::new();
             loop {
+                // Boundary struktural yang BUKAN milik blok ini — case arm
+                // tanpa begin/end yang kehilangan `end` (source malformed,
+                // keccak_2share_fpv) membuat blok menyentuh `endcase` blok
+                // case di atasnya. Hentikan blok TANPA konsumsi agar case
+                // parser bisa menutup dengan benar. Terminator fungsi/task/
+                // class/module juga bukan milik blok (desync DV macro-case:
+                // blok begin milik task mengembara sampai `endfunction`).
+                if matches!(
+                    self.peek(),
+                    Token::Endcase
+                        | Token::Join
+                        | Token::JoinAny
+                        | Token::JoinNone
+                        | Token::EndFunction
+                        | Token::EndTask
+                        | Token::EndClass
+                        | Token::EndInterface
+                        | Token::EndPackage
+                        | Token::Endmodule
+                ) {
+                    break;
+                }
                 if self.peek() == &Token::End || self.peek() == &Token::Eof {
                     self.advance();
                     // Konsumsi label opsional setelah `end` (`end : label`) —
@@ -72,10 +94,60 @@ impl Parser {
                     }
                     break;
                 }
-                stmts.push(self.parse_stmt()?);
+                // Labeled statement: `name: stmt` — label di-consume &
+                // dibuang (case arm tanpa `begin` yang kehilangan `end`,
+                // source malformed keccak_2share_fpv, berakhir di label case
+                // berikutnya DI DALAM blok begin yang masih terbuka).
+                self.consume_stmt_label();
+                match self.parse_stmt() {
+                    Ok(s) => stmts.push(s),
+                    Err(e) => {
+                        // Berhenti di boundary struktural (endcase/join/terminator lain) →
+                        // toleransi tanpa error; selain itu catat + skip ke
+                        // boundary agar loop selalu maju.
+                        if matches!(
+                            self.peek(),
+                            Token::Endcase
+                                | Token::Join
+                                | Token::JoinAny
+                                | Token::JoinNone
+                                | Token::EndFunction
+                                | Token::EndTask
+                                | Token::EndClass
+                                | Token::EndInterface
+                                | Token::EndPackage
+                                | Token::Endmodule
+                        ) {
+                            break;
+                        }
+                        let diag = e.to_diagnostic();
+                        self.errors.push(diag);
+                        let before = self.pos.get();
+                        self.skip_to_stmt_boundary();
+                        // Jaminan kemajuan: bila skip berhenti tanpa mengkonsumsi
+                        // (peek = terminator struktural EndFunction/EndTask/End/
+                        // EndClass dst — skip_to_stmt_boundary return di sana),
+                        // majukan SATU token agar loop tidak mem-push error
+                        // identik tanpa batas (flood 71 ribu duplikat E1002,
+                        // lihat DV macro-case base_seq::body). Konsumsi terminator
+                        // di sini aman: parse_stmt_block TIDAK memakai
+                        // EndFunction/EndTask/EndClass, dan `end` masih di-break
+                        // di iterasi berikutnya oleh guard peek di atas.
+                        if self.pos.get() == before {
+                            self.advance();
+                        }
+                    }
+                }
             }
             Ok(stmts)
         } else {
+            // Labeled statement: `name: stmt` (legal SV — label opsional di
+            // depan statement). Case arm tanpa `begin` yang kehilangan `end`
+            // (source malformed, mis. keccak_2share_fpv) berakhir di LABEL
+            // case berikutnya (`StPhase2Cycle2: begin`) — tanpa ini seluruh
+            // module gagal. Label di-consume & dibuang, statement setelahnya
+            // di-parse normal.
+            self.consume_stmt_label();
             let stmts = match self.parse_stmt() {
                 Ok(s) => vec![s],
                 Err(e) => {
@@ -693,7 +765,7 @@ impl Parser {
                                                         // Level pertama.
                                                         let mut level1 = Vec::new();
                                                         loop {
-                                                            level1.push(self.parse_expr(0)?);
+                                                            level1.push(self.parse_bin_level_expr()?);
                                                             if self.peek() == &Token::Comma {
                                                                 self.advance();
                                                             } else {
@@ -706,7 +778,7 @@ impl Parser {
                                                             while self.peek() == &Token::FatArrow {
                                                                 self.advance(); // '=>'
                                                                 loop {
-                                                                    seq.push(self.parse_expr(0)?);
+                                                                    seq.push(self.parse_bin_level_expr()?);
                                                                     if self.peek() == &Token::Comma
                                                                     {
                                                                         self.advance();
@@ -1090,6 +1162,11 @@ impl Parser {
             }
             _ => return None,
         };
+        // Modifier signed/unsigned (C-style): `int unsigned x`, `bit signed y`
+        // — umum di header DPI OpenTitan (`otbn_model_dpi.svh`).
+        if matches!(self.peek(), Token::Signed | Token::Unsigned) {
+            self.advance();
+        }
         Some(dt)
     }
 
@@ -1125,6 +1202,8 @@ impl Parser {
             | Token::Time
             | Token::String
             | Token::Real
+            | Token::RealTime
+            | Token::WReal
             | Token::Enum
             | Token::Struct
             | Token::Union
@@ -1133,12 +1212,25 @@ impl Parser {
             | Token::Semaphore
             | Token::Mailbox
             | Token::Virtual => true,
-            Token::Ident(_) => match self.peek_ahead(1) {
-                Token::Ident(_) => true,
-                // pkg::type varname;  (bukan pkg::func(...))
-                Token::Scope => matches!(self.peek_ahead(3), Token::Ident(_) | Token::LBrack),
-                _ => false,
-            },
+            Token::Ident(_) => {
+                // `randcase`/`randsequence` statement — JANGAN dianggap decl
+                // (item randcase bisa berawal Ident → parse_decl salah → "expected
+                // expression, found Colon").
+                if matches!(
+                    self.peek(),
+                    Token::Ident(s)
+                        if s.as_str() == "randcase" || s.as_str() == "randsequence"
+                ) {
+                    false
+                } else {
+                    match self.peek_ahead(1) {
+                        Token::Ident(_) => true,
+                        // pkg::type varname;  (bukan pkg::func(...))
+                        Token::Scope => matches!(self.peek_ahead(3), Token::Ident(_) | Token::LBrack),
+                        _ => false,
+                    }
+                }
+            }
             _ => false,
         }
     }
@@ -1234,6 +1326,21 @@ impl Parser {
     fn parse_stmt_impl(&mut self) -> Result<Stmt, SimError> {
         if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
             self.skip_attribute();
+            return self.parse_stmt();
+        }
+        // Named statement: `label: begin ... end`, `label: if (...) ...`,
+        // `error: begin ... end` di blok fork/join (DV alert_reset_vseq,
+        // i2c_base_vseq `wait_for_fatal_alert: begin`). Legal SV
+        // (IEEE 1800 §22.4) — label opsional di depan statement. Label
+        // di-buang (nama tidak dipakai engine); statement setelahnya
+        // di-parse normal via rekursi. Guard `::` agar `pkg::func()`
+        // call-statement tidak dianggap label.
+        if matches!(self.peek(), Token::Ident(_))
+            && self.peek_ahead(1) == &Token::Colon
+            && self.peek_ahead(2) != &Token::Scope
+        {
+            self.advance(); // label
+            self.advance(); // ':'
             return self.parse_stmt();
         }
         // Procedural static/automatic variable declaration:
@@ -1666,7 +1773,23 @@ impl Parser {
             Token::WaitOrder => self.parse_wait_order(),
             Token::Arrow => {
                 self.advance();
-                let name = self.expect_ident()?;
+                let mut name = self.expect_ident()?;
+                // Event hierarkis `-> evt.member;` (DV umum): konsumsi `.member`
+                // . EventTrigger menyimpan nama dasar.
+                while self.peek() == &Token::Dot {
+                    self.advance();
+                    // Nama member bisa api-indexed dsb — parse ekspresi sisa agar
+                    // tidak tersesat (`.member[0]`, `.member.sub`).
+                    let _ = self.expect_ident();
+                    while matches!(self.peek(), Token::LBrack | Token::Dot) {
+                        if self.peek() == &Token::LBrack {
+                            let _ = self.skip_balanced_paren();
+                        } else {
+                            self.advance();
+                            let _ = self.expect_ident();
+                        }
+                    }
+                }
                 self.skip_semi();
                 Ok(Stmt::EventTrigger { name })
             }
@@ -2261,6 +2384,41 @@ impl Parser {
         })
     }
 
+    /// Ekspresi level transition bin covergroup: `[lo:hi]` (range) atau
+    /// ekspresi biasa. Range direpresentasikan sbg RangeSelect dengan base 0
+    /// (pola sama dengan label case-inside) — consumer mengenali pola ini.
+    /// Contoh: `bins t = (0 => [1:15]);` (aes_cov_if).
+    fn parse_bin_level_expr(&mut self) -> Result<Expr, SimError> {
+        if self.peek() == &Token::LBrack {
+            self.advance();
+            let lo = self.parse_expr(0)?;
+            self.expect(Token::Colon)?;
+            let hi = self.parse_expr(0)?;
+            self.expect(Token::RBrack)?;
+            Ok(Expr::RangeSelect {
+                expr: Box::new(Expr::Value(Value::Decimal(0))),
+                msb: Box::new(hi),
+                lsb: Box::new(lo),
+            })
+        } else {
+            self.parse_expr(0)
+        }
+    }
+
+    /// Konsumsi label statement `name :` bila ada (legal SV — label opsional
+    /// di depan statement). Return true bila label dikonsumsi. Guard `::`
+    /// agar `pkg::func()` call-statement tidak dianggap label.
+    fn consume_stmt_label(&mut self) -> bool {
+        if let Token::Ident(_) = self.peek() {
+            if self.peek_ahead(1) == &Token::Colon && self.peek_ahead(2) != &Token::Scope {
+                self.advance(); // label
+                self.advance(); // ':'
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn parse_case_stmt(&mut self) -> Result<Stmt, SimError> {
         let is_casex = self.peek() == &Token::CaseX;
         let is_casez = self.peek() == &Token::CaseZ;
@@ -2378,7 +2536,11 @@ impl Parser {
         self.advance();
         self.expect(Token::LParen)?;
         let init = if self.peek() != &Token::Semi {
-            if matches!(
+            // For-init typed decl: `int i = 0;` / `Type var = expr;` /
+            // `flash_tgt_prefix_e j = TgtRd;`. User-defined type = peek=Ident
+            // diikuti Ident (var name) — vs `for (var = expr; ...)` varname
+            // diikuti `=`, atau `for (f(a); ...)` diikuti `(`.
+            let is_for_type = matches!(
                 self.peek(),
                 Token::Int
                     | Token::Integer
@@ -2389,7 +2551,11 @@ impl Parser {
                     | Token::Shortint
                     | Token::Byte
                     | Token::Time
-            ) || matches!(self.peek(), Token::Ident(s) if s == "uint" || s == "sint")
+            )
+            || matches!(self.peek(), Token::Ident(s) if s == "uint" || s == "sint")
+            || (matches!(self.peek(), Token::Ident(_))
+                && matches!(self.peek_ahead(1), Token::Ident(_)));
+            if is_for_type
             {
                 self.advance();
                 if self.peek() == &Token::Signed {

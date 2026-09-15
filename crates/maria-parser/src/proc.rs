@@ -516,6 +516,14 @@ impl Parser {
                         | Token::Output
                         | Token::Inout
                         | Token::Ref
+                        | Token::Byte
+                        | Token::Shortint
+                        | Token::Longint
+                        | Token::Bit
+                        | Token::Time
+                        | Token::Real
+                        | Token::RealTime
+                        | Token::WReal
                 ) {
                     if matches!(
                         self.peek(),

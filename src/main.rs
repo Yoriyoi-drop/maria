@@ -3033,6 +3033,23 @@ fn run_fast(
             );
         }
     } else {
+        // Parsing menghasilkan error → desain parsial; elaborasi penuh
+        // sia-sia (3888 file = ~6 menit). Perilaku terminal SAMA (readiness
+        // "Simulasi: TIDAK SIAP" + exit error) tanpa membayar biaya
+        // elaborate pada desain yang sudah rusak.
+        if session.parse_errors.iter().any(|d| d.is_error()) {
+            ir_design = maria_ir::IrDesign::default();
+            elab_diags = Vec::new();
+            recovered = false;
+            from_cache = false;
+            elab_opt = None;
+            if anim_active(&anim) {
+                anim_phase_done(&anim, Phase::Ela);
+                anim_phase_done(&anim, Phase::Opt);
+                anim_phase_done(&anim, Phase::Ver);
+                anim_finish(&mut anim, false, 0, 0);
+            }
+        } else {
         let (source_lines, source_file) = session.source_info().unwrap_or_default();
         let mut elab = if source_lines.is_empty() {
             Elaborator::new(design)
@@ -3079,6 +3096,7 @@ fn run_fast(
         recovered = elab.recovered;
         from_cache = false;
         elab_opt = Some(elab);
+        }
     }
 
     // ── Simulation Readiness Check (Rule 6) — full validation ──

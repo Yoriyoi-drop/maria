@@ -155,6 +155,20 @@ impl Preprocessor {
                     // `// ... input\` + `` `endif `` — jika joined dengan
                     // newline, `` `endif `` menjadi directive nyata dan ifdef
                     // jadi tak seimbang → module hilang).
+                    //
+                    // Di dalam body `` `define `` newline DI-PERTAHANKAN:
+                    // body define boleh memuat baris KOMENTAR yang berakhiran
+                    // `\` (mis. WAIT_FOR_FORCED_SIGNAL / ASSERT_INIT_NET /
+                    // DV_SPINWAIT_EXIT). Kalau `\`-continuation meratakan
+                    // komentar garis-tunggal jadi satu baris panjang, `` // ``
+                    // pertama menelan SISA BARIS (termasuk `@(...)`/`end`)
+                    // → "expected expression, found EndTask" dsb. Newline
+                    // menjaga struktur baris; token-paste antar baris define
+                    // (`foo\` + `bar` → token terpisah) praktis tidak dipakai
+                    // SV nyata (paste memakai `` ` ``, bukan `\`).
+                    if in_define_body {
+                        raw_line.push('\n');
+                    }
                     raw_line.push_str(lines[i]);
                 } else {
                     break;
@@ -188,7 +202,7 @@ impl Preprocessor {
                     // ke baris file induk berikut (i+2, 1-based).
                     if folded.contains('\n') {
                         if let Some(ref p) = self.cur_path {
-                            output.push_str(&format!("`line {}\"{}\"\n", i + 2, p));
+                            output.push_str(&format!("`line {} \"{}\"\n", i + 2, p));
                         }
                     }
                 }
@@ -212,7 +226,7 @@ impl Preprocessor {
                 // Sama — macro invocation multi-baris: re-sync physical line.
                 if folded.contains('\n') {
                     if let Some(ref p) = self.cur_path {
-                        output.push_str(&format!("`line {}\"{}\"\n", i + 2, p));
+                        output.push_str(&format!("`line {} \"{}\"\n", i + 2, p));
                     }
                 }
                 i += 1;
@@ -283,7 +297,7 @@ impl Preprocessor {
                                     // berikutnya milik file INDUK. Include ada di
                                     // baris i+1 (1-based) → baris berikut = i+2.
                                     if let Some(ref outer) = outer_path {
-                                        output.push_str(&format!("`line {}\"{}\"\n", i + 2, outer));
+                                        output.push_str(&format!("`line {} \"{}\"\n", i + 2, outer));
                                     }
                                     self.cur_path = outer_path;
                                     Ok(())
@@ -1222,10 +1236,16 @@ impl Preprocessor {
 
 /// String-aware top-level comma splitter, dipakai untuk memisahkan:
 /// - argumen invokasi macro (`` `MACRO(a, b, c) ``) — koma di dalam string
-///   literal (`"x, y"`) atau di dalam paren bersarang TIDAK memisahkan arg.
+///   literal (`"x, y"`), di dalam paren bersarang, ATAU di dalam komentar
+///   (`//` / `/* */`) TIDAK memisahkan arg.
 /// - daftar parameter `define (LRM 1800 §22.5.1) — default bernilai string
 ///   yang memuat koma (mis. `A="x,y"`) tetap satu param penuh.
 /// Koma yang TIDAK memisahkan juga tetap dipertahankan di token aslinya.
+/// KOMENTAR di-skip penuh: arg macro Multi-baris (mis. `DV_SPINWAIT_EXIT`
+/// dengan `i = 0; // restart the delay, since ...`) membawa koma di dalam
+/// komentar — tanpa skip, koma itu memutus argumen → ekspansi korup
+/// (arg bergeser: MSG_ dapat nilai EXIT_, error "expected expression,
+/// found Wait" di ratusan file DV OpenTitan).
 fn split_args_string_aware(args_str: &str, expected_count: usize) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();
@@ -1233,7 +1253,8 @@ fn split_args_string_aware(args_str: &str, expected_count: usize) -> Vec<String>
     let mut brace_depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;
-    for c in args_str.chars() {
+    let mut chars = args_str.chars().peekable();
+    while let Some(c) = chars.next() {
         if in_string {
             current.push(c);
             if escaped {
@@ -1243,6 +1264,36 @@ fn split_args_string_aware(args_str: &str, expected_count: usize) -> Vec<String>
             } else if c == '"' {
                 in_string = false;
             }
+            continue;
+        }
+        // Komentar `//` — skip sampai akhir baris (arg macro multi-baris
+        // memuat komentar; koma di dalamnya bukan pemisah arg). Teks komentar
+        // DI-BUANG (diganti spasi) — komentar SV tidak punya semantik: arg
+        // yang memuat `int_err == 0; // catatan \n }` TIDAK boleh membawa `//`
+        // ke hasil substitusi (komentar pada baris hasil ekspansi akan MEMAKAN
+        // penutup `}`/`)` di baris yang sama → `with {` tak tertutup → parse
+        // desync. Ganti spasi utk menjaga batas token (`a//x b` ≠ ident `ab`).
+        if c == '/' && chars.peek() == Some(&'/') {
+            chars.next(); // consume second '/'
+            for n in chars.by_ref() {
+                if n == '\n' {
+                    current.push(' ');
+                    break;
+                }
+            }
+            continue;
+        }
+        // Komentar `/* ... */` — skip sampai `*/`. DI-BUANG (ganti spasi).
+        if c == '/' && chars.peek() == Some(&'*') {
+            chars.next(); // consume '*'
+            let mut prev = None;
+            for n in chars.by_ref() {
+                if prev == Some('*') && n == '/' {
+                    break;
+                }
+                prev = Some(n);
+            }
+            current.push(' ');
             continue;
         }
         match c {

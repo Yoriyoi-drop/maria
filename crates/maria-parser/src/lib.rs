@@ -357,8 +357,7 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                 DiagCode::UnclosedBlock => {
                     // Fix-it: tambahkan closing keyword di akhir file
                     // Gunakan resolve_source_file untuk konversi combined line ke file line
-                    let last_combined_line = self.source_lines.len();
-                    let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                    let (fix_file, fix_line) = (display_file.clone(), display_line);
                     let fix_it = FixItHint::insert(
                         fix_file,
                         fix_line + 1, // Insert after last line of original file
@@ -395,8 +394,7 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                         || msg_lower.contains("endpackage")
                         || msg_lower.contains("end")
                     {
-                        let last_combined_line = self.source_lines.len();
-                        let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                        let (fix_file, fix_line) = (display_file.clone(), display_line);
                         let fix_it = FixItHint::insert(
                             fix_file,
                             fix_line + 1,
@@ -430,8 +428,7 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                     }
                 }
                 DiagCode::UnclosedBlock => {
-                    let last_combined_line = self.source_lines.len();
-                    let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                    let (fix_file, fix_line) = (display_file.clone(), display_line);
                     let fix_it = FixItHint::insert(
                         fix_file,
                         fix_line + 1,
@@ -451,8 +448,7 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                         || msg_lower.contains("endpackage")
                         || msg_lower.contains("end")
                     {
-                        let last_combined_line = self.source_lines.len();
-                        let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                        let (fix_file, fix_line) = (display_file.clone(), display_line);
                         let fix_it = FixItHint::insert(
                             fix_file,
                             fix_line + 1,
@@ -478,8 +474,7 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                         || msg_lower.contains("endpackage")
                         || msg_lower.contains("end")
                     {
-                        let last_combined_line = self.source_lines.len();
-                        let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                        let (fix_file, fix_line) = (display_file.clone(), display_line);
                         let fix_it = FixItHint::insert(
                             fix_file,
                             fix_line + 1,
@@ -491,8 +486,7 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                     }
                 }
                 DiagCode::UnclosedBlock => {
-                    let last_combined_line = self.source_lines.len();
-                    let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                    let (fix_file, fix_line) = (display_file.clone(), display_line);
                     let fix_it = FixItHint::insert(
                         fix_file,
                         fix_line + 1,
@@ -614,6 +608,13 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
             Token::This => {
                 self.advance();
                 Ok(Symbol::intern("this"))
+            }
+            // covergroup `.option.weight` / `.option.at_least` — `option` is a
+            // keyword (Token::Option_) but acts as a member-name in SV DV code.
+            // Accept it as an identifier in member-access positions.
+            Token::Option_ => {
+                self.advance();
+                Ok(Symbol::intern("option"))
             }
             _ => Err(self.err(format!("expected identifier, found {}", self.peek()))),
         }
@@ -1511,7 +1512,69 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
             // tidak error di module body.
             Token::Default => {
                 self.advance(); // 'default'
-                                // `default clock = <event>;` — skip token sampai ';'
+                // `default clocking @(posedge clk); endclocking` inline —
+                // clocking default di dalam generate block (keymgr_if).
+                // `clocking` setelah `default` menandai bentuk ini.
+                if self.peek() == &Token::Clocking {
+                    self.advance(); // 'clocking'
+                    if self.peek() == &Token::At {
+                        self.advance();
+                        if self.peek() == &Token::LParen {
+                            self.skip_balanced_paren()?;
+                        }
+                    }
+                    self.skip_semi();
+                    if self.peek() == &Token::EndClocking {
+                        self.advance();
+                        if self.peek() == &Token::Colon {
+                            self.advance();
+                            if matches!(self.peek(), Token::Ident(_)) {
+                                self.advance();
+                            }
+                        }
+                    }
+                    return Ok(None);
+                }
+                // `default disable iff <expr>;` — disable condition default
+                // untuk assertion dalam scope ini (keymgr_if, desain formal).
+                // Tanpa efek runtime (assertion clocking/disable kami per-item).
+                if self.peek() == &Token::Disable {
+                    self.advance(); // 'disable'
+                    // `iff` di-lex sbg Ident (tanpa token khusus).
+                    if matches!(self.peek(), Token::Ident(s) if s.as_str() == "iff") {
+                        self.advance(); // 'iff'
+                    }
+                    // Skip ekspresi balance-aware: kurung/bracket/brace bisa
+                    // memuat `;` di dalamnya (jangan berhenti di situ).
+                    while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                        match self.peek() {
+                            Token::LParen | Token::LBrack | Token::LBrace => {
+                                let open = self.peek().clone();
+                                self.advance();
+                                let close = match open {
+                                    Token::LParen => Token::RParen,
+                                    Token::LBrack => Token::RBrack,
+                                    _ => Token::RBrace,
+                                };
+                                let mut depth = 1usize;
+                                while depth > 0 && self.peek() != &Token::Eof {
+                                    if self.peek() == &open {
+                                        depth += 1;
+                                    } else if self.peek() == &close {
+                                        depth -= 1;
+                                    }
+                                    self.advance();
+                                }
+                            }
+                            _ => {
+                                self.advance();
+                            }
+                        }
+                    }
+                    self.skip_semi();
+                    return Ok(None);
+                }
+                // `default clock = <event>;` — skip token sampai ';'
                 while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
                     self.advance();
                 }
