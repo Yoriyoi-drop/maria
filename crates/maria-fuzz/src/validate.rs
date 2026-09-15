@@ -8,7 +8,9 @@
 //! 3. **X/Z audit** — signal yang TETAP X/Z di akhir sim dicatat; bisa wajar
 //!    (undriven) atau bukti state-propagation bug — dipasok ke laporan.
 
-use maria_api::{simulate_signals_with_flags_quiet, simulate_signals_with_trace_quiet, EngineFlags};
+use maria_api::{
+    simulate_signals_with_flags_quiet, simulate_signals_with_trace_quiet, EngineFlags,
+};
 
 /// Bukti keberhasilan/keanehan satu simulasi.
 #[derive(Debug, Clone)]
@@ -69,7 +71,7 @@ impl SimEvidence {
 }
 
 /// Jalur engine yang dibandingkan (termasuk kombos — area belum tersentuh:
-    /// kombinasi flag parallel+packed dll, bukan hanya single-flag).
+/// kombinasi flag parallel+packed dll, bukan hanya single-flag).
 fn engine_paths() -> Vec<(&'static str, EngineFlags)> {
     let base = EngineFlags {
         use_packed_eval: false,
@@ -79,38 +81,59 @@ fn engine_paths() -> Vec<(&'static str, EngineFlags)> {
     };
     vec![
         ("default", EngineFlags { ..base }),
-        ("packed", EngineFlags {
-            use_packed_eval: true,
-            ..base
-        }),
-        ("dag-par", EngineFlags {
-            use_dag_parallel: true,
-            ..base
-        }),
-        ("timing", EngineFlags {
-            use_timing_wheel: true,
-            ..base
-        }),
-        ("mir-jit", EngineFlags {
-            use_mir_jit: true,
-            ..base
-        }),
+        (
+            "packed",
+            EngineFlags {
+                use_packed_eval: true,
+                ..base
+            },
+        ),
+        (
+            "dag-par",
+            EngineFlags {
+                use_dag_parallel: true,
+                ..base
+            },
+        ),
+        (
+            "timing",
+            EngineFlags {
+                use_timing_wheel: true,
+                ..base
+            },
+        ),
+        (
+            "mir-jit",
+            EngineFlags {
+                use_mir_jit: true,
+                ..base
+            },
+        ),
         // ── Kombinasi (interaksi flag) ──
-        ("packed+dag", EngineFlags {
-            use_packed_eval: true,
-            use_dag_parallel: true,
-            ..base
-        }),
-        ("packed+timing", EngineFlags {
-            use_packed_eval: true,
-            use_timing_wheel: true,
-            ..base
-        }),
-        ("dag+timing", EngineFlags {
-            use_dag_parallel: true,
-            use_timing_wheel: true,
-            ..base
-        }),
+        (
+            "packed+dag",
+            EngineFlags {
+                use_packed_eval: true,
+                use_dag_parallel: true,
+                ..base
+            },
+        ),
+        (
+            "packed+timing",
+            EngineFlags {
+                use_packed_eval: true,
+                use_timing_wheel: true,
+                ..base
+            },
+        ),
+        (
+            "dag+timing",
+            EngineFlags {
+                use_dag_parallel: true,
+                use_timing_wheel: true,
+                ..base
+            },
+        ),
     ]
 }
 
@@ -169,12 +192,10 @@ pub fn collect(source: &str, max_time: u64) -> SimEvidence {
     }
 
     let paths = engine_paths();
-    let mut results: Vec<(&'static str, Option<Vec<(String, maria_ir::LogicVec)>>)> =
-        Vec::new();
+    let mut results: Vec<(&'static str, Option<Vec<(String, maria_ir::LogicVec)>>)> = Vec::new();
     for (name, flags) in &paths {
-        let r = std::panic::catch_unwind(|| {
-            simulate_signals_with_flags_quiet(source, max_time, flags)
-        });
+        let r =
+            std::panic::catch_unwind(|| simulate_signals_with_flags_quiet(source, max_time, flags));
         match r {
             Ok(Ok(sigs)) => results.push((name, Some(sigs))),
             _ => results.push((name, None)),
@@ -183,10 +204,7 @@ pub fn collect(source: &str, max_time: u64) -> SimEvidence {
 
     // 3. Determinism — jalur default dijalankan dua kali (run kedua segar).
     {
-        let run1 = results
-            .get(0)
-            .and_then(|(_, r)| r.as_ref())
-            .cloned();
+        let run1 = results.get(0).and_then(|(_, r)| r.as_ref()).cloned();
         let run2 = std::panic::catch_unwind(|| {
             simulate_signals_with_flags_quiet(source, max_time, &engine_paths()[0].1)
         });
@@ -238,10 +256,7 @@ pub fn collect(source: &str, max_time: u64) -> SimEvidence {
 }
 
 /// Apakah dua hasil signal identik (nama + nilai + urutan).
-fn signal_eq(
-    a: &[(String, maria_ir::LogicVec)],
-    b: &[(String, maria_ir::LogicVec)],
-) -> bool {
+fn signal_eq(a: &[(String, maria_ir::LogicVec)], b: &[(String, maria_ir::LogicVec)]) -> bool {
     if a.len() != b.len() {
         return false;
     }

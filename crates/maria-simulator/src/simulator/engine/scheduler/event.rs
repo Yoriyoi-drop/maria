@@ -510,95 +510,107 @@ impl SimulationEngine {
     }
 
     /// Terapkan write hasil evaluasi paralel ke state. Sama seperti jalur serial
-/// (`write_lvalue`, lvalue.rs:234): net Wire/Inout multi-driver di-RESOLVE
-/// terhadap nilai saat ini (resolve_bit), bukan last-write-wins — tanpa ini
-/// hasil paralel (dipakai saat ≥`min_processes_parallel` proses comb) bisa
-/// beda dari serial (ditemukan maria-fuzz: EMI dead-code menambah 1 proses →
-/// melewati ambang → multi-driver wire berubah nilai → mismatch EMI palsu).
-fn apply_parallel_writes(&mut self, writes: &[(SignalId, LogicVec)]) {
-    for (sig_id, val) in writes {
-        if let Some(info) = self.design.top.signals.get(*sig_id) {
-            if info.multi_driver
-                && (info.kind == SignalKind::Wire || info.kind == SignalKind::Inout)
-            {
-                let current = self.state.read_signal(*sig_id).clone();
-                let resolved =
-                    crate::simulator::util::resolve_net_values(info.net_type, &current, val);
-                self.state.write_signal(*sig_id, resolved);
-                continue;
-            }
-        }
-        self.state.write_signal(*sig_id, val.clone());
-    }
-}
-
-/// Pisahkan process comb jadi kelompok independen (tanpa conflict antar
-/// anggota). Greedy: ambil sebanyak mungkin process yang saling bebas per
-/// kelompok. Kelompok dieval SEQUENTIAL (apply antar kelompok), di dalam
-/// kelompok PARALEL. Menghilangkan ketergantungan implisit urutan thread
-/// saat process ber-WAW/RAW dalam delta yang sama.
-fn layered_groups(comb_indices: &[usize], access: &[crate::scheduler::sim_dag::SignalAccess]) -> Vec<Vec<usize>> {
-    // Debug multi-writer: dua process nulis signal sama → WAW.
-    if std::env::var("MARIA_DBG_MW").is_ok() {
-        for i in 0..access.len() {
-            for j in (i + 1)..access.len() {
-                let w = access[i].writes.iter().copied().collect::<std::collections::HashSet<_>>();
-                let ow = access[j].writes.iter().copied().collect::<std::collections::HashSet<_>>();
-                let inter: Vec<usize> = w.intersection(&ow).copied().collect();
-                if !inter.is_empty() && comb_indices.contains(&i) && comb_indices.contains(&j) {
-                    eprintln!("[DBG-MW] proc{i} & proc{j} both write sig {:?}", inter);
-                }
-            }
-        }
-    }
-    let conflict = |a: &crate::scheduler::sim_dag::SignalAccess,
-                    b: &crate::scheduler::sim_dag::SignalAccess| {
-        a.writes.iter().any(|sig| b.reads.contains(sig))
-            || b.writes.iter().any(|sig| a.reads.contains(sig))
-            || a.writes.iter().any(|sig| b.writes.contains(sig))
-    };
-
-    let mut remaining: std::collections::HashSet<usize> = comb_indices.iter().copied().collect();
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    while !remaining.is_empty() {
-        let mut group: Vec<usize> = Vec::new();
-        let mut taken = std::collections::HashSet::new();
-        // Ambil semua process yang tidak konflik dengan yang sudah di-grup.
-        loop {
-            let mut added = false;
-            for &pid in remaining.clone().iter() {
-                if taken.contains(&pid) {
+    /// (`write_lvalue`, lvalue.rs:234): net Wire/Inout multi-driver di-RESOLVE
+    /// terhadap nilai saat ini (resolve_bit), bukan last-write-wins — tanpa ini
+    /// hasil paralel (dipakai saat ≥`min_processes_parallel` proses comb) bisa
+    /// beda dari serial (ditemukan maria-fuzz: EMI dead-code menambah 1 proses →
+    /// melewati ambang → multi-driver wire berubah nilai → mismatch EMI palsu).
+    fn apply_parallel_writes(&mut self, writes: &[(SignalId, LogicVec)]) {
+        for (sig_id, val) in writes {
+            if let Some(info) = self.design.top.signals.get(*sig_id) {
+                if info.multi_driver
+                    && (info.kind == SignalKind::Wire || info.kind == SignalKind::Inout)
+                {
+                    let current = self.state.read_signal(*sig_id).clone();
+                    let resolved =
+                        crate::simulator::util::resolve_net_values(info.net_type, &current, val);
+                    self.state.write_signal(*sig_id, resolved);
                     continue;
                 }
-                let pa = access.get(pid);
-                let pa = match pa {
-                    Some(a) => a,
-                    None => continue,
-                };
-                let free = group
-                    .iter()
-                    .all(|&other| !conflict(pa, access.get(other).unwrap_or(pa)));
-                if free {
-                    group.push(pid);
-                    taken.insert(pid);
-                    added = true;
-                }
             }
-            if !added {
-                break;
-            }
-        }
-        for pid in &group {
-            remaining.remove(pid);
-        }
-        if !group.is_empty() {
-            groups.push(group);
+            self.state.write_signal(*sig_id, val.clone());
         }
     }
-    groups
-}
 
-pub(crate) fn trigger_sensitive_processes(
+    /// Pisahkan process comb jadi kelompok independen (tanpa conflict antar
+    /// anggota). Greedy: ambil sebanyak mungkin process yang saling bebas per
+    /// kelompok. Kelompok dieval SEQUENTIAL (apply antar kelompok), di dalam
+    /// kelompok PARALEL. Menghilangkan ketergantungan implisit urutan thread
+    /// saat process ber-WAW/RAW dalam delta yang sama.
+    fn layered_groups(
+        comb_indices: &[usize],
+        access: &[crate::scheduler::sim_dag::SignalAccess],
+    ) -> Vec<Vec<usize>> {
+        // Debug multi-writer: dua process nulis signal sama → WAW.
+        if std::env::var("MARIA_DBG_MW").is_ok() {
+            for i in 0..access.len() {
+                for j in (i + 1)..access.len() {
+                    let w = access[i]
+                        .writes
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::HashSet<_>>();
+                    let ow = access[j]
+                        .writes
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::HashSet<_>>();
+                    let inter: Vec<usize> = w.intersection(&ow).copied().collect();
+                    if !inter.is_empty() && comb_indices.contains(&i) && comb_indices.contains(&j) {
+                        eprintln!("[DBG-MW] proc{i} & proc{j} both write sig {:?}", inter);
+                    }
+                }
+            }
+        }
+        let conflict = |a: &crate::scheduler::sim_dag::SignalAccess,
+                        b: &crate::scheduler::sim_dag::SignalAccess| {
+            a.writes.iter().any(|sig| b.reads.contains(sig))
+                || b.writes.iter().any(|sig| a.reads.contains(sig))
+                || a.writes.iter().any(|sig| b.writes.contains(sig))
+        };
+
+        let mut remaining: std::collections::HashSet<usize> =
+            comb_indices.iter().copied().collect();
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        while !remaining.is_empty() {
+            let mut group: Vec<usize> = Vec::new();
+            let mut taken = std::collections::HashSet::new();
+            // Ambil semua process yang tidak konflik dengan yang sudah di-grup.
+            loop {
+                let mut added = false;
+                for &pid in remaining.clone().iter() {
+                    if taken.contains(&pid) {
+                        continue;
+                    }
+                    let pa = access.get(pid);
+                    let pa = match pa {
+                        Some(a) => a,
+                        None => continue,
+                    };
+                    let free = group
+                        .iter()
+                        .all(|&other| !conflict(pa, access.get(other).unwrap_or(pa)));
+                    if free {
+                        group.push(pid);
+                        taken.insert(pid);
+                        added = true;
+                    }
+                }
+                if !added {
+                    break;
+                }
+            }
+            for pid in &group {
+                remaining.remove(pid);
+            }
+            if !group.is_empty() {
+                groups.push(group);
+            }
+        }
+        groups
+    }
+
+    pub(crate) fn trigger_sensitive_processes(
         &mut self,
         changed: &[(usize, LogicVec, LogicVec)],
         _t: usize,
@@ -779,11 +791,8 @@ pub(crate) fn trigger_sensitive_processes(
                                     pid
                                 );
                                 let mut overlay = std::collections::HashMap::new();
-                                let mut view = parallel::SignalView::new(
-                                    &snapshot,
-                                    &identity,
-                                    &mut overlay,
-                                );
+                                let mut view =
+                                    parallel::SignalView::new(&snapshot, &identity, &mut overlay);
                                 let mut writes = Vec::new();
                                 match parallel::with_packed_eval(use_packed, || {
                                     parallel::evaluate_stmt_block_parallel(

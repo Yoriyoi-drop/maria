@@ -563,7 +563,8 @@ module m {
         out.sv
     );
     assert!(
-        out.sv.contains("typedef enum logic [1:0] { OFF, ON } Mode;"),
+        out.sv
+            .contains("typedef enum logic [1:0] { OFF, ON } Mode;"),
         "enum lokal: {}",
         out.sv
     );
@@ -613,11 +614,7 @@ module top {
 }
 "#;
     let out = generate(&parse(src).unwrap(), "top");
-    assert!(
-        out.sv.contains("fifo u1 #(8) ("),
-        "positional: {}",
-        out.sv
-    );
+    assert!(out.sv.contains("fifo u1 #(8) ("), "positional: {}", out.sv);
     assert!(
         out.sv.contains("fifo u2 #(8, .DEPTH(4)) ("),
         "campur positional+named: {}",
@@ -667,12 +664,14 @@ task send(data : logic[7:0], tag : logic[3:0] = 4'h0) {
 "#;
     let out = generate(&parse(src).unwrap(), "util");
     assert!(
-        out.sv.contains("function int scale(input int v, input int factor = 2);"),
+        out.sv
+            .contains("function int scale(input int v, input int factor = 2);"),
         "func default: {}",
         out.sv
     );
     assert!(
-        out.sv.contains("task send(inout logic [7:0] data, inout logic [3:0] tag = 4'h0);"),
+        out.sv
+            .contains("task send(inout logic [7:0] data, inout logic [3:0] tag = 4'h0);"),
         "task default: {}",
         out.sv
     );

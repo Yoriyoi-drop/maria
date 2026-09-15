@@ -15,9 +15,7 @@ pub fn evaluate(target: Target, source: &str, timeout_ms: u64) -> CaseResult {
     match target {
         Target::Lexer => evaluate_lexer(source),
         Target::Vcd => evaluate_vcd(source, timeout_ms),
-        Target::Parser | Target::Elaborator => {
-            evaluate_compile(target, source)
-        }
+        Target::Parser | Target::Elaborator => evaluate_compile(target, source),
         Target::Simulator => evaluate_sim(source, timeout_ms),
         Target::Fmt => evaluate_fmt(source),
         Target::Cli => evaluate_cli(source, timeout_ms),
@@ -94,8 +92,7 @@ fn compile_in_thread(target: Target, source: &str) -> CaseResult {
             // recovery (AnalysisRecovery): kalau berhasil → Ok (analisis).
             let msg = err.to_string();
             if is_global_error(&msg) {
-                let recovered =
-                    std::panic::catch_unwind(|| maria_api::compile_str_analyze(source));
+                let recovered = std::panic::catch_unwind(|| maria_api::compile_str_analyze(source));
                 if let Ok(Ok(_ir)) = recovered {
                     return mk(
                         target,
@@ -156,7 +153,13 @@ fn compile_in_thread(target: Target, source: &str) -> CaseResult {
                     source,
                 );
             }
-            mk(target, Oracle::O1NoCrash, Category::Ok, "compile ok", source)
+            mk(
+                target,
+                Oracle::O1NoCrash,
+                Category::Ok,
+                "compile ok",
+                source,
+            )
         }
         _ => mk(
             target,
@@ -332,9 +335,7 @@ fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
 
 /// Jalankan seluruh validasi sim in-process dalam thread stack besar.
 fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
-    let mk_r = |c: Category, o: Oracle, d: &str| {
-        Some(mk(Target::Simulator, o, c, d, source))
-    };
+    let mk_r = |c: Category, o: Oracle, d: &str| Some(mk(Target::Simulator, o, c, d, source));
     // ── 2. In-process compile check (O1) ──
     let compile_result = std::panic::catch_unwind(|| maria_api::compile_str_quiet(source));
     match compile_result {
@@ -426,47 +427,67 @@ fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
     // Jalur packed, DAG, timing-wheel, dan MIR JIT memberi implementasi
     // alternatif untuk menemukan bug yang konsisten pada jalur default.
     let alternate_flags = [
-        ("packed", EngineFlags {
-            use_packed_eval: true,
-            ..default_flags
-        }),
-        ("dag", EngineFlags {
-            use_dag_parallel: true,
-            ..default_flags
-        }),
-        ("timing-wheel", EngineFlags {
-            use_timing_wheel: true,
-            ..default_flags
-        }),
-        ("mir-jit", EngineFlags {
-            use_mir_jit: true,
-            ..default_flags
-        }),
+        (
+            "packed",
+            EngineFlags {
+                use_packed_eval: true,
+                ..default_flags
+            },
+        ),
+        (
+            "dag",
+            EngineFlags {
+                use_dag_parallel: true,
+                ..default_flags
+            },
+        ),
+        (
+            "timing-wheel",
+            EngineFlags {
+                use_timing_wheel: true,
+                ..default_flags
+            },
+        ),
+        (
+            "mir-jit",
+            EngineFlags {
+                use_mir_jit: true,
+                ..default_flags
+            },
+        ),
         // ── Kombinasi (interaksi flag) — validate.rs sudah definisikan 8 jalur
         // tapi oracle lama hanya bandingkan single-flag → kombinasi
         // packed+dag/packed+timing/dag+timing TIDAK pernah di-fuzz. Tambah
         // sekarang: interaksi antar jalur engine bisa memicu race/ordering
         // yang tidak terlihat pada jalur tunggal.
-        ("packed+dag", EngineFlags {
-            use_packed_eval: true,
-            use_dag_parallel: true,
-            ..default_flags
-        }),
-        ("packed+timing", EngineFlags {
-            use_packed_eval: true,
-            use_timing_wheel: true,
-            ..default_flags
-        }),
-        ("dag+timing", EngineFlags {
-            use_dag_parallel: true,
-            use_timing_wheel: true,
-            ..default_flags
-        }),
+        (
+            "packed+dag",
+            EngineFlags {
+                use_packed_eval: true,
+                use_dag_parallel: true,
+                ..default_flags
+            },
+        ),
+        (
+            "packed+timing",
+            EngineFlags {
+                use_packed_eval: true,
+                use_timing_wheel: true,
+                ..default_flags
+            },
+        ),
+        (
+            "dag+timing",
+            EngineFlags {
+                use_dag_parallel: true,
+                use_timing_wheel: true,
+                ..default_flags
+            },
+        ),
     ];
     for (name, flags) in alternate_flags {
-        let result = std::panic::catch_unwind(|| {
-            simulate_signals_with_flags_quiet(source, 1_000, &flags)
-        });
+        let result =
+            std::panic::catch_unwind(|| simulate_signals_with_flags_quiet(source, 1_000, &flags));
         match result {
             Ok(Ok(signals))
                 if {
@@ -507,9 +528,8 @@ fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
     }
 
     // ── 5. Trace quality: pastikan trace punya data bermakna ──
-    let trace_result = std::panic::catch_unwind(|| {
-        simulate_signals_with_trace_quiet(source, 1_000, 100)
-    });
+    let trace_result =
+        std::panic::catch_unwind(|| simulate_signals_with_trace_quiet(source, 1_000, 100));
 
     match trace_result {
         Ok(Ok((sigs_trace, trace))) => {
@@ -517,10 +537,7 @@ fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
                 return mk_r(
                     Category::Ok,
                     Oracle::O1NoCrash,
-                    &format!(
-                        "sim ok, no trace ({} signals)",
-                        sigs_trace.len()
-                    ),
+                    &format!("sim ok, no trace ({} signals)", sigs_trace.len()),
                 );
             }
 
@@ -564,22 +581,17 @@ fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
             // Opsional via env MARIA_FUZZ_ICARUS=1: jalankan source juga di
             // iverilog+vvp (reference eksternal independen). Mismatch marker
             // = semantic divergence NYATA (hasil maria != reference).
-            if std::env::var("MARIA_FUZZ_ICARUS").map(|v| v == "1").unwrap_or(false) {
+            if std::env::var("MARIA_FUZZ_ICARUS")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
                 let ic = crate::oracle_icarus::evaluate_icarus(source, timeout_ms);
                 match ic.verdict {
                     crate::oracle_icarus::Verdict::Mismatch => {
-                        return mk_r(
-                            Category::Differential,
-                            Oracle::O5Differential,
-                            &ic.detail,
-                        );
+                        return mk_r(Category::Differential, Oracle::O5Differential, &ic.detail);
                     }
                     crate::oracle_icarus::Verdict::MariaBug => {
-                        return mk_r(
-                            Category::Panic,
-                            Oracle::O1NoCrash,
-                            &ic.detail,
-                        );
+                        return mk_r(Category::Panic, Oracle::O1NoCrash, &ic.detail);
                     }
                     crate::oracle_icarus::Verdict::Match => {
                         return mk_r(
@@ -600,8 +612,8 @@ fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
 
             // ── 8. X/stimulus audit — bagan verdict: pasif vs suspicious ──
             let is_passive = ev.process_count == 0;
-            let x_heavy =
-                ev.signal_count > 0 && (ev.x_remain + ev.z_remain) * 100 >= ev.signal_count.max(1) * 60;
+            let x_heavy = ev.signal_count > 0
+                && (ev.x_remain + ev.z_remain) * 100 >= ev.signal_count.max(1) * 60;
 
             let detail = format!(
                 "sim verified: {} signals, {} trace entries ({} meaningful); \
@@ -626,15 +638,16 @@ fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
                 return mk_r(
                     Category::Suspicious,
                     Oracle::O1NoCrash,
-                    &format!("{detail} — stimulus ada ({}) namun X/Z dominan ({}/{})", ev.process_count, ev.x_remain + ev.z_remain, ev.signal_count),
+                    &format!(
+                        "{detail} — stimulus ada ({}) namun X/Z dominan ({}/{})",
+                        ev.process_count,
+                        ev.x_remain + ev.z_remain,
+                        ev.signal_count
+                    ),
                 );
             }
 
-            mk_r(
-                Category::Ok,
-                Oracle::O1NoCrash,
-                &detail,
-            )
+            mk_r(Category::Ok, Oracle::O1NoCrash, &detail)
         }
         Ok(Err(e)) => {
             return mk_r(
@@ -672,7 +685,12 @@ fn signal_summary(sigs: &[(String, maria_ir::LogicVec)]) -> String {
     if nonzero.is_empty() {
         format!("{} signals (all zero)", sigs.len())
     } else {
-        format!("{} signals ({} nonzero: {})", sigs.len(), nonzero.len(), nonzero.join(", "))
+        format!(
+            "{} signals ({} nonzero: {})",
+            sigs.len(),
+            nonzero.len(),
+            nonzero.join(", ")
+        )
     }
 }
 
@@ -718,7 +736,13 @@ fn evaluate_fmt(source: &str) -> CaseResult {
 fn fmt_in_thread(source: &str) -> CaseResult {
     let caught = std::panic::catch_unwind(|| fmt_roundtrip(source));
     match caught {
-        Ok(Ok(())) => mk(Target::Fmt, Oracle::O3Roundtrip, Category::Ok, "fmt ok", source),
+        Ok(Ok(())) => mk(
+            Target::Fmt,
+            Oracle::O3Roundtrip,
+            Category::Ok,
+            "fmt ok",
+            source,
+        ),
         Ok(Err(e)) => match e.category {
             Category::RoundtripMismatch => mk(
                 Target::Fmt,
@@ -734,7 +758,13 @@ fn fmt_in_thread(source: &str) -> CaseResult {
                 &e.detail,
                 source,
             ),
-            _ => mk(Target::Fmt, Oracle::O1NoCrash, Category::Panic, &e.detail, source),
+            _ => mk(
+                Target::Fmt,
+                Oracle::O1NoCrash,
+                Category::Panic,
+                &e.detail,
+                source,
+            ),
         },
         Err(_) => mk(
             Target::Fmt,
@@ -767,10 +797,8 @@ fn fmt_roundtrip(source: &str) -> Result<(), FmtError> {
         });
     }
 
-    let input_parses = std::panic::catch_unwind(|| {
-        maria_api::compile_str_quiet(source).is_ok()
-    })
-    .unwrap_or(false);
+    let input_parses =
+        std::panic::catch_unwind(|| maria_api::compile_str_quiet(source).is_ok()).unwrap_or(false);
 
     let once = maria_api::tools::fmt::format_source(source, 4);
     if once.is_empty() && !source.trim().is_empty() {
@@ -785,10 +813,8 @@ fn fmt_roundtrip(source: &str) -> Result<(), FmtError> {
             detail: "input tidak valid — fmt output kosong wajar".to_string(),
         });
     }
-    let once_parses = std::panic::catch_unwind(|| {
-        maria_api::compile_str_quiet(&once).is_ok()
-    })
-    .unwrap_or(false);
+    let once_parses =
+        std::panic::catch_unwind(|| maria_api::compile_str_quiet(&once).is_ok()).unwrap_or(false);
     if !once_parses {
         if input_parses {
             // GOLDEN: fmt merusak source yang VALID — bug nyata.
@@ -809,9 +835,7 @@ fn fmt_roundtrip(source: &str) -> Result<(), FmtError> {
     if twice != once {
         return Err(FmtError {
             category: Category::RoundtripMismatch,
-            detail: format!(
-                "fmt(fmt(s)) != fmt(s):\n--- once ---\n{once}\n--- twice ---\n{twice}"
-            ),
+            detail: format!("fmt(fmt(s)) != fmt(s):\n--- once ---\n{once}\n--- twice ---\n{twice}"),
         });
     }
     Ok(())
@@ -865,9 +889,7 @@ fn evaluate_cli(source: &str, timeout_ms: u64) -> CaseResult {
         if second.kind == crate::runner::Kind::Ok {
             let strip = |s: &str| -> Vec<String> {
                 s.lines()
-                    .filter(|l| {
-                        !l.contains("time") && !l.contains("µs") && !l.contains("ms)")
-                    })
+                    .filter(|l| !l.contains("time") && !l.contains("µs") && !l.contains("ms)"))
                     .map(|l| l.trim().to_string())
                     .collect()
             };
@@ -939,9 +961,7 @@ fn evaluate_cli(source: &str, timeout_ms: u64) -> CaseResult {
 /// 4. O4: stats double-run → output harus identik.
 fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
     use std::path::PathBuf;
-    let mk_v = |c: Category, o: Oracle, d: &str| {
-        mk(Target::Vcd, o, c, d, source)
-    };
+    let mk_v = |c: Category, o: Oracle, d: &str| mk(Target::Vcd, o, c, d, source);
 
     // Hash source → RNG deterministik per-case.
     let mut h: u64 = 0x9E3779B97F4A7C15;
@@ -953,13 +973,21 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
 
     // ── 1. Generate VCD base ──
     let dir = std::env::temp_dir();
-    let stem = format!("mariafzv_{}_{}", std::process::id(), crate::next_crash_seq());
+    let stem = format!(
+        "mariafzv_{}_{}",
+        std::process::id(),
+        crate::next_crash_seq()
+    );
     let sv = dir.join(format!("{stem}.sv"));
     let vcd_base = dir.join(format!("{stem}_base.vcd"));
     let vcd_mut = dir.join(format!("{stem}_mut.vcd"));
     let vcd_out = dir.join(format!("{stem}_out.vcd"));
     if std::fs::write(&sv, source).is_err() {
-        return mk_v(Category::CleanError, Oracle::O1NoCrash, "gagal tulis temp sv");
+        return mk_v(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            "gagal tulis temp sv",
+        );
     }
     let args = vec![
         "msim".to_string(),
@@ -984,7 +1012,11 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
         Ok(s) if s.trim().len() >= 32 => s,
         _ => {
             let _ = std::fs::remove_file(&vcd_base);
-            return mk_v(Category::CleanError, Oracle::O1NoCrash, "VCD kosong/tidak terbentuk");
+            return mk_v(
+                Category::CleanError,
+                Oracle::O1NoCrash,
+                "VCD kosong/tidak terbentuk",
+            );
         }
     };
 
@@ -997,7 +1029,11 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
     }
     if std::fs::write(&vcd_mut, &vcd_target).is_err() {
         let _ = std::fs::remove_file(&vcd_base);
-        return mk_v(Category::CleanError, Oracle::O1NoCrash, "gagal tulis VCD mutasi");
+        return mk_v(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            "gagal tulis VCD mutasi",
+        );
     }
 
     let mcmd = |args2: Vec<String>| -> crate::runner::Outcome {
@@ -1011,10 +1047,26 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
     let cmds: [Vec<String>; 8] = [
         vec!["mwave".into(), "stats".into(), vcd_mut_s.clone()],
         vec!["mwave".into(), "tree".into(), vcd_mut_s.clone()],
-        vec!["mwave".into(), "search".into(), vcd_mut_s.clone(), "*".into()],
+        vec![
+            "mwave".into(),
+            "search".into(),
+            vcd_mut_s.clone(),
+            "*".into(),
+        ],
         vec!["mwave".into(), "export".into(), vcd_mut_s.clone()],
-        vec!["mwave".into(), "compare".into(), vcd_base_s.clone(), vcd_mut_s.clone()],
-        vec!["mwave".into(), "filter".into(), vcd_mut_s.clone(), "q".into(), "clk".into()],
+        vec![
+            "mwave".into(),
+            "compare".into(),
+            vcd_base_s.clone(),
+            vcd_mut_s.clone(),
+        ],
+        vec![
+            "mwave".into(),
+            "filter".into(),
+            vcd_mut_s.clone(),
+            "q".into(),
+            "clk".into(),
+        ],
         vec![
             "mwave".into(),
             "merge".into(),
@@ -1023,7 +1075,13 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
             "-o".into(),
             vcd_out_s.clone(),
         ],
-        vec!["mwave".into(), "get".into(), vcd_mut_s.clone(), "--at".into(), "0".into()],
+        vec![
+            "mwave".into(),
+            "get".into(),
+            vcd_mut_s.clone(),
+            "--at".into(),
+            "0".into(),
+        ],
     ];
     let n = 1 + rng.below(2);
     for _ in 0..n {
@@ -1035,27 +1093,47 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
                 // VCD korup → error parser wajar (bukan bug).
                 let _ = std::fs::remove_file(&vcd_base);
                 let _ = std::fs::remove_file(&vcd_mut);
-                return mk_v(Category::CleanError, Oracle::O1NoCrash, "mwave clean error (VCD invalid)");
+                return mk_v(
+                    Category::CleanError,
+                    Oracle::O1NoCrash,
+                    "mwave clean error (VCD invalid)",
+                );
             }
             crate::runner::Kind::Panic => {
                 let _ = std::fs::remove_file(&vcd_base);
                 let _ = std::fs::remove_file(&vcd_mut);
-                return mk_v(Category::Panic, Oracle::O1NoCrash, &format!("mwave panic: {}", o.stderr));
+                return mk_v(
+                    Category::Panic,
+                    Oracle::O1NoCrash,
+                    &format!("mwave panic: {}", o.stderr),
+                );
             }
             crate::runner::Kind::Abort => {
                 let _ = std::fs::remove_file(&vcd_base);
                 let _ = std::fs::remove_file(&vcd_mut);
-                return mk_v(Category::Abort, Oracle::O1NoCrash, &format!("mwave abort: {}", o.stderr));
+                return mk_v(
+                    Category::Abort,
+                    Oracle::O1NoCrash,
+                    &format!("mwave abort: {}", o.stderr),
+                );
             }
             crate::runner::Kind::Crash(code) => {
                 let _ = std::fs::remove_file(&vcd_base);
                 let _ = std::fs::remove_file(&vcd_mut);
-                return mk_v(Category::Panic, Oracle::O1NoCrash, &format!("mwave crash code {code}: {}", o.stderr));
+                return mk_v(
+                    Category::Panic,
+                    Oracle::O1NoCrash,
+                    &format!("mwave crash code {code}: {}", o.stderr),
+                );
             }
             crate::runner::Kind::Hang => {
                 let _ = std::fs::remove_file(&vcd_base);
                 let _ = std::fs::remove_file(&vcd_mut);
-                return mk_v(Category::Hang, Oracle::O1NoCrash, &format!("mwave hang > {} ms", timeout_ms));
+                return mk_v(
+                    Category::Hang,
+                    Oracle::O1NoCrash,
+                    &format!("mwave hang > {} ms", timeout_ms),
+                );
             }
         }
     }
@@ -1079,7 +1157,11 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
     let _ = std::fs::remove_file(&vcd_base);
     let _ = std::fs::remove_file(&vcd_mut);
     let _ = std::fs::remove_file(&vcd_out);
-    mk_v(Category::Ok, Oracle::O1NoCrash, "vcd pipeline ok: mwave robust + deterministic")
+    mk_v(
+        Category::Ok,
+        Oracle::O1NoCrash,
+        "vcd pipeline ok: mwave robust + deterministic",
+    )
 }
 
 /// Argumen CLI untuk satu kasus fuzz: tool subcommand ATAU pipeline flags,
@@ -1130,8 +1212,15 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
     }
 
     let flags = [
-        "--ast", "--tokens", "--tree", "--print-state", "--coverage", "--fast",
-        "--recompile", "--deep-debug", "--debug",
+        "--ast",
+        "--tokens",
+        "--tree",
+        "--print-state",
+        "--coverage",
+        "--fast",
+        "--recompile",
+        "--deep-debug",
+        "--debug",
     ];
     let n = 1 + rng.below(3);
     for _ in 0..n {
@@ -1155,7 +1244,8 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
                 // --timeline/--print-signal/--watch butuh nama signal — pilih
                 // ident pendek dari source (nama signal nyata bila ada).
                 let mut name = "q".to_string();
-                'outer: for w in source.split([' ', '\n', '\t', '(', ')', ',', ';', '[', ']', '.']) {
+                'outer: for w in source.split([' ', '\n', '\t', '(', ')', ',', ';', '[', ']', '.'])
+                {
                     let w = w.trim();
                     if w.len() >= 2
                         && w.len() <= 16
@@ -1168,9 +1258,18 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
                 }
                 let kind = rng.below(3);
                 match kind {
-                    0 => { args.push("--timeline".to_string()); args.push(name.clone()); }
-                    1 => { args.push("--print-signal".to_string()); args.push(name.clone()); }
-                    _ => { args.push("--watch".to_string()); args.push(name.clone()); }
+                    0 => {
+                        args.push("--timeline".to_string());
+                        args.push(name.clone());
+                    }
+                    1 => {
+                        args.push("--print-signal".to_string());
+                        args.push(name.clone());
+                    }
+                    _ => {
+                        args.push("--watch".to_string());
+                        args.push(name.clone());
+                    }
                 }
             }
         }
@@ -1197,24 +1296,58 @@ fn evaluate_preproc(source: &str) -> CaseResult {
                     source,
                 );
             }
-            mk(Target::Preproc, Oracle::O1NoCrash, Category::Ok, "preproc deterministik", source)
+            mk(
+                Target::Preproc,
+                Oracle::O1NoCrash,
+                Category::Ok,
+                "preproc deterministik",
+                source,
+            )
         }
         (Ok(Err(e1)), Ok(Err(e2))) => {
             if e1 == e2 {
                 let has_loc = extract_loc(&e1);
                 if has_loc {
-                    mk(Target::Preproc, Oracle::O1NoCrash, Category::CleanError, &e1, source)
+                    mk(
+                        Target::Preproc,
+                        Oracle::O1NoCrash,
+                        Category::CleanError,
+                        &e1,
+                        source,
+                    )
                 } else {
-                    mk(Target::Preproc, Oracle::O2DiagLocation, Category::DiagMissing, &format!("preproc tanpa lokasi: {e1}"), source)
+                    mk(
+                        Target::Preproc,
+                        Oracle::O2DiagLocation,
+                        Category::DiagMissing,
+                        &format!("preproc tanpa lokasi: {e1}"),
+                        source,
+                    )
                 }
             } else {
-                mk(Target::Preproc, Oracle::O4Determinism, Category::NonDeterministic, &format!("error preproc beda: {e1} vs {e2}"), source)
+                mk(
+                    Target::Preproc,
+                    Oracle::O4Determinism,
+                    Category::NonDeterministic,
+                    &format!("error preproc beda: {e1} vs {e2}"),
+                    source,
+                )
             }
         }
-        (Ok(Err(e)), _) | (_, Ok(Err(e))) => {
-            mk(Target::Preproc, Oracle::O4Determinism, Category::NonDeterministic, &format!("satu run error satu ok: {e}"), source)
-        }
-        _ => mk(Target::Preproc, Oracle::O1NoCrash, Category::Panic, "panic saat preprocess", source),
+        (Ok(Err(e)), _) | (_, Ok(Err(e))) => mk(
+            Target::Preproc,
+            Oracle::O4Determinism,
+            Category::NonDeterministic,
+            &format!("satu run error satu ok: {e}"),
+            source,
+        ),
+        _ => mk(
+            Target::Preproc,
+            Oracle::O1NoCrash,
+            Category::Panic,
+            "panic saat preprocess",
+            source,
+        ),
     }
 }
 
@@ -1251,8 +1384,9 @@ fn evaluate_mv(source: &str) -> CaseResult {
             }
             // Output SV harus parseable.
             let combined = format!("{}\n{}", t1.svh, t1.sv);
-            let parses = std::panic::catch_unwind(|| maria_api::compile_str_quiet(&combined).is_ok())
-                .unwrap_or(false);
+            let parses =
+                std::panic::catch_unwind(|| maria_api::compile_str_quiet(&combined).is_ok())
+                    .unwrap_or(false);
             if !parses {
                 return mk(
                     Target::Mv,
@@ -1262,11 +1396,23 @@ fn evaluate_mv(source: &str) -> CaseResult {
                     source,
                 );
             }
-            mk(Target::Mv, Oracle::O1NoCrash, Category::Ok, "mv transpile deterministik + output parseable", source)
+            mk(
+                Target::Mv,
+                Oracle::O1NoCrash,
+                Category::Ok,
+                "mv transpile deterministik + output parseable",
+                source,
+            )
         }
         (Ok(Err(_e1)), Ok(Err(_e2))) => {
             // Error deterministik — MV tak valid, bukan bug.
-            mk(Target::Mv, Oracle::O1NoCrash, Category::CleanError, "mv transpile error deterministik", source)
+            mk(
+                Target::Mv,
+                Oracle::O1NoCrash,
+                Category::CleanError,
+                "mv transpile error deterministik",
+                source,
+            )
         }
         _ => mk(
             Target::Mv,

@@ -213,18 +213,14 @@ mod tests {
         let x_packed = PackedLogicVec::fill(LogicVal::X, 4);
         let zero_packed = PackedLogicVec::fill(LogicVal::Zero, 4);
         let r = x_packed.bitwise_and(&zero_packed);
-        assert!(
-            r.all_x(),
-            "pessimistic: X & 0 should be X, got {}",
-            r
-        );
+        assert!(r.all_x(), "pessimistic: X & 0 should be X, got {}", r);
     }
 
     #[test]
     fn test_bitwise_and_x_0_optimistic() {
         // Moda Optimistic memakai tabel LRM: 0 mendominasi AND → X & 0 = 0.
-        use crate::simulator::value::set_xprop_mode;
         use crate::simulator::types::XPropagationMode;
+        use crate::simulator::value::set_xprop_mode;
         set_xprop_mode(XPropagationMode::Optimistic);
         let x_packed = PackedLogicVec::fill(LogicVal::X, 4);
         let zero_packed = PackedLogicVec::fill(LogicVal::Zero, 4);
@@ -252,11 +248,7 @@ mod tests {
         let x_packed = PackedLogicVec::fill(LogicVal::X, 4);
         let one_packed = PackedLogicVec::fill(LogicVal::One, 4);
         let r = x_packed.bitwise_or(&one_packed);
-        assert!(
-            r.all_x(),
-            "pessimistic: X | 1 should be X, got {}",
-            r
-        );
+        assert!(r.all_x(), "pessimistic: X | 1 should be X, got {}", r);
     }
 
     #[test]
@@ -626,11 +618,7 @@ mod tests {
         let prev = get_xprop_mode();
         let x = LogicVec::fill(LogicVal::X, 2);
         let z = LogicVec::fill(LogicVal::Z, 2);
-        let ops = [
-            BinaryIrOp::BitAnd,
-            BinaryIrOp::BitOr,
-            BinaryIrOp::BitXor,
-        ];
+        let ops = [BinaryIrOp::BitAnd, BinaryIrOp::BitOr, BinaryIrOp::BitXor];
         let pairs = [
             (LogicVec::from_u64(0, 2), x.clone()),
             (x.clone(), LogicVec::from_u64(0, 2)),

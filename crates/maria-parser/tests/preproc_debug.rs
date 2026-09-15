@@ -187,9 +187,7 @@ endmodule
     let mut pp = Preprocessor::new();
     let out = pp.preprocess(src, None).unwrap();
     assert!(
-        out.contains(
-            "\"Since drive_clk is true, freq_mhz must be greater than zero.\""
-        ),
+        out.contains("\"Since drive_clk is true, freq_mhz must be greater than zero.\""),
         "string argumen harus utuh, out:\n{}",
         out
     );

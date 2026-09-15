@@ -7,23 +7,97 @@ use crate::{corpus::Corpus, Rng};
 
 /// REDQUEEN-style input-to-state keywords (SystemVerilog).
 pub static KEYWORD_LIST: &[&str] = &[
-    "module", "endmodule", "input", "output", "inout", "wire", "reg",
-    "logic", "bit", "integer", "real", "string", "byte", "shortint", "int",
-    "longint", "unsigned", "signed", "parameter", "localparam",
-    "assign", "always", "always_ff", "always_comb", "always_latch",
-    "initial", "final", "begin", "end", "if", "else", "case", "casez",
-    "casex", "endcase", "default", "for", "foreach", "while", "do",
-    "forever", "repeat", "break", "continue", "return",
-    "function", "endfunction", "task", "endtask",
-    "class", "endclass", "extends", "implements", "interface", "endinterface",
-    "package", "endpackage", "import", "export",
-    "struct", "union", "enum", "typedef",
-    "generate", "endgenerate", "genvar",
-    "assert", "assume", "cover", "property", "sequence", "endproperty",
-    "constraint", "rand", "randc", "randomize",
-    "fork", "join", "join_any", "join_none",
-    "posedge", "negedge", "clocking", "#",
-    "and", "or", "not", "xor", "xnor", "nand", "nor",
+    "module",
+    "endmodule",
+    "input",
+    "output",
+    "inout",
+    "wire",
+    "reg",
+    "logic",
+    "bit",
+    "integer",
+    "real",
+    "string",
+    "byte",
+    "shortint",
+    "int",
+    "longint",
+    "unsigned",
+    "signed",
+    "parameter",
+    "localparam",
+    "assign",
+    "always",
+    "always_ff",
+    "always_comb",
+    "always_latch",
+    "initial",
+    "final",
+    "begin",
+    "end",
+    "if",
+    "else",
+    "case",
+    "casez",
+    "casex",
+    "endcase",
+    "default",
+    "for",
+    "foreach",
+    "while",
+    "do",
+    "forever",
+    "repeat",
+    "break",
+    "continue",
+    "return",
+    "function",
+    "endfunction",
+    "task",
+    "endtask",
+    "class",
+    "endclass",
+    "extends",
+    "implements",
+    "interface",
+    "endinterface",
+    "package",
+    "endpackage",
+    "import",
+    "export",
+    "struct",
+    "union",
+    "enum",
+    "typedef",
+    "generate",
+    "endgenerate",
+    "genvar",
+    "assert",
+    "assume",
+    "cover",
+    "property",
+    "sequence",
+    "endproperty",
+    "constraint",
+    "rand",
+    "randc",
+    "randomize",
+    "fork",
+    "join",
+    "join_any",
+    "join_none",
+    "posedge",
+    "negedge",
+    "clocking",
+    "#",
+    "and",
+    "or",
+    "not",
+    "xor",
+    "xnor",
+    "nand",
+    "nor",
 ];
 
 pub struct Mutator<'r> {
@@ -100,7 +174,11 @@ impl<'r> Mutator<'r> {
                 }
             }
         }
-        if done { out } else { source.to_string() }
+        if done {
+            out
+        } else {
+            source.to_string()
+        }
     }
 
     /// Sisipkan delay `#N` di depan satu statement (event scheduling stress).
@@ -109,19 +187,27 @@ impl<'r> Mutator<'r> {
         let mut done = false;
         for line in source.lines() {
             let t = line.trim_start();
-            if !done
-                && t.starts_with("assign")
-                && !t.starts_with("assign #")
-            {
-                let indent: String = line.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
-                out.push_str(&format!("{}assign #1 {};\n", indent, t.trim_end_matches(';')));
+            if !done && t.starts_with("assign") && !t.starts_with("assign #") {
+                let indent: String = line
+                    .chars()
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .collect();
+                out.push_str(&format!(
+                    "{}assign #1 {};\n",
+                    indent,
+                    t.trim_end_matches(';')
+                ));
                 done = true;
             } else {
                 out.push_str(line);
                 out.push('\n');
             }
         }
-        if done { out } else { source.to_string() }
+        if done {
+            out
+        } else {
+            source.to_string()
+        }
     }
 
     /// Duplikasi panggilan macro/`$display` di akhir baris.
@@ -140,7 +226,11 @@ impl<'r> Mutator<'r> {
                 }
             }
         }
-        if done { out } else { source.to_string() }
+        if done {
+            out
+        } else {
+            source.to_string()
+        }
     }
 
     /// Ekstremisasi lebar literal: `8'hFF` → lebar tak wajar (1, 128, 64'd…).
@@ -173,7 +263,8 @@ impl<'r> Mutator<'r> {
         let mut done = false;
         for line in source.lines() {
             if !done
-                && (line.trim_start().starts_with("module") || line.trim_start().starts_with("assign"))
+                && (line.trim_start().starts_with("module")
+                    || line.trim_start().starts_with("assign"))
             {
                 out.push_str("`include \"fz_undefined_inc.svh\"\n");
                 done = true;
@@ -181,7 +272,9 @@ impl<'r> Mutator<'r> {
             out.push_str(line);
             out.push('\n');
         }
-        if done { out } else {
+        if done {
+            out
+        } else {
             format!("`include \"fz_undefined_inc.svh\"\n{source}")
         }
     }
@@ -206,8 +299,12 @@ impl<'r> Mutator<'r> {
         if cut_len == 0 {
             return source.to_string();
         }
-        let donor_start = self.rng.below(donor_chars.len() - cut_len.min(donor_chars.len()));
-        let frag: String = donor_chars[donor_start..donor_start + cut_len].iter().collect();
+        let donor_start = self
+            .rng
+            .below(donor_chars.len() - cut_len.min(donor_chars.len()));
+        let frag: String = donor_chars[donor_start..donor_start + cut_len]
+            .iter()
+            .collect();
 
         let insert_at = self.rng.below(src_chars.len());
         let mut out: String = src_chars[..insert_at].iter().collect();
@@ -276,9 +373,16 @@ impl<'r> Mutator<'r> {
     /// Ubah literal angka — sisipkan nilai ekstrem.
     fn tweak_literal(&mut self, source: &str) -> String {
         let extremes = [
-            "'0", "'1", "'x", "'z",
-            "32'hffffffff", "64'd0", "-1",
-            "1e308", "2**31", "18446744073709551615",
+            "'0",
+            "'1",
+            "'x",
+            "'z",
+            "32'hffffffff",
+            "64'd0",
+            "-1",
+            "1e308",
+            "2**31",
+            "18446744073709551615",
         ];
         let (mut num_start, mut num_end) = (0usize, 0usize);
         let mut in_number = false;
@@ -316,9 +420,21 @@ impl<'r> Mutator<'r> {
     /// Sisipkan sampah (garbage) di posisi acak.
     fn insert_garbage(&mut self, source: &str) -> String {
         let garbage = [
-            "{", "::", "&&&", "'''", "é中", "@@@", "~~~", "/*",
-            "*/", "`define X Y", "`include \"fz.sv\"",
-            "endmodule", "begin end", "0x", "##1",
+            "{",
+            "::",
+            "&&&",
+            "'''",
+            "é中",
+            "@@@",
+            "~~~",
+            "/*",
+            "*/",
+            "`define X Y",
+            "`include \"fz.sv\"",
+            "endmodule",
+            "begin end",
+            "0x",
+            "##1",
         ];
         let chars: Vec<char> = source.chars().collect();
         if chars.is_empty() {
@@ -356,7 +472,9 @@ impl<'r> Mutator<'r> {
             return String::new();
         }
         let at = self.rng.below(chars.len());
-        let flip_table = ['0', '1', ';', '(', ')', '"', '\'', '+', '-', '&', '|', '^', '~', '!', '=', '<', '>'];
+        let flip_table = [
+            '0', '1', ';', '(', ')', '"', '\'', '+', '-', '&', '|', '^', '~', '!', '=', '<', '>',
+        ];
         let new_char = self.rng.pick(&flip_table);
         let mut out: String = chars[..at].iter().collect();
         out.push(*new_char);

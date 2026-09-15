@@ -518,7 +518,12 @@ impl SimulationEngine {
         }
         // Toggle coverage: nama sinyal + transisi bit (old→new).
         for (sig_id, toggles) in &self.cover_toggle {
-            let name = self.design.top.signals.get(*sig_id).map(|s| s.name.to_string());
+            let name = self
+                .design
+                .top
+                .signals
+                .get(*sig_id)
+                .map(|s| s.name.to_string());
             for (old, new) in toggles {
                 let n = name.as_deref().unwrap_or("sig");
                 keys.push(format!("cov_toggle:{}:{:?}->{:?}", n, old, new));
@@ -526,7 +531,12 @@ impl SimulationEngine {
         }
         // FSM coverage: nama sinyal + nilai state dikunjungi.
         for (sig_id, vals) in &self.cover_fsm {
-            let name = self.design.top.signals.get(*sig_id).map(|s| s.name.to_string());
+            let name = self
+                .design
+                .top
+                .signals
+                .get(*sig_id)
+                .map(|s| s.name.to_string());
             for v in vals {
                 let n = name.as_deref().unwrap_or("sig");
                 keys.push(format!("cov_fsm:{}:{:#x}", n, v));
@@ -773,7 +783,8 @@ impl SimulationEngine {
                     .map(|(i, s)| format!("{}={}", s.name, self.state.read_signal(i)))
                     .collect();
                 parts.sort();
-                self.trace_snapshots.push(format!("t{}:{}", t, parts.join(",")));
+                self.trace_snapshots
+                    .push(format!("t{}:{}", t, parts.join(",")));
             }
         }
     }

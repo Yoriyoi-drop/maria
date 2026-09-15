@@ -178,7 +178,10 @@ fn cmd_replay(args: &[String]) -> i32 {
 }
 
 fn cmd_triage(args: &[String]) -> i32 {
-    let dir = args.first().cloned().unwrap_or_else(|| bugs_dir().to_string_lossy().to_string());
+    let dir = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| bugs_dir().to_string_lossy().to_string());
 
     let mut results = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -202,7 +205,11 @@ fn cmd_triage(args: &[String]) -> i32 {
                 target: Target::Parser,
                 category,
                 oracle: "manual",
-                detail: meta.lines().find(|l| l.starts_with("detail: ")).unwrap_or("").to_string(),
+                detail: meta
+                    .lines()
+                    .find(|l| l.starts_with("detail: "))
+                    .unwrap_or("")
+                    .to_string(),
                 source,
             });
         }
@@ -283,9 +290,7 @@ fn cmd_verify(args: &[String]) -> i32 {
 
     if let Some(cases_s) = cases_s {
         let cases: usize = cases_s.parse().unwrap_or(200);
-        let seed: u64 = seed_s
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0x1CA_2026);
+        let seed: u64 = seed_s.and_then(|s| s.parse().ok()).unwrap_or(0x1CA_2026);
         return verify_mutated(cases, seed, timeout);
     }
 
@@ -294,7 +299,11 @@ fn cmd_verify(args: &[String]) -> i32 {
         .map(PathBuf::from)
         .unwrap_or_else(default_corpus_dir);
 
-    eprintln!("VERIFY vs iverilog: corpus={} timeout={}ms", dir.display(), timeout);
+    eprintln!(
+        "VERIFY vs iverilog: corpus={} timeout={}ms",
+        dir.display(),
+        timeout
+    );
 
     let mut seed_sources: Vec<(String, String)> = Vec::new(); // (name, combined)
     if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -444,7 +453,8 @@ fn verify_mutated(cases: usize, seed: u64, timeout_ms: u64) -> i32 {
         // marker kosong dua sisi = "match" vakum (tak bermakna). Filter:
         // hanya source yang punya marker (TB fuzz) ATAU design berstimulus
         // ($display) — untuk real RTL tanpa tb, compare vakum.
-        if !source.contains("ASRT_") && !source.contains("$display") && !source.contains("$finish") {
+        if !source.contains("ASRT_") && !source.contains("$display") && !source.contains("$finish")
+        {
             n_clean += 1;
             continue;
         }
@@ -456,7 +466,11 @@ fn verify_mutated(cases: usize, seed: u64, timeout_ms: u64) -> i32 {
             }
             maria_fuzz::oracle_icarus::Verdict::Mismatch => {
                 n_mismatch += 1;
-                eprintln!("  [MISMATCH] #{}: {}", i, r.detail.lines().next().unwrap_or(""));
+                eprintln!(
+                    "  [MISMATCH] #{}: {}",
+                    i,
+                    r.detail.lines().next().unwrap_or("")
+                );
                 let _ = std::fs::create_dir_all(maria_fuzz::bugs_dir());
                 let path = maria_fuzz::bugs_dir().join(format!("verify_bad_{:04}.sv", i));
                 let _ = std::fs::write(&path, &source);
@@ -475,7 +489,11 @@ fn verify_mutated(cases: usize, seed: u64, timeout_ms: u64) -> i32 {
                     | maria_fuzz::Category::Abort
                     | maria_fuzz::Category::Hang => {
                         n_mariabug += 1;
-                        eprintln!("  [MARIA-BUG] #{}: {}", i, r.detail.lines().next().unwrap_or(""));
+                        eprintln!(
+                            "  [MARIA-BUG] #{}: {}",
+                            i,
+                            r.detail.lines().next().unwrap_or("")
+                        );
                         let _ = std::fs::create_dir_all(maria_fuzz::bugs_dir());
                         let path = maria_fuzz::bugs_dir().join(format!("verify_bug_{:04}.sv", i));
                         let _ = std::fs::write(&path, &source);
@@ -487,8 +505,15 @@ fn verify_mutated(cases: usize, seed: u64, timeout_ms: u64) -> i32 {
             }
         }
         if (i + 1) % 100 == 0 {
-            eprintln!("  [{}/{}] match={} mismatch={} refNA={} mariaBug={}",
-                i + 1, cases, n_match, n_mismatch, n_ref_na, n_mariabug);
+            eprintln!(
+                "  [{}/{}] match={} mismatch={} refNA={} mariaBug={}",
+                i + 1,
+                cases,
+                n_match,
+                n_mismatch,
+                n_ref_na,
+                n_mariabug
+            );
         }
     }
 

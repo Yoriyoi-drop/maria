@@ -48,7 +48,11 @@ fn main() {
             Err(e) => {
                 println!("{}", e);
                 eprintln!("---- preprocessed source tail ----");
-                for (idx, l) in expanded.lines().enumerate().skip(expanded.lines().count().saturating_sub(200)) {
+                for (idx, l) in expanded
+                    .lines()
+                    .enumerate()
+                    .skip(expanded.lines().count().saturating_sub(200))
+                {
                     println!("{:>6} | {}", idx + 1, l);
                 }
             }

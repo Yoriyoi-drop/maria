@@ -95,6 +95,33 @@ impl Parser {
                 }
                 continue;
             }
+            // `unique {expr; ...}` is a constraint qualifier used by
+            // riscv-dv randomize-with blocks.  The contents are not needed
+            // by Maria's runtime, but must be consumed without treating the
+            // semicolons as malformed expression syntax.
+            if self.peek() == &Token::Unique {
+                self.advance();
+                if self.peek() == &Token::LBrace {
+                    self.advance();
+                    let mut depth = 1usize;
+                    while depth > 0 && self.peek() != &Token::Eof {
+                        match self.peek() {
+                            Token::LBrace => {
+                                depth += 1;
+                                self.advance();
+                            }
+                            Token::RBrace => {
+                                depth -= 1;
+                                self.advance();
+                            }
+                            _ => self.advance(),
+                        }
+                    }
+                } else {
+                    self.skip_semi();
+                }
+                continue;
+            }
             // `soft expr;` (LANG-31) — constraint soft (best-effort): boleh
             // dilanggar bila bertentangan dengan hard constraint.
             if self.peek() == &Token::Soft {

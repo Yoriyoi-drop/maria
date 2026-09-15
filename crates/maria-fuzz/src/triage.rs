@@ -51,7 +51,10 @@ pub fn render_report(results: &[CaseResult]) -> String {
             r.target.as_str(),
             r.oracle
         ));
-        out.push_str(&format!("  detail: {}\n", r.detail.lines().next().unwrap_or("")));
+        out.push_str(&format!(
+            "  detail: {}\n",
+            r.detail.lines().next().unwrap_or("")
+        ));
         out.push_str(&format!(
             "  source ({:?} bytes): {}\n",
             r.source.len(),

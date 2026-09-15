@@ -17,7 +17,10 @@ impl SimulationEngine {
         // DEBUG trace method (env-gated): 1,2M+ baris spam saat korpus UVM
         // (opentitan) — kampanye besar kewalahan I/O. Hanya aktif eksplisit.
         if std::env::var("MARIA_METHOD_TRACE").is_ok() {
-            eprintln!("METHOD {} task={} obj={:?}", method, method_def.is_task, obj_id);
+            eprintln!(
+                "METHOD {} task={} obj={:?}",
+                method, method_def.is_task, obj_id
+            );
         }
         let old_this = self.current_this;
         if let Some(oid) = obj_id {

@@ -261,11 +261,17 @@ fn print_stmt_b(b: &mut StrB, indent: usize, s: &Stmt) {
         }
         Stmt::Assign { lhs, rhs, nba, .. } => b.line(
             indent,
-            &format!("{} {} {}", print_expr(lhs), if *nba { "<=" } else { "=" }, print_expr(rhs)),
+            &format!(
+                "{} {} {}",
+                print_expr(lhs),
+                if *nba { "<=" } else { "=" },
+                print_expr(rhs)
+            ),
         ),
-        Stmt::CompoundAssign { lhs, op, rhs, .. } => {
-            b.line(indent, &format!("{} {op} {}", print_expr(lhs), print_expr(rhs)))
-        }
+        Stmt::CompoundAssign { lhs, op, rhs, .. } => b.line(
+            indent,
+            &format!("{} {op} {}", print_expr(lhs), print_expr(rhs)),
+        ),
         Stmt::IncDec { lhs, inc, pre, .. } => {
             let op = if *inc { "++" } else { "--" };
             if *pre {
@@ -275,46 +281,98 @@ fn print_stmt_b(b: &mut StrB, indent: usize, s: &Stmt) {
             }
         }
         Stmt::If { cond, then, els } => {
-            b.line(indent, &format!("if ({}) {}", print_expr(cond), print_stmt(indent, then)));
+            b.line(
+                indent,
+                &format!("if ({}) {}", print_expr(cond), print_stmt(indent, then)),
+            );
             if let Some(e) = els {
                 b.line(indent, &format!("else {}", print_stmt(indent, e)));
             }
         }
-        Stmt::Case { expr, items, default, qual, kind } => {
+        Stmt::Case {
+            expr,
+            items,
+            default,
+            qual,
+            kind,
+        } => {
             let q = qual.as_ref().map(|s| format!("{s} ")).unwrap_or_default();
             b.line(indent, &format!("{q}{kind} ({}) {{", print_expr(expr)));
             for (vals, body) in items {
                 let v: Vec<String> = vals.iter().map(print_expr).collect();
-                b.line(indent + 1, &format!("{}: {}", v.join(", "), print_stmt(indent + 1, body)));
+                b.line(
+                    indent + 1,
+                    &format!("{}: {}", v.join(", "), print_stmt(indent + 1, body)),
+                );
             }
             if let Some(d) = default {
-                b.line(indent + 1, &format!("default: {}", print_stmt(indent + 1, d)));
+                b.line(
+                    indent + 1,
+                    &format!("default: {}", print_stmt(indent + 1, d)),
+                );
             }
             b.line(indent, "}");
         }
-        Stmt::For { var, from, to, step, body } => {
-            let st = step.as_ref().map(|s| format!(" step {}", print_expr(s))).unwrap_or_default();
+        Stmt::For {
+            var,
+            from,
+            to,
+            step,
+            body,
+        } => {
+            let st = step
+                .as_ref()
+                .map(|s| format!(" step {}", print_expr(s)))
+                .unwrap_or_default();
             b.line(
                 indent,
-                &format!("for {var} in {}..{}{st} {}", print_expr(from), print_expr(to), print_stmt(indent, body)),
+                &format!(
+                    "for {var} in {}..{}{st} {}",
+                    print_expr(from),
+                    print_expr(to),
+                    print_stmt(indent, body)
+                ),
             );
         }
         Stmt::While { cond, body } => {
-            b.line(indent, &format!("while ({}) {}", print_expr(cond), print_stmt(indent, body)));
+            b.line(
+                indent,
+                &format!("while ({}) {}", print_expr(cond), print_stmt(indent, body)),
+            );
         }
         Stmt::DoWhile { cond, body } => {
-            b.line(indent, &format!("do {} while ({})", print_stmt(indent, body), print_expr(cond)));
+            b.line(
+                indent,
+                &format!(
+                    "do {} while ({})",
+                    print_stmt(indent, body),
+                    print_expr(cond)
+                ),
+            );
         }
         Stmt::EventTrigger(e) => b.line(indent, &format!("->{}", print_expr(e))),
         Stmt::Repeat { count, body } => {
-            b.line(indent, &format!("repeat ({}) {}", print_expr(count), print_stmt(indent, body)));
+            b.line(
+                indent,
+                &format!(
+                    "repeat ({}) {}",
+                    print_expr(count),
+                    print_stmt(indent, body)
+                ),
+            );
         }
         Stmt::Forever(body) => b.line(indent, &format!("forever {}", print_stmt(indent, body))),
         Stmt::Wait { cond, body } => {
-            b.line(indent, &format!("wait ({}) {}", print_expr(cond), print_stmt(indent, body)));
+            b.line(
+                indent,
+                &format!("wait ({}) {}", print_expr(cond), print_stmt(indent, body)),
+            );
         }
         Stmt::Event { expr, body } => {
-            b.line(indent, &format!("@({}) {}", print_expr(expr), print_stmt(indent, body)));
+            b.line(
+                indent,
+                &format!("@({}) {}", print_expr(expr), print_stmt(indent, body)),
+            );
         }
         Stmt::Delay { amt, body } => {
             let body_s = print_stmt(indent, body);
@@ -327,8 +385,14 @@ fn print_stmt_b(b: &mut StrB, indent: usize, s: &Stmt) {
         }
         Stmt::ExprStmt(e) => b.line(indent, &print_expr(e)),
         Stmt::VarDecl { names, ty, init } => {
-            let i = init.as_ref().map(|e| format!(" = {}", print_expr(e))).unwrap_or_default();
-            b.line(indent, &format!("var {} : {}{i}", names.join(", "), print_type(ty)));
+            let i = init
+                .as_ref()
+                .map(|e| format!(" = {}", print_expr(e)))
+                .unwrap_or_default();
+            b.line(
+                indent,
+                &format!("var {} : {}{i}", names.join(", "), print_type(ty)),
+            );
         }
         Stmt::Return(v) => match v {
             Some(e) => b.line(indent, &format!("return {}", print_expr(e))),
@@ -350,11 +414,20 @@ fn print_stmt_b(b: &mut StrB, indent: usize, s: &Stmt) {
         }
         Stmt::Foreach { arr, inds, body } => {
             let idx: String = inds.iter().map(|i| format!("[{i}]")).collect();
-            b.line(indent, &format!("foreach ({arr}{idx}) {}", print_stmt(indent, body)));
+            b.line(
+                indent,
+                &format!("foreach ({arr}{idx}) {}", print_stmt(indent, body)),
+            );
         }
         Stmt::Assert { cond, pass, fail } => {
-            let p = pass.as_ref().map(|s| format!(" {}", print_stmt(indent, s))).unwrap_or_default();
-            let f = fail.as_ref().map(|s| format!(" else {}", print_stmt(indent, s))).unwrap_or_default();
+            let p = pass
+                .as_ref()
+                .map(|s| format!(" {}", print_stmt(indent, s)))
+                .unwrap_or_default();
+            let f = fail
+                .as_ref()
+                .map(|s| format!(" else {}", print_stmt(indent, s)))
+                .unwrap_or_default();
             b.line(indent, &format!("assert ({}){p}{f}", print_expr(cond)));
         }
         Stmt::AssertProperty(raw) => b.line(indent, &format!("assert property {raw}")),
@@ -379,8 +452,15 @@ fn print_stmt_b(b: &mut StrB, indent: usize, s: &Stmt) {
 
 fn print_typedef(out: &mut StrB, td: &Typedef) {
     match td {
-        Typedef::Alias { name, ty, .. } => out.line(0, &format!("type {name} = {}", print_type(ty))),
-        Typedef::Struct { name, packed, fields, .. } => {
+        Typedef::Alias { name, ty, .. } => {
+            out.line(0, &format!("type {name} = {}", print_type(ty)))
+        }
+        Typedef::Struct {
+            name,
+            packed,
+            fields,
+            ..
+        } => {
             let p = if *packed { "packed " } else { "" };
             out.line(0, &format!("{p}struct {name} {{"));
             print_fields(out, 1, fields);
@@ -391,11 +471,23 @@ fn print_typedef(out: &mut StrB, td: &Typedef) {
             print_fields(out, 1, fields);
             out.line(0, "}");
         }
-        Typedef::Enum { name, width, members, .. } => {
-            let w = width.as_ref().map(|e| format!("({}) ", print_expr(e))).unwrap_or_default();
+        Typedef::Enum {
+            name,
+            width,
+            members,
+            ..
+        } => {
+            let w = width
+                .as_ref()
+                .map(|e| format!("({}) ", print_expr(e)))
+                .unwrap_or_default();
             out.line(0, &format!("enum {w}{name} {{"));
             for m in members {
-                let v = m.value.as_ref().map(|e| format!(" = {}", print_expr(e))).unwrap_or_default();
+                let v = m
+                    .value
+                    .as_ref()
+                    .map(|e| format!(" = {}", print_expr(e)))
+                    .unwrap_or_default();
                 out.line(1, &format!("{}{v},", m.name));
             }
             out.line(0, "}");
@@ -405,7 +497,10 @@ fn print_typedef(out: &mut StrB, td: &Typedef) {
 
 fn print_fields(out: &mut StrB, indent: usize, fields: &[Field]) {
     for f in fields {
-        out.line(indent, &format!("{} : {}", f.names.join(", "), print_type(&f.ty)));
+        out.line(
+            indent,
+            &format!("{} : {}", f.names.join(", "), print_type(&f.ty)),
+        );
     }
 }
 
@@ -416,7 +511,10 @@ fn print_package(p: &Package) -> String {
         print_typedef(&mut b, td);
     }
     for (name, ty, value) in &p.consts {
-        let t = ty.as_ref().map(|t| format!(" : {}", print_type(t))).unwrap_or_default();
+        let t = ty
+            .as_ref()
+            .map(|t| format!(" : {}", print_type(t)))
+            .unwrap_or_default();
         b.line(1, &format!("const {name}{t} = {}", print_expr(value)));
     }
     b.line(0, "}");
@@ -432,7 +530,10 @@ fn print_interface(i: &Interface) -> String {
             Dir::Out => "out",
             Dir::Inout => "inout",
         };
-        b.line(1, &format!("{dir} {} : {}", p.names.join(", "), print_type(&p.ty)));
+        b.line(
+            1,
+            &format!("{dir} {} : {}", p.names.join(", "), print_type(&p.ty)),
+        );
     }
     for (names, ty, _, _) in &i.sigs {
         b.line(1, &format!("sig {} : {}", names.join(", "), print_type(ty)));
@@ -476,12 +577,24 @@ fn print_module(m: &Module, kw: &str) -> String {
 fn print_param(p: &Param) -> String {
     if p.type_default.is_some() {
         // type param `type T = logic[...]` (bentuk keyword — round-trip aman)
-        format!("type {} = {}", p.name, print_type(p.type_default.as_ref().unwrap()))
+        format!(
+            "type {} = {}",
+            p.name,
+            print_type(p.type_default.as_ref().unwrap())
+        )
     } else if let Some(t) = &p.ty {
-        let d = p.default.as_ref().map(|e| format!(" = {}", print_expr(e))).unwrap_or_default();
+        let d = p
+            .default
+            .as_ref()
+            .map(|e| format!(" = {}", print_expr(e)))
+            .unwrap_or_default();
         format!("{} : {}{d}", p.name, print_type(t))
     } else {
-        let d = p.default.as_ref().map(|e| format!(" = {}", print_expr(e))).unwrap_or_default();
+        let d = p
+            .default
+            .as_ref()
+            .map(|e| format!(" = {}", print_expr(e)))
+            .unwrap_or_default();
         format!("{}{d}", p.name)
     }
 }
@@ -494,7 +607,10 @@ fn print_m_item(b: &mut StrB, indent: usize, item: &MItem) {
                 Dir::Out => "out",
                 Dir::Inout => "inout",
             };
-            b.line(indent, &format!("{dir} {} : {}", p.names.join(", "), print_type(&p.ty)));
+            b.line(
+                indent,
+                &format!("{dir} {} : {}", p.names.join(", "), print_type(&p.ty)),
+            );
         }
         MItem::Typedef(td) => {
             let mut t = StrB::new();
@@ -503,29 +619,63 @@ fn print_m_item(b: &mut StrB, indent: usize, item: &MItem) {
                 b.line(indent, l);
             }
         }
-        MItem::Sig { names, ty, init, .. } => {
-            let i = init.as_ref().map(|e| format!(" = {}", print_expr(e))).unwrap_or_default();
-            b.line(indent, &format!("sig {} : {}{i}", names.join(", "), print_type(ty)));
+        MItem::Sig {
+            names, ty, init, ..
+        } => {
+            let i = init
+                .as_ref()
+                .map(|e| format!(" = {}", print_expr(e)))
+                .unwrap_or_default();
+            b.line(
+                indent,
+                &format!("sig {} : {}{i}", names.join(", "), print_type(ty)),
+            );
         }
-        MItem::Reg { names, ty, init, .. } => {
-            let i = init.as_ref().map(|e| format!(" = {}", print_expr(e))).unwrap_or_default();
-            b.line(indent, &format!("reg {} : {}{i}", names.join(", "), print_type(ty)));
+        MItem::Reg {
+            names, ty, init, ..
+        } => {
+            let i = init
+                .as_ref()
+                .map(|e| format!(" = {}", print_expr(e)))
+                .unwrap_or_default();
+            b.line(
+                indent,
+                &format!("reg {} : {}{i}", names.join(", "), print_type(ty)),
+            );
         }
-        MItem::Const { name, ty, value, .. } => {
-            let t = ty.as_ref().map(|t| format!(" : {}", print_type(t))).unwrap_or_default();
+        MItem::Const {
+            name, ty, value, ..
+        } => {
+            let t = ty
+                .as_ref()
+                .map(|t| format!(" : {}", print_type(t)))
+                .unwrap_or_default();
             b.line(indent, &format!("const {name}{t} = {}", print_expr(value)));
         }
         MItem::Use { pkg, item } => b.line(indent, &format!("use {pkg}::{item}")),
         MItem::Seq(spec, stmt) => {
-            b.line(indent, &format!("seq({}) {}", print_seq_spec(spec), print_stmt(indent, stmt)));
+            b.line(
+                indent,
+                &format!("seq({}) {}", print_seq_spec(spec), print_stmt(indent, stmt)),
+            );
         }
         MItem::Comb(stmt) => b.line(indent, &format!("comb {}", print_stmt(indent, stmt))),
         MItem::Always(stmt) => b.line(indent, &format!("always {}", print_stmt(indent, stmt))),
         MItem::Latch(stmt) => b.line(indent, &format!("latch {}", print_stmt(indent, stmt))),
         MItem::Initial(stmt) => b.line(indent, &format!("initial {}", print_stmt(indent, stmt))),
         MItem::Final(stmt) => b.line(indent, &format!("final {}", print_stmt(indent, stmt))),
-        MItem::Inst { module, name, dims, params, conns, .. } => {
-            let d = dims.as_ref().map(|e| format!("[{}]", print_expr(e))).unwrap_or_default();
+        MItem::Inst {
+            module,
+            name,
+            dims,
+            params,
+            conns,
+            ..
+        } => {
+            let d = dims
+                .as_ref()
+                .map(|e| format!("[{}]", print_expr(e)))
+                .unwrap_or_default();
             let mut head = format!("inst {module} {name}{d}");
             if !params.is_empty() {
                 let ps: Vec<String> = params
@@ -555,9 +705,25 @@ fn print_m_item(b: &mut StrB, indent: usize, item: &MItem) {
             }
             b.line(indent, &head);
         }
-        MItem::GenFor { var, from, to, step, body } => {
-            let st = step.as_ref().map(|s| format!(" step {}", print_expr(s))).unwrap_or_default();
-            b.line(indent, &format!("for {var} in {}..{}{st} {{", print_expr(from), print_expr(to)));
+        MItem::GenFor {
+            var,
+            from,
+            to,
+            step,
+            body,
+        } => {
+            let st = step
+                .as_ref()
+                .map(|s| format!(" step {}", print_expr(s)))
+                .unwrap_or_default();
+            b.line(
+                indent,
+                &format!(
+                    "for {var} in {}..{}{st} {{",
+                    print_expr(from),
+                    print_expr(to)
+                ),
+            );
             for it in body {
                 print_m_item(b, indent + 1, it);
             }
@@ -613,7 +779,11 @@ fn print_seq_spec(spec: &SeqSpec) -> String {
 
 fn print_class(c: &MClass) -> String {
     let mut b = StrB::new();
-    let ext = c.extends.as_ref().map(|e| format!(" extends {e}")).unwrap_or_default();
+    let ext = c
+        .extends
+        .as_ref()
+        .map(|e| format!(" extends {e}"))
+        .unwrap_or_default();
     b.line(0, &format!("class {}{ext} {{", c.name));
     for (name, ty, rand) in &c.fields {
         let r = if *rand { "rand " } else { "" };
@@ -653,7 +823,12 @@ fn print_constraint_item(it: &ConstraintItem) -> String {
                 format!("if ({}) {{ {} }}", print_expr(cond), t.join(", "))
             } else {
                 let e: Vec<String> = els.iter().map(print_constraint_item).collect();
-                format!("if ({}) {{ {} }} else {{ {} }}", print_expr(cond), t.join(", "), e.join(", "))
+                format!(
+                    "if ({}) {{ {} }} else {{ {} }}",
+                    print_expr(cond),
+                    t.join(", "),
+                    e.join(", ")
+                )
             }
         }
         ConstraintItem::Solve { var, before, .. } => {
@@ -671,7 +846,10 @@ fn print_arg_list(args: &[(String, MvType, Option<Dir>, Option<Expr>)]) -> Strin
                 Some(Dir::Inout) => "inout ",
                 None => "",
             };
-            let def = default.as_ref().map(|e| format!(" = {}", print_expr(e))).unwrap_or_default();
+            let def = default
+                .as_ref()
+                .map(|e| format!(" = {}", print_expr(e)))
+                .unwrap_or_default();
             format!("{d}{name} : {}{def}", print_type(ty))
         })
         .collect::<Vec<_>>()
@@ -685,8 +863,15 @@ fn print_func(f: &MFunc) -> String {
 }
 
 fn print_func_b(b: &mut StrB, f: &MFunc) {
-    let ret = f.ret.as_ref().map(|t| format!(" -> {}", print_type(t))).unwrap_or_default();
-    b.line(0, &format!("func {}({}){ret} {{", f.name, print_arg_list(&f.args)));
+    let ret = f
+        .ret
+        .as_ref()
+        .map(|t| format!(" -> {}", print_type(t)))
+        .unwrap_or_default();
+    b.line(
+        0,
+        &format!("func {}({}){ret} {{", f.name, print_arg_list(&f.args)),
+    );
     for st in &f.body {
         print_stmt_b(b, 1, st);
     }
@@ -700,7 +885,10 @@ fn print_task(t: &MTask) -> String {
 }
 
 fn print_task_b(b: &mut StrB, t: &MTask) {
-    b.line(0, &format!("task {}({}) {{", t.name, print_arg_list(&t.args)));
+    b.line(
+        0,
+        &format!("task {}({}) {{", t.name, print_arg_list(&t.args)),
+    );
     for st in &t.body {
         print_stmt_b(b, 1, st);
     }

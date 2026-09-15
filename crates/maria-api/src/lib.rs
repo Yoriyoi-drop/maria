@@ -653,7 +653,8 @@ fn compile_str_inner(source: &str, quiet: bool) -> Result<maria_ir::IrDesign, Si
     if !parser.errors.is_empty() {
         let has_real_errors = parser.errors.iter().any(|d| d.is_error());
         if !quiet {
-            let mut emitter = maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
+            let mut emitter =
+                maria_core::diagnostics::TerminalEmitter::new().with_simple_mode(true);
             for diag in &parser.errors {
                 let _ = emitter.emit(diag);
             }

@@ -1666,7 +1666,10 @@ endmodule
     let sigs = simulate_signals(source, 10).unwrap();
     let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
     let final_val = get("val");
-    assert_eq!(final_val, 0x02, "always_comb harus re-eval saat idx berubah → rom[1]=2, dapat {final_val}");
+    assert_eq!(
+        final_val, 0x02,
+        "always_comb harus re-eval saat idx berubah → rom[1]=2, dapat {final_val}"
+    );
 }
 
 #[test]

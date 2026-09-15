@@ -153,10 +153,7 @@ impl<'r> DirectedMutator<'r> {
         let mut done = false;
         for line in source.lines() {
             let t = line.trim_start();
-            if !done
-                && t.starts_with("a")
-                && (t.starts_with("always") || t.starts_with("assign"))
-            {
+            if !done && t.starts_with("a") && (t.starts_with("always") || t.starts_with("assign")) {
                 // Tambahkan `#1` di baris assign berikutnya? — sederhana:
                 // sisipkan `#1;` satu baris sebelum baris ini.
                 out.push_str("#1;\n");

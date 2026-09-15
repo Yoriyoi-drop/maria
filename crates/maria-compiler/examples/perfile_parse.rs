@@ -3,9 +3,9 @@
 //! Debug aid, not production code.
 use maria_compiler::frontend::lexer::FastLexer;
 use maria_core::intern::Symbol;
+use maria_parser::lexer::Token;
 use maria_parser::preprocessor::Preprocessor;
 use maria_parser::Parser;
-use maria_parser::lexer::Token;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -18,19 +18,17 @@ fn discover(src: &str, classes: &mut HashSet<Symbol>, typedefs: &mut HashSet<Sym
         let (tok, _, _) = lexer.next_token();
         match tok {
             Token::Eof => break,
-            Token::Class => {
-                loop {
-                    let (t, _, _) = lexer.next_token();
-                    match t {
-                        Token::Eof => break,
-                        Token::Ident(n) => {
-                            classes.insert(n);
-                            break;
-                        }
-                        _ => break,
+            Token::Class => loop {
+                let (t, _, _) = lexer.next_token();
+                match t {
+                    Token::Eof => break,
+                    Token::Ident(n) => {
+                        classes.insert(n);
+                        break;
                     }
+                    _ => break,
                 }
-            }
+            },
             Token::Typedef => {
                 in_typedef = true;
                 last_ident = None;
@@ -134,7 +132,11 @@ fn main() {
     for src in &discovery_sources {
         discover(src, &mut classes, &mut typedefs);
     }
-    eprintln!("discovery: classes={} typedefs={}", classes.len(), typedefs.len());
+    eprintln!(
+        "discovery: classes={} typedefs={}",
+        classes.len(),
+        typedefs.len()
+    );
 
     // Per-file FastLexer parse, exactly like CompileSession
     let mut lexer = FastLexer::new(&target_combined, &abs_file);

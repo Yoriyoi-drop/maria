@@ -2,8 +2,8 @@
 //! (seq/comb/always/latch/initial/final), instansi, generate, func/task.
 //! 1 file = 1 tanggung jawab.
 
-use super::{for_inc, line, emit_signal_decl};
 use super::expr::{emit_expr, emit_type};
+use super::{emit_signal_decl, for_inc, line};
 use crate::ast::*;
 
 /// Emit `module` atau `program` (testbench) — struktur badan sama, hanya
@@ -115,7 +115,11 @@ pub(crate) fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names
                             1,
                             &format!(
                                 "{}{};",
-                                fresh.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                                fresh
+                                    .iter()
+                                    .map(|nm| emit_signal_decl(ty, nm))
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
                                 init_s
                             ),
                         );
@@ -137,7 +141,11 @@ pub(crate) fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names
                         1,
                         &format!(
                             "{}{};",
-                            fresh.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                            fresh
+                                .iter()
+                                .map(|nm| emit_signal_decl(ty, nm))
+                                .collect::<Vec<_>>()
+                                .join(", "),
                             init_s
                         ),
                     );
@@ -269,7 +277,12 @@ pub(crate) fn emit_module_kw(out: &mut String, m: &Module, kw: &str, iface_names
 
 /// Emit satu item module di indentasi tertentu — dipakai di level module
 /// maupun di dalam blok generate.
-pub(crate) fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem, iface_names: &[&str]) {
+pub(crate) fn emit_module_item_at(
+    out: &mut String,
+    indent: usize,
+    item: &MItem,
+    iface_names: &[&str],
+) {
     match item {
         MItem::Port(_) => {}
         MItem::Sig {
@@ -290,7 +303,11 @@ pub(crate) fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem,
                     indent,
                     &format!(
                         "{}{};",
-                        names.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                        names
+                            .iter()
+                            .map(|nm| emit_signal_decl(ty, nm))
+                            .collect::<Vec<_>>()
+                            .join(", "),
                         init_s
                     ),
                 );
@@ -305,7 +322,11 @@ pub(crate) fn emit_module_item_at(out: &mut String, indent: usize, item: &MItem,
                 indent,
                 &format!(
                     "{}{};",
-                    names.iter().map(|nm| emit_signal_decl(ty, nm)).collect::<Vec<_>>().join(", "),
+                    names
+                        .iter()
+                        .map(|nm| emit_signal_decl(ty, nm))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     init_s
                 ),
             );

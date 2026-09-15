@@ -64,12 +64,23 @@ fn find_marker_tokens(s: &str) -> Vec<String> {
     let mut i = 0usize;
     while i < chars.len() {
         // cari `ASRT_` prefix (case-sensitive, kontrak cross-sim)
-        if chars[i] == 'A' && i + 4 < chars.len()
-            && chars[i + 1] == 'S' && chars[i + 2] == 'R' && chars[i + 3] == 'T' && chars[i + 4] == '_' {
+        if chars[i] == 'A'
+            && i + 4 < chars.len()
+            && chars[i + 1] == 'S'
+            && chars[i + 2] == 'R'
+            && chars[i + 3] == 'T'
+            && chars[i + 4] == '_'
+        {
             // scan sampai `=` (allow spasi/ident di antara)
             let mut j = i + 5;
             let mut eq = None;
-            while j < chars.len() && chars[j] != ' ' && chars[j] != '\t' && chars[j] != '=' && chars[j] != '\r' && chars[j] != '\n' {
+            while j < chars.len()
+                && chars[j] != ' '
+                && chars[j] != '\t'
+                && chars[j] != '='
+                && chars[j] != '\r'
+                && chars[j] != '\n'
+            {
                 j += 1;
             }
             if j < chars.len() && chars[j] == '=' {
@@ -78,7 +89,8 @@ fn find_marker_tokens(s: &str) -> Vec<String> {
             if let Some(eqpos) = eq {
                 // scan `>`
                 let mut gt = eqpos + 1;
-                while gt < chars.len() && chars[gt] != '>' && chars[gt] != '\r' && chars[gt] != '\n' {
+                while gt < chars.len() && chars[gt] != '>' && chars[gt] != '\r' && chars[gt] != '\n'
+                {
                     gt += 1;
                 }
                 if gt < chars.len() && chars[gt] == '>' {
@@ -111,7 +123,9 @@ fn run_capture(args: &[String], timeout_ms: u64) -> (Option<i32>, String, String
     for a in &args[1..] {
         cmd.arg(a);
     }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
 
     let start = Instant::now();
     let mut child: Child = match cmd.spawn() {
@@ -173,7 +187,11 @@ fn kind_label(k: Kind) -> &'static str {
 /// Iverilog compile → vvp run, return (code, stdout, stderr).
 fn run_iverilog(source: &str, timeout_ms: u64) -> (Option<i32>, String, String) {
     let base = std::env::temp_dir().clone();
-    let stem = format!("mariaic_{}_{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+    let stem = format!(
+        "mariaic_{}_{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
     let sv = base.join(format!("{stem}.sv"));
     let vvp = base.join(format!("{stem}.vvp"));
     let _ = std::fs::write(&sv, source);
@@ -194,7 +212,10 @@ fn run_iverilog(source: &str, timeout_ms: u64) -> (Option<i32>, String, String) 
     if code.unwrap_or(1) != 0 {
         return (None, String::new(), err);
     }
-    let (code2, out, err2) = run_capture(&["vvp".to_string(), vvp.to_string_lossy().to_string()], timeout_ms);
+    let (code2, out, err2) = run_capture(
+        &["vvp".to_string(), vvp.to_string_lossy().to_string()],
+        timeout_ms,
+    );
     let _ = std::fs::remove_file(&vvp);
     if code2.is_none() {
         // vvp hang — reference not reliable
@@ -240,7 +261,11 @@ pub fn evaluate_icarus(source: &str, timeout_ms: u64) -> IcarusResult {
         let reason = if ref_stderr.contains("Streaming") || ref_stderr.is_empty() {
             "iverilog compile gagal (SV-only feature, mis. streaming)".to_string()
         } else {
-            ref_stderr.lines().next().unwrap_or("compile gagal").to_string()
+            ref_stderr
+                .lines()
+                .next()
+                .unwrap_or("compile gagal")
+                .to_string()
         };
         return IcarusResult {
             verdict: Verdict::RefUnavailable,

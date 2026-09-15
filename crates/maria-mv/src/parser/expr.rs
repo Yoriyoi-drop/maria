@@ -251,7 +251,10 @@ impl Parser {
         self.parse_postfix_expr_inner(true)
     }
 
-    pub(crate) fn parse_postfix_expr_inner(&mut self, allow_postfix: bool) -> Result<Expr, MvError> {
+    pub(crate) fn parse_postfix_expr_inner(
+        &mut self,
+        allow_postfix: bool,
+    ) -> Result<Expr, MvError> {
         let mut e = self.parse_primary()?;
         loop {
             match self.peek().clone() {

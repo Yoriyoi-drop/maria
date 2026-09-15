@@ -84,10 +84,7 @@ pub enum Expr {
     Call(String, Vec<Expr>),
     /// Named argument dalam call: `f(10, factor = 4)` — nama dengan `=`,
     /// di-emit SV `.factor(4)`. Hanya valid di argumen call.
-    NamedArg {
-        name: String,
-        expr: Box<Expr>,
-    },
+    NamedArg { name: String, expr: Box<Expr> },
     /// Method call `obj.method(args)` (obj bisa `this`/`super`/var)
     MethodCall {
         obj: Box<Expr>,

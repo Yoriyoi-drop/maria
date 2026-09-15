@@ -293,12 +293,11 @@ impl Parser {
             }
             Tok::Return => {
                 self.advance();
-                let v =
-                    if matches!(self.peek(), Tok::RBrace) || matches!(self.peek(), Tok::Semi) {
-                        None
-                    } else {
-                        Some(self.parse_expr()?)
-                    };
+                let v = if matches!(self.peek(), Tok::RBrace) || matches!(self.peek(), Tok::Semi) {
+                    None
+                } else {
+                    Some(self.parse_expr()?)
+                };
                 self.eat(&Tok::Semi);
                 Ok(Stmt::Return(v))
             }
@@ -369,12 +368,12 @@ impl Parser {
                 self.expect(&Tok::LParen)?;
                 let cond = self.parse_expr()?;
                 self.expect(&Tok::RParen)?;
-                let pass =
-                    if matches!(self.peek(), Tok::Else) || matches!(self.peek(), Tok::RBrace) {
-                        None
-                    } else {
-                        Some(Box::new(self.parse_stmt()?))
-                    };
+                let pass = if matches!(self.peek(), Tok::Else) || matches!(self.peek(), Tok::RBrace)
+                {
+                    None
+                } else {
+                    Some(Box::new(self.parse_stmt()?))
+                };
                 let fail = if self.eat(&Tok::Else) {
                     Some(Box::new(self.parse_stmt()?))
                 } else {

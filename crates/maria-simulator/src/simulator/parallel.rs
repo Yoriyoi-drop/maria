@@ -370,15 +370,13 @@ pub fn evaluate_expr_simple(
         // Resolve sama seperti write (parallel.rs HierRef write) —
         // fallback `_` di bawah memberi X 32-bit → slave baca `bus.req`
         // jadi X → beda dari serial (interface differential).
-        IrExpr::HierRef(name) => {
-            match resolve_hier_signal(name.as_str(), sig_info) {
-                Some(id) => Ok(signals
-                    .get(id)
-                    .map(|a| (**a).clone())
-                    .unwrap_or_else(|| LogicVec::new(1))),
-                None => Ok(LogicVec::new(32)),
-            }
-        }
+        IrExpr::HierRef(name) => match resolve_hier_signal(name.as_str(), sig_info) {
+            Some(id) => Ok(signals
+                .get(id)
+                .map(|a| (**a).clone())
+                .unwrap_or_else(|| LogicVec::new(1))),
+            None => Ok(LogicVec::new(32)),
+        },
         // MemberAccess pada struct signal yang TIDAK punya objek (field tak
         // ditemukan saat elaborasi — tipe unresolved, mis. `bkdr_loader_pkg::
         // bkdr_req_t` dari OpenTitan prim_rom yang di-mutasi fuzz). Serial
@@ -396,9 +394,7 @@ pub fn evaluate_expr_simple(
 /// Resolve nama hierarkis ke SignalId: exact → suffix `.name` → last-segment
 /// unik. Dipakai read & write parallel (interface flatten `bus.req` = `b.req`).
 fn resolve_hier_signal(name: &str, sig_info: &[SignalInfo]) -> Option<usize> {
-    let id = sig_info
-        .iter()
-        .position(|s| s.name.as_str() == name);
+    let id = sig_info.iter().position(|s| s.name.as_str() == name);
     if let Some(id) = id {
         return Some(id);
     }

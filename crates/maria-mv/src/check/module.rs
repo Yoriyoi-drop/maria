@@ -213,7 +213,7 @@ fn check_module_item<'a>(
     scope: &mut Scope<'a>,
 ) -> Result<(), MvError> {
     match item {
-        MItem::Port(_) => Ok(()), // port tidak valid di dalam generate — abaikan
+        MItem::Port(_) => Ok(()),    // port tidak valid di dalam generate — abaikan
         MItem::Typedef(_) => Ok(()), // sudah divalidasi pass-1 module
         MItem::Sig {
             names, ty, init, ..

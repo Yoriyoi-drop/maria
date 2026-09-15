@@ -165,8 +165,7 @@ fn ok_program_drives_input_in_initial() {
 
 #[test]
 fn e2003_drive_input_with_final_still_error() {
-    let src =
-        "module m {\n in clk : bit\n out y : bit\n comb { clk = 0 }\n final { y = clk } }";
+    let src = "module m {\n in clk : bit\n out y : bit\n comb { clk = 0 }\n final { y = clk } }";
     let e = check_src(src).unwrap_err();
     assert!(e.msg.contains("E2003"), "msg: {}", e.msg);
 }
@@ -351,8 +350,7 @@ fn f9_check_many_cross_file_package() {
 #[test]
 fn f9_check_many_error_index_and_message() {
     let good = parse("module a {\n in clk : bit\n}\n").unwrap();
-    let bad =
-        parse("module b {\n in clk : bit\n out y : bit\n comb { y = nope }\n}\n").unwrap();
+    let bad = parse("module b {\n in clk : bit\n out y : bit\n comb { y = nope }\n}\n").unwrap();
     let (idx, e) = check_many(&[&good, &bad]).unwrap_err();
     assert_eq!(idx, 1);
     assert!(e.msg.contains("E2001"), "msg: {}", e.msg);
@@ -401,8 +399,7 @@ fn f11_e2001_undefined_signal_position() {
 
 #[test]
 fn f11_e2002_width_position() {
-    let src =
-        "module m {\n    in a : logic[7:0]\n    out y : logic[3:0]\n    comb { y = a }\n}\n";
+    let src = "module m {\n    in a : logic[7:0]\n    out y : logic[3:0]\n    comb { y = a }\n}\n";
     let e = check_src(src).unwrap_err();
     assert_eq!(e.line, 4, "line: {e:?}");
     assert_eq!(e.col, 12, "col: {e:?}");
@@ -438,8 +435,7 @@ fn f11_e2005_unknown_type_position() {
 
 #[test]
 fn f11_e2006_overflow_position() {
-    let src =
-        "module m {\n    in clk : bit\n    out y : logic[7:0]\n    comb { y = 8'h1FF }\n}\n";
+    let src = "module m {\n    in clk : bit\n    out y : logic[7:0]\n    comb { y = 8'h1FF }\n}\n";
     let e = check_src(src).unwrap_err();
     assert_eq!(e.line, 4, "line: {e:?}");
     assert_eq!(e.col, 16, "col: {e:?}");
@@ -638,9 +634,8 @@ fn f30_inst_cross_file_port_check() {
 #[test]
 fn f30_inst_cross_file_ok() {
     let a = parse("module foo {\n    in a : bit\n    out b : bit\n}\n").unwrap();
-    let b =
-        parse("module tb {\n    sig x : bit\n    sig y : bit\n    inst foo u (x, .b(y))\n}\n")
-            .unwrap();
+    let b = parse("module tb {\n    sig x : bit\n    sig y : bit\n    inst foo u (x, .b(y))\n}\n")
+        .unwrap();
     check_many(&[&a, &b]).expect("koneksi lintas-file valid harus lolos");
 }
 

@@ -1624,9 +1624,16 @@ impl SimulationEngine {
                         break;
                     }
                     if let Some(step_stmt) = step {
-                        eprintln!("FOR step {:?} before {:?}", step_stmt, self.get_local("i").map(|v| v.to_u64()));
+                        eprintln!(
+                            "FOR step {:?} before {:?}",
+                            step_stmt,
+                            self.get_local("i").map(|v| v.to_u64())
+                        );
                         self.evaluate_ast_stmt(step_stmt)?;
-                        eprintln!("FOR step after {:?}", self.get_local("i").map(|v| v.to_u64()));
+                        eprintln!(
+                            "FOR step after {:?}",
+                            self.get_local("i").map(|v| v.to_u64())
+                        );
                     }
                 }
                 Ok(())

@@ -2855,7 +2855,8 @@ impl X86Cpu {
         let base = (n as u64) * 4;
         let ip = mem
             .read(base, 2)
-            .map_err(|e| self.fault(format!("IVT read ip 0x{:x}: {}", base, e)))? as u16;
+            .map_err(|e| self.fault(format!("IVT read ip 0x{:x}: {}", base, e)))?
+            as u16;
         let cs = mem
             .read(base + 2, 2)
             .map_err(|e| self.fault(format!("IVT read cs 0x{:x}: {}", base + 2, e)))?
@@ -3554,7 +3555,7 @@ mod tests {
     }
 
     /// E2E: GRUB boot.img (El Torito LBA 667) — eksekusi dengan INT 13h AH=42.
-   #[ignore]
+    #[ignore]
     #[test]
     fn test_boot_grub_bootimg_executes() {
         let iso = root_of("ubuntu-26.04-desktop-amd64.iso");

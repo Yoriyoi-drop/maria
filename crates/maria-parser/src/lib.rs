@@ -133,11 +133,7 @@ impl Parser {
                 let after = rest.trim();
                 let (num_str, path) = match after.find('"') {
                     Some(q) => {
-                        let p = after[q + 1..]
-                            .split('"')
-                            .next()
-                            .unwrap_or("")
-                            .to_string();
+                        let p = after[q + 1..].split('"').next().unwrap_or("").to_string();
                         (after[..q].trim().to_string(), p)
                     }
                     None => (after.to_string(), String::new()),
@@ -163,31 +159,31 @@ impl Parser {
     }
 
     /// Teks baris utk snippet — prioritas peta per-file (dari `line directive,
-/// akurat utk semua file termasuk yang punya include = combined ≠ fisik);
-/// fallback source_lines (FastLexer / tanpa directive).
-fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String> {
-    if let Some(m) = self.file_lines.get(file) {
-        if let Some(l) = m.get(&display_line) {
-            return Some(l.clone());
-        }
-    }
-    if file.is_empty() || file == self.source_file {
-        // Konvensi header-aligned: source_lines[0] = `line directive, konten
-        // baris N di [N]. Jalur tanpa directive (FastLexer/API lama) = 0-based:
-        // coba display_line, lalu display_line-1 sebagai fallback.
-        if let Some(l) = self.source_lines.get(display_line) {
-            return Some(l.clone());
-        }
-        if display_line > 0 {
-            if let Some(l) = self.source_lines.get(display_line - 1) {
+    /// akurat utk semua file termasuk yang punya include = combined ≠ fisik);
+    /// fallback source_lines (FastLexer / tanpa directive).
+    fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String> {
+        if let Some(m) = self.file_lines.get(file) {
+            if let Some(l) = m.get(&display_line) {
                 return Some(l.clone());
             }
         }
-        None
-    } else {
-        None
+        if file.is_empty() || file == self.source_file {
+            // Konvensi header-aligned: source_lines[0] = `line directive, konten
+            // baris N di [N]. Jalur tanpa directive (FastLexer/API lama) = 0-based:
+            // coba display_line, lalu display_line-1 sebagai fallback.
+            if let Some(l) = self.source_lines.get(display_line) {
+                return Some(l.clone());
+            }
+            if display_line > 0 {
+                if let Some(l) = self.source_lines.get(display_line - 1) {
+                    return Some(l.clone());
+                }
+            }
+            None
+        } else {
+            None
+        }
     }
-}
 
     pub fn with_file_line_map(mut self, map: Vec<(usize, usize, String)>) -> Self {
         self.file_line_map = map;
@@ -1311,6 +1307,8 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                             | Token::Enum
                             | Token::Struct
                             | Token::Union
+                            | Token::Assign
+                            | Token::For
                     ) {
                         // File bebas-module (fragmen `include, mis.
                         // `tb__xbar_connect.sv` / formal `mem.sv`): deklarasi
@@ -1469,7 +1467,11 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                 | Token::GenVar
                 | Token::LocalParam
                 | Token::Param
-                | Token::Parameter if paren <= 0 => break,
+                | Token::Parameter
+                    if paren <= 0 =>
+                {
+                    break
+                }
                 _ => {
                     self.advance();
                 }
@@ -1512,9 +1514,9 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
             // tidak error di module body.
             Token::Default => {
                 self.advance(); // 'default'
-                // `default clocking @(posedge clk); endclocking` inline —
-                // clocking default di dalam generate block (keymgr_if).
-                // `clocking` setelah `default` menandai bentuk ini.
+                                // `default clocking @(posedge clk); endclocking` inline —
+                                // clocking default di dalam generate block (keymgr_if).
+                                // `clocking` setelah `default` menandai bentuk ini.
                 if self.peek() == &Token::Clocking {
                     self.advance(); // 'clocking'
                     if self.peek() == &Token::At {
@@ -1540,7 +1542,7 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                 // Tanpa efek runtime (assertion clocking/disable kami per-item).
                 if self.peek() == &Token::Disable {
                     self.advance(); // 'disable'
-                    // `iff` di-lex sbg Ident (tanpa token khusus).
+                                    // `iff` di-lex sbg Ident (tanpa token khusus).
                     if matches!(self.peek(), Token::Ident(s) if s.as_str() == "iff") {
                         self.advance(); // 'iff'
                     }
@@ -2175,14 +2177,38 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                 // MANUAL (tanpa parse_type_expr).
                 self.advance(); // consume 'nettype'
                 let base = match self.peek() {
-                    Token::Bit => { self.advance(); DataType::Bit }
-                    Token::Logic => { self.advance(); DataType::Logic }
-                    Token::Int => { self.advance(); DataType::Int }
-                    Token::Integer => { self.advance(); DataType::Integer }
-                    Token::Byte => { self.advance(); DataType::Byte }
-                    Token::Shortint => { self.advance(); DataType::Shortint }
-                    Token::Longint => { self.advance(); DataType::Longint }
-                    Token::Real => { self.advance(); DataType::Real }
+                    Token::Bit => {
+                        self.advance();
+                        DataType::Bit
+                    }
+                    Token::Logic => {
+                        self.advance();
+                        DataType::Logic
+                    }
+                    Token::Int => {
+                        self.advance();
+                        DataType::Int
+                    }
+                    Token::Integer => {
+                        self.advance();
+                        DataType::Integer
+                    }
+                    Token::Byte => {
+                        self.advance();
+                        DataType::Byte
+                    }
+                    Token::Shortint => {
+                        self.advance();
+                        DataType::Shortint
+                    }
+                    Token::Longint => {
+                        self.advance();
+                        DataType::Longint
+                    }
+                    Token::Real => {
+                        self.advance();
+                        DataType::Real
+                    }
                     Token::Ident(name) => {
                         let name = *name;
                         self.advance();
@@ -2588,6 +2614,7 @@ fn snippet_source_line(&self, file: &str, display_line: usize) -> Option<String>
                 | Token::LocalParam
                 | Token::GenVar
                 | Token::Assign
+                | Token::For
                 | Token::Always
                 | Token::AlwaysComb
                 | Token::AlwaysFF

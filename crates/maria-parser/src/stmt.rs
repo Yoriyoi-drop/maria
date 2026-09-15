@@ -765,7 +765,8 @@ impl Parser {
                                                         // Level pertama.
                                                         let mut level1 = Vec::new();
                                                         loop {
-                                                            level1.push(self.parse_bin_level_expr()?);
+                                                            level1
+                                                                .push(self.parse_bin_level_expr()?);
                                                             if self.peek() == &Token::Comma {
                                                                 self.advance();
                                                             } else {
@@ -778,7 +779,10 @@ impl Parser {
                                                             while self.peek() == &Token::FatArrow {
                                                                 self.advance(); // '=>'
                                                                 loop {
-                                                                    seq.push(self.parse_bin_level_expr()?);
+                                                                    seq.push(
+                                                                        self.parse_bin_level_expr(
+                                                                        )?,
+                                                                    );
                                                                     if self.peek() == &Token::Comma
                                                                     {
                                                                         self.advance();
@@ -1226,7 +1230,9 @@ impl Parser {
                     match self.peek_ahead(1) {
                         Token::Ident(_) => true,
                         // pkg::type varname;  (bukan pkg::func(...))
-                        Token::Scope => matches!(self.peek_ahead(3), Token::Ident(_) | Token::LBrack),
+                        Token::Scope => {
+                            matches!(self.peek_ahead(3), Token::Ident(_) | Token::LBrack)
+                        }
                         _ => false,
                     }
                 }
@@ -1358,6 +1364,14 @@ impl Parser {
                 stmts: vec![],
                 decls: vec![decl],
             });
+        }
+        // A typedef may be declared inside a procedural block (commonly in
+        // verification code).  It has no runtime statement representation,
+        // but must be consumed as one declaration so following statements
+        // remain synchronized.
+        if self.peek() == &Token::Typedef {
+            let _ = self.parse_typedef()?;
+            return Ok(Stmt::Null);
         }
         // Declaration statement in procedural block (e.g. `int index_x1;` or
         // `logic unused;` inside an always/initial block). Sebelumnya dibuang
@@ -1956,15 +1970,14 @@ impl Parser {
                                     self.advance();
                                     let w = if self.peek() == &Token::LBrace {
                                         self.advance();
-                                        let mut exprs: Vec<Expr> = Vec::new();
-                                        while self.peek() != &Token::RBrace
-                                            && self.peek() != &Token::Eof
-                                        {
-                                            exprs.push(self.parse_expr(0)?);
-                                            if self.peek() == &Token::Semi {
-                                                self.advance();
-                                            }
-                                        }
+                                        let items = self.parse_constraint_items()?;
+                                        let exprs: Vec<Expr> = items
+                                            .into_iter()
+                                            .filter_map(|item| match item {
+                                                ConstraintItem::Expr(expr) => Some(expr),
+                                                _ => None,
+                                            })
+                                            .collect();
                                         self.expect(Token::RBrace)?;
                                         exprs
                                             .into_iter()
@@ -2541,18 +2554,27 @@ impl Parser {
                     | Token::Shortint
                     | Token::Byte
                     | Token::Time
-            )
-            || matches!(self.peek(), Token::Ident(s) if s == "uint" || s == "sint")
-            || (matches!(self.peek(), Token::Ident(_))
-                && matches!(self.peek_ahead(1), Token::Ident(_)));
-            if is_for_type
-            {
+            ) || matches!(self.peek(), Token::Ident(s) if s == "uint" || s == "sint")
+                || (matches!(self.peek(), Token::Ident(_))
+                    && matches!(self.peek_ahead(1), Token::Ident(_)));
+            if is_for_type {
                 self.advance();
                 if self.peek() == &Token::Signed {
                     self.advance();
                 }
                 if self.peek() == &Token::Unsigned {
                     self.advance();
+                }
+                // Packed dimensions belong to the declaration type:
+                // `for (bit [31:0] i = 0; ...)`.
+                while self.peek() == &Token::LBrack {
+                    self.advance();
+                    let _ = self.parse_expr(0)?;
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        let _ = self.parse_expr(0)?;
+                    }
+                    self.expect(Token::RBrack)?;
                 }
                 let var = self.expect_ident()?;
                 let init_val = if self.peek() == &Token::BlockingAssign {
@@ -2623,7 +2645,9 @@ impl Parser {
                 self.expect(Token::RBrack)?;
             }
             // tipe user-defined `, StateEnumT t = ...`
-            if matches!(self.peek(), Token::Ident(_)) && matches!(self.peek_ahead(1), Token::Ident(_)) {
+            if matches!(self.peek(), Token::Ident(_))
+                && matches!(self.peek_ahead(1), Token::Ident(_))
+            {
                 self.advance();
             }
             self.expect_ident()?;
@@ -2816,6 +2840,13 @@ impl Parser {
         array_var.push_str(&self.expect_ident()?.as_str());
         loop {
             match self.peek() {
+                Token::Scope => {
+                    // Package-qualified arrays are valid foreach targets,
+                    // e.g. `foreach (riscv_instr_pkg::supported_isa[i])`.
+                    self.advance();
+                    array_var.push_str("::");
+                    array_var.push_str(&self.expect_ident()?.as_str());
+                }
                 Token::Dot => {
                     self.advance();
                     array_var.push('.');
@@ -2860,6 +2891,11 @@ impl Parser {
                         self.pos.set(save);
                         self.advance(); // '['
                         let mut index_vars = Vec::new();
+                        if self.peek() == &Token::Comma {
+                            // Associative-array foreach syntax may omit the
+                            // first key: `foreach (array[, value])`.
+                            self.advance();
+                        }
                         loop {
                             index_vars.push(self.expect_ident()?);
                             if self.peek() == &Token::Comma {
@@ -2997,7 +3033,7 @@ impl Parser {
                     });
                 }
                 Token::Eof => return Err(self.err("unexpected EOF in fork block")),
-                // DV style (macro wait/SPINWAIT): `fork ... end join` / 
+                // DV style (macro wait/SPINWAIT): `fork ... end join` /
                 // `... end join_any` — `end` sebelum join menutup block ENCLOSING
                 // (fork tanpa begin di dalam begin luar). Toleransi: konsumsi
                 // `end` bila join menyusul.

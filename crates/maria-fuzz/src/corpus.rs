@@ -61,9 +61,7 @@ impl Corpus {
         seeds.sort();
         seeds.dedup();
         // Guard: reject file terlalu besar.
-        seeds.retain(|p| {
-            p.metadata().map(|m| m.len() <= 4_000_000).unwrap_or(false)
-        });
+        seeds.retain(|p| p.metadata().map(|m| m.len() <= 4_000_000).unwrap_or(false));
 
         // Batas total seed (hindari jutaan file) — naikkan utk area penuh.
         if seeds.len() > 100_000 {
@@ -75,10 +73,7 @@ impl Corpus {
         // (import/submodule seed real, terutama area dv/UVM opentitan).
         let deps_index = crate::deps::build_index(&seeds);
 
-        Self {
-            seeds,
-            deps_index,
-        }
+        Self { seeds, deps_index }
     }
 
     /// Project real RTL (tanpa copy): scan cva6/core, openc910/gen_rtl,
@@ -191,9 +186,12 @@ impl Corpus {
 fn is_real_project(p: &Path) -> bool {
     let s = p.to_string_lossy();
     is_real_seed_path(p)
-        || s == "cva6" || s.starts_with("cva6/")
-        || s == "openc910" || s.starts_with("openc910/")
-        || s == "opentitan" || s.starts_with("opentitan/")
+        || s == "cva6"
+        || s.starts_with("cva6/")
+        || s == "openc910"
+        || s.starts_with("openc910/")
+        || s == "opentitan"
+        || s.starts_with("opentitan/")
 }
 
 /// Pub wrapper untuk test/CLI: apakah path seed dari project real.
@@ -265,16 +263,10 @@ fn resolve_includes(src: &str, file: &Path, depth: usize) -> String {
 /// Extract nama file dari baris `` `include "x.svh" `` (atau `<x.svh>`).
 fn extract_include_path(rest: &str) -> Option<String> {
     let trimmed = rest.trim();
-    if let Some(inner) = trimmed
-        .strip_prefix('"')
-        .and_then(|r| r.split('"').next())
-    {
+    if let Some(inner) = trimmed.strip_prefix('"').and_then(|r| r.split('"').next()) {
         return Some(inner.to_string());
     }
-    if let Some(inner) = trimmed
-        .strip_prefix('<')
-        .and_then(|r| r.split('>').next())
-    {
+    if let Some(inner) = trimmed.strip_prefix('<').and_then(|r| r.split('>').next()) {
         return Some(inner.to_string());
     }
     // Tanpa kutip — kata pertama.
@@ -331,7 +323,10 @@ pub fn transpile_seed(p: &Path) -> Result<String, Box<dyn std::error::Error>> {
 }
 
 /// Transpile `.mv` string → SV (path bebas, dipakai setelah mutasi di MV).
-pub fn transpile_mv_string(mv_src: &str, base_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn transpile_mv_string(
+    mv_src: &str,
+    base_name: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let tr = maria_api::mv::transpile(mv_src, base_name)?;
     let mut buf = tr.svh.clone();
     buf.push('\n');

@@ -2,8 +2,8 @@
 //! single-line (repeat/forever/@/#/assert), escape hatch `@sv` raw.
 //! 1 file = 1 tanggung jawab.
 
-use super::line;
 use super::expr::emit_expr;
+use super::line;
 use crate::ast::*;
 
 pub(crate) fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
@@ -189,7 +189,8 @@ pub(crate) fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
                 indent,
                 &format!(
                     "{}{};",
-                    names.iter()
+                    names
+                        .iter()
                         .map(|nm| super::emit_signal_decl(ty, nm))
                         .collect::<Vec<_>>()
                         .join(", "),

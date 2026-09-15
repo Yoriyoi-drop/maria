@@ -138,12 +138,8 @@ fn spawn(cmd: &mut Command, timeout_ms: u64) -> Outcome {
     let stderr = child.stderr.take();
 
     // Drain pipe via reader thread — cegah pipe-full false-hang
-    let out_handle = std::thread::spawn(move || {
-        read_pipe(stdout)
-    });
-    let err_handle = std::thread::spawn(move || {
-        read_pipe(stderr)
-    });
+    let out_handle = std::thread::spawn(move || read_pipe(stdout));
+    let err_handle = std::thread::spawn(move || read_pipe(stderr));
 
     let timeout = Duration::from_millis(timeout_ms);
     let status = loop {

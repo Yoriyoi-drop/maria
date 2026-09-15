@@ -297,7 +297,11 @@ impl Preprocessor {
                                     // berikutnya milik file INDUK. Include ada di
                                     // baris i+1 (1-based) → baris berikut = i+2.
                                     if let Some(ref outer) = outer_path {
-                                        output.push_str(&format!("`line {} \"{}\"\n", i + 2, outer));
+                                        output.push_str(&format!(
+                                            "`line {} \"{}\"\n",
+                                            i + 2,
+                                            outer
+                                        ));
                                     }
                                     self.cur_path = outer_path;
                                     Ok(())
@@ -594,7 +598,17 @@ impl Preprocessor {
             return;
         }
 
-        let (name, params, value, defaults) = if let Some(open_paren) = s.find('(') {
+        // A function-like macro requires `NAME(` with no whitespace between
+        // the name and `(`.  Object-like macros commonly use a parenthesized
+        // replacement with whitespace, e.g. `define HAS_PARITY (expr)`.
+        let function_open = s.find('(').filter(|&open_paren| {
+            open_paren > 0
+                && s[..open_paren]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_ascii_whitespace())
+        });
+        let (name, params, value, defaults) = if let Some(open_paren) = function_open {
             let name = s[..open_paren].trim().to_string();
             // Penutup param-list STRING-AWARE: `define dv_fatal(MSG_,
             // ID_ = $sformatf("%m")) $fatal(...)` — `)` di dalam string/
@@ -938,7 +952,10 @@ impl Preprocessor {
                                     }
                                 } else if c == b'"' {
                                     in_string = true;
-                                } else if c == b'/' && args_end + 1 < bytes.len() && bytes[args_end + 1] == b'/' {
+                                } else if c == b'/'
+                                    && args_end + 1 < bytes.len()
+                                    && bytes[args_end + 1] == b'/'
+                                {
                                     // Skip komentar sampai newline.
                                     while args_end < bytes.len() && bytes[args_end] != b'\n' {
                                         args_end += 1;
@@ -1050,8 +1067,10 @@ impl Preprocessor {
                                     // `if` → `i`+`f` jadi ter-paste). Batas: karakter
                                     // sebelum/selepas param bukan ident-char.
                                     let p_end = pos + param.len();
-                                    let before_ok = pos == 0 || !val_bytes[pos - 1].is_ascii_alphanumeric();
-                                    let after_ok = p_end >= val_bytes.len() || !val_bytes[p_end].is_ascii_alphanumeric();
+                                    let before_ok =
+                                        pos == 0 || !val_bytes[pos - 1].is_ascii_alphanumeric();
+                                    let after_ok = p_end >= val_bytes.len()
+                                        || !val_bytes[p_end].is_ascii_alphanumeric();
                                     if before_ok && after_ok {
                                         expanded.push_str(arg);
                                         pos += param.len();

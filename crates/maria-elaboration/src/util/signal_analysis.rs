@@ -141,7 +141,9 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
         // ArrayIndex dynamic (`rom[idx]`) — index juga sinyal yang DIBACA:
         // always_comb `val = rom[idx]` harus sensitivity ke {rom, idx}. Tanpa
         // ini idx berubah → val tak recompute (stuck di nilai lama).
-        IrExpr::ArrayIndex { sig_id: id, index, .. } => {
+        IrExpr::ArrayIndex {
+            sig_id: id, index, ..
+        } => {
             out.push(*id);
             collect_read_signals_expr(index, out);
         }

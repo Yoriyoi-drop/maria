@@ -572,6 +572,14 @@ impl Parser {
     fn parse_primary_expr_impl(&mut self) -> Result<Expr, SimError> {
         let tok = self.peek().clone();
         match tok {
+            // Constraint implication may use `soft` on the consequent:
+            // `condition -> soft expression`.  Soft is a constraint modifier,
+            // not part of the expression AST, so consume it and parse the
+            // consequent normally.
+            Token::Soft => {
+                self.advance();
+                self.parse_primary_expr_impl()
+            }
             // `$` sebagai end-marker dalam slice queue `[1:$]` (LRM 1800 §7.12.4)
             // — contoh `tokens[1:$]` di `dv_utils_pkg::read_vmem`. Di sini `$`
             // berarti "sampai elemen terakhir" (bukan system function). Dikenali
@@ -752,7 +760,27 @@ impl Parser {
                             let _ = self.parse_expr(0)?;
                             self.expect(Token::RParen)?;
                         } else {
-                            type_specs.push(self.parse_type_expr()?);
+                            // Parameterized class calls accept both type
+                            // arguments and constant expressions:
+                            // `mem#(pkg::BytesPerBank / 4)`.  A scoped
+                            // identifier followed by an operator is an
+                            // expression, not a type.
+                            let is_virtual_type = self.peek() == &Token::Virtual;
+                            let is_type_arg = is_virtual_type
+                                || self.is_type_token()
+                                || (matches!(self.peek(), Token::Ident(_))
+                                    && matches!(
+                                        self.peek_ahead(1),
+                                        Token::Ident(_) | Token::LBrack
+                                    ));
+                            if is_type_arg {
+                                if is_virtual_type {
+                                    self.advance();
+                                }
+                                type_specs.push(self.parse_type_expr()?);
+                            } else {
+                                let _ = self.parse_expr(0)?;
+                            }
                         }
                         if self.peek() == &Token::Comma {
                             self.advance();

@@ -600,7 +600,7 @@ mod tests {
         // diproses sebelum toggle — konsisten dgn vector-queue standard path.
         let mut wheel = HierarchicalTimingWheel::new();
         wheel.add_event(50, EventRegion::Active, EventKind::EvalProcess(0)); // $finish
-        // Simulasikan push t=50 KEDUA saat current=45 (toggle clock).
+                                                                             // Simulasikan push t=50 KEDUA saat current=45 (toggle clock).
         for t in 1..=45 {
             let _ = wheel.advance(t);
         }

@@ -18,10 +18,10 @@ use maria_core::intern::Symbol;
 impl Parser {
     pub(crate) fn parse_clocking_block(&mut self) -> Result<ClockingBlock, SimError> {
         self.advance(); // consume 'clocking'
-        // Bentuk `default clocking @(posedge clk); endclocking` — clocking
-        // block ANONIM (tanpa nama, LRM 1800 §14.3): `clocking` langsung
-        // diikuti `@`, bukan nama. Pola ini muncul dalam generate block
-        // interface (keymgr_if OpenTitan) sebagai clocking default.
+                        // Bentuk `default clocking @(posedge clk); endclocking` — clocking
+                        // block ANONIM (tanpa nama, LRM 1800 §14.3): `clocking` langsung
+                        // diikuti `@`, bukan nama. Pola ini muncul dalam generate block
+                        // interface (keymgr_if OpenTitan) sebagai clocking default.
         let name = if self.peek() == &Token::At {
             Symbol::intern("")
         } else {
@@ -102,8 +102,8 @@ impl Parser {
                     if self.peek_ahead(1) == &Token::Clocking {
                         self.advance(); // 'default'
                         self.advance(); // 'clocking'
-                        // Event: `@(posedge clk)` dsb. Event expression
-                        // dilewati balance-aware sampai `;`.
+                                        // Event: `@(posedge clk)` dsb. Event expression
+                                        // dilewati balance-aware sampai `;`.
                         if self.peek() == &Token::At {
                             self.advance();
                             if self.peek() == &Token::LParen {

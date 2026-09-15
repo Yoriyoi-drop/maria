@@ -244,7 +244,10 @@ pub(crate) fn check_stmt<'a>(
                     0,
                     0,
                     "E2001",
-                    format!("undefined signal '{arr}' (foreach) — di '{}'", scope.env.mname),
+                    format!(
+                        "undefined signal '{arr}' (foreach) — di '{}'",
+                        scope.env.mname
+                    ),
                 ));
             }
             let mut inner = scope.clone();

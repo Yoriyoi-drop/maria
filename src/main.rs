@@ -925,7 +925,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // GATE: scan hanya bila ADa sumber yang memuat `` `include `` (tanggal 9s
     // utk header tanpa module — cva6 assign.svh). Tanpa include, scan mubazir.
     let sources_need_include_scan = sources.iter().any(|src| {
-        std::fs::read_to_string(src).map(|s| s.contains("`include")).unwrap_or(false)
+        std::fs::read_to_string(src)
+            .map(|s| s.contains("`include"))
+            .unwrap_or(false)
     });
     let mut seen_dirs = std::collections::HashSet::new();
     let mut src_dirs = std::collections::HashSet::new();
@@ -3050,52 +3052,52 @@ fn run_fast(
                 anim_finish(&mut anim, false, 0, 0);
             }
         } else {
-        let (source_lines, source_file) = session.source_info().unwrap_or_default();
-        let mut elab = if source_lines.is_empty() {
-            Elaborator::new(design)
-        } else {
-            Elaborator::with_source(design, source_lines, source_file)
-        };
-        // Mode elaborasi: dengan `--top` eksplisit → StrictSimulation (top wajib).
-        // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
-        // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
-        // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
-        let elab_mode = pick_elab_mode(&cli);
-        ir_design = match elab.elaborate(top_name, elab_mode) {
-            Ok(d) => d,
-            Err(e) => {
-                let diags = elab.flush_diagnostics();
-                if anim_active(&anim) {
-                    let w = diags
-                        .iter()
-                        .filter(|d| d.level == DiagLevel::Warning)
-                        .count();
-                    anim_abort(&mut anim, 1, w);
+            let (source_lines, source_file) = session.source_info().unwrap_or_default();
+            let mut elab = if source_lines.is_empty() {
+                Elaborator::new(design)
+            } else {
+                Elaborator::with_source(design, source_lines, source_file)
+            };
+            // Mode elaborasi: dengan `--top` eksplisit → StrictSimulation (top wajib).
+            // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
+            // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
+            // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
+            let elab_mode = pick_elab_mode(&cli);
+            ir_design = match elab.elaborate(top_name, elab_mode) {
+                Ok(d) => d,
+                Err(e) => {
+                    let diags = elab.flush_diagnostics();
+                    if anim_active(&anim) {
+                        let w = diags
+                            .iter()
+                            .filter(|d| d.level == DiagLevel::Warning)
+                            .count();
+                        anim_abort(&mut anim, 1, w);
+                    }
+                    emit_diags(&diags);
+                    return Err(e);
                 }
-                emit_diags(&diags);
-                return Err(e);
+            };
+            elab_diags = elab.flush_diagnostics();
+            if anim_active(&anim) {
+                anim_phase_done(&anim, Phase::Ela);
+                anim_phase_done(&anim, Phase::Opt);
+                anim_phase_done(&anim, Phase::Ver);
+                let w = elab_diags
+                    .iter()
+                    .filter(|d| d.level == DiagLevel::Warning)
+                    .count();
+                let e = elab_diags.iter().filter(|d| d.is_error()).count();
+                anim_finish(&mut anim, e == 0, e, w);
             }
-        };
-        elab_diags = elab.flush_diagnostics();
-        if anim_active(&anim) {
-            anim_phase_done(&anim, Phase::Ela);
-            anim_phase_done(&anim, Phase::Opt);
-            anim_phase_done(&anim, Phase::Ver);
-            let w = elab_diags
-                .iter()
-                .filter(|d| d.level == DiagLevel::Warning)
-                .count();
-            let e = elab_diags.iter().filter(|d| d.is_error()).count();
-            anim_finish(&mut anim, e == 0, e, w);
-        }
-        emit_diags(&elab_diags);
+            emit_diags(&elab_diags);
 
-        // Mode analisis (recovery): top-level tidak dapat ditentukan secara unik
-        // karena `--top` tidak diberikan. Semua diagnostik sudah dilaporkan —
-        // simulasi & VCD TIDAK dijalankan (Rule 2/4).
-        recovered = elab.recovered;
-        from_cache = false;
-        elab_opt = Some(elab);
+            // Mode analisis (recovery): top-level tidak dapat ditentukan secara unik
+            // karena `--top` tidak diberikan. Semua diagnostik sudah dilaporkan —
+            // simulasi & VCD TIDAK dijalankan (Rule 2/4).
+            recovered = elab.recovered;
+            from_cache = false;
+            elab_opt = Some(elab);
         }
     }
 

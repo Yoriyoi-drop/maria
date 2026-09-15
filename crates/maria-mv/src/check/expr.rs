@@ -118,7 +118,9 @@ pub(crate) fn check_expr<'a>(
         // (bisa param function eksternal/UVM).
         Expr::NamedArg { expr, .. } => check_expr(expr, ctx, scope, depth + 1)?,
         Expr::MethodCall {
-            obj, method: _, args,
+            obj,
+            method: _,
+            args,
         } => {
             check_expr(obj, ctx, scope, depth + 1)?;
             for a in args {

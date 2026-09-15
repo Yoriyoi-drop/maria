@@ -53,7 +53,10 @@ endmodule
 
 /// Jalankan EMI_PARTSEL_SRC pada konfigurasi parallel tertentu, kembalikan
 /// nilai sinyal `name` dalam bentuk string bit (mis. "xx01").
-fn run_emivariant(dead_code: &str, mut pcfg: maria_simulator::simulator::parallel::ParallelConfig) -> String {
+fn run_emivariant(
+    dead_code: &str,
+    mut pcfg: maria_simulator::simulator::parallel::ParallelConfig,
+) -> String {
     let source = EMI_PARTSEL_SRC.replace("  DEAD_CODE", dead_code);
     let design = compile_str(&source).unwrap();
     let mut engine = maria_simulator::simulator::SimulationEngine::new(design, 100);
@@ -85,7 +88,10 @@ fn test_emi_partselect_serial_reference() {
     let mut pcfg = maria_simulator::simulator::parallel::ParallelConfig::default();
     pcfg.parallel_processes = false;
     let x = run_emivariant("", pcfg);
-    assert_eq!(x, "xx01", "serial: a[3:0] pada a 2-bit → bit dalam batas nilai asli, sisanya X");
+    assert_eq!(
+        x, "xx01",
+        "serial: a[3:0] pada a 2-bit → bit dalam batas nilai asli, sisanya X"
+    );
 }
 
 /// Bug asli fuzzer: proses comb ke-4+ mengaktifkan jalur parallel — hasil
@@ -106,7 +112,10 @@ fn test_emi_partselect_parallel_forced() {
     let mut pcfg = maria_simulator::simulator::parallel::ParallelConfig::default();
     pcfg.min_processes_parallel = 1;
     let x = run_emivariant("", pcfg);
-    assert_eq!(x, "xx01", "parallel dipaksa aktif: part-select OOB per-bit §11.5.1");
+    assert_eq!(
+        x, "xx01",
+        "parallel dipaksa aktif: part-select OOB per-bit §11.5.1"
+    );
 }
 
 /// Varian ExprRangeSelect: `a[base+:4]` pada `a` 2-bit, base konstan 0.
@@ -141,8 +150,16 @@ endmodule
     engine.run().unwrap();
     let parallel = engine.state.read_signal(idx).clone();
     assert_eq!(serial.width, 4);
-    assert_eq!(serial.bits[0], maria_ir::LogicVal::One, "bit 0 dalam batas = nilai asli");
-    assert_eq!(serial.bits[1], maria_ir::LogicVal::Zero, "bit 1 dalam batas = nilai asli");
+    assert_eq!(
+        serial.bits[0],
+        maria_ir::LogicVal::One,
+        "bit 0 dalam batas = nilai asli"
+    );
+    assert_eq!(
+        serial.bits[1],
+        maria_ir::LogicVal::Zero,
+        "bit 1 dalam batas = nilai asli"
+    );
     assert_eq!(serial.bits[2], maria_ir::LogicVal::X, "bit 2 OOB = X");
     assert_eq!(parallel, serial, "parallel harus identik dengan serial");
 }
@@ -219,7 +236,10 @@ endmodule
     let r = rx
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("compile concat lebar negatif harus selesai <10s (dulu panic/regresi?)");
-    assert!(r.is_ok(), "part-select lebar negatif/unresolved harus error elegan, bukan panic");
+    assert!(
+        r.is_ok(),
+        "part-select lebar negatif/unresolved harus error elegan, bukan panic"
+    );
 }
 
 /// Regresi diagnostic RT0001 (ditemukan maria-fuzz seed 42): concat part-select

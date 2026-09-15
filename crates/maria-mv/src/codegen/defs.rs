@@ -2,9 +2,9 @@
 //! emit_package, emit_interface (+modport), emit_class (+constraint),
 //! emit_constraint_items. 1 file = 1 tanggung jawab.
 
-use super::{line, pad_type};
 use super::expr::{emit_expr, emit_type};
 use super::module::emit_args;
+use super::{line, pad_type};
 use crate::ast::*;
 
 /// Emit interface SV: `interface axi_lite; ... endinterface`.
@@ -14,7 +14,11 @@ pub(crate) fn emit_interface(out: &mut String, indent: usize, ifc: &Interface) {
     line(out, indent, &format!("interface {};", ifc.name));
     for p in &ifc.ports {
         for n in &p.names {
-            line(out, indent + 1, &format!("{};", super::emit_signal_decl(&p.ty, n)));
+            line(
+                out,
+                indent + 1,
+                &format!("{};", super::emit_signal_decl(&p.ty, n)),
+            );
         }
     }
     for (names, ty, ..) in &ifc.sigs {

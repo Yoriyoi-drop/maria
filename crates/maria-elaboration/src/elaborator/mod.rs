@@ -2800,7 +2800,11 @@ impl Elaborator {
         // anker (masih lebih baik dari tanpa lokasi).
         let loc = best.unwrap_or_else(|| {
             let n = self.source_lines.len();
-            if n > 0 { (n, 1) } else { (0, 0) }
+            if n > 0 {
+                (n, 1)
+            } else {
+                (0, 0)
+            }
         });
         *self.source_literal_loc.borrow_mut() = Some(loc);
         loc
@@ -5537,8 +5541,7 @@ impl Elaborator {
                     // dengan statement assign (stmt.rs:805): decompose ke per-elemen
                     // assign `rom[i] = ei;` di level IR.
                     let mut per_elem_stmts: Vec<IrStmt> = Vec::new();
-                    if let (Some(sid), Expr::Concat(elems)) = (lvalue_signal_id(&lhs), init_expr)
-                    {
+                    if let (Some(sid), Expr::Concat(elems)) = (lvalue_signal_id(&lhs), init_expr) {
                         if let Some(sig) = signals.get(sid) {
                             if sig.array_depth > 1 && elems.len() == sig.array_depth {
                                 for (i, elem) in elems.iter().enumerate() {
@@ -5547,9 +5550,9 @@ impl Elaborator {
                                     per_elem_stmts.push(IrStmt::BlockingAssign {
                                         lhs: IrLValue::ArrayIndex {
                                             sig_id: sid,
-                                            index: Box::new(IrExpr::Const(
-                                                LogicVec::from_u64(i as u64, 32),
-                                            )),
+                                            index: Box::new(IrExpr::Const(LogicVec::from_u64(
+                                                i as u64, 32,
+                                            ))),
                                             elem_width: sig.elem_width.max(1),
                                         },
                                         rhs: ir_elem,

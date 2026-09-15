@@ -1,5 +1,5 @@
-use std::io::Read;
 use maria_parser::preprocessor::Preprocessor;
+use std::io::Read;
 
 fn main() {
     let mut src = String::new();

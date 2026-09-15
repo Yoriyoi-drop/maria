@@ -1,8 +1,8 @@
 //! Check — tipe level file/package: typedef (alias/struct/union/enum) &
 //! interface validate. 1 file = 1 tanggung jawab.
 
-use super::{err_at, new_scope, td_name, Ctx};
 use super::expr::check_type;
+use super::{err_at, new_scope, td_name, Ctx};
 use crate::ast::*;
 use crate::MvError;
 use std::collections::HashSet;

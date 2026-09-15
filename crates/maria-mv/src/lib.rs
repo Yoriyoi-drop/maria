@@ -327,8 +327,11 @@ module m {
             r.sv
         );
         // concat biasa tetap `{...}` tanpa quote
-        let r2 = transpile("module m2 {\n out y : logic[15:0]\n comb { y = {8'h01, 8'h02} } }", "m2")
-            .expect("concat tetap");
+        let r2 = transpile(
+            "module m2 {\n out y : logic[15:0]\n comb { y = {8'h01, 8'h02} } }",
+            "m2",
+        )
+        .expect("concat tetap");
         assert!(r2.sv.contains("y = {8'h01, 8'h02};"), "concat: {}", r2.sv);
     }
 

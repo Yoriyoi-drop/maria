@@ -109,11 +109,15 @@ impl Parser {
                 if self.peek() == &Token::Unsigned {
                     self.advance();
                 }
-                let decl_expr_range = if self.peek() == &Token::LBrack {
-                    self.parse_range()?
-                } else {
-                    None
-                };
+                // A wildcard unpacked dimension belongs to the declarator:
+                // `spi_data_t storage[*]`.  Do not parse `[*]` as a packed
+                // type range, because `*` is not an expression bound.
+                let decl_expr_range =
+                    if self.peek() == &Token::LBrack && self.peek_ahead(1) != &Token::Star {
+                        self.parse_range()?
+                    } else {
+                        None
+                    };
                 let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
                 while self.peek_is_packed_dim() {
                     if let Some(er) = self.parse_range()? {
@@ -283,11 +287,12 @@ impl Parser {
                         type_name
                     )));
                 }
-                let decl_expr_range = if self.peek() == &Token::LBrack {
-                    self.parse_range()?
-                } else {
-                    None
-                };
+                let decl_expr_range =
+                    if self.peek() == &Token::LBrack && self.peek_ahead(1) != &Token::Star {
+                        self.parse_range()?
+                    } else {
+                        None
+                    };
                 let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
                 while self.peek_is_packed_dim() {
                     if let Some(er) = self.parse_range()? {
@@ -389,6 +394,17 @@ impl Parser {
                         self.advance();
                         self.advance();
                         is_dynamic = true;
+                    }
+                    if decl_expr_range.is_none()
+                        && self.peek() == &Token::LBrack
+                        && self.peek_ahead(1) == &Token::Star
+                        && self.peek_ahead(2) == &Token::RBrack
+                    {
+                        self.advance();
+                        self.advance();
+                        self.advance();
+                        is_associative = true;
+                        assoc_key_type = Some(DataType::Int);
                     }
                     let (var_expr_range, array_range, array_size_expr) = if decl_expr_range
                         .is_some()

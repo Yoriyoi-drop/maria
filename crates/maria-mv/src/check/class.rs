@@ -49,7 +49,11 @@ pub(crate) fn check_task<'a>(
     Ok(())
 }
 
-fn check_expr_stmt_ctx<'a>(s: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>) -> Result<(), MvError> {
+fn check_expr_stmt_ctx<'a>(
+    s: &'a Stmt,
+    ctx: &'a Ctx<'a>,
+    scope: &mut Scope<'a>,
+) -> Result<(), MvError> {
     super::stmt::check_stmt(s, ctx, scope, BlockKind::Always)
 }
 

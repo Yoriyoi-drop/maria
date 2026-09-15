@@ -444,10 +444,7 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(result.to_bits(), 64))
                 } else if matches!(
                     op,
-                    BinaryIrOp::Lt
-                        | BinaryIrOp::Le
-                        | BinaryIrOp::Gt
-                        | BinaryIrOp::Ge
+                    BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge
                 ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
                     && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
@@ -464,10 +461,8 @@ impl SimulationEngine {
                     // lebar konteks saat evaluate (bug #7: 8-bit -4 → 0x000000FC
                     // → 252). Clip ke lebar ASLI signal agar eval_binary_signed
                     // melakukan sign-extend yang benar.
-                    let lv_c =
-                        signed_raw_operand(lhs.as_ref(), &lval, &self.design.top.signals);
-                    let rv_c =
-                        signed_raw_operand(rhs.as_ref(), &rval, &self.design.top.signals);
+                    let lv_c = signed_raw_operand(lhs.as_ref(), &lval, &self.design.top.signals);
+                    let rv_c = signed_raw_operand(rhs.as_ref(), &rval, &self.design.top.signals);
                     Ok(eval_binary_signed(op.clone(), &lv_c, &rv_c))
                 } else if matches!(op, BinaryIrOp::Sshr) {
                     // `>>>` (IEEE 1800 §11.4.10): ARITHMETIC bila lhs signed,
@@ -2574,12 +2569,10 @@ fn signed_raw_operand(e: &IrExpr, v: &LogicVec, signals: &[SignalInfo]) -> Logic
         return signed_raw_operand(inner, v, signals);
     }
     let w = match e {
-        IrExpr::Signal(id, _) | IrExpr::BitSelect(id, _) | IrExpr::RangeSelect(id, ..) => {
-            signals
-                .get(*id)
-                .map(|s| s.width.min(v.width))
-                .unwrap_or(v.width)
-        }
+        IrExpr::Signal(id, _) | IrExpr::BitSelect(id, _) | IrExpr::RangeSelect(id, ..) => signals
+            .get(*id)
+            .map(|s| s.width.min(v.width))
+            .unwrap_or(v.width),
         _ => v.width,
     };
     let bits = v.bits.iter().take(w).cloned().collect();

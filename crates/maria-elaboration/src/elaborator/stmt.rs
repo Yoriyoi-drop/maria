@@ -152,8 +152,10 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
             // berujung usize::MAX → `.sum()` panic "attempt to add with overflow"
             // (ditemukan maria-fuzz: panic pada concat tlul_socket `shifted_id`).
             // lebar di sini HANYA perkiraan utk konteks sizing — jangan panic.
-            items.iter().fold(0usize, |acc, e| acc.saturating_add(expr_approx_width(e, signals)))
-        },
+            items.iter().fold(0usize, |acc, e| {
+                acc.saturating_add(expr_approx_width(e, signals))
+            })
+        }
         IrExpr::Replicate(n, inner) => n.saturating_mul(expr_approx_width(inner, signals)),
         // Unary logika & reduksi menghasilkan 1 bit (`!x`, `&x`, `|x`, `^x`);
         // sisanya (aritmetika, bitwise) selebar operand.
@@ -291,10 +293,7 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
                 // pertahankan bit X/Z yang sudah ada.
                 let mut bits = lv.bits.clone();
                 bits.resize(ctx, LogicVal::Zero);
-                *lv = LogicVec {
-                    bits,
-                    width: ctx,
-                };
+                *lv = LogicVec { bits, width: ctx };
             }
             lv.width
         }

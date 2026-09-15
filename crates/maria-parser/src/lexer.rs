@@ -914,14 +914,26 @@ impl Lexer {
                 let bn2 = self.chars.get(self.pos + 2).copied();
                 let direct_base = matches!(
                     bn,
-                    Some('b') | Some('B') | Some('o') | Some('O') | Some('d') | Some('D')
-                        | Some('h') | Some('H')
+                    Some('b')
+                        | Some('B')
+                        | Some('o')
+                        | Some('O')
+                        | Some('d')
+                        | Some('D')
+                        | Some('h')
+                        | Some('H')
                 );
                 let signed_base = matches!(bn, Some('s') | Some('S'))
                     && matches!(
                         bn2,
-                        Some('b') | Some('B') | Some('o') | Some('O') | Some('d') | Some('D')
-                            | Some('h') | Some('H')
+                        Some('b')
+                            | Some('B')
+                            | Some('o')
+                            | Some('O')
+                            | Some('d')
+                            | Some('D')
+                            | Some('h')
+                            | Some('H')
                     );
                 if !direct_base && !signed_base {
                     // Bukan literal berpola width'base — `'` bukan bagian number.
@@ -960,10 +972,7 @@ impl Lexer {
                 let base_char = s.chars().last().unwrap_or('d');
                 let valid_char = |c: char| -> bool {
                     match base_char.to_ascii_lowercase() {
-                        'b' => matches!(
-                            c,
-                            '0' | '1' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'
-                        ),
+                        'b' => matches!(c, '0' | '1' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'),
                         'o' => matches!(
                             c,
                             '0'..='7' | '8'..='9' | '_' | 'x' | 'X' | 'z' | 'Z' | '?'
@@ -971,9 +980,7 @@ impl Lexer {
                         'h' => {
                             c.is_ascii_hexdigit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
                         }
-                        _ => {
-                            c.is_ascii_digit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
-                        }
+                        _ => c.is_ascii_digit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?'),
                     }
                 };
                 while let Some(c) = self.peek() {
@@ -1440,7 +1447,8 @@ impl Lexer {
                                         || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
                                 }
                                 _ => {
-                                    c.is_ascii_digit() || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
+                                    c.is_ascii_digit()
+                                        || matches!(c, '_' | 'x' | 'X' | 'z' | 'Z' | '?')
                                 }
                             }
                         };

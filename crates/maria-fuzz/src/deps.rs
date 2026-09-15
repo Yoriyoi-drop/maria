@@ -61,7 +61,9 @@ pub fn index_file(path: &Path, idx: &mut DepsIndex) {
                 .next()
                 .unwrap_or("");
             if !name.is_empty() && !name.starts_with("//") {
-                idx.packages.entry(name.to_string()).or_insert_with(|| path.to_path_buf());
+                idx.packages
+                    .entry(name.to_string())
+                    .or_insert_with(|| path.to_path_buf());
             }
             continue;
         }
@@ -72,7 +74,9 @@ pub fn index_file(path: &Path, idx: &mut DepsIndex) {
                 .next()
                 .unwrap_or("");
             if !name.is_empty() && !name.starts_with("//") {
-                idx.modules.entry(name.to_string()).or_insert_with(|| path.to_path_buf());
+                idx.modules
+                    .entry(name.to_string())
+                    .or_insert_with(|| path.to_path_buf());
             }
             continue;
         }
@@ -82,7 +86,9 @@ pub fn index_file(path: &Path, idx: &mut DepsIndex) {
                 .next()
                 .unwrap_or("");
             if !name.is_empty() && !name.starts_with("//") {
-                idx.interfaces.entry(name.to_string()).or_insert_with(|| path.to_path_buf());
+                idx.interfaces
+                    .entry(name.to_string())
+                    .or_insert_with(|| path.to_path_buf());
             }
             continue;
         }
@@ -228,7 +234,11 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let pkg = dir.join("my_pkg.sv");
         let top = dir.join("top.sv");
-        std::fs::write(&pkg, "package my_pkg;\n  parameter int W = 8;\nendpackage\n").unwrap();
+        std::fs::write(
+            &pkg,
+            "package my_pkg;\n  parameter int W = 8;\nendpackage\n",
+        )
+        .unwrap();
         std::fs::write(
             &top,
             "import my_pkg::*;\nmodule top;\n  initial $finish;\nendmodule\n",
@@ -262,7 +272,11 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let sub = dir.join("sub.sv");
         let top = dir.join("t.sv");
-        std::fs::write(&sub, "module sub(input a, output b);\n  assign b = a;\nendmodule\n").unwrap();
+        std::fs::write(
+            &sub,
+            "module sub(input a, output b);\n  assign b = a;\nendmodule\n",
+        )
+        .unwrap();
         std::fs::write(
             &top,
             "module t(input i, output o);\n  sub u_sub(.a(i), .b(o));\nendmodule\n",

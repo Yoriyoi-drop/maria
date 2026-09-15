@@ -438,13 +438,18 @@ fn strip_duplicate_modules(tb_src: &str, mod_src: &str) -> String {
             if let Some(rest) = stripped_for_check.strip_prefix(kw) {
                 if rest.starts_with(char::is_whitespace) || rest.starts_with('(') {
                     // `module X ...` or `module #(P) X ...`
-                    let name_token = rest.trim_start()
+                    let name_token = rest
+                        .trim_start()
                         .split(|c: char| c.is_whitespace() || c == '#' || c == '(')
                         .next()
                         .unwrap_or("");
                     if defined.contains(name_token) {
                         should_skip = true;
-                        skip_until_end = Some(if kw == "module" { "module" } else { "interface" });
+                        skip_until_end = Some(if kw == "module" {
+                            "module"
+                        } else {
+                            "interface"
+                        });
                         break;
                     }
                 }
@@ -466,9 +471,7 @@ fn run_single(cfg: FuzzConfig) -> FuzzReport {
     if corpus.is_empty() {
         eprintln!(
             "WARNING: corpus kosong di {:?} — tidak ada seed nyata",
-            cfg.corpus_dir
-                .clone()
-                .unwrap_or_else(default_corpus_dir)
+            cfg.corpus_dir.clone().unwrap_or_else(default_corpus_dir)
         );
     }
 

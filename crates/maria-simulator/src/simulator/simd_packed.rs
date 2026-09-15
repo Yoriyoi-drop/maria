@@ -684,7 +684,9 @@ mod tests {
     fn test_simd_and_zero_dominates_optimistic() {
         let a = make_chunks(&[(0xFF, 0x00)]); // 00000000
         let b = make_chunks(&[(0, 0)]); // XXXXXXXX
-        crate::simulator::value::set_xprop_mode(crate::simulator::types::XPropagationMode::Optimistic);
+        crate::simulator::value::set_xprop_mode(
+            crate::simulator::types::XPropagationMode::Optimistic,
+        );
         let r = simd_and(&a, &b);
         // Optimistic/LRM: 0 mendominasi AND → 0 AND X = 0
         assert_eq!(r[0], (0xFF, 0x00));
