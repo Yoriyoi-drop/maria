@@ -892,6 +892,13 @@ impl Preprocessor {
                     result.push_str(name);
                     continue;
                 }
+                // `MACRO (args)` — spasi antara nama macro dan `(` sah di SV
+                // (`uvm_info (gfn, ...)` pola umum). Tanpa skip, args terdeteksi
+                // KOSONG → substitusi body jadi `uvm_report_info(, , )` dan
+                // `(gfn, ...)` bocor ke output → "expected RParen, found Comma".
+                while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                    i += 1;
+                }
                 if let Some(mdef) = self.defines.get(name) {
                     // Batas ukuran hasil: ekspansi eksponensial (`define A `A `A`)
                     // menggandakan output tiap level — input kecil selalu, jadi

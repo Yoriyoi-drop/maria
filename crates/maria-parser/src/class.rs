@@ -49,71 +49,12 @@ impl Parser {
                     continue;
                 }
             }
-            // `if (cond) { items } else { items }` (F12) ATAU
-            // `if (cond) expr;` / `if (cond) expr; else expr;` — constraint
-            // kondisional TANPA braces (legal SV; contoh spid_common line
-            // 1254 `if (wrap_test == 1'b 0) size >= 1 && size <= 256;`).
+            // `if (cond) { items } else if (cond) { items } ... else { items }`
+            // (constraint kondisional F12 + else-if chain — pola
+            // kmac_test_vectors_kmac_vseq: `if..else if..else if..`).
             if self.peek() == &Token::If {
-                self.advance();
-                self.expect(Token::LParen)?;
-                let cond = self.parse_expr(0)?;
-                self.expect(Token::RParen)?;
-                let mut then = Vec::new();
-                let mut els = Vec::new();
-                if self.peek() == &Token::LBrace {
-                    self.advance();
-                    then = self.parse_constraint_items()?;
-                    self.expect(Token::RBrace)?;
-                } else {
-                    // Tanpa braces: parse satu ekspresi constraint sebagai
-                    // branch-then.
-                    match self.parse_expr(0) {
-                        Ok(e) => {
-                            self.skip_semi();
-                            then.push(ConstraintItem::Expr(e));
-                        }
-                        Err(_) => loop {
-                            match self.peek() {
-                                Token::Semi => {
-                                    self.advance();
-                                    break;
-                                }
-                                Token::RBrace | Token::Eof => break,
-                                _ => {
-                                    self.advance();
-                                }
-                            }
-                        },
-                    }
-                }
-                if self.peek() == &Token::Else {
-                    self.advance();
-                    if self.peek() == &Token::LBrace {
-                        self.advance();
-                        els = self.parse_constraint_items()?;
-                        self.expect(Token::RBrace)?;
-                    } else {
-                        match self.parse_expr(0) {
-                            Ok(e) => {
-                                self.skip_semi();
-                                els.push(ConstraintItem::Expr(e));
-                            }
-                            Err(_) => loop {
-                                match self.peek() {
-                                    Token::Semi => {
-                                        self.advance();
-                                        break;
-                                    }
-                                    Token::RBrace | Token::Eof => break,
-                                    _ => {
-                                        self.advance();
-                                    }
-                                }
-                            },
-                        }
-                    }
-                }
-                body.push(ConstraintItem::If { cond, then, els });
+                let citem = self.parse_constraint_if()?;
+                body.push(citem);
                 continue;
             }
             // `foreach (arr[i]) { constraints }` di dalam dengan-block /
@@ -207,6 +148,74 @@ impl Parser {
             }
         }
         Ok(body)
+    }
+
+    /// Parse satu konstruk `if (cond) { then } [else if (c2) { } | else { }]`
+    /// dalam constraint body — recursive utk chain `else if` (pola
+    /// kmac_test_vectors_*: lima level if/else if di randomize-with).
+    fn parse_constraint_if(&mut self) -> Result<ConstraintItem, SimError> {
+        self.advance(); // consume 'if'
+        self.expect(Token::LParen)?;
+        let cond = self.parse_expr(0)?;
+        self.expect(Token::RParen)?;
+        let mut then = Vec::new();
+        let mut els = Vec::new();
+        if self.peek() == &Token::LBrace {
+            self.advance();
+            then = self.parse_constraint_items()?;
+            self.expect(Token::RBrace)?;
+        } else {
+            // Tanpa braces: parse satu ekspresi constraint sebagai branch-then.
+            match self.parse_expr(0) {
+                Ok(e) => {
+                    self.skip_semi();
+                    then.push(ConstraintItem::Expr(e));
+                }
+                Err(_) => loop {
+                    match self.peek() {
+                        Token::Semi => {
+                            self.advance();
+                            break;
+                        }
+                        Token::RBrace | Token::Eof => break,
+                        _ => {
+                            self.advance();
+                        }
+                    }
+                },
+            }
+        }
+        if self.peek() == &Token::Else {
+            self.advance();
+            if self.peek() == &Token::If {
+                // `else if (cond2) { ... }` — chain recursive.
+                els.push(self.parse_constraint_if()?);
+            } else if self.peek() == &Token::LBrace {
+                self.advance();
+                els = self.parse_constraint_items()?;
+                self.expect(Token::RBrace)?;
+            } else {
+                match self.parse_expr(0) {
+                    Ok(e) => {
+                        self.skip_semi();
+                        els.push(ConstraintItem::Expr(e));
+                    }
+                    Err(_) => loop {
+                        match self.peek() {
+                            Token::Semi => {
+                                self.advance();
+                                break;
+                            }
+                            Token::RBrace | Token::Eof => break,
+                            _ => {
+                                self.advance();
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        Ok(ConstraintItem::If { cond, then, els })
     }
 
     pub(crate) fn parse_class_fast(&mut self) -> Result<(), SimError> {
