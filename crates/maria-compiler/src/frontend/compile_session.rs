@@ -568,7 +568,7 @@ impl CompileSession {
         // Clone all designs for cache BEFORE merge (one-time O(n) cost).
         // File yang di-restore dari MICD sudah ada di prev_designs (dari
         // attach) → tidak perlu clone ulang (hemat CPU + memori).
-        let cache_designs: Vec<Option<Design>> = designs
+        let mut cache_designs: Vec<Option<Design>> = designs
             .iter()
             .enumerate()
             .map(|(i, d)| {
@@ -636,11 +636,15 @@ impl CompileSession {
         // File yang di-restore TIDAK di-clear/di-insert ulang — entry lama di
         // prev_designs tetap valid (konten identik, diverifikasi saat attach).
         self.prev_checksums.clear();
-        for (path, design) in paths.iter().zip(cache_designs.iter()) {
+        for (path, design) in paths.iter().zip(cache_designs.iter_mut()) {
             let meta_fp = self.metadata_fingerprint(path);
             self.prev_checksums.insert(path.clone(), meta_fp);
-            if let Some(d) = design {
-                self.prev_designs.insert(path.clone(), d.clone());
+            // MOVE (bukan clone) — cache_designs sudah merupakan clone set utk
+            // cache; menyalin sekali lagi = 2x memori AST penuh selama compile
+            // (bocor: peak parse ~2.9GB utk OpenTitan dgn 2x clone). Setelah
+            // move, cache_designs[i] = None → di-drop.
+            if let Some(d) = design.take() {
+                self.prev_designs.insert(path.clone(), d);
             }
         }
 
@@ -2123,6 +2127,18 @@ impl CompileSession {
 
     /// Get merged source info: (source_lines, first_source_file)
     /// Returns None if merged_source hasn't been populated (e.g., before first compile).
+    /// Lepas cache parse-hit dari memori setelah `save_micd()` (run_fast jalur
+    /// main.rs): prev_designs + prev_combined_sources TIDAK lagi dibutuhkan —
+    /// sudah ditulis ke disk oleh save_micd, dan compile berikutnya (bila ada)
+    /// me-restore dari MICD. Menahan keduanya menambah ~1GB+ (AST penuh) selama
+    /// ELABORASI berikut — bocor memori penyebab OOM utk design besar
+    /// (OpenTitan: RSS parse ~2.9GB → elaborasi harus muat di sisa RAM).
+    pub fn release_parse_cache(&mut self) {
+        self.prev_designs.clear();
+        self.prev_combined_sources.clear();
+        self.combined_parts.lock().unwrap().clear();
+    }
+
     pub fn source_info(&self) -> Option<(Vec<String>, String)> {
         self.merged_source.as_ref().map(|src| {
             let lines: Vec<String> = src.lines().map(|l| l.to_string()).collect();

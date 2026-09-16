@@ -2964,6 +2964,12 @@ fn run_fast(
     // parse tetap tersimpan walau elaborasi gagal. ──
     micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
 
+    // ── Optimasi memori: lepas AST parse (prev_designs + combined sources)
+    // yang sudah di-<persist ke MICD — elaborasi design besar (OpenTitan)
+    // butuh RAM; menahan clone AST penuh kedua selama elaborate = OOM pada
+    // mesin kecil (sebelumnya peak ~2.9GB parse, lalu elaborate +AST → swap). ──
+    session.release_parse_cache();
+
     if design.modules.is_empty() {
         // Tidak fatal bila ada package/interface/class — mode analisis:
         // tidak ada top yang bisa disimulasikan, tapi parse sudah valid.

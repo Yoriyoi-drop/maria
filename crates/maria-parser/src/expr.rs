@@ -373,25 +373,48 @@ impl Parser {
                     self.advance();
                     let with_expr = if self.peek() == &Token::LBrace {
                         self.advance();
-                        // Randomize-with bodies are verification constraints;
-                        // consume the balanced body without forcing every
-                        // constraint-only token through the runtime
-                        // expression parser.
-                        let mut depth = 1usize;
-                        while depth > 0 && self.peek() != &Token::Eof {
-                            match self.peek() {
-                                Token::LBrace => {
-                                    depth += 1;
-                                    self.advance();
+                        // Randomize-with: coba parse body sbg constraint items
+                        // (agar `with { addr > 200; }` constraint DIHORMATI
+                        // solver — regresi F17). Bila body memuat konstruk
+                        // constraint-only (if/soft/foreach, pola UVM) yang
+                        // parser tidak dukung, fallback structural skip agar
+                        // tidak desync (OpenTitan DV).
+                        let saved = self.pos.get();
+                        match self.parse_constraint_items() {
+                            Ok(items) => {
+                                let exprs: Vec<Expr> = items
+                                    .into_iter()
+                                    .filter_map(|ci| match ci {
+                                        ConstraintItem::Expr(e) => Some(e),
+                                        _ => None,
+                                    })
+                                    .collect();
+                                self.expect(Token::RBrace)?;
+                                exprs.into_iter().reduce(|acc, e| Expr::BinaryOp {
+                                    op: BinaryOp::LogicalAnd,
+                                    lhs: Box::new(acc),
+                                    rhs: Box::new(e),
+                                }).unwrap_or(Expr::Value(Value::Decimal(1)))
+                            }
+                            Err(_) => {
+                                self.pos.set(saved);
+                                let mut depth = 1usize;
+                                while depth > 0 && self.peek() != &Token::Eof {
+                                    match self.peek() {
+                                        Token::LBrace => {
+                                            depth += 1;
+                                            self.advance();
+                                        }
+                                        Token::RBrace => {
+                                            depth -= 1;
+                                            self.advance();
+                                        }
+                                        _ => self.advance(),
+                                    }
                                 }
-                                Token::RBrace => {
-                                    depth -= 1;
-                                    self.advance();
-                                }
-                                _ => self.advance(),
+                                Expr::Value(Value::Decimal(1))
                             }
                         }
-                        Expr::Value(Value::Decimal(1))
                     } else {
                         self.expect(Token::LParen)?;
                         let e = self.parse_expr(0)?;

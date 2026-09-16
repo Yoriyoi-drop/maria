@@ -418,6 +418,17 @@ impl Elaborator {
         }
     }
 
+    /// Fragment modules (implicit unit wrappers for include snippets like
+    /// compare_helper.sv, abs.sv) have no real declarations; signals come
+    /// from the enclosing context. All elaboration errors in these modules
+    /// are downgraded to warnings (mirrors the parse-level fragment
+    /// downgrade: files without real modules → non-blocking diagnostics).
+    pub(crate) fn is_fragment_module(&self) -> bool {
+        self.current_module
+            .map(|m| m.as_str().starts_with("__unit__"))
+            .unwrap_or(false)
+    }
+
     pub fn with_source(design: Design, source_lines: Vec<String>, source_file: String) -> Self {
         let mut package_symbols: HashMap<Symbol, HashMap<Symbol, PackageItem>> = HashMap::new();
         // First pass: collect directly declared items
@@ -4717,7 +4728,7 @@ impl Elaborator {
                             Ok(process) => processes.push(process),
                             Err(e) => {
                                 let mut diag = e.to_diagnostic();
-                                if !self.is_current_module_reachable() {
+                                if !self.is_current_module_reachable() || self.is_fragment_module() {
                                     diag.level = DiagLevel::Warning;
                                 }
                                 self.diag_sink.push(diag);
@@ -4740,7 +4751,7 @@ impl Elaborator {
                             Ok(body) => processes.push(Process::Initial { name, body }),
                             Err(e) => {
                                 let mut diag = e.to_diagnostic();
-                                if !self.is_current_module_reachable() {
+                                if !self.is_current_module_reachable() || self.is_fragment_module() {
                                     diag.level = DiagLevel::Warning;
                                 }
                                 self.diag_sink.push(diag);
@@ -4760,7 +4771,7 @@ impl Elaborator {
                             // main.rs memblokir simulasi & VCD sampai semua bersih.
                             // F38: module unreachable → downgrade ke warning.
                             let mut diag = e.to_diagnostic();
-                            if !self.is_current_module_reachable() {
+                            if !self.is_current_module_reachable() || self.is_fragment_module() {
                                 diag.level = DiagLevel::Warning;
                             }
                             self.diag_sink.push(diag);
@@ -4788,7 +4799,7 @@ impl Elaborator {
                         Err(e) => {
                             // Error GLOBAL (lihat komentar di Always).
                             let mut diag = e.to_diagnostic();
-                            if !self.is_current_module_reachable() {
+                            if !self.is_current_module_reachable() || self.is_fragment_module() {
                                 diag.level = DiagLevel::Warning;
                             }
                             self.diag_sink.push(diag);
@@ -4815,7 +4826,7 @@ impl Elaborator {
                         Err(e) => {
                             // Error GLOBAL (lihat komentar di Always).
                             let mut diag = e.to_diagnostic();
-                            if !self.is_current_module_reachable() {
+                            if !self.is_current_module_reachable() || self.is_fragment_module() {
                                 diag.level = DiagLevel::Warning;
                             }
                             self.diag_sink.push(diag);
@@ -4942,10 +4953,16 @@ impl Elaborator {
                             proc_counter += 1;
                         }
                         (Err(e), _) | (_, Err(e)) => {
-                            // Assign ini di-skip agar module tetap terdaftar, TAPI error
-                            // dipertahankan level aslinya (Error). Error di satu tempat
-                            // bersifat GLOBAL: gate memblokir simulasi & VCD.
-                            let diag = e.to_diagnostic();
+                            // Assign ini di-skip agar module tetap terdaftar.
+                            // Downgrade errors in fragment modules (implicit
+                            // unit wrappers for include snippets) — their
+                            // signals come from the enclosing context, not the
+                            // fragment scope (mirrors parse-level fragment
+                            // downgrade and `is_current_module_reachable`).
+                            let mut diag = e.to_diagnostic();
+                            if self.is_fragment_module() {
+                                diag.level = DiagLevel::Warning;
+                            }
                             self.diag_sink.push(diag);
                         }
                     }
@@ -5147,7 +5164,7 @@ impl Elaborator {
                                     Ok(process) => processes.push(process),
                                     Err(e) => {
                                         let mut diag = e.to_diagnostic();
-                                        if !self.is_current_module_reachable() {
+                                        if !self.is_current_module_reachable() || self.is_fragment_module() {
                                             diag.level = DiagLevel::Warning;
                                         }
                                         self.diag_sink.push(diag);
