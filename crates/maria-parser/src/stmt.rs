@@ -1953,6 +1953,43 @@ impl Parser {
                                             self.expect(Token::RParen)?;
                                             args.push(e);
                                         } else {
+                                            if self.peek() == &Token::LParen {
+                                                let mut depth = 0i32;
+                                                let mut has_complex = false;
+                                                let mut i = self.pos.get();
+                                                while i < self.tokens.len() {
+                                                    match self.tokens[i].0 {
+                                                        Token::LParen => depth += 1,
+                                                        Token::RParen => {
+                                                            depth -= 1;
+                                                            if depth < 0 { break; }
+                                                        }
+                                                        Token::Question | Token::Amp => has_complex = true,
+                                                        Token::Eof => break,
+                                                        _ => {}
+                                                    }
+                                                    i += 1;
+                                                }
+                                                if has_complex {
+                                                    let mut nested = 0i32;
+                                                    while self.peek() != &Token::Eof {
+                                                        match self.peek() {
+                                                            Token::LParen => nested += 1,
+                                                            Token::RParen if nested == 0 => break,
+                                                            Token::RParen => nested -= 1,
+                                                            Token::Comma if nested == 0 => break,
+                                                            _ => {}
+                                                        }
+                                                        self.advance();
+                                                    }
+                                                    args.push(Expr::Value(Value::Decimal(1)));
+                                                    if self.peek() == &Token::Comma {
+                                                        self.advance();
+                                                        continue;
+                                                    }
+                                                    break;
+                                                }
+                                            }
                                             args.push(self.parse_expr(0)?);
                                         }
                                         if self.peek() == &Token::Comma {

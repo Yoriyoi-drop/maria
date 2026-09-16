@@ -307,9 +307,11 @@ impl Parser {
                     names,
                 });
             }
-            _ => return Err(self.err(
-                "expected wire/reg/logic/int/byte/shortint/longint/enum/struct/union/wand/wor/tri",
-            )),
+            _ => {
+                return Err(self.err(
+                    "expected wire/reg/logic/int/byte/shortint/longint/enum/struct/union/wand/wor/tri",
+                ));
+            }
         };
         self.advance();
 
@@ -329,7 +331,9 @@ impl Parser {
             // unsigned = default, no-op
         }
 
-        let decl_expr_range = if self.peek() == &Token::LBrack {
+        let decl_expr_range = if self.peek() == &Token::LBrack
+            && self.peek_ahead(1) != &Token::Star
+        {
             self.parse_range()?
         } else {
             None
@@ -352,7 +356,9 @@ impl Parser {
         let effective_dtype = scoped_dtype.unwrap_or(dtype);
 
         let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
-        while self.peek_is_packed_dim() {
+        while self.peek_is_packed_dim()
+            && !(self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Star)
+        {
             if let Some(er) = self.parse_range()? {
                 extra_packed.push((er, None));
             }
@@ -441,6 +447,15 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::String);
+                                (None, None)
+                            } else if self.peek_ahead(1) == &Token::Star
+                                && self.peek_ahead(2) == &Token::RBrack
+                            {
+                                self.advance();
+                                self.advance();
+                                self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Int);
                                 (None, None)
                             } else if self.peek_ahead(1) == &Token::Bit {
                                 // bit-key associative array

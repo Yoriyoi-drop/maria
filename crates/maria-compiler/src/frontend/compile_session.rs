@@ -929,6 +929,26 @@ impl CompileSession {
         for (name, value) in &self.config.defines {
             pp.define(name, value);
         }
+        // ── Internal UVM library connection (maria + uvm-core) ──
+        // Prioritas PALING RENDAH (setelah incdirs & parent source):
+        // 1. `uvm-core/src` (Accellera IEEE 1800.2-2020) bila proyek
+        //    mendownloadnya → `include "uvm_pkg.sv" / "uvm.sv" resolve ke
+        //    library nyata (verified: uvm_pkg.sv parse 0 error).
+        // 2. CWD/repo-root (file uvm_macros.svh kompatibilitas maria dsb.) →
+        //    `include "uvm_macros.svh" di DV resolve ke macro maria yang
+        //    aman di-parse (bukan library penuh yang `uvm_field_* paste
+        //    belum di-support preprocessor).
+        for cand in [
+            std::path::PathBuf::from("."),
+            std::path::PathBuf::from("uvm-core/src"),
+            std::path::PathBuf::from("vendor/uvm-core/src"),
+        ] {
+            if cand.join("uvm_macros.svh").is_file() {
+                if let Some(s) = cand.to_str() {
+                    pp.add_search_path(s);
+                }
+            }
+        }
         pp
     }
 

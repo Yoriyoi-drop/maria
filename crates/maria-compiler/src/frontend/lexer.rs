@@ -503,7 +503,6 @@ impl<'a> FastLexer<'a> {
                 || c == b'z'
                 || c == b'X'
                 || c == b'Z'
-                || c == b'?'
             {
                 self.skip_byte();
             } else if c == b'\'' {

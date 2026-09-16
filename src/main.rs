@@ -3104,7 +3104,17 @@ fn run_fast(
     // ── Simulation Readiness Check (Rule 6) — full validation ──
     let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
     let has_elab_errors = elab_errs > 0;
-    let parse_errs = session.parse_errors.len();
+    // Hanya diagnostic level ERROR yang menggagalkan kesiapan simulasi.
+    // Paket warning/notice parse (mis. E1005 "skipping top-level construct")
+    // tetap masuk parse_errors utk transparansi, tapi TIDAK dihitung sbg
+    // error dan TIDAK memblokir sim — sebelumnya parse_errors.len() ikut
+    // menghitung warning + duplikat → "✗ Parse (234 error)" padahal error
+    // nyata cuma 1-2 (OpenTitan DV filelist). (sesi opentitan fiks)
+    let parse_errs = session
+        .parse_errors
+        .iter()
+        .filter(|d| d.is_error())
+        .count();
     let has_parse_errors = parse_errs > 0;
 
     // Per-tahap validation: hitung error per kategori dari elab_diags

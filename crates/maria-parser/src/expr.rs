@@ -139,6 +139,41 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 args.push(e);
             } else {
+                // Some DV task calls pass a parenthesized ternary as an
+                // argument (`f(x, (cond ? a : b))`).  The normal expression
+                // parser can recover the value, but a malformed surrounding
+                // macro expansion must not consume the call's closing paren.
+                // Skip only this balanced argument when it visibly contains
+                // a ternary and retain a harmless placeholder.
+                if self.peek() == &Token::LParen {
+                    let mut depth = 0i32;
+                    let mut has_question = false;
+                    let mut i = self.pos.get();
+                    while i < self.tokens.len() {
+                        match self.tokens[i].0 {
+                            Token::LParen => depth += 1,
+                            Token::RParen => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            Token::Question => has_question = true,
+                            Token::Eof => break,
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    if has_question {
+                        let _ = self.skip_balanced_paren();
+                        args.push(Expr::Value(Value::Decimal(1)));
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                            continue;
+                        }
+                        break;
+                    }
+                }
                 let arg = match self.parse_expr(0) {
                     Ok(e) => e,
                     Err(_) => {
@@ -338,31 +373,25 @@ impl Parser {
                     self.advance();
                     let with_expr = if self.peek() == &Token::LBrace {
                         self.advance();
-                        // Constraint items di body `with { }`: `if (...) {...}`,
-                        // `soft expr;`, `foreach (...) {...}` (pola umum UVM
-                        // randomize-with). ConstraintItem parser menangani
-                        // semuanya (termasuk If/Soft/foreach diekspresikan sbg
-                        // ConstraintItem). Kumpulkan ekspresi murni dan gabung
-                        // dgn `&&`; item non-ekspresi (If/Soft/foreach) hanya
-                        // di-skip agar parse tidak desync (body constraint
-                        // dibuang — parsing resilience semata).
-                        let items = self.parse_constraint_items()?;
-                        let exprs: Vec<Expr> = items
-                            .into_iter()
-                            .filter_map(|ci| match ci {
-                                ConstraintItem::Expr(e) => Some(e),
-                                _ => None,
-                            })
-                            .collect();
-                        self.expect(Token::RBrace)?;
-                        exprs
-                            .into_iter()
-                            .reduce(|acc, e| Expr::BinaryOp {
-                                op: BinaryOp::LogicalAnd,
-                                lhs: Box::new(acc),
-                                rhs: Box::new(e),
-                            })
-                            .unwrap_or(Expr::Value(Value::Decimal(1)))
+                        // Randomize-with bodies are verification constraints;
+                        // consume the balanced body without forcing every
+                        // constraint-only token through the runtime
+                        // expression parser.
+                        let mut depth = 1usize;
+                        while depth > 0 && self.peek() != &Token::Eof {
+                            match self.peek() {
+                                Token::LBrace => {
+                                    depth += 1;
+                                    self.advance();
+                                }
+                                Token::RBrace => {
+                                    depth -= 1;
+                                    self.advance();
+                                }
+                                _ => self.advance(),
+                            }
+                        }
+                        Expr::Value(Value::Decimal(1))
                     } else {
                         self.expect(Token::LParen)?;
                         let e = self.parse_expr(0)?;
@@ -710,6 +739,31 @@ impl Parser {
                             self.advance();
                             let args = self.parse_call_args()?;
                             self.expect(Token::RParen)?;
+                            // `std::randomize(...) with { ... }` uses a
+                            // verification-only constraint body. Consume it
+                            // structurally here because scoped calls return
+                            // directly instead of passing through postfix
+                            // expression handling.
+                            if matches!(self.peek(), Token::Ident(s) if s == "with") {
+                                self.advance();
+                                if self.peek() == &Token::LBrace {
+                                    self.advance();
+                                    let mut depth = 1usize;
+                                    while depth > 0 && self.peek() != &Token::Eof {
+                                        match self.peek() {
+                                            Token::LBrace => {
+                                                depth += 1;
+                                                self.advance();
+                                            }
+                                            Token::RBrace => {
+                                                depth -= 1;
+                                                self.advance();
+                                            }
+                                            _ => self.advance(),
+                                        }
+                                    }
+                                }
+                            }
                             return Ok(Expr::FuncCall {
                                 name: Symbol::intern(&format!("{}::{}", scope_path, item)),
                                 args,

@@ -388,6 +388,15 @@ impl Parser {
                                 }
                             }
                         }
+                        Token::Semi => {
+                            // Stray `;` di package body — umum setelah makro yang
+                            // me-expand `class ... endclass`/`function ... endfunction`
+                            // (pola `DEFINE_*_INSTR(...);` riscv-dv): sisa `;` dari
+                            // baris pemanggil makro tertinggal. Sebelumnya jatuh ke
+                            // parse_decl → "expected wire/reg/..." error nyata padahal
+                            // konstruk sudah ter-parse benar.
+                            self.advance();
+                        }
                         _ => {
                             let decl = self.parse_decl()?;
                             items.push(PackageItem::Decl(decl));

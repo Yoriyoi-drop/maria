@@ -272,6 +272,35 @@ impl Preprocessor {
                                 self.include_set.insert(resolved.clone());
                                 self.resolved_includes.insert(resolved.clone());
                                 self.warned_includes.remove(&inc_path);
+                                // Auto-aktifkan `UVM bila design menyertakan
+                                // macro-macros UVM/DV (dv_macros.svh /
+                                // uvm_macros.svh). maria punya infra UVM
+                                // built-in (uvm_info/warning/error/fatal +
+                                // factory via engine dispatch); tanpa `UVM,
+                                // `` `gfn `` di dv_macros.svh jatuh ke cabang
+                                // `$sformatf("%m")` → `X.`gfn` me-expand jadi
+                                // `X.$sformatf(...)` — member-access invalid
+                                // (E1002 "expected identifier, found Dollar").
+                                // Dengan `UVM → `` `gfn `` = get_full_name() →
+                                // `X.get_full_name()` valid. Scoped: hanya
+                                // file yang include uvm/dv macros; RTL murni
+                                // tanpa UVM tidak terpengaruh.
+                                if !self.defines.contains_key("UVM") {
+                                    let base = resolved
+                                        .file_name()
+                                        .map(|b| b.to_string_lossy().into_owned())
+                                        .unwrap_or_default();
+                                    if base.starts_with("uvm_macros") || base == "dv_macros.svh" {
+                                        self.defines.insert(
+                                            "UVM".to_string(),
+                                            MacroDef {
+                                                value: String::new(),
+                                                params: Vec::new(),
+                                                defaults: Vec::new(),
+                                            },
+                                        );
+                                    }
+                                }
                                 let inc_result = (|| -> Result<(), SimError> {
                                     let inc_source =
                                         fs::read_to_string(&resolved).map_err(|e| {
@@ -465,14 +494,20 @@ impl Preprocessor {
                         output.push('\n');
                     }
                 }
-                _ if emitting && rest.trim_start().starts_with('(') => {
-                    // Unknown backtick macro INVOCATION at line start (mis.
+                _ if emitting
+                    && (rest.trim_start().starts_with('(')
+                        || rest.trim_start().starts_with('.')
+                        || rest.trim_start().starts_with('[')) =>
+                {
+                    // Unknown backtick macro at line start (mis.
                     // `` `uvm_error(...) `` / `` `uvm_info(...) `` saat uvm_macros
-                    // tidak ter-dedefine). Ini bukan directive — strip backtick
-                    // dan expand sebagai baris statement biasa, supaya panggilan
-                    // polos `uvm_error(...)` tetap parse-able dan baris tidak
-                    // di-skip (yang membuat `if (...) `` `uvm_error(...) `` tanpa
-                    // begin/end menjadi "expected expression, found EndTask").
+                    // tidak ter-dedefine; `` `CR.rf_wdata_fwd_wb `` / `` `RF.reg[i] `` —
+                    // referensi macro scope/array di formal checker yg definisinya
+                    // ada di file lain, tidak di-substitusi). Ini BUKAN directive —
+                    // strip backtick dan expan baris statement biasa, supaya
+                    // `CR.rf_wdata_fwd_wb` tetap parse-able dan baris tidak
+                    // di-skip (sebelumnya baris `? \n `CR.x : `RF.y;` DI-DROP →
+                    // "expected expression, found End/Assign" palsu).
                     let expanded = self.expand_inline_macros(&raw_line);
                     output.push_str(&expanded);
                     output.push('\n');
@@ -601,13 +636,16 @@ impl Preprocessor {
         // A function-like macro requires `NAME(` with no whitespace between
         // the name and `(`.  Object-like macros commonly use a parenthesized
         // replacement with whitespace, e.g. `define HAS_PARITY (expr)`.
-        let function_open = s.find('(').filter(|&open_paren| {
-            open_paren > 0
-                && s[..open_paren]
-                    .chars()
-                    .last()
-                    .is_some_and(|c| !c.is_ascii_whitespace())
-        });
+        // Penting: cari nama = TOKEN PERTAMA (berhenti di whitespace ATAU `(`).
+        // Sebelumnya `s.find('(')` ambil `(` yang PERTAMA di string — salah
+        // saat value memuat invokasi bersarang langsung: `define IS_LB
+        // `IS_LOAD(3'b001)` → nama jadi "IS_LB `IS_LOAD" + value kosong →
+        // `IS_LB tidak pernah ter-expand (riscv-dv encodings.sv, compare_helper
+        // top.sv → "expected expression, found Assign" palsu).
+        let name_end = s
+            .find(|c: char| c == '(' || c.is_whitespace())
+            .unwrap_or(s.len());
+        let function_open = (s.as_bytes().get(name_end) == Some(&b'(')).then_some(name_end);
         let (name, params, value, defaults) = if let Some(open_paren) = function_open {
             let name = s[..open_paren].trim().to_string();
             // Penutup param-list STRING-AWARE: `define dv_fatal(MSG_,
@@ -676,7 +714,7 @@ impl Preprocessor {
                 }
             }
             let value = if close_paren < s.len() {
-                s[close_paren + 1..].trim().to_string()
+                Self::strip_macro_comments(s[close_paren + 1..].trim())
             } else {
                 String::new()
             };
@@ -684,7 +722,7 @@ impl Preprocessor {
         } else {
             let end = s.find(|c: char| c.is_whitespace()).unwrap_or(s.len());
             let name = s[..end].to_string();
-            let value = s[end..].trim().to_string();
+            let value = Self::strip_macro_comments(s[end..].trim());
             (name, Vec::new(), value, Vec::new())
         };
 
@@ -696,6 +734,53 @@ impl Preprocessor {
                 defaults,
             },
         );
+    }
+
+    fn strip_macro_comments(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut chars = text.chars().peekable();
+        let mut in_string = false;
+        let mut escaped = false;
+        while let Some(c) = chars.next() {
+            if in_string {
+                out.push(c);
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            if c == '"' {
+                in_string = true;
+                out.push(c);
+            } else if c == '/' && chars.peek() == Some(&'/') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            } else if c == '/' && chars.peek() == Some(&'*') {
+                chars.next();
+                let mut prev = '\0';
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        out.push('\n');
+                    }
+                    if prev == '*' && next == '/' {
+                        break;
+                    }
+                    prev = next;
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
     }
 
     /// Evaluate `ifdef/`ifndef expression. Supports:
