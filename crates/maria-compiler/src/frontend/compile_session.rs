@@ -1228,6 +1228,10 @@ impl CompileSession {
         // ── Fase 1: kumpulkan data per file (ringan untuk warm run —
         // file restored tidak dibaca ulang / tidak diserialize). ──
         let t_gather = std::time::Instant::now();
+        // Cache AST-hash per path utk fase 2 (verify ast_hash) — sebelumnya
+        // serialize_design() dieksekusi 2x per file (1270 + 1359) → ~1GB
+        // serialize ulang sia-sia. Compute hash SEKALI dari bytes fase 1.
+        let mut ast_hash_cache: HashMap<PathBuf, u64> = HashMap::new();
         let mut items: Vec<(
             PathBuf,
             u64,
@@ -1240,83 +1244,120 @@ impl CompileSession {
         )> = Vec::new();
         let mut hash_by_path: HashMap<PathBuf, u64> = HashMap::new();
         let mut built_changed = 0usize;
-        for (path, design) in &self.prev_designs {
-            // F10: path inline (buffer transpile `.mv`) tidak direkam ke MICD.
-            // Hash basis-nya berbeda (buffer vs isi .mv di disk) — merekamnya
-            // bisa membuat run_fast berikutnya me-restore AST transpile
-            // seolah-olah file itu SV mentah (design salah). Setiap run
-            // meng-transpile ulang, jadi tidak ada yang hilang.
-            if self.config.inline_sources.contains_key(path) {
-                continue;
-            }
-            let is_restored = self.micd_restored_paths.contains(path);
-            let (content_hash, combined, design_bytes) = if is_restored {
-                // Hash konten == hash tersimpan (diverifikasi saat attach).
-                // Tidak baca ulang / tidak re-serialize — AST sudah di db.
-                let h = self
+
+        // ── Parallel gather ──
+        // save_micd untuk design besar terukur lambat: 32.9s gather utk 3888
+        // file OpenTitan (fs::read + serialize_design bincode + include hash —
+        // SEQUENTIAL). Semua komponen baca-only → par_iter (skala core).
+        use rayon::prelude::*;
+        let entries: Vec<(PathBuf, &Design)> =
+            self.prev_designs.iter().map(|(p, d)| (p.clone(), d)).collect();
+        // Pre-hash SEMUA distinct include sekali (paralel) — cache by path
+        // tanpa kontensi Mutex antar worker.
+        let distinct_incs: std::collections::HashSet<PathBuf> =
+            self.micd_include_deps.values().flatten().cloned().collect();
+        let inc_hashes: HashMap<PathBuf, u64> = distinct_incs
+            .par_iter()
+            .map(|inc| {
+                let h = std::fs::read(inc).map(|b| compute_checksum(&b)).unwrap_or(0);
+                (inc.clone(), h)
+            })
+            .collect();
+
+        let gathered: Vec<(
+            Option<PathBuf>, // None = inline (skip)
+            u64,             // content_hash
+            u64,             // size
+            Vec<PathBuf>,    // deps
+            micd::FileStatus,
+            Option<String>,  // combined
+            Option<Vec<u8>>, // design_bytes
+            Vec<(PathBuf, u64)>, // include_hashes
+            u64,             // ast_hash
+            bool,            // was_changed
+        )> = entries
+            .par_iter()
+            .map(|(path, design)| {
+                // F10: path inline (buffer transpile `.mv`) tidak direkam ke MICD.
+                if self.config.inline_sources.contains_key(path) {
+                    return (None, 0, 0, Vec::new(), micd::FileStatus::Unchanged, None, None, Vec::new(), 0, false);
+                }
+                let is_restored = self.micd_restored_paths.contains(path);
+                let (content_hash, combined, design_bytes, ast_hash) = if is_restored {
+                    let h = self
+                        .micd
+                        .as_ref()
+                        .and_then(|d| d.get_file_meta(path))
+                        .map(|m| m.content_hash)
+                        .unwrap_or(0);
+                    (h, None, None, 0)
+                } else {
+                    let content_hash = std::fs::read(path)
+                        .map(|b| compute_checksum(&b))
+                        .unwrap_or(0);
+                    let combined = self.prev_combined_sources.get(path).cloned();
+                    let design_bytes = micd::serialize_design(design).ok();
+                    let ast_hash = design_bytes
+                        .as_ref()
+                        .map(|b| compute_checksum(b))
+                        .unwrap_or(0);
+                    (content_hash, combined, design_bytes, ast_hash)
+                };
+                let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                let deps = file_deps.get(path).cloned().unwrap_or_default();
+                let include_hashes: Vec<(PathBuf, u64)> = if is_restored {
+                    self.micd
+                        .as_ref()
+                        .and_then(|d| d.get_file_meta(path))
+                        .map(|m| m.include_hashes.clone())
+                        .unwrap_or_default()
+                } else {
+                    self.micd_include_deps
+                        .get(path)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|inc| {
+                            let h = inc_hashes.get(&inc).copied().unwrap_or(0);
+                            (inc, h)
+                        })
+                        .collect()
+                };
+                let prev_hash = self
                     .micd
                     .as_ref()
                     .and_then(|d| d.get_file_meta(path))
-                    .map(|m| m.content_hash)
-                    .unwrap_or(0);
-                (h, None, None)
-            } else {
-                // File diproses segar: hash konten SEBENARNYA (xxh3) + serialize
-                // AST baru. Baca file (xxhash sangat cepat ~50GB/s).
-                let content_hash = std::fs::read(path)
-                    .map(|b| compute_checksum(&b))
-                    .unwrap_or(0);
-                let combined = self.prev_combined_sources.get(path).cloned();
-                let design_bytes = micd::serialize_design(design).ok();
-                (content_hash, combined, design_bytes)
-            };
-            let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-            let deps = file_deps.get(path).cloned().unwrap_or_default();
-            // Include deps + hash konten saat ini (verifikasi header saat restore).
-            let include_hashes: Vec<(PathBuf, u64)> = if is_restored {
-                self.micd
-                    .as_ref()
-                    .and_then(|d| d.get_file_meta(path))
-                    .map(|m| m.include_hashes.clone())
-                    .unwrap_or_default()
-            } else {
-                self.micd_include_deps
-                    .get(path)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|inc| {
-                        let h = std::fs::read(&inc)
-                            .map(|b| compute_checksum(&b))
-                            .unwrap_or(0);
-                        (inc, h)
-                    })
-                    .collect()
-            };
-            let prev_hash = self
-                .micd
-                .as_ref()
-                .and_then(|d| d.get_file_meta(path))
-                .map(|m| m.content_hash);
-            if prev_hash != Some(content_hash) {
-                built_changed += 1;
+                    .map(|m| m.content_hash);
+                let was_changed = prev_hash != Some(content_hash);
+                let status = if is_restored {
+                    micd::FileStatus::Unchanged
+                } else {
+                    micd::FileStatus::Recompiled
+                };
+                (
+                    Some(path.clone()),
+                    content_hash,
+                    size,
+                    deps,
+                    status,
+                    combined,
+                    design_bytes,
+                    include_hashes,
+                    ast_hash,
+                    was_changed,
+                )
+            })
+            .collect();
+
+        for g in gathered {
+            if let Some(p) = g.0 {
+                hash_by_path.insert(p.clone(), g.1);
+                ast_hash_cache.insert(p.clone(), g.8);
+                if g.9 {
+                    built_changed += 1;
+                }
+                items.push((p, g.1, g.2, g.3, g.4, g.5, g.6, g.7));
             }
-            let status = if is_restored {
-                micd::FileStatus::Unchanged
-            } else {
-                micd::FileStatus::Recompiled
-            };
-            hash_by_path.insert(path.clone(), content_hash);
-            items.push((
-                path.clone(),
-                content_hash,
-                size,
-                deps,
-                status,
-                combined,
-                design_bytes,
-                include_hashes,
-            ));
         }
         let full_write = built_changed > 0;
 
@@ -1356,9 +1397,9 @@ impl CompileSession {
                         .map(|v| v.ast_hash)
                         .unwrap_or(0)
                 } else {
-                    micd::serialize_design(design)
-                        .map(|b| compute_checksum(&b))
-                        .unwrap_or(0)
+                    // Hash dihitung dari bytes fase 1 (serialize_design 1x),
+                    // bukan serialize ulang.
+                    ast_hash_cache.get(path).copied().unwrap_or(0)
                 };
                 let mut v = micd::VerifyResult::fresh(content_hash);
                 v.ast_hash = ast_hash;

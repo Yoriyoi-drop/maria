@@ -990,6 +990,7 @@ impl Elaborator {
                 package_symbols: &self.package_symbols,
                 structs: &self.pkg_struct_ref_index,
             };
+            let resolve_params_t0 = std::time::Instant::now();
             let param_vals = resolve_param_values_with_ctx(
                 &self.design.modules[i],
                 &HashMap::new(),
@@ -997,20 +998,10 @@ impl Elaborator {
                 Some(&pkg_full),
             )
             .map_err(|e| self.elab_diag_at(DiagCode::SimulationError, e, 0, 0))?;
-            let resolve_us = mod_t0.elapsed().as_micros();
+            let resolve_params_us = resolve_params_t0.elapsed().as_micros();
             let module_name = self.design.modules[i].name;
             self.current_module = Some(module_name);
-            if std::env::var("DBG_ELAB").is_ok() {
-                eprintln!(
-                    "[DBG-ELAB] expanding generates in module '{}' ({}/{}) ctx={}us resolve={}us",
-                    module_name.as_str(),
-                    i + 1,
-                    self.design.modules.len(),
-                    ctx_us,
-                    resolve_us
-                );
-            }
-            // Process generate expansion in isolated block to release mutable borrow before elab_diag_at
+            let expand_t0 = std::time::Instant::now();
             let gen_result = {
                 let module = &mut self.design.modules[i];
                 expand_all_generates(
@@ -1021,6 +1012,17 @@ impl Elaborator {
                     &self.source_file,
                 )
             };
+            let expand_us = expand_t0.elapsed().as_micros();
+            if std::env::var("DBG_ELAB").is_ok() {
+                eprintln!(
+                    "[DBG-ELAB] '{}' ({}/{}) resolve={}us expand={}us",
+                    module_name.as_str(),
+                    i + 1,
+                    self.design.modules.len(),
+                    resolve_params_us,
+                    expand_us
+                );
+            }
             if let Err(e) = gen_result {
                 return Err(self.elab_diag_at(
                     DiagCode::ModuleNotFound,

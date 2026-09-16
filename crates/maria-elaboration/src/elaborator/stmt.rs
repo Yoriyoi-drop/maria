@@ -1575,6 +1575,29 @@ impl Elaborator {
                     // Statistik cache pipeline (db.md "6. optimize/"): loop
                     // for yang berhasil di-unroll + jumlah statement hasilnya.
                     self.opt_stats.record_loop_unroll(unrolled.len());
+                    // Enum-iterasi fallback: `for (... t = t.first(); i <
+                    // t.num(); ... t = t.next())` di prim_sparse_fsm_flop —
+                    // body di-elide (loop var enum tak ter-resolve; hanya
+                    // menandai assertion/FIP `unused_err_o`, bukan datapath).
+                    if unrolled.is_empty()
+                        && !stmts.is_empty()
+                        && crate::util::loop_unroll::is_enum_iteration_loop(
+                            init.as_deref(),
+                            cond.as_ref(),
+                            step.as_deref(),
+                        )
+                    {
+                        let loc = cond
+                            .as_ref()
+                            .map(crate::util::generate::expr_location)
+                            .unwrap_or((0, 0));
+                        self.elab_warn_at(
+                            DiagCode::SimulationError,
+                            "enum-iteration loop (t.first()/t.num()/t.next()) elided — maria belum men-resolve parameter-type enum per-instance; signal assertion/FIP di-degradasi (non-fatal, datapath tidak terpengaruh)".to_string(),
+                            loc.0,
+                            loc.1,
+                        );
+                    }
                     return Ok(IrStmt::Block { stmts: unrolled });
                 }
                 // Fallback: generate runtime LoopFor. Loop var (`for (int j = 0 ...)`)

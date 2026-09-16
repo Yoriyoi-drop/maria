@@ -31,6 +31,23 @@ pub fn try_unroll_for_loop<'a, F>(
 where
     F: Fn(&[Stmt], &str, i64) -> Result<Vec<IrStmt>, String>,
 {
+    // ── Enum-iterasi fallback (prim_sparse_fsm_flop::is_undefined_state) ──
+    // `for (int i = 0, StateEnumT t = t.first(); i < t.num(); i += 1, t = t.next())`
+    // — enum METHODS `.first()/.num()/.next()` pada loop var bertipe
+    // `parameter type` (per-instance enum tidak di-resolve maria). Loop ini
+    // hanya menandai signal assertion/FIP (`unused_err_o`), BUKAN datapath.
+    // Deteksi struktural (tanpa mengevaluasi t):
+    let is_enum_iter = cond.as_ref().is_some_and(|c| expr_uses_enum_method(c))
+        || step.as_ref().is_some_and(|s| stmt_uses_enum_method(s))
+        || init.as_ref().is_some_and(|s| stmt_uses_enum_method(s));
+    if is_enum_iter {
+        // Elide loop — body dihilangkan; loop var enum tidak dapat di-resolve
+        // (E2001 't' not found). `is_defined` tetap 0 → `~is_defined`=1 →
+        // `unused_err_o`=1 (spurious tapi NON-FATAL utk sim RTL; datapath
+        // tidak terpengaruh). Caller mencatat warning degradasi.
+        return Ok(Some(Vec::new()));
+    }
+
     let (var_name, init_val) = match init {
         Some(Stmt::BlockingAssign {
             lhs: Expr::Ident { name, .. },
@@ -151,6 +168,76 @@ where
 /// sana terikat pada loop dalam, bukan loop yang akan di-unroll.
 pub fn stmts_contain_break_continue(stmts: &[Stmt]) -> bool {
     stmts.iter().any(stmt_contains_break_continue)
+}
+
+/// Apakah ekspresi memuat enum METHOD `.first()/.num()/.next()` —
+/// penanda loop iterasi enum (`t.num()`, `t.next()`, `t.first()`).
+fn expr_uses_enum_method(e: &Expr) -> bool {
+    match e {
+        Expr::MethodCall { method, args, .. } => {
+            let m = method.as_str();
+            (m == "first" || m == "num" || m == "next") || args.iter().any(expr_uses_enum_method)
+        }
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            expr_uses_enum_method(lhs) || expr_uses_enum_method(rhs)
+        }
+        Expr::UnaryOp { expr, .. } => expr_uses_enum_method(expr),
+        Expr::Cast { expr, .. } => expr_uses_enum_method(expr),
+        Expr::RangeSelect { expr, msb, lsb } => {
+            expr_uses_enum_method(expr)
+                || expr_uses_enum_method(msb)
+                || expr_uses_enum_method(lsb)
+        }
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            expr_uses_enum_method(cond)
+                || expr_uses_enum_method(true_expr)
+                || expr_uses_enum_method(false_expr)
+        }
+        Expr::FuncCall { args, .. } => args.iter().any(expr_uses_enum_method),
+        _ => false,
+    }
+}
+
+/// Apakah statement memuat enum method (untuk init/step `t=t.first()`,
+/// `t=t.next()`).
+fn stmt_uses_enum_method(s: &Stmt) -> bool {
+    match s {
+        Stmt::BlockingAssign { lhs, rhs, .. }
+        | Stmt::NonBlockingAssign { lhs, rhs, .. } => {
+            expr_uses_enum_method(lhs) || expr_uses_enum_method(rhs)
+        }
+        Stmt::IfElse {
+            cond,
+            true_branch,
+            false_branch,
+            ..
+        } => {
+            expr_uses_enum_method(cond)
+                || stmt_uses_enum_method(true_branch)
+                || false_branch.as_ref().is_some_and(|b| stmt_uses_enum_method(b))
+        }
+        Stmt::Block { stmts, .. } | Stmt::NamedBlock { stmts, .. } => {
+            stmts.iter().any(stmt_uses_enum_method)
+        }
+        _ => false,
+    }
+}
+
+/// Deteksi pola loop iterasi enum: `for (... t = t.first(); i < t.num();
+/// ... t = t.next())` — dipakai caller utk mencatat warning degradasi saat
+/// body di-elide.
+pub fn is_enum_iteration_loop(
+    init: Option<&Stmt>,
+    cond: Option<&Expr>,
+    step: Option<&Stmt>,
+) -> bool {
+    cond.map(expr_uses_enum_method).unwrap_or(false)
+        || step.map(stmt_uses_enum_method).unwrap_or(false)
+        || init.map(stmt_uses_enum_method).unwrap_or(false)
 }
 
 fn stmt_contains_break_continue(s: &Stmt) -> bool {

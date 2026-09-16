@@ -303,6 +303,7 @@ fn run_clean() -> ! {
 /// Simpan MICD dan cetak statistik ringkas (best-effort, tidak menggagalkan run).
 /// `suppress` menekan output (saat animasi pipeline aktif di terminal).
 fn micd_save_and_print(session: &mut CompileSession, quiet: bool, suppress: bool) {
+    let t0 = std::time::Instant::now();
     match session.save_micd() {
         Ok(Some(st)) => {
             if !quiet && !suppress {
@@ -314,11 +315,12 @@ fn micd_save_and_print(session: &mut CompileSession, quiet: bool, suppress: bool
                     .map(|pdb| format!(" precompiled={}", pdb.len()))
                     .unwrap_or_default();
                 eprintln!(
-                    "[MICD] files={} restored={} changed={} snapshots={}{}",
+                    "[MICD] files={} restored={} changed={} snapshots={} save_ms={}{}",
                     st.files,
                     st.restored_designs,
                     st.changed_files,
                     st.snapshot_id,
+                    t0.elapsed().as_millis(),
                     precompiled_info
                 );
             }
