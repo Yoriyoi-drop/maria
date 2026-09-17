@@ -339,6 +339,9 @@ impl SimulationEngine {
                         // LANG-27: guard `iff (cond)` — continuation hanya
                         // dilanjutkan bila kondisi benar saat event terpenuhi.
                         iff: iff.clone(),
+                        // Branch fork tempat @(...) berada — dipakai decrement
+                        // ForkGroup saat resume (cegah join menggantung).
+                        fork_id,
                     });
                     return Ok(false);
                 }
@@ -2804,6 +2807,8 @@ impl SimulationEngine {
                         continuation: later,
                         // LANG-27: guard `iff (cond)`.
                         iff: iff.clone(),
+                        // Konteks tanpa param fork_id eksplisit — pakai aktif.
+                        fork_id: self.active_fork_id,
                     });
                     return Ok(());
                 }

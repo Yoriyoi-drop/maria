@@ -345,7 +345,17 @@ impl SimulationEngine {
                 };
                 if guard_ok {
                     matched = true;
-                    self.evaluate_block_with_delay_fork(&pe.continuation, None)?;
+                    // Branch fork: decrement ForkGroup bila continuation BENAR
+                    // selesai (bukan suspend lagi). Tanpa ini join menggantung
+                    // (probe v03: @(ev) di branch fork).
+                    let fid = pe.fork_id;
+                    let all_consumed =
+                        self.evaluate_block_with_delay_fork(&pe.continuation, fid)?;
+                    if let Some(f) = fid {
+                        if all_consumed {
+                            self.fork_decrement(f)?;
+                        }
+                    }
                     continue;
                 }
             }

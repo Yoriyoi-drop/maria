@@ -1202,6 +1202,31 @@ endmodule"#,
     assert_eq!(g("lut_dyn"), 22, "LUT[2] dinamis = 22");
 }
 
+// Fork + event: `fork @(ev) ... #5 -> ev ... join` — branch fork yang
+// suspend di `@(ev)` harus me-decrement ForkGroup saat resume, jika tidak
+// `join` menggantung (probe v03/u06).
+#[test]
+fn test_edge_fork_event_join() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    event ev;
+    int hit = 0;
+    initial begin
+        fork
+            begin @(ev); hit = 1; end
+            begin #5 -> ev; end
+        join
+        #1 $finish;
+    end
+endmodule"#,
+        20,
+    )
+    .unwrap();
+    let (_, hit) = sigs.iter().find(|(n, _)| n == "hit").unwrap();
+    assert_eq!(hit.to_u64(), 1, "join harus selesai setelah -> ev");
+}
+
 // === 15. Assignment patterns ===
 
 #[test]

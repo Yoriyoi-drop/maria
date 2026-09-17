@@ -152,6 +152,11 @@ pub struct PendingEventControl {
     pub continuation: Vec<IrStmt>,
     /// LANG-27: guard `iff (cond)` — continuation hanya lanjut bila cond true.
     pub iff: Option<IrExpr>,
+    /// Fork group branch tempat `@(...)` ini berada (None = bukan branch fork).
+    /// Tanpa ini, branch fork yang suspend di `@(ev)` lalu resume kehilangan
+    /// akuntansi ForkGroup → `join` tidak pernah selesai (probe v03:
+    /// `fork @(ev) ... #5 -> ev ... join`).
+    pub fork_id: Option<usize>,
 }
 
 /// Blocking event control `@(...)` di jalur AST (class method/task UVM).
