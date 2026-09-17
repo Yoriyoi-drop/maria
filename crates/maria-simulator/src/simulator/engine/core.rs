@@ -1397,11 +1397,17 @@ impl SimulationEngine {
                 delta_count += 1;
                 self.current_delta = delta_count;
                 // ── Layer resource guard (MARIA-SIM-34): poll RSS tiap delta
-                // pada delta awal (lonjakan time-0 sering terjadi di delta kecil,
-                // mis. big_30000 RSS 1.5GB dalam delta=2), lalu tiap 256 delta
-                // setelahnya agar overhead baca /proc tidak memberatkan.
+                // pada delta KUMULATIF awal (lonjakan time-0 sering terjadi di
+                // delta kecil, mis. big_30000 RSS 1.5GB dalam delta=2), lalu
+                // tiap 256 delta setelahnya agar overhead baca /proc tidak
+                // memberatkan. PENTING: pakai delta_cycles (kumulatif lintas
+                // time step) — `delta_count` RESET tiap time step sehingga
+                // kondisi lama `delta_count < 1024` selalu true → baca
+                // /proc/self/status (~37k instr + alokasi) SETIAP delta tiap
+                // step (probe perf2: 14.8% instruction di check_rss).
+                let cum_delta = self.sim_perf.counters.delta_cycles;
                 if self.resource_guard.is_enabled()
-                    && (delta_count < 1024 || delta_count % 256 == 0)
+                    && (cum_delta < 1024 || cum_delta % 256 == 0)
                 {
                     self.resource_guard.check_limit(self.state.time)?;
                 }
