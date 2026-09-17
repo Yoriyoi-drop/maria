@@ -882,6 +882,72 @@ endmodule"#,
     assert_eq!(v.to_u64(), 0);
 }
 
+// IEEE 1800-2017 §11.4.11: kondisi unknown/x → operator kondisional
+// menghasilkan KOMBINASI bitwise kedua cabang (Tabel 11-22), bukan cabang
+// else (itu perilaku if-statement §12.4). Ditemukan probe p04: `x ? a : b`
+// mengembalikan b (silent miscompilation) sebelum fix.
+#[test]
+fn test_edge_ternary_x_condition() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    logic [7:0] a = 8'hAA, b = 8'h55, out;
+    logic [7:0] c = 8'hxx;
+    initial begin out = c ? a : b; #1 $finish; end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "out").unwrap();
+    // AA(1010_1010) ^ 55(0101_0101) per bit → seluruh bit x. Dulu = 0x55.
+    assert!(
+        v.bits.iter().all(|b| *b == maria_ir::LogicVal::X),
+        "ternary-X harus menghasilkan X, got {:?}",
+        v.bits
+    );
+}
+
+// Kondisi X/Z tapi kedua cabang bernilai sama → hasilnya nilai itu (bit
+// bersesuaian sama → bukan X).
+#[test]
+fn test_edge_ternary_x_equal_branches() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    logic [7:0] a = 8'hAB, out;
+    logic [7:0] c = 8'hzz;
+    initial begin out = c ? a : a; #1 $finish; end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "out").unwrap();
+    assert_eq!(v.to_u64(), 0xAB);
+}
+
+// Kondisi unknown pada ternary BERTINGKAT (di dalam ekspresi), pastikan jalur
+// IR Cond mencampur tiap level, bukan hanya level terluar.
+#[test]
+fn test_edge_ternary_x_in_expr() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    logic [7:0] out;
+    logic [7:0] c = 8'hxx;
+    initial begin out = (c ? 8'h0F : 8'hF0) + 8'h01; #1 $finish; end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "out").unwrap();
+    // 0F^F0 per bit → xxxx_xxxx; +1 dengan salah satu operand ber-X → tetap X.
+    assert!(
+        v.bits.iter().any(|b| *b == maria_ir::LogicVal::X),
+        "ternary-X bertingkat harus X, got {:?}",
+        v.bits
+    );
+}
+
 // === 15. Assignment patterns ===
 
 #[test]

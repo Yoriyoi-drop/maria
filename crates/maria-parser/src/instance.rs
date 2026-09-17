@@ -63,10 +63,9 @@ impl Parser {
                     self.expect_ident()?
                 };
                 // Register imported typedef supaya deklarasi berikut bisa pakai.
-                // Register imported typedef supaya deklarasi berikut bisa pakai. Nama
-                // EKSPLISIT (`import pkg::t`) = calon jenis port LANGSUNG (IEEE
-                // 1800 §23.2.1) tanpa tunggu package_tdefs — package bisa di
-                // file eksternal (kmac_pkg), parser per-file tak punya tabelnya.
+                // Nama EKSPLISIT (`import pkg::t`) = calon jenis port LANGSUNG
+                // (IEEE 1800 §23.2.1) tanpa tunggu package_tdefs — package bisa
+                // di file eksternal (kmac_pkg), parser per-file tak punya tabelnya.
                 if item == "*" {
                     if let Some(tdefs) = self.package_tdefs.get(&pkg) {
                         for name in tdefs {
@@ -102,6 +101,25 @@ impl Parser {
                 self.parse_port_list(&mut ports)?;
             }
             self.expect(Token::RParen)?;
+        }
+        if self.peek() == &Token::Semi {
+            self.advance();
+        } else if !matches!(self.peek(), Token::Eof) {
+            // Header modul tidak diakhiri `;` — sintaks salah. Sebelumnya
+            // ditelan diam-diam: `module top {` dianggap module valid (token
+            // `{` jatuh ke fallback `_ => Ok(None)` yang tidak emit diag).
+            // Kini peringatkan di lokasi token penyebab + fix-it sisip `;`
+            // (infra push_warning_at). Recovery: token ditangani body loop.
+            let line = self.peek_line();
+            let col = self.peek_col();
+            self.push_warning_at(
+                format!(
+                    "expected ';' after module header, found `{}`",
+                    self.peek()
+                ),
+                line,
+                col,
+            );
         }
         self.skip_semi();
 

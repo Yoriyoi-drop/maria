@@ -513,10 +513,27 @@ impl SimulationEngine {
                 let w = tv.width.max(fv.width);
                 let tv = if tv.width < w { tv.resize(w) } else { tv };
                 let fv = if fv.width < w { fv.resize(w) } else { fv };
-                if cval.to_bool().unwrap_or(false) {
-                    Ok(tv)
-                } else {
-                    Ok(fv)
+                match cval.to_bool() {
+                    Some(true) => Ok(tv),
+                    Some(false) => Ok(fv),
+                    // IEEE 1800-2017 §11.4.11: kondisi unknown/z → hasil
+                    // kombinasi bitwise per Tabel 11-22 (bit kedua-branch
+                    // sama → nilai itu; berbeda/x/z → X). Sebelumnya jatuh ke
+                    // cabang else (perilaku if-statement §12.4) — salah untuk
+                    // operator kondisional: `x ? a : b` harus menghasilkan X,
+                    // bukan b (ditemukan probe p04 ternary-x).
+                    None => {
+                        let mut bits = Vec::with_capacity(w);
+                        for i in 0..w {
+                            let out = match (tv.bits.get(i), fv.bits.get(i)) {
+                                (Some(LogicVal::Zero), Some(LogicVal::Zero)) => LogicVal::Zero,
+                                (Some(LogicVal::One), Some(LogicVal::One)) => LogicVal::One,
+                                _ => LogicVal::X,
+                            };
+                            bits.push(out);
+                        }
+                        Ok(LogicVec { bits, width: w })
+                    }
                 }
             }
             IrExpr::Signed(inner) => self.evaluate_expr(inner),

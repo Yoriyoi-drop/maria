@@ -121,10 +121,29 @@ impl SimulationEngine {
                 false_expr,
             } => {
                 let cval = self.evaluate_ast_expr(cond)?;
-                if cval.to_bool().unwrap_or(false) {
-                    self.evaluate_ast_expr(true_expr)
-                } else {
-                    self.evaluate_ast_expr(false_expr)
+                let tv = self.evaluate_ast_expr(true_expr)?;
+                let fv = self.evaluate_ast_expr(false_expr)?;
+                let w = tv.width.max(fv.width);
+                let tv = if tv.width < w { tv.resize(w) } else { tv };
+                let fv = if fv.width < w { fv.resize(w) } else { fv };
+                match cval.to_bool() {
+                    Some(true) => Ok(tv),
+                    Some(false) => Ok(fv),
+                    // IEEE 1800-2017 §11.4.11 — kondisi unknown/z → kombinasi
+                    // bitwise (sama dgn jalur IR IrExpr::Cond di eval/expr.rs;
+                    // perbaiki keduanya agar konsisten).
+                    None => {
+                        let mut bits = Vec::with_capacity(w);
+                        for i in 0..w {
+                            let out = match (tv.bits.get(i), fv.bits.get(i)) {
+                                (Some(LogicVal::Zero), Some(LogicVal::Zero)) => LogicVal::Zero,
+                                (Some(LogicVal::One), Some(LogicVal::One)) => LogicVal::One,
+                                _ => LogicVal::X,
+                            };
+                            bits.push(out);
+                        }
+                        Ok(LogicVec { bits, width: w })
+                    }
                 }
             }
             Expr::FuncCall { name, args, .. } if name == "new" => {

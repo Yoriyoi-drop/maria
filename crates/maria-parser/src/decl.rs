@@ -365,7 +365,22 @@ impl Parser {
         }
 
         let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
-        self.skip_semi();
+        if self.peek() == &Token::Semi {
+            self.advance();
+        } else if !matches!(self.peek(), Token::Eof | Token::Endmodule) {
+            // `logic c = 1` tanpa ';' (dilanjutkan `logic d;` di baris
+            // berikut) ditelan diam-diam oleh skip_semi lama → kode rusak
+            // dianggap valid (E-probe e01). Peringatkan di lokasi token
+            // penyebab + fix-it sisip ';' (infra push_warning_at tanpa
+            // konsumsi token: item berikutnya tetap ter-parse normal).
+            let line = self.peek_line();
+            let col = self.peek_col();
+            self.push_warning_at(
+                format!("expected ';' after declaration — missing semicolon"),
+                line,
+                col,
+            );
+        }
 
         Ok(Decl {
             dtype: effective_dtype,

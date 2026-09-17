@@ -448,49 +448,54 @@ impl SimulationEngine {
                     }
                     Some('h') => {
                         if let Some((val, _)) = value_args.next() {
-                            if val.width <= 64 {
-                                let n = val.to_u64();
-                                let ndigits = u64_hex_digits(n);
-                                if width > ndigits {
-                                    let pad = if zero_fill { '0' } else { ' ' };
-                                    for _ in 0..(width - ndigits) {
-                                        result.push(pad);
-                                    }
-                                }
-                                let _ = write!(result, "{:x}", n);
-                            } else {
-                                // >64-bit: format per-nibble dari pola bit —
-                                // to_u64 memotong bit tinggi (ditemukan
-                                // wide_fuzz seed=11).
-                                let vw = val.width;
-                                let ndigits = vw.div_ceil(4);
-                                let mut s = String::new();
-                                let mut started = false;
-                                for i in (0..ndigits).rev() {
-                                    let mut nib = 0u8;
-                                    for j in 0..4 {
-                                        let bi = i * 4 + j;
-                                        if bi < vw && val.bits[bi] == LogicVal::One {
-                                            nib |= 1 << j;
-                                        }
-                                    }
-                                    if !started && nib == 0 && i > 0 {
+                            // Format per-nibble dari pola bit — X/Z-aware.
+                            // (Bug render: to_u64() memetakan X/Z → 0 sehingga
+                            // `$display("%h", 8'hxx)` mencetak "0" — user
+                            // debugging propagasi X melihat nilai seolah known.
+                            // Kini: nibble ber-X → 'x', ber-Z (tanpa X) → 'z',
+                            // else digit hex. Berlaku juga >64-bit.)
+                            let vw = val.width;
+                            let ndigits = vw.div_ceil(4);
+                            let mut s = String::new();
+                            let mut started = false;
+                            for i in (0..ndigits).rev() {
+                                let mut nib = 0u8;
+                                let mut has_x = false;
+                                let mut has_z = false;
+                                for j in 0..4 {
+                                    let bi = i * 4 + j;
+                                    if bi >= vw {
                                         continue;
                                     }
-                                    started = true;
-                                    s.push(char::from_digit(nib as u32, 16).unwrap_or('0'));
-                                }
-                                if !started {
-                                    s.push('0');
-                                }
-                                if width > s.len() {
-                                    let pad = if zero_fill { '0' } else { ' ' };
-                                    for _ in 0..(width - s.len()) {
-                                        result.push(pad);
+                                    match val.bits[bi] {
+                                        LogicVal::One => nib |= 1 << j,
+                                        LogicVal::X => has_x = true,
+                                        LogicVal::Z => has_z = true,
+                                        LogicVal::Zero => {}
                                     }
                                 }
-                                result.push_str(&s);
+                                if !started && nib == 0 && !has_x && !has_z && i > 0 {
+                                    continue;
+                                }
+                                started = true;
+                                if has_x {
+                                    s.push('x');
+                                } else if has_z {
+                                    s.push('z');
+                                } else {
+                                    s.push(char::from_digit(nib as u32, 16).unwrap_or('0'));
+                                }
                             }
+                            if !started {
+                                s.push('0');
+                            }
+                            if width > s.len() {
+                                let pad = if zero_fill { '0' } else { ' ' };
+                                for _ in 0..(width - s.len()) {
+                                    result.push(pad);
+                                }
+                            }
+                            result.push_str(&s);
                         }
                     }
                     Some('f') => {
@@ -778,5 +783,62 @@ pub fn string_to_logicvec(s: &str) -> LogicVec {
     LogicVec {
         bits,
         width: width + 8,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_engine() -> SimulationEngine {
+        let design =
+            crate::test_util::compile_str("module top; endmodule").unwrap();
+        SimulationEngine::new(design, 100)
+    }
+
+    #[test]
+    fn test_format_display_hex_xz_aware() {
+        let mut e = test_engine();
+        // IEEE 1800 & konvensi simulator: nibble ber-X → 'x', ber-Z (tanpa X)
+        // → 'z'. Sebelumnya `$display("%h", x)` mencetak '0' (to_u64 memetakan
+        // X→0) — user debugging propagasi X melihat nilai seolah known.
+        let x = LogicVec::fill(LogicVal::X, 8);
+        assert_eq!(
+            e.format_display_fmt("%h", vec![(x, false)].into_iter()),
+            "xx"
+        );
+        // 8'bzzzz_0101 → "z5" (bits[0]=LSB; nibble tinggi bits[4..7]=zzzz)
+        let z5 = LogicVec {
+            bits: vec![
+                LogicVal::One,
+                LogicVal::Zero,
+                LogicVal::One,
+                LogicVal::Zero,
+                LogicVal::Z,
+                LogicVal::Z,
+                LogicVal::Z,
+                LogicVal::Z,
+            ],
+            width: 8,
+        };
+        assert_eq!(
+            e.format_display_fmt("%h", vec![(z5, false)].into_iter()),
+            "z5"
+        );
+        // Known tidak berubah.
+        let f0 = LogicVec::from_u64(0xf0, 8);
+        assert_eq!(
+            e.format_display_fmt("%h", vec![(f0.clone(), false)].into_iter()),
+            "f0"
+        );
+        assert_eq!(
+            e.format_display_fmt("%04h", vec![(f0, false)].into_iter()),
+            "00f0"
+        );
+        let z0 = LogicVec::from_u64(0, 8);
+        assert_eq!(
+            e.format_display_fmt("%h", vec![(z0, false)].into_iter()),
+            "0"
+        );
     }
 }
