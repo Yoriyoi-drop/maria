@@ -358,6 +358,41 @@ pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> Log
     let lhs_ext = sign_extend_to(lhs, max_width);
     let rhs_ext = sign_extend_to(rhs, max_width);
     match op {
+        BinaryIrOp::Add | BinaryIrOp::Sub | BinaryIrOp::Mul => {
+            // Aritmetika signed: operan DUA-COMPLEMENT di-ekstensi tanda ke
+            // lebar umum (LRM §11.8.1/§11.8.2). Dulu eval_binary zero-extend
+            // → `-8'sd4 + 1` (8-bit + 32-bit signed) = 253 padahal -3
+            // (probe q07). X → X (pessimistic).
+            let l_has_x = lhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let r_has_x = rhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            if l_has_x || r_has_x {
+                return LogicVec {
+                    bits: vec![LogicVal::X; max_width],
+                    width: max_width,
+                };
+            }
+            if max_width > 128 {
+                return eval_binary(op, lhs, rhs);
+            }
+            let l = to_i128_signed(&lhs_ext);
+            let r = to_i128_signed(&rhs_ext);
+            let s = match op {
+                BinaryIrOp::Add => l.wrapping_add(r),
+                BinaryIrOp::Sub => l.wrapping_sub(r),
+                _ => l.wrapping_mul(r),
+            };
+            if max_width > 64 {
+                from_u128_wide(s as u128, max_width)
+            } else {
+                LogicVec::from_u64(s as u64, max_width)
+            }
+        }
         BinaryIrOp::Lt => {
             // >64-bit: to_i64 memotong — pakai i128 (wide_fuzz seed=17:
             // `a >= b` 65-bit salah tanda).

@@ -2408,9 +2408,19 @@ mod tests {
         let mut session = CompileSession::new(config);
         let _ = session.compile().unwrap();
 
-        // Cache should have entries
+        // Cache should have entries: `compile()` mendaftarkan checksum tiap
+        // file ke prev_checksums (pipeline incremental). `stats.ast_entries`
+        // (CacheManager in-memory AST) TIDAK terisi di jalur compile() — AST
+        // disimpan via MICD (db.cache_ast) saat save_micd, bukan CacheManager
+        // (sebelumnya assertion `|| total_invalidations >= 0` selalu true →
+        // e5f7489 menyederhanakannya menjadi `ast_entries > 0` → fail palsu).
         let stats = session.cache_stats();
-        assert!(stats.ast_entries > 0);
+        assert!(
+            stats.ast_entries > 0 || !session.prev_checksums.is_empty(),
+            "cache pipeline tidak aktif: ast_entries={} prev_checksums={}",
+            stats.ast_entries,
+            session.prev_checksums.len()
+        );
     }
 
     #[test]

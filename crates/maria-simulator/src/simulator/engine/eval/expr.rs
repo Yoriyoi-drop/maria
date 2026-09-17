@@ -449,7 +449,10 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(result.to_bits(), 64))
                 } else if matches!(
                     op,
-                    BinaryIrOp::Eq
+                    BinaryIrOp::Add
+                        | BinaryIrOp::Sub
+                        | BinaryIrOp::Mul
+                        | BinaryIrOp::Eq
                         | BinaryIrOp::Neq
                         | BinaryIrOp::CaseEq
                         | BinaryIrOp::CaseNeq
@@ -460,10 +463,13 @@ impl SimulationEngine {
                 ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
                     && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
-                    // LRM §11.8.2 any-unsigned: perbandingan UNSIGNED bila SATU
-                    // operand unsigned (mis. `logic [1:0] m = 3; m > 2` →
-                    // 3 > 2 = 1, bukan sign-extend 2-bit 11 → -1 > 2 = 0).
-                    // Pakai eval_binary_signed HANYA jika KEDUANYA signed.
+                    // LRM §11.8.2 any-unsigned: perbandingan & ARITMETIK
+                    // dilakukan SIGNED hanya bila KEDUA operand signed
+                    // (mis. `logic [1:0] m = 3; m > 2` → 3 > 2 = 1, bukan
+                    // sign-extend 2-bit 11 → -1 > 2 = 0). eval_binary_signed
+                    // men-sign-extend operan ke lebar umum: `-8'sd4 + 1`
+                    // (lebar campur) harus -3, bukan 253 (probe q07 — dulu
+                    // Add/Sub/Mul jatuh ke eval_binary zero-extend).
                     // Eq/CaseEq ikut (sign-extend operan ke lebar umum):
                     // `int X = -2; X === -2` salah bila zero-extend
                     // (0xFFFFFFFFFFFFFFFE vs 0x00000000FFFFFFFE — probe p12f).
@@ -2186,7 +2192,20 @@ impl SimulationEngine {
             }
             IrExpr::Cast { width, expr } => {
                 let val = self.evaluate_expr(expr)?;
-                Ok(val.resize(*width))
+                // Size-cast mempertahankan signedness operand (LRM §6.24.1):
+                // widening operand SIGNED → sign-extend; unsigned → zero-extend.
+                // Dulu selalu `resize` (zero-extend) → `sn + 1` (sn signed
+                // [7:0]) mem-bungkus operand jadi Cast{32} 0x000000FC → Add
+                // jadi 253 padahal -3 (probe q15).
+                if *width > val.width && is_signed_expr(expr, &self.design.top.signals) {
+                    let msb = val.bits.last().copied().unwrap_or(LogicVal::Zero);
+                    let mut out = val;
+                    out.bits.resize(*width, msb);
+                    out.width = *width;
+                    Ok(out)
+                } else {
+                    Ok(val.resize(*width))
+                }
             }
             IrExpr::StreamingConcat {
                 op,

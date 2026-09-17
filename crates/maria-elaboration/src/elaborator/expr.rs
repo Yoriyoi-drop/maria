@@ -655,7 +655,16 @@ impl Elaborator {
                         "$unsigned requires exactly one argument",
                     ));
                 }
-                self.elaborate_expr(&args[0], signal_map, signals)
+                // LRM §6.24.3: $unsigned(x) memperlakukan x sebagai UNSIGNED
+                // (ekstensi nol saat penugasan/lebar-konteks, perbandingan &
+                // shift logis). Tidak ada varian IrExpr "Unsigned" — gunakan
+                // ekivalensi LRM §11.8.1: concat satu-elemen `{x}` bernilai x
+                // dengan signedness UNSIGNED (is_signed_expr(Concat) = false).
+                // Dulu di-emit sebagai x polos → `$unsigned(sn)` (signed
+                // signal) tetap signed → sign-extend (probe q07: 0xFFFFFFFC
+                // padahal harus 0xFC).
+                let inner = self.elaborate_expr(&args[0], signal_map, signals)?;
+                Ok(IrExpr::Concat(vec![inner]))
             }
             "$clog2" => {
                 if let Some(arg) = args.first() {
@@ -700,6 +709,22 @@ impl Elaborator {
                             info.width
                         })
                         .or_else(|| self.try_array_param_bits(arg))
+                        .or_else(|| {
+                            // Typedef (termasuk lokal module): self.typedef_map
+                            // dihitung PENUH (range + packed dims + struct fields
+                            // via resolve_typedef_width_dims) saat pemrosesan
+                            // ModuleItem::Typedef. JANGAN pakai compute_expr_width
+                            // utk nama typedef — arm param-nya menghitung
+                            // min-bits NILAI (byte_t=8 → 4) & resolve_typedef_
+                            // ident_width mengabaikan td.range (logic [7:0] → 1)
+                            // → $bits(byte_t)=4 / $bits(pkt_t)=4 (probe q13/q14).
+                            match arg {
+                                Expr::Ident { name, .. } => {
+                                    self.typedef_map.get(name).copied()
+                                }
+                                _ => None,
+                            }
+                        })
                         .or_else(|| {
                             compute_expr_width(
                                 arg,

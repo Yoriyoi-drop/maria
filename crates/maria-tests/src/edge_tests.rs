@@ -1047,6 +1047,71 @@ endmodule"#,
     assert_eq!(r.to_u64(), 0xFFFF_FFFD, "-8'sd3 harus sign-extend ke -3");
 }
 
+// Aritmetika signed operan BEDA LEBAR: `-8'sd4 + 1` = -3 (operan di-sign-
+// extend ke lebar konteks). Dulu Add/Sub/Mul signed jatuh ke jalur unsigned
+// (zero-extend) → 253 (probe q07).
+#[test]
+fn test_edge_signed_add_mixed_width() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    logic signed [7:0] sn = -8'sd4;
+    logic [31:0] w;
+    initial begin w = sn + 1; #1 $finish; end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, w) = sigs.iter().find(|(n, _)| n == "w").unwrap();
+    assert_eq!(w.to_u64(), 0xFFFF_FFFD, "-4 + 1 harus -3 (0xFFFFFFFD)");
+}
+
+// $unsigned(x) memperlakukan x UNSIGNED (LRM §6.24.3) → assignment ke LHS
+// lebih lebar harus ZERO-extend, bukan sign-extend (probe q07).
+#[test]
+fn test_edge_unsigned_cast_zero_extend() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    logic signed [7:0] sn = -8'sd4;
+    logic [31:0] u;
+    initial begin u = $unsigned(sn); #1 $finish; end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, u) = sigs.iter().find(|(n, _)| n == "u").unwrap();
+    assert_eq!(u.to_u64(), 0x0000_00FC, "$unsigned(-4) harus 0x000000FC");
+}
+
+// $bits(typedef) = lebar typedef sebenarnya: ranged `logic [7:0]` = 8, dan
+// packed struct = jumlah bit member (probe q13/q14). Dulu 4 (arm param
+// menghitung min-bits nilai) / 4 (td.range diabaikan).
+#[test]
+fn test_edge_bits_typedef() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    typedef logic [7:0] byte_t;
+    typedef struct packed { logic [7:0] d; logic v; } pkt_t;
+    typedef struct packed { logic [3:0] a; logic [2:0] b; } two_t;
+    integer b1, b2, b3;
+    initial begin
+        b1 = $bits(byte_t);
+        b2 = $bits(pkt_t);
+        b3 = $bits(two_t);
+        #1 $finish;
+    end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let g = |n: &str| sigs.iter().find(|(x, _)| x == n).unwrap().1.to_u64();
+    assert_eq!(g("b1"), 8, "$bits(logic [7:0] typedef) = 8");
+    assert_eq!(g("b2"), 9, "$bits(packed struct 8+1) = 9");
+    assert_eq!(g("b3"), 7, "$bits(packed struct 4+3) = 7");
+}
+
 // === 15. Assignment patterns ===
 
 #[test]
