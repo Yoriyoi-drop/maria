@@ -209,7 +209,16 @@ impl CompileSession {
         let base_pp = self.create_preprocessor();
 
         // ── Phase 1: File Discovery ──
-        let files: Vec<PathBuf> = self.discover_files()?;
+        let mut files: Vec<PathBuf> = self.discover_files()?;
+        // ── Phase 1b: Auto-include package file yang hilang dari daftar ──
+        // OpenTitan reggen: `X_regs_reg_top.sv` meng-import `X_reg_pkg::*` yang
+        // dibangkitkan di direktori yang SAMA (`rtl/X_reg_pkg.sv`). Filelist
+        // yang lupa menyertakan package-nya membuat import tak ter-resolve →
+        // E2001 `CHERIOT_ALERT_TEST_OFFSET not found` (33 *_reg_pkg RTL absen
+        // di opentitan_rtl.f). Bila `import <pkg>::` dipakai dan file
+        // `<pkg>.sv/.svh` ADA di direktori pengimport namun belum masuk daftar
+        // → tambahkan otomatis (pola deterministic: nama file == nama paket).
+        self.auto_include_missing_packages(&mut files);
         if files.is_empty() {
             return Err(SimError::with_diag(
                 DiagCode::ModuleNotFound,
@@ -673,6 +682,79 @@ impl CompileSession {
         // changed_files per-build akurat. ──
 
         Ok((merged, &self.module_index))
+    }
+
+    /// Auto-include `<pkg>.sv/.svh` bila `import <pkg>::` dipakai oleh source
+    /// yang masuk daftar tapi panggilannya tidak ada di daftar (pola reggen
+    /// OpenTitan: `rtl/X_regs_reg_top.sv` import `X_reg_pkg::*` yang di-
+    /// generate di dir yang sama). Deterministik: nama file == nama package,
+    /// DAN file berada di direktori pengimport (atau libdirs). Tanpa ini,
+    /// package param/typedef yang di-import module tak ter-resolve → E2001.
+    fn auto_include_missing_packages(&self, files: &mut Vec<PathBuf>) {
+        use std::collections::HashSet;
+        let mut have: HashSet<PathBuf> = files.iter().cloned().collect();
+        let mut basename_set: HashSet<String> = files
+            .iter()
+            .filter_map(|p| p.file_name().map(|b| b.to_string_lossy().into_owned()))
+            .collect();
+        // Multi-pass: paket yang baru ditambahkan juga bisa meng-import paket
+        // lain yang hilang. Biasanya 1-2 pass sudah selasai.
+        for _pass in 0..4 {
+            let snapshot = files.clone();
+            let mut added = false;
+            for src in &snapshot {
+                let text = match std::fs::read_to_string(src) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                let dir = src.parent().map(|d| d.to_path_buf());
+                let bytes = text.as_bytes();
+                let mut idx = 0usize;
+                while idx < bytes.len() {
+                    if bytes.get(idx..idx + 6) == Some(b"import") {
+                        let after = idx + 6;
+                        let mut start = after;
+                        while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                            start += 1;
+                        }
+                        let mut end = start;
+                        while end < bytes.len()
+                            && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                        {
+                            end += 1;
+                        }
+                        let pkg = &text[start..end];
+                        if !pkg.is_empty() {
+                            let has = basename_set.contains(&format!("{}.sv", pkg))
+                                || basename_set.contains(&format!("{}.svh", pkg));
+                            if !has {
+                                if let Some(ref d) = dir {
+                                    for ext in ["sv", "svh"] {
+                                        let cand = d.join(format!("{}.{}", pkg, ext));
+                                        if cand.is_file() && have.insert(cand.clone()) {
+                                            if let Some(b) = cand
+                                                .file_name()
+                                                .map(|b| b.to_string_lossy().into_owned())
+                                            {
+                                                basename_set.insert(b);
+                                            }
+                                            files.push(cand);
+                                            added = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        idx = end.max(after);
+                    } else {
+                        idx += 1;
+                    }
+                }
+            }
+            if !added {
+                break;
+            }
+        }
     }
 
     /// Incremental compile — detect changes and only re-process changed files.

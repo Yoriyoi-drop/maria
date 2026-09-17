@@ -141,7 +141,10 @@ impl Elaborator {
                 }
                 // Check if this ident is a parameter (from param_vals or effective_params)
                 if let Some(&val) = self.param_vals.get(name) {
-                    return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
+                    return Ok(super::const_or_signed(
+                        LogicVec::from_u64(val as u64, 64),
+                        self.param_is_signed.contains(name),
+                    ));
                 }
                 // Enum member plain dari package (di-build oleh build_pkg_param_ctx
                 // dengan nilai sequential). Case label seperti `DmaXfer1BperTxn:`
@@ -197,9 +200,13 @@ impl Elaborator {
                                 if let Some(expr) = &p.default {
                                     if let Ok(val) = const_eval_with_params(expr, &self.param_vals)
                                     {
-                                        return Ok(IrExpr::Const(LogicVec::from_u64(
-                                            val as u64, 64,
-                                        )));
+                                        // Signed bila tipe param signed (sama
+                                        // dgn jalur plain param di atas).
+                                        let psign = super::param_decl_is_signed(p);
+                                        return Ok(super::const_or_signed(
+                                            LogicVec::from_u64(val as u64, 64),
+                                            psign,
+                                        ));
                                     }
                                 }
                                 return Err(self.elab_diag_at(

@@ -375,10 +375,18 @@ pub fn const_eval_with_params(
             if l == i64::MIN && r == -1 {
                 return Ok(0);
             }
-            // SV unsigned semantics: literal besar (> i64::MAX) adalah
-            // bit-pattern u64 — pembagian unsigned (ditemukan fuzzer
-            // seed=120172402: modulo literal 64-bit salah tanda).
-            Ok(((l as u64) / (r as u64)) as i64)
+            // SV §11.8.2 (any-unsigned): pembagian UNSIGNED bila salah satu
+            // operan unsigned (literal besar > i64::MAX = bit-pattern u64,
+            // ditemukan fuzzer seed=120172402), SIGNED bila keduanya signed.
+            // Sebelumnya `(l as u64)` selalu — `-7 / 3` di-fold jadi
+            // 0xFFFF...F9 / 3 = 0x5555...5553 (6148914691236517203) padahal
+            // harus -2 (probe p12d, konstanta-folding ≠ runtime).
+            let q = if is_signed_expr(lhs) && is_signed_expr(rhs) {
+                l.wrapping_div(r)
+            } else {
+                ((l as u64) / (r as u64)) as i64
+            };
+            Ok(q)
         }
         Expr::BinaryOp {
             op: BinaryOp::Power,
@@ -430,8 +438,15 @@ pub fn const_eval_with_params(
             if l == i64::MIN && r == -1 {
                 return Ok(0);
             }
-            // Unsigned semantics (sama dgn Div — lihat catatan di atas).
-            Ok(((l as u64) % (r as u64)) as i64)
+            // Unsigned semantics bila salah satu operan unsigned (sama dgn
+            // Div — lihat catatan di atas); signed bila keduanya signed:
+            // `-7 % 3` harus -1, bukan 0 (probe p12d).
+            let m = if is_signed_expr(lhs) && is_signed_expr(rhs) {
+                l.wrapping_rem(r)
+            } else {
+                ((l as u64) % (r as u64)) as i64
+            };
+            Ok(m)
         }
         Expr::BinaryOp {
             op: BinaryOp::Eq,

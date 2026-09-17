@@ -34,6 +34,133 @@ fn format_sym(prefix: &[u8], n: usize) -> Symbol {
     buf.copy_within(end..end + dlen, plen);
     Symbol::intern(unsafe { std::str::from_utf8_unchecked(&buf[..total]) })
 }
+
+/// Signedness AST-expr dalam konteks param default (mirror const_eval: desimal
+/// unsized signed; literal sized ber-suffix `s` signed; unary ±/~ mewarisi).
+fn elab_expr_is_signed(e: &Expr) -> bool {
+    match e {
+        Expr::Value(Value::Decimal(_)) => true,
+        Expr::Value(Value::Binary { is_signed, .. })
+        | Expr::Value(Value::Hex { is_signed, .. })
+        | Expr::Value(Value::Octal { is_signed, .. }) => *is_signed,
+        Expr::Paren(inner) => elab_expr_is_signed(inner),
+        Expr::UnaryOp { op, expr: inner } => match op {
+            UnaryOp::Not
+            | UnaryOp::ReductionAnd
+            | UnaryOp::ReductionNand
+            | UnaryOp::ReductionOr
+            | UnaryOp::ReductionNor
+            | UnaryOp::ReductionXor
+            | UnaryOp::ReductionXnor => false,
+            _ => elab_expr_is_signed(inner),
+        },
+        _ => false,
+    }
+}
+
+/// Signedness deklarasi param SV (IEEE 1800 §6.11/§6.20): `int/integer/byte/
+/// shortint/longint`/signed-typed → signed; tanpa tipe → signedness default
+/// ekspresi (desimal signed; `localparam A = -2` → int implicit signed).
+fn param_decl_is_signed(p: &ParamDecl) -> bool {
+    if let Some(dt) = &p.dtype {
+        return is_signed_type(dt);
+    }
+    match &p.default {
+        Some(expr) => elab_expr_is_signed(expr),
+        None => true, // implicit integer
+    }
+}
+
+/// Emit konstanta param dengan signedness: signed → `Signed(Const)` agar
+/// is_signed_expr + perbandingan/aritmetik (LRM §11.8.2) memperlakukannya
+/// signed (`localparam int X = -2` → `X < 0` benar, `%0d` cetak -2).
+fn const_or_signed(lv: LogicVec, is_signed: bool) -> IrExpr {
+    if is_signed {
+        IrExpr::Signed(Box::new(IrExpr::Const(lv)))
+    } else {
+        IrExpr::Const(lv)
+    }
+}
+
+/// Apakah ekspresi mereferensikan param SIGNED (nama di `signed_params`)?
+/// Dipakai guard const-fold: `const_eval_with_params` memperlakukan Ident
+/// sebagai unsigned, sehingga `PD < 0` (localparam int -2) salah ter-fold
+/// jadi false. Referensi param signed → biarkan jalur runtime yang memakai
+/// IrExpr::Signed agar perbandingan/aritmetik benar (probe p12f/p12g).
+fn expr_refs_signed_param(expr: &Expr, signed_params: &std::collections::HashSet<Symbol>) -> bool {
+    if signed_params.is_empty() {
+        return false; // fast path: tidak ada param signed di module ini
+    }
+    match expr {
+        Expr::Ident { name, .. } => signed_params.contains(name),
+        Expr::ScopedIdent { package, item, .. } => {
+            signed_params.contains(&Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str())))
+        }
+        Expr::Paren(inner) => expr_refs_signed_param(inner, signed_params),
+        Expr::UnaryOp { expr: inner, .. } => expr_refs_signed_param(inner, signed_params),
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            expr_refs_signed_param(lhs, signed_params) || expr_refs_signed_param(rhs, signed_params)
+        }
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            expr_refs_signed_param(cond, signed_params)
+                || expr_refs_signed_param(true_expr, signed_params)
+                || expr_refs_signed_param(false_expr, signed_params)
+        }
+        Expr::Concat(parts) => {
+            parts.iter().any(|p| expr_refs_signed_param(p, signed_params))
+        }
+        Expr::Replicate { count, expr: inner } => {
+            expr_refs_signed_param(count, signed_params) || expr_refs_signed_param(inner, signed_params)
+        }
+        Expr::MemberAccess { obj, .. } => expr_refs_signed_param(obj, signed_params),
+        Expr::RangeSelect { expr: inner, msb, lsb } => {
+            expr_refs_signed_param(inner, signed_params)
+                || expr_refs_signed_param(msb, signed_params)
+                || expr_refs_signed_param(lsb, signed_params)
+        }
+        Expr::BitSelect { expr: inner, index } => {
+            expr_refs_signed_param(inner, signed_params) || expr_refs_signed_param(index, signed_params)
+        }
+        Expr::PartSelect { expr: inner, base, width } => {
+            expr_refs_signed_param(inner, signed_params)
+                || expr_refs_signed_param(base, signed_params)
+                || expr_refs_signed_param(width, signed_params)
+        }
+        Expr::FuncCall { args, .. } => {
+            args.iter().any(|a| expr_refs_signed_param(a, signed_params))
+        }
+        Expr::MethodCall { obj, args, with_clause, .. } => {
+            expr_refs_signed_param(obj, signed_params)
+                || args.iter().any(|a| expr_refs_signed_param(a, signed_params))
+                || with_clause
+                    .as_ref()
+                    .map_or(false, |w| expr_refs_signed_param(w, signed_params))
+        }
+        Expr::Cast { expr: inner, .. } | Expr::CastWidth { expr: inner, .. } => {
+            expr_refs_signed_param(inner, signed_params)
+        }
+        Expr::Inside { expr: inner, range_list } => {
+            expr_refs_signed_param(inner, signed_params)
+                || range_list.iter().any(|r| expr_refs_signed_param(r, signed_params))
+        }
+        Expr::StreamingConcat { slices, .. } => {
+            slices.iter().any(|s| expr_refs_signed_param(s, signed_params))
+        }
+        Expr::Dist { expr: inner, items } => {
+            expr_refs_signed_param(inner, signed_params)
+                || items.iter().any(|d| match d {
+                    maria_ast::DistItem::Value(e, _) | maria_ast::DistItem::Range(e, _, _) => {
+                        expr_refs_signed_param(e, signed_params)
+                    }
+                })
+        }
+        _ => false,
+    }
+}
 pub mod always;
 pub mod classes;
 pub mod expr;
@@ -282,6 +409,11 @@ pub struct Elaborator {
     pub design: Design,
     pub modules: HashMap<Symbol, IrModule>,
     pub param_vals: HashMap<Symbol, i64>,
+    /// Nama param bertipe SIGNED (int/integer/byte/.../sign-typed) pada module
+    /// saat ini. IEEE 1800 §6.11 + §6.20: `localparam int X = -2` bersifat
+    /// signed — tanpa ini, resolve param jadi `Const(u64,64)` UNSIGNED
+    /// sehingga `X < 0` false dan `%0d` cetak 2^64-2 (probe p12f/p12g).
+    pub param_is_signed: std::collections::HashSet<Symbol>,
     /// LANG-40: `let` declaration module saat ini (Symbol → LetDecl) — alias
     /// ekspresi scoped (IEEE 1800-2017 §11.12.2). Di-set per-module di
     /// elaborate_module_with_params_and_type; di-resolve elaborate_expr
@@ -616,6 +748,7 @@ impl Elaborator {
             design,
             modules: HashMap::new(),
             param_vals: HashMap::new(),
+            param_is_signed: std::collections::HashSet::new(),
             let_decls: HashMap::new(),
             checker_decls: HashMap::new(),
             typedef_map: HashMap::new(),
@@ -2984,6 +3117,27 @@ impl Elaborator {
         }
 
         // Process package imports: add package params + typedefs, collect in-module typedefs
+        if std::env::var("DBG_ELAB").is_ok() && module.name.as_str() == "cheriot_regs_reg_top" {
+            let imports: Vec<String> = module
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ModuleItem::Import { package, item } => {
+                        Some(format!("{}::{}", package.as_str(), item.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            eprintln!(
+                "[DBG-ELAB] cheriot_regs_reg_top imports={:?} pkg_in_symbols={} pkg_plain_len={}",
+                imports,
+                self.package_symbols.contains_key(&Symbol::intern("cheriot_reg_pkg")),
+                self.pkg_plain_params
+                    .get(&Symbol::intern("cheriot_reg_pkg"))
+                    .map(|m| m.len())
+                    .unwrap_or(0)
+            );
+        }
         for item in &module.items {
             match item {
                 ModuleItem::Import {
@@ -3021,6 +3175,14 @@ impl Elaborator {
                                                     // elaborate. Nilai rujukan (konstanta token)
                                                     // jarang dibandingkan dalam simulasi cone.
                                                     effective_params.insert(p.name, 0);
+                                                }
+                                                if std::env::var("DBG_ELAB").is_ok()
+                                                    && p.name.as_str() == "CHERIOT_ALERT_TEST_OFFSET"
+                                                {
+                                                    eprintln!(
+                                                        "[DBG-ELAB] import param CHERIOT_ALERT_TEST_OFFSET inserted in module {}",
+                                                        module.name.as_str()
+                                                    );
                                                 }
                                             }
                                         }
@@ -3100,6 +3262,29 @@ impl Elaborator {
         // untuk ribuan elemen konstanta per-module (bottleneck: 43% memcmp +
         // 28% Symbol::as_str di OpenTitan — interning berulang). Dihapus.
         self.param_vals = effective_params.clone();
+        // Signedness param module saat ini (IEEE §6.11): dipakai resolve
+        // `Expr::Ident(parameter)` agar `localparam int X = -2` di-emit
+        // sebagai IrExpr::Signed (bukan Const unsigned 64) — `X < 0` benar.
+        let mut module_signed_params: std::collections::HashSet<Symbol> =
+            std::collections::HashSet::new();
+        for p in &module.params {
+            if param_decl_is_signed(p) {
+                module_signed_params.insert(p.name);
+            }
+        }
+        for item in &module.items {
+            if let ModuleItem::Param(p) = item {
+                if param_decl_is_signed(p) {
+                    module_signed_params.insert(p.name);
+                }
+            }
+        }
+        for p in &self.design.unit_params {
+            if param_decl_is_signed(p) {
+                module_signed_params.insert(p.name);
+            }
+        }
+        self.param_is_signed = module_signed_params;
         // Context package GLOBAL (qualified `pkg::name` + enum member) sudah
         // dijamin ada di effective_params: param_vals selalu berasal dari
         // resolve_param_values → collect_package_param_ctx yang meng-clone
@@ -4927,10 +5112,17 @@ impl Elaborator {
                             let lhs_w = crate::elaborator::stmt::lvalue_width(&lhs, &signals);
                             if lhs_w > 0 {
                                 // Whole-RHS konstanta → fold langsung pada
-                                // lebar konteks (hindari fold bertingkat pada
-                                // lebar self-determined yang salah untuk op
-                                // context-determined seperti unary minus).
-                                if let Some(c) =
+                                // lebar konteks. JANGAN fold bila RHS
+                                // mereferensikan param SIGNED: const_eval
+                                // memperlakukan Ident sbg unsigned sehingga
+                                // `assign y = (N<0)` (N=-2) salah jadi 0
+                                // (probe p19).
+                                if expr_refs_signed_param(
+                                    &assign.rhs,
+                                    &self.param_is_signed,
+                                ) {
+                                    propagate_context_width(&mut rhs, lhs_w, &signals);
+                                } else if let Some(c) =
                                     try_fold_const_at_width(&assign.rhs, &self.param_vals, lhs_w)
                                 {
                                     rhs = c;
@@ -5599,7 +5791,12 @@ impl Elaborator {
                             .map(|s| s.width)
                             .unwrap_or(0);
                         if lhs_w > 0 {
-                            if let Some(c) =
+                            // JANGAN fold RHS yang mereferensikan param SIGNED
+                            // (const_eval → Ident unsigned; `logic y = (N<0)`
+                            // N=-2 salah jadi 0 — probe p19).
+                            if expr_refs_signed_param(init_expr, &self.param_is_signed) {
+                                propagate_context_width(&mut rhs, lhs_w, &signals);
+                            } else if let Some(c) =
                                 try_fold_const_at_width(init_expr, &self.param_vals, lhs_w)
                             {
                                 rhs = c;
