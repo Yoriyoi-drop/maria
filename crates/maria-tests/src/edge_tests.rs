@@ -1171,6 +1171,37 @@ endmodule"#,
     assert_eq!(g("flat"), 0x4433_2211, "packed layout mem");
 }
 
+// Localparam array: index DINAMIS (`L[i]`) + baca seluruh array. Dulu
+// body-param loop meng-insert skalar `L`=elemen-0 (via .first()) yang
+// menaungi signal const-array → `L[i]` jadi Const(elemen-0) lalu bit-select
+// → 0 (probe u04/u08).
+#[test]
+fn test_edge_localparam_array_dynamic_index() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    localparam logic [7:0] L [4] = '{8'hAA, 8'hBB, 8'hCC, 8'hDD};
+    localparam int LUT [4] = '{0, 11, 22, 33};
+    logic [31:0] flat;
+    logic [7:0] dyn;
+    int lut_dyn;
+    logic [1:0] i = 2'd2;
+    initial begin
+        flat = L;
+        dyn = L[i];
+        lut_dyn = LUT[i];
+        #1 $finish;
+    end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let g = |n: &str| sigs.iter().find(|(x, _)| x == n).unwrap().1.to_u64();
+    assert_eq!(g("flat"), 0xDDCC_BBAA, "baca seluruh array L");
+    assert_eq!(g("dyn"), 0xCC, "L[2] dinamis = 0xCC");
+    assert_eq!(g("lut_dyn"), 22, "LUT[2] dinamis = 22");
+}
+
 // === 15. Assignment patterns ===
 
 #[test]

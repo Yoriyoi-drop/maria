@@ -3996,6 +3996,15 @@ impl Elaborator {
         // (qualified) + effective_params (plain, module menang).
         let mut struct_vals: HashMap<Symbol, Vec<SField>> = HashMap::new();
         let mut struct_lit_done: HashSet<Symbol> = HashSet::new();
+        // Default param berupa ARRAY multi-elemen (`localparam logic [7:0]
+        // L[4] = '{...}`) — JANGAN didaftarkan sebagai skalar (dulu
+        // eval_param_default_full mengambil elemen-0 via `.first()` → param_vals
+        // ["L"]=0xAA menaungi signal const-array sehingga `L[i]` dinamis
+        // me-resolve Const(elemen-0) lalu bit-select → 0; probe u04/u08).
+        // Array ditangani blok "Localparam ARRAY" (materialisasi signal +
+        // key ter-flatten `L[i]`). `array_done` mencegah fixed-point loop
+        // mengulang tanpa henti.
+        let mut array_done: HashSet<Symbol> = HashSet::new();
         // Struct literal yang SUDAH berhasil diproses (masuk struct_vals ATAU
         // effective_params) — mencegah loop tak berujung: tanpa penanda ini,
         // struct literal selalu memenuhi kondisi proses tiap iterasi (skip
@@ -4034,7 +4043,7 @@ impl Elaborator {
                 } else {
                     effective_params.contains_key(pname) || struct_vals.contains_key(pname)
                 };
-                if already_done {
+                if already_done || array_done.contains(pname) {
                     continue;
                 }
                 // 0.5) Struct via referensi konstanta struct package
@@ -4045,6 +4054,21 @@ impl Elaborator {
                     {
                         struct_vals.insert(*pname, fields);
                         struct_lit_done.insert(*pname);
+                        changed = true;
+                        continue;
+                    }
+                }
+                // Guard ARRAY: default array multi-elemen → jangan insert skalar
+                // (lihat array_done). Ditangani blok materialisasi const-array.
+                if let Some(CVal::Array(ref a)) = eval_cval_full(
+                    expr,
+                    &effective_params,
+                    &self.pkg_const_arrays,
+                    &self.package_symbols,
+                    &struct_vals,
+                ) {
+                    if a.len() > 1 {
+                        array_done.insert(*pname);
                         changed = true;
                         continue;
                     }
