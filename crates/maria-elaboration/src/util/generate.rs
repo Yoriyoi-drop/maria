@@ -129,6 +129,7 @@ pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
 pub fn expand_all_generates(
     module: &mut Module,
     param_vals: &HashMap<Symbol, i64>,
+    signed_params: &std::collections::HashSet<Symbol>,
     diag_sink: &DiagSink,
     source_lines: &[String],
     source_file: &str,
@@ -145,7 +146,14 @@ pub fn expand_all_generates(
     let mut expand_count = 0usize;
     while i < module.items.len() {
         if let ModuleItem::Generate(gen) = &module.items[i] {
-            match expand_generate_block(gen, param_vals, diag_sink, source_lines, source_file) {
+            match expand_generate_block(
+                gen,
+                param_vals,
+                signed_params,
+                diag_sink,
+                source_lines,
+                source_file,
+            ) {
                 Ok(expanded) => {
                     total_items += expanded.len();
                     expand_count += 1;
@@ -240,10 +248,124 @@ pub fn extract_generate_step(step: &Option<Stmt>, param_vals: &HashMap<Symbol, i
     }
 }
 
+/// Evaluasi kondisi generate-if dengan memperhitungkan signedness param.
+///
+/// `const_eval_with_params` memperlakukan `Expr::Ident` sebagai UNSIGNED
+/// (tidak ada info tipe), sehingga `N < 0` (N = `localparam int` bernilai -2)
+/// salah ter-fold jadi false → cabang generate salah terpilih (probe p19).
+/// Untuk perbandingan relasional / logika yang dua operandnya keduanya signed
+/// (menurut `signed_params`), hitung dengan i64 (signed); selain itu jatuh ke
+/// `const_eval_with_params` (unsigned, sesuai LRM any-unsigned §11.8.2).
+fn eval_generate_cond(
+    cond: &Expr,
+    params: &HashMap<Symbol, i64>,
+    signed_params: &std::collections::HashSet<Symbol>,
+) -> Result<i64, String> {
+    match cond {
+        Expr::Paren(inner) => return eval_generate_cond(inner, params, signed_params),
+        Expr::UnaryOp {
+            op: UnaryOp::Not,
+            expr: inner,
+        } => {
+            let v = eval_generate_cond(inner, params, signed_params)?;
+            return Ok(if v == 0 { 1 } else { 0 });
+        }
+        Expr::BinaryOp { op, lhs, rhs } => {
+            match op {
+                BinaryOp::LogicalAnd => {
+                    if eval_generate_cond(lhs, params, signed_params)? == 0 {
+                        return Ok(0);
+                    }
+                    return Ok(if eval_generate_cond(rhs, params, signed_params)? != 0 {
+                        1
+                    } else {
+                        0
+                    });
+                }
+                BinaryOp::LogicalOr => {
+                    if eval_generate_cond(lhs, params, signed_params)? != 0 {
+                        return Ok(1);
+                    }
+                    return Ok(if eval_generate_cond(rhs, params, signed_params)? != 0 {
+                        1
+                    } else {
+                        0
+                    });
+                }
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                    if gen_expr_is_signed(lhs, signed_params)
+                        && gen_expr_is_signed(rhs, signed_params)
+                    {
+                        let l = const_eval_with_params(lhs, params)?;
+                        let r = const_eval_with_params(rhs, params)?;
+                        let b = match op {
+                            BinaryOp::Lt => l < r,
+                            BinaryOp::Le => l <= r,
+                            BinaryOp::Gt => l > r,
+                            _ => l >= r,
+                        };
+                        return Ok(if b { 1 } else { 0 });
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    const_eval_with_params(cond, params)
+}
+
+/// Signedness AST-expr untuk operand kondisi generate (mirror
+/// `const_eval::is_signed_expr`): Ident param di `signed_params`, desimal
+/// unsized, literal ber-suffix `s`, unary ±/~ mewarisi, paren tembus;
+/// perbandingan/logika selalu unsigned (1-bit).
+fn gen_expr_is_signed(e: &Expr, signed_params: &std::collections::HashSet<Symbol>) -> bool {
+    match e {
+        Expr::Ident { name, .. } => signed_params.contains(name),
+        Expr::ScopedIdent { package, item, .. } => signed_params.contains(&Symbol::intern(
+            &format!("{}::{}", package.as_str(), item.as_str()),
+        )),
+        Expr::Value(Value::Decimal(_)) => true,
+        Expr::Value(Value::Binary { is_signed, .. })
+        | Expr::Value(Value::Hex { is_signed, .. })
+        | Expr::Value(Value::Octal { is_signed, .. }) => *is_signed,
+        Expr::Paren(inner) => gen_expr_is_signed(inner, signed_params),
+        Expr::UnaryOp { op, expr: inner } => match op {
+            UnaryOp::Not
+            | UnaryOp::ReductionAnd
+            | UnaryOp::ReductionNand
+            | UnaryOp::ReductionOr
+            | UnaryOp::ReductionNor
+            | UnaryOp::ReductionXor
+            | UnaryOp::ReductionXnor => false,
+            _ => gen_expr_is_signed(inner, signed_params),
+        },
+        Expr::BinaryOp { op, lhs, rhs } => match op {
+            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr => {
+                gen_expr_is_signed(lhs, signed_params)
+            }
+            BinaryOp::Eq
+            | BinaryOp::Neq
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+            | BinaryOp::LogicalAnd
+            | BinaryOp::LogicalOr => false,
+            _ => {
+                gen_expr_is_signed(lhs, signed_params)
+                    && gen_expr_is_signed(rhs, signed_params)
+            }
+        },
+        _ => false,
+    }
+}
+
 /// Perluas SATU generate block dengan nilai parameter tertentu.
 pub fn expand_generate_block(
     gen: &GenerateBlock,
     param_vals: &HashMap<Symbol, i64>,
+    signed_params: &std::collections::HashSet<Symbol>,
     diag_sink: &DiagSink,
     source_lines: &[String],
     source_file: &str,
@@ -258,13 +380,14 @@ pub fn expand_generate_block(
                 ..
             } => {
                 let (cond_line, cond_col) = expr_location(cond);
-                let eval_result = const_eval_with_params(cond, param_vals);
+                let eval_result = eval_generate_cond(cond, param_vals, signed_params);
                 match eval_result {
                     Ok(val) => {
                         let branch = if val != 0 { true_items } else { false_items };
                         result.extend(expand_item_list(
                             branch,
                             param_vals,
+                            signed_params,
                             diag_sink,
                             source_lines,
                             source_file,
@@ -307,6 +430,7 @@ pub fn expand_generate_block(
                         result.extend(expand_item_list(
                             true_items,
                             param_vals,
+                            signed_params,
                             diag_sink,
                             source_lines,
                             source_file,
@@ -424,6 +548,7 @@ pub fn expand_generate_block(
                         result.extend(expand_item_list(
                             &substituted,
                             param_vals,
+                            signed_params,
                             diag_sink,
                             source_lines,
                             source_file,
@@ -449,6 +574,7 @@ pub fn expand_generate_block(
                         result.extend(expand_item_list(
                             &substituted,
                             param_vals,
+                            signed_params,
                             diag_sink,
                             source_lines,
                             source_file,
@@ -475,6 +601,7 @@ pub fn expand_generate_block(
                             result.extend(expand_item_list(
                                 &first.body,
                                 param_vals,
+                                signed_params,
                                 diag_sink,
                                 source_lines,
                                 source_file,
@@ -483,6 +610,7 @@ pub fn expand_generate_block(
                             result.extend(expand_item_list(
                                 default_items,
                                 param_vals,
+                                signed_params,
                                 diag_sink,
                                 source_lines,
                                 source_file,
@@ -506,6 +634,7 @@ pub fn expand_generate_block(
                             result.extend(expand_item_list(
                                 &ci.body,
                                 param_vals,
+                                signed_params,
                                 diag_sink,
                                 source_lines,
                                 source_file,
@@ -523,6 +652,7 @@ pub fn expand_generate_block(
                         result.extend(expand_item_list(
                             default_items,
                             param_vals,
+                            signed_params,
                             diag_sink,
                             source_lines,
                             source_file,
@@ -534,6 +664,7 @@ pub fn expand_generate_block(
                 result.extend(expand_item_list(
                     items,
                     param_vals,
+                    signed_params,
                     diag_sink,
                     source_lines,
                     source_file,
@@ -550,6 +681,7 @@ pub fn expand_generate_block(
 fn expand_item_list(
     items: &[ModuleItem],
     param_vals: &HashMap<Symbol, i64>,
+    signed_params: &std::collections::HashSet<Symbol>,
     diag_sink: &DiagSink,
     source_lines: &[String],
     source_file: &str,
@@ -576,6 +708,7 @@ fn expand_item_list(
                 result.extend(expand_generate_block(
                     gen,
                     &extended,
+                    signed_params,
                     diag_sink,
                     source_lines,
                     source_file,

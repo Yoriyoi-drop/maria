@@ -1112,6 +1112,36 @@ endmodule"#,
     assert_eq!(g("b3"), 7, "$bits(packed struct 4+3) = 7");
 }
 
+// generate-if dengan kondisi param SIGNED: `if (N < 0)` (N=-2) harus pilih
+// cabang true. Dulu const_eval memperlakukan Ident unsigned → false → cabang
+// salah (probe p19).
+#[test]
+fn test_edge_generate_if_signed_param() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    localparam int N = -2;
+    localparam int P = 3;
+    logic g_neg, g_pos, g_and;
+    generate
+        if (N < 0) begin : a1 assign g_neg = 1'b1; end
+        else       begin : a2 assign g_neg = 1'b0; end
+        if (P > 0) begin : b1 assign g_pos = 1'b1; end
+        else       begin : b2 assign g_pos = 1'b0; end
+        if ((N < 0) && (P > 0)) begin : c1 assign g_and = 1'b1; end
+        else                    begin : c2 assign g_and = 1'b0; end
+    endgenerate
+    initial #1 $finish;
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let g = |n: &str| sigs.iter().find(|(x, _)| x == n).unwrap().1.to_u64();
+    assert_eq!(g("g_neg"), 1, "generate if (N<0) harus true untuk N=-2");
+    assert_eq!(g("g_pos"), 1, "generate if (P>0) harus true untuk P=3");
+    assert_eq!(g("g_and"), 1, "generate if ((N<0)&&(P>0)) harus true");
+}
+
 // === 15. Assignment patterns ===
 
 #[test]

@@ -1251,11 +1251,13 @@ impl Elaborator {
             let module_name = self.design.modules[i].name;
             self.current_module = Some(module_name);
             let expand_t0 = std::time::Instant::now();
+            let signed_for_gen = self.module_param_signed_set(&self.design.modules[i]);
             let gen_result = {
                 let module = &mut self.design.modules[i];
                 expand_all_generates(
                     module,
                     &param_vals,
+                    &signed_for_gen,
                     &self.diag_sink,
                     &self.source_lines,
                     &self.source_file,
@@ -1435,10 +1437,13 @@ impl Elaborator {
                         &ctx,
                         Some(&pkg_full),
                     ) {
+                        let signed_for_gen2 =
+                            self.module_param_signed_set(&self.design.modules[i]);
                         let module = &mut self.design.modules[i];
                         let _ = expand_all_generates(
                             module,
                             &param_vals,
+                            &signed_for_gen2,
                             &self.diag_sink,
                             &self.source_lines,
                             &self.source_file,
@@ -3215,6 +3220,30 @@ impl Elaborator {
 }
 
 impl Elaborator {
+    /// Nama param bertipe SIGNED di module (header + body + $unit). Dipakai
+    /// resolve `Expr::Ident(parameter)` dan evaluasi kondisi generate-if.
+    fn module_param_signed_set(&self, module: &Module) -> std::collections::HashSet<Symbol> {
+        let mut set = std::collections::HashSet::new();
+        for p in &module.params {
+            if param_decl_is_signed(p) {
+                set.insert(p.name);
+            }
+        }
+        for item in &module.items {
+            if let ModuleItem::Param(p) = item {
+                if param_decl_is_signed(p) {
+                    set.insert(p.name);
+                }
+            }
+        }
+        for p in &self.design.unit_params {
+            if param_decl_is_signed(p) {
+                set.insert(p.name);
+            }
+        }
+        set
+    }
+
     fn elaborate_module(
         &mut self,
         module: &Module,
@@ -3451,26 +3480,8 @@ impl Elaborator {
         // Signedness param module saat ini (IEEE §6.11): dipakai resolve
         // `Expr::Ident(parameter)` agar `localparam int X = -2` di-emit
         // sebagai IrExpr::Signed (bukan Const unsigned 64) — `X < 0` benar.
-        let mut module_signed_params: std::collections::HashSet<Symbol> =
-            std::collections::HashSet::new();
-        for p in &module.params {
-            if param_decl_is_signed(p) {
-                module_signed_params.insert(p.name);
-            }
-        }
-        for item in &module.items {
-            if let ModuleItem::Param(p) = item {
-                if param_decl_is_signed(p) {
-                    module_signed_params.insert(p.name);
-                }
-            }
-        }
-        for p in &self.design.unit_params {
-            if param_decl_is_signed(p) {
-                module_signed_params.insert(p.name);
-            }
-        }
-        self.param_is_signed = module_signed_params;
+        // Juga dipakai kondisi generate-if (util/generate.rs).
+        self.param_is_signed = self.module_param_signed_set(module);
         // Context package GLOBAL (qualified `pkg::name` + enum member) sudah
         // dijamin ada di effective_params: param_vals selalu berasal dari
         // resolve_param_values → collect_package_param_ctx yang meng-clone
@@ -4182,6 +4193,7 @@ impl Elaborator {
                         let expanded = match expand_generate_block(
                             gen,
                             &effective_params,
+                            &self.param_is_signed,
                             &self.diag_sink,
                             &self.source_lines,
                             &self.source_file,
