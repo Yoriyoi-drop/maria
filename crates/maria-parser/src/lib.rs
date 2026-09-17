@@ -20,6 +20,23 @@ use maria_core::diagnostics::diagnostic::{
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 
+/// Terapkan modifier signed/unsigned ke dtype param (IEEE 1800 §6.20 + §6.11).
+/// `signed` → `Signed(dtype)` (atau `Signed(Int)` bila tanpa tipe); `unsigned`
+/// membuang wrapper `Signed`. Dipakai parser param body (`lib.rs`) & header
+/// (`decl.rs`) agar `parameter signed int W` / `localparam signed int X`
+/// tidak salah-parse (dulu `signed` dikonsumsi sbg "tipe" lalu `int` dianggap
+/// NAMA → E1002 / param jadi signal; probe p12k/p18).
+pub(crate) fn apply_sign_mod(dt: Option<DataType>, signed: bool) -> DataType {
+    match (dt, signed) {
+        (Some(DataType::Signed(inner)), false) => *inner,
+        (Some(DataType::Signed(inner)), true) => DataType::Signed(inner),
+        (Some(dt), true) => DataType::Signed(Box::new(dt)),
+        (Some(dt), false) => dt,
+        (None, true) => DataType::Signed(Box::new(DataType::Int)),
+        (None, false) => DataType::Int,
+    }
+}
+
 pub struct Parser {
     tokens: Vec<(Token, usize, usize)>,
     pos: std::cell::Cell<usize>,
@@ -2289,6 +2306,16 @@ impl Parser {
                     })));
                 }
                 let mut dtype = None;
+                // Leading signed/unsigned modifier: `localparam signed int X`
+                // — dulu `signed` dikonsumsi lalu `int` (bukan Ident) mem-break
+                // loop nama → `localparam` hilang, `int X = ...` jadi deklarasi
+                // signal dgn init runtime (probe p12k B1=253). Konsumsi
+                // modifier di depan, terapkan setelah tipe di-parse.
+                let mut lead_sign: Option<bool> = None;
+                if matches!(self.peek(), Token::Signed | Token::Unsigned) {
+                    lead_sign = Some(self.peek() == &Token::Signed);
+                    self.advance();
+                }
                 match self.peek() {
                     Token::Integer => {
                         self.advance();
@@ -2345,17 +2372,18 @@ impl Parser {
                         }
                     }
                 }
+                // Trailing modifier (`int signed`, `logic unsigned`).
+                let mut trail_sign: Option<bool> = None;
                 if self.peek() == &Token::Signed {
                     self.advance();
-                    if dtype.is_none() {
-                        dtype = Some(DataType::Signed(Box::new(DataType::Int)));
-                    }
+                    trail_sign = Some(true);
                 }
                 if self.peek() == &Token::Unsigned {
                     self.advance();
-                    if dtype.is_none() {
-                        dtype = Some(DataType::Int);
-                    }
+                    trail_sign = Some(false);
+                }
+                if let Some(sig) = lead_sign.or(trail_sign) {
+                    dtype = Some(apply_sign_mod(dtype, sig));
                 }
                 let mut range = None;
                 // Packed dimensi bertingkat: `[NumCnt-1:0][Width-1:0] name = ...`.

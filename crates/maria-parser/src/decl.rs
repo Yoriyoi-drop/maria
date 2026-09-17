@@ -1594,7 +1594,16 @@ impl Parser {
                 _ => {}
             }
 
-            // Skip optional type keyword (integer, int, reg, logic, bit, string, signed)
+            // Skip optional type keyword (integer, int, reg, logic, bit, string, ...).
+            // `signed`/`unsigned` di sini adalah MODIFIER (dikonsumsi di bawah,
+            // bukan bagian list) agar `parameter signed int W` tidak salah-
+            // parse: dulu `signed` dikonsumsi sbg "tipe" lalu `int` dianggap
+            // NAMA → E1002 'expected RParen, found SW' (probe p18).
+            let mut lead_sign: Option<bool> = None;
+            if matches!(self.peek(), Token::Signed | Token::Unsigned) {
+                lead_sign = Some(self.peek() == &Token::Signed);
+                self.advance();
+            }
             let mut type_ident = None;
             match self.peek() {
                 Token::Integer
@@ -1603,7 +1612,6 @@ impl Parser {
                 | Token::Logic
                 | Token::Bit
                 | Token::String
-                | Token::Signed
                 | Token::Byte
                 | Token::Shortint
                 | Token::Longint
@@ -1632,12 +1640,15 @@ impl Parser {
                 _ => {}
             }
 
-            // Handle signed/unsigned
+            // Modifier signed/unsigned SETELAH tipe (`int signed`, `logic unsigned`).
+            let mut trail_sign: Option<bool> = None;
             if self.peek() == &Token::Signed {
                 self.advance();
+                trail_sign = Some(true);
             }
             if self.peek() == &Token::Unsigned {
                 self.advance();
+                trail_sign = Some(false);
             }
 
             // Parse optional range(s): [msb:lsb] or [msb:lsb][msb:lsb]...
@@ -1748,6 +1759,13 @@ impl Parser {
                 .as_ref()
                 .map(|t| DataType::UserDefined(*t))
                 .or(dtype);
+            // Terapkan modifier signed/unsigned (lead/trail) — `parameter
+            // signed int W` → Signed(Int) agar elaborator memperlakukannya
+            // signed (probe p18).
+            let resolved_dtype = match lead_sign.or(trail_sign) {
+                Some(sig) => Some(crate::apply_sign_mod(resolved_dtype, sig)),
+                None => resolved_dtype,
+            };
 
             params.push(ParamDecl {
                 name: Symbol::intern(&name),

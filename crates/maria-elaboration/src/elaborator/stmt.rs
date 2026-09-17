@@ -541,6 +541,13 @@ impl Elaborator {
         if lhs_w == 0 {
             return;
         }
+        // Jangan fold RHS yang mereferensikan param SIGNED: try_fold_const_at_width
+        // → const_eval memperlakukan Ident sbg unsigned, sehingga `lt = (N < 0)`
+        // (N=localparam int -2) salah ter-fold jadi 0 (probe test_edge_signed_param_negative).
+        if super::expr_refs_signed_param(rhs_ast, &self.param_is_signed) {
+            propagate_context_width(ir_rhs, lhs_w, signals);
+            return;
+        }
         if let Some(c) = try_fold_const_at_width(rhs_ast, &self.param_vals, lhs_w) {
             *ir_rhs = c;
         } else {
@@ -934,17 +941,55 @@ impl Elaborator {
                 true_branch,
                 false_branch,
             } => {
-                // Constant-fold condition — if known at compile time, eliminate dead branch
-                if let Ok(val) = const_eval_with_params(cond, &self.param_vals) {
-                    if val != 0 {
-                        // Condition is always true — keep only true branch
-                        Ok(self.elaborate_stmt(true_branch, signal_map, known_modules, signals)?)
-                    } else {
-                        // Condition is always false — keep only false branch
-                        match false_branch {
-                            Some(fb) => self.elaborate_stmt(fb, signal_map, known_modules, signals),
-                            None => Ok(IrStmt::Block { stmts: vec![] }),
+                // Constant-fold condition — if known at compile time, eliminate dead branch.
+                // JANGAN fold bila kondisi mereferensikan param SIGNED:
+                // const_eval_with_params memperlakukan Ident sbg unsigned
+                // sehingga `PD < 0` (PD = localparam int -2) salah ter-fold
+                // jadi false; biarkan runtime mengevaluasi dgn IrExpr::Signed
+                // (probe p12f/p12g — signedness hilang).
+                let can_fold =
+                    !super::expr_refs_signed_param(cond, &self.param_is_signed);
+                if can_fold {
+                    if let Ok(val) = const_eval_with_params(cond, &self.param_vals) {
+                        if val != 0 {
+                            // Condition is always true — keep only true branch
+                            Ok(self.elaborate_stmt(
+                                true_branch,
+                                signal_map,
+                                known_modules,
+                                signals,
+                            )?)
+                        } else {
+                            // Condition is always false — keep only false branch
+                            match false_branch {
+                                Some(fb) => self.elaborate_stmt(
+                                    fb,
+                                    signal_map,
+                                    known_modules,
+                                    signals,
+                                ),
+                                None => Ok(IrStmt::Block { stmts: vec![] }),
+                            }
                         }
+                    } else {
+                        let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                        let true_stmt = vec![self.elaborate_stmt(
+                            true_branch,
+                            signal_map,
+                            known_modules,
+                            signals,
+                        )?];
+                        let false_stmt = match false_branch {
+                            Some(fb) => {
+                                vec![self.elaborate_stmt(fb, signal_map, known_modules, signals)?]
+                            }
+                            None => vec![],
+                        };
+                        Ok(IrStmt::If {
+                            cond: ir_cond,
+                            true_branch: true_stmt,
+                            false_branch: false_stmt,
+                        })
                     }
                 } else {
                     let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
