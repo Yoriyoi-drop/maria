@@ -417,6 +417,38 @@ pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> Log
                 }
             }
         }
+        BinaryIrOp::Eq | BinaryIrOp::CaseEq => {
+            // Perbandingan kesetaraan dua operand SIGNED: bandingkan pola
+            // setelah BOTH di-sign-extend ke lebar umum. Zero-extend
+            // (`eval_binary`) salah utk `int X = -2; X === -2` (64-bit
+            // vs 32-bit): 0xFF..FE vs 0x00000000FFFFFFFE (probe p12f).
+            let mode = get_xprop_mode();
+            if op == BinaryIrOp::Eq
+                && (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+                && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
+            {
+                return LogicVec {
+                    bits: vec![LogicVal::X],
+                    width: 1,
+                };
+            }
+            let eq = lhs_ext.bits == rhs_ext.bits;
+            LogicVec::from_u64(if eq { 1 } else { 0 }, 1)
+        }
+        BinaryIrOp::Neq | BinaryIrOp::CaseNeq => {
+            let mode = get_xprop_mode();
+            if op == BinaryIrOp::Neq
+                && (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+                && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
+            {
+                return LogicVec {
+                    bits: vec![LogicVal::X],
+                    width: 1,
+                };
+            }
+            let eq = lhs_ext.bits == rhs_ext.bits;
+            LogicVec::from_u64(if eq { 0 } else { 1 }, 1)
+        }
         _ => eval_binary(op, lhs, rhs),
     }
 }

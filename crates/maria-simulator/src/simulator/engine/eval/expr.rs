@@ -24,8 +24,13 @@ impl SimulationEngine {
         if let IrExpr::FillLit(v) = expr {
             let w = self.get_lvalue_width(lhs);
             Ok(LogicVec::fill(*v, w))
-        } else if let IrExpr::Signed(inner) = expr {
-            let mut val = self.evaluate_expr(inner)?;
+        } else if is_signed_expr(expr, &self.design.top.signals) {
+            // RHS signed (LRM §11.8.2): assignment ke LHS lebih lebar harus
+            // SIGN-extend. Dulu hanya cabang `IrExpr::Signed(inner)` top-level
+            // — `-8'sd3` (UnaryOp Minus atas literal signed) terlewat sehingga
+            // zero-extend: -3 jadi 253 (probe p12i). Generalisasi via
+            // is_signed_expr menangani unary/binary/signal/ternary signed.
+            let mut val = self.evaluate_expr(expr)?;
             let target_w = self.get_lvalue_width(lhs);
             if val.width < target_w {
                 let msb = val.bits.last().copied().unwrap_or(LogicVal::Zero);
@@ -444,7 +449,14 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(result.to_bits(), 64))
                 } else if matches!(
                     op,
-                    BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge
+                    BinaryIrOp::Eq
+                        | BinaryIrOp::Neq
+                        | BinaryIrOp::CaseEq
+                        | BinaryIrOp::CaseNeq
+                        | BinaryIrOp::Lt
+                        | BinaryIrOp::Le
+                        | BinaryIrOp::Gt
+                        | BinaryIrOp::Ge
                 ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
                     && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
@@ -452,6 +464,9 @@ impl SimulationEngine {
                     // operand unsigned (mis. `logic [1:0] m = 3; m > 2` →
                     // 3 > 2 = 1, bukan sign-extend 2-bit 11 → -1 > 2 = 0).
                     // Pakai eval_binary_signed HANYA jika KEDUANYA signed.
+                    // Eq/CaseEq ikut (sign-extend operan ke lebar umum):
+                    // `int X = -2; X === -2` salah bila zero-extend
+                    // (0xFFFFFFFFFFFFFFFE vs 0x00000000FFFFFFFE — probe p12f).
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else if matches!(op, BinaryIrOp::Div | BinaryIrOp::Mod)
                     && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)

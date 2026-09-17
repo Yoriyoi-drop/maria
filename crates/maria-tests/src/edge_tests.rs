@@ -948,6 +948,105 @@ endmodule"#,
     );
 }
 
+// ── Const-fold / signedness param (probe p12/p18 series) ─────────────────
+// Div/Mod konstan dua operand signed harus pakai aritmetika signed
+// (LRM §11.8.2): `-7/3 == -2`, `-7%3 == -1` (dulu dihitung unsigned →
+// 0xFFFF...F9/3 = 6148914691236517203).
+#[test]
+fn test_edge_const_fold_divmod_signed() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    localparam int PD = -7 / 3;
+    localparam int PM = -7 % 3;
+    logic [31:0] od, om;
+    initial begin od = PD; om = PM; #1 $finish; end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, od) = sigs.iter().find(|(n, _)| n == "od").unwrap();
+    let (_, om) = sigs.iter().find(|(n, _)| n == "om").unwrap();
+    assert_eq!(od.to_u64(), 0xFFFF_FFFE, "PD=-7/3 harus 0xFFFFFFFE (-2)");
+    assert_eq!(om.to_u64(), 0xFFFF_FFFF, "PM=-7%3 harus 0xFFFFFFFF (-1)");
+}
+
+// Param bertipe signed bernilai negatif harus tetap signed: `localparam
+// int N = -2; N < 0` = 1 (dulu 0 — signedness hilang → dianggap unsigned).
+#[test]
+fn test_edge_signed_param_negative() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    localparam int N = -2;
+    logic lt, neg3;
+    logic y_decl = (N < 0);
+    logic y_assign;
+    assign y_assign = (N < 0);
+    initial begin
+        lt = (N < 0);
+        neg3 = (N === -2);
+        #1 $finish;
+    end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, lt) = sigs.iter().find(|(n, _)| n == "lt").unwrap();
+    let (_, neg3) = sigs.iter().find(|(n, _)| n == "neg3").unwrap();
+    let (_, y_decl) = sigs.iter().find(|(n, _)| n == "y_decl").unwrap();
+    let (_, y_assign) = sigs.iter().find(|(n, _)| n == "y_assign").unwrap();
+    assert_eq!(lt.to_u64(), 1, "N < 0 harus 1 untuk N=-2");
+    assert_eq!(neg3.to_u64(), 1, "N === -2 harus 1");
+    assert_eq!(y_decl.to_u64(), 1, "decl init (N<0) harus 1");
+    assert_eq!(y_assign.to_u64(), 1, "assign (N<0) harus 1");
+}
+
+// Parser: `localparam signed int` / `parameter signed int` — `signed` adalah
+// MODIFIER di depan tipe, bukan "tipe lalu int jadi nama" (dulu E1002 /
+// param jadi signal). Probe p12k/p18.
+#[test]
+fn test_edge_signed_modifier_params() {
+    let sigs = simulate_signals(
+        r#"
+module sub #(parameter signed int SW = -5) ();
+    localparam int COPY = SW;
+    logic lt;
+    initial lt = (COPY < 0);
+endmodule
+module top;
+    localparam signed int L = -8'sd3;
+    logic lt_l;
+    sub u();
+    initial begin
+        lt_l = (L < 0);
+        #1 $finish;
+    end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, lt_l) = sigs.iter().find(|(n, _)| n == "lt_l").unwrap();
+    assert_eq!(lt_l.to_u64(), 1, "localparam signed int L=-3; L<0 = 1");
+}
+
+// Runtime unary minus atas literal sized SIGNED: `integer r = -8'sd3`
+// harus sign-extend ke 0xFFFFFFFD (-3), bukan zero-extend 0xFD (253).
+#[test]
+fn test_edge_neg_sized_literal_sign_extend() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    integer r;
+    initial begin r = -8'sd3; #1 $finish; end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, r) = sigs.iter().find(|(n, _)| n == "r").unwrap();
+    assert_eq!(r.to_u64(), 0xFFFF_FFFD, "-8'sd3 harus sign-extend ke -3");
+}
+
 // === 15. Assignment patterns ===
 
 #[test]
