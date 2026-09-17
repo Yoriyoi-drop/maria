@@ -267,6 +267,28 @@ pub fn collect_loop_var_names(stmts: &[Stmt], out: &mut Vec<Symbol>) {
     }
 }
 
+/// Kumpulkan nama var dari `init`/`step` LoopFor — mendukung `Stmt::Block`
+/// (for-init/step multi-var `int i=0, j=10; i++, j--` kini dipecah jadi Block
+/// assignment; probe x03).
+fn collect_loop_init_names(s: Option<&Stmt>, out: &mut Vec<Symbol>) {
+    match s {
+        Some(Stmt::BlockingAssign {
+            lhs: Expr::Ident { name, .. },
+            ..
+        }) => {
+            if !out.contains(name) {
+                out.push(*name);
+            }
+        }
+        Some(Stmt::Block { stmts }) => {
+            for st in stmts {
+                collect_loop_init_names(Some(st), out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn collect_loop_var_names_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
     match stmt {
         Stmt::Block { stmts } | Stmt::LoopForever { stmts } => collect_loop_var_names(stmts, out),
@@ -313,15 +335,7 @@ fn collect_loop_var_names_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
         Stmt::LoopFor {
             init, step, stmts, ..
         } => {
-            if let Some(Stmt::BlockingAssign {
-                lhs: Expr::Ident { name, .. },
-                ..
-            }) = init.as_deref()
-            {
-                if !out.contains(name) {
-                    out.push(*name);
-                }
-            }
+            collect_loop_init_names(init.as_deref(), out);
             if let Some(s) = init {
                 collect_loop_var_names_stmt(s, out);
             }

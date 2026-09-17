@@ -1250,6 +1250,32 @@ endmodule"#,
     assert_eq!(g("t"), 10, "$time harus 10");
 }
 
+// for-init/step multi-var (IEEE 1800 §12.8): `for (int i=0, j=10; i<j; i++, j--)`.
+// Dulu var/step ke-2 dibuang parser → "signal 'j' not found" (probe x03).
+#[test]
+fn test_edge_for_multi_var() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    int sum = 0;
+    function automatic int add2(int a, int b);
+        return a + b;
+    endfunction
+    integer k;
+    initial begin
+        for (int i = 0, j = 10; i < j; i++, j--) sum += i;
+        k = add2(3, 4);
+        #1 $finish;
+    end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let g = |n: &str| sigs.iter().find(|(x, _)| x == n).unwrap().1.to_u64();
+    assert_eq!(g("sum"), 10, "for multi-var: iterasi i=0..4 → 10");
+    assert_eq!(g("k"), 7, "function return");
+}
+
 // === 15. Assignment patterns ===
 
 #[test]

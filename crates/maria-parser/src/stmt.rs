@@ -2657,9 +2657,10 @@ impl Parser {
         } else {
             None
         };
-        // Multi-var init `int i = 0, StateEnumT t = t.first();` (IEEE §12.8)
-        // — item lanjutan dipisah koma. Tanpa ini: "expected Semi, found
-        // Comma" → function/modul gagal (prim_sparse_fsm_flop, keccak_2share).
+        // Multi-var init `int i = 0, j = 10;` (IEEE §12.8) — item lanjutan
+        // dipisah koma. Bangun assignment utk tiap var (dulu hanya di-skip →
+        // var ke-2 tak terdeklarasi: "signal 'j' not found"; probe x03).
+        let mut extra_inits: Vec<Stmt> = Vec::new();
         while self.peek() == &Token::Comma {
             self.advance();
             while matches!(
@@ -2691,12 +2692,33 @@ impl Parser {
             {
                 self.advance();
             }
-            self.expect_ident()?;
-            if self.peek() == &Token::BlockingAssign {
+            let vname = self.expect_ident()?;
+            let vrhs = if self.peek() == &Token::BlockingAssign {
                 self.advance();
-                let _ = self.parse_expr(0)?;
-            }
+                self.parse_expr(0)?
+            } else {
+                Expr::Value(Value::Decimal(0))
+            };
+            extra_inits.push(Stmt::BlockingAssign {
+                lhs: Expr::Ident {
+                    name: vname,
+                    line: 0,
+                    col: 0,
+                },
+                rhs: vrhs,
+                delay: None,
+            });
         }
+        let init = if extra_inits.is_empty() {
+            init
+        } else {
+            let mut all: Vec<Stmt> = Vec::new();
+            if let Some(first) = init {
+                all.push(*first);
+            }
+            all.extend(extra_inits);
+            Some(Box::new(Stmt::Block { stmts: all }))
+        };
         self.expect(Token::Semi)?;
         let cond = if self.peek() != &Token::Semi {
             Some(self.parse_expr(0)?)
@@ -2843,19 +2865,55 @@ impl Parser {
         } else {
             None
         };
-        // Multi-step `i += 1, t = t.next()` (IEEE §12.8) — sisa step dipisah
-        // koma; konsumsi `, ident =/+= expr` lanjutan.
+        // Multi-step `i++, j--` / `i += 1, t = t.next()` (IEEE §12.8) — sisa
+        // step dipisah koma. Bangun statement (dulu hanya di-konsumsi/dibuang
+        // → `j--` hilang; probe x03).
+        let mut extra_steps: Vec<Stmt> = Vec::new();
         while self.peek() == &Token::Comma {
             self.advance();
-            if matches!(self.peek(), Token::Ident(_)) {
+            if let Token::Ident(var) = self.peek().clone() {
                 self.advance();
                 match self.peek() {
                     Token::Increment | Token::Decrement => {
+                        let is_inc = self.peek() == &Token::Increment;
                         self.advance();
+                        let op = if is_inc { BinaryOp::Add } else { BinaryOp::Sub };
+                        extra_steps.push(Stmt::BlockingAssign {
+                            lhs: Expr::Ident { name: var, line: 0, col: 0 },
+                            rhs: Expr::BinaryOp {
+                                op,
+                                lhs: Box::new(Expr::Ident { name: var, line: 0, col: 0 }),
+                                rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                            },
+                            delay: None,
+                        });
                     }
-                    Token::BlockingAssign | Token::PlusAssign | Token::MinusAssign => {
+                    Token::BlockingAssign => {
                         self.advance();
-                        let _ = self.parse_expr(0)?;
+                        let rhs = self.parse_expr(0)?;
+                        extra_steps.push(Stmt::BlockingAssign {
+                            lhs: Expr::Ident { name: var, line: 0, col: 0 },
+                            rhs,
+                            delay: None,
+                        });
+                    }
+                    Token::PlusAssign | Token::MinusAssign => {
+                        let op = if self.peek() == &Token::PlusAssign {
+                            BinaryOp::Add
+                        } else {
+                            BinaryOp::Sub
+                        };
+                        self.advance();
+                        let rhs = self.parse_expr(0)?;
+                        extra_steps.push(Stmt::BlockingAssign {
+                            lhs: Expr::Ident { name: var, line: 0, col: 0 },
+                            rhs: Expr::BinaryOp {
+                                op,
+                                lhs: Box::new(Expr::Ident { name: var, line: 0, col: 0 }),
+                                rhs: Box::new(rhs),
+                            },
+                            delay: None,
+                        });
                     }
                     _ => {}
                 }
@@ -2863,6 +2921,16 @@ impl Parser {
                 let _ = self.parse_expr(0)?;
             }
         }
+        let step = if extra_steps.is_empty() {
+            step
+        } else {
+            let mut all: Vec<Stmt> = Vec::new();
+            if let Some(first) = step {
+                all.push(*first);
+            }
+            all.extend(extra_steps);
+            Some(Box::new(Stmt::Block { stmts: all }))
+        };
         self.expect(Token::RParen)?;
         let stmts = self.parse_stmt_block()?;
         Ok(Stmt::LoopFor {
