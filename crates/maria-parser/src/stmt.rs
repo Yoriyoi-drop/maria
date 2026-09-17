@@ -1787,7 +1787,7 @@ impl Parser {
             Token::WaitOrder => self.parse_wait_order(),
             Token::Arrow => {
                 self.advance();
-                let mut name = self.expect_ident()?;
+                let name = self.expect_ident()?;
                 // Event hierarkis `-> evt.member;` (DV umum): konsumsi `.member`
                 // . EventTrigger menyimpan nama dasar.
                 while self.peek() == &Token::Dot {
@@ -1962,9 +1962,13 @@ impl Parser {
                                                         Token::LParen => depth += 1,
                                                         Token::RParen => {
                                                             depth -= 1;
-                                                            if depth < 0 { break; }
+                                                            if depth < 0 {
+                                                                break;
+                                                            }
                                                         }
-                                                        Token::Question | Token::Amp => has_complex = true,
+                                                        Token::Question | Token::Amp => {
+                                                            has_complex = true
+                                                        }
                                                         Token::Eof => break,
                                                         _ => {}
                                                     }

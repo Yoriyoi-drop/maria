@@ -113,10 +113,7 @@ impl Parser {
             let line = self.peek_line();
             let col = self.peek_col();
             self.push_warning_at(
-                format!(
-                    "expected ';' after module header, found `{}`",
-                    self.peek()
-                ),
+                format!("expected ';' after module header, found `{}`", self.peek()),
                 line,
                 col,
             );

@@ -2375,7 +2375,7 @@ pub async fn run_lsp_server() {
 }
 
 // ═══ LSP-09: Inlay Hints (type hints) ═══
-
+#[allow(dead_code)] // scaffolding LSP-09 — belum dipanggil handler LSP (dihasilkan API utk dipakai nanti)
 impl LspBackend {
     /// Compute inlay hints for a document (LSP-09).
     /// Returns type hints for variables, parameters, and function return types.
@@ -2739,6 +2739,7 @@ fn count_word_occurrences(text: &str, word: &str) -> usize {
 
 // ═══ LSP-13: Call Hierarchy ═══
 
+#[allow(dead_code)] // scaffolding LSP-13 — API disiapkan, handler belum di-wire
 impl LspBackend {
     /// Compute call hierarchy for a symbol (LSP-13).
     /// Returns incoming calls (callers) and outgoing calls (callees).

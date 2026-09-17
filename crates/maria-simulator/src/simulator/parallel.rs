@@ -8,13 +8,13 @@ use maria_ir::{
 };
 use std::sync::Arc;
 
-/// Semantik packed-eval untuk jalur paralel (BUG FIX fuZZ): evaluator paralel
-/// (SIM-28) memakai `eval_binary` (value.rs, pessimistic) sedangkan jalur
-/// serial memakai `eval_binary_packed` (tabel LRM) saat `use_packed_eval` —
-/// hasil beda utk X/Z (`x & 0`: packed=0, pessimistic=x). Menambah dead-code
-/// (EMI) bisa menggeser jumlah proses comb melewati ambang paralel →
-/// mismatch EMI palsu. Solusi: flag scoped thread-local — paralel meneruskan
-/// semantik `use_packed_eval` dari engine, konsisten dgn serial.
+// Semantik packed-eval untuk jalur paralel (BUG FIX fuZZ): evaluator paralel
+// (SIM-28) memakai `eval_binary` (value.rs, pessimistic) sedangkan jalur
+// serial memakai `eval_binary_packed` (tabel LRM) saat `use_packed_eval` —
+// hasil beda utk X/Z (`x & 0`: packed=0, pessimistic=x). Menambah dead-code
+// (EMI) bisa menggeser jumlah proses comb melewati ambang paralel →
+// mismatch EMI palsu. Solusi: flag scoped thread-local — paralel meneruskan
+// semantik `use_packed_eval` dari engine, konsisten dgn serial.
 thread_local! {
     static PACKED_EVAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -777,9 +777,8 @@ fn write_lvalue_simple(
                 .get(*sig_id)
                 .map(|a| (**a).clone())
                 .unwrap_or_else(|| LogicVec::new(1));
-            // `arr[i][msb:lsb] = val` — val LSB → bit abs_start, tanpa
+            // `arr[i][msb:lsb] = val` — val LSB → bit base+start, tanpa
             // reversal (konsisten serial lvalue.rs:397).
-            let abs_start = base + start;
             let max_end = base + end.min(existing.width.saturating_sub(1).saturating_sub(base));
             for i in start..=end.min(existing.width.saturating_sub(1).saturating_sub(base)) {
                 let src_idx = (i - start).min(val.bits.len().saturating_sub(1));

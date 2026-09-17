@@ -39,22 +39,22 @@ pub const DEFAULT_MAX_TIME_NS: u64 = 100_000;
 
 /// Emit a list of diagnostics through TerminalEmitter.
 // Global warning filter state (set once at startup, used by emit_diags_filtered)
-static mut WARN_FILTER_NO_WARN: bool = false;
-static mut WARN_FILTER_ALLOW: Vec<String> = Vec::new();
-static mut WARN_FILTER_MAX: Option<usize> = None;
+static WARN_FILTER_NO_WARN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static WARN_FILTER_ALLOW: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+static WARN_FILTER_MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
 
 /// Initialize global warning filter from CLI args (call once at startup)
 fn init_warn_filter(cli: &Cli) {
-    unsafe {
-        WARN_FILTER_NO_WARN = cli.no_warn;
-        WARN_FILTER_ALLOW = cli.allow_codes.clone();
-        WARN_FILTER_MAX = cli.max_warnings;
-    }
+    WARN_FILTER_NO_WARN.store(cli.no_warn, std::sync::atomic::Ordering::Relaxed);
+    let _ = WARN_FILTER_ALLOW.set(cli.allow_codes.clone());
+    let _ = WARN_FILTER_MAX.set(cli.max_warnings.unwrap_or(usize::MAX));
 }
 
 fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
-    let (no_warn, allow_codes, max_warn) =
-        unsafe { (WARN_FILTER_NO_WARN, &WARN_FILTER_ALLOW, WARN_FILTER_MAX) };
+    let no_warn = WARN_FILTER_NO_WARN.load(std::sync::atomic::Ordering::Relaxed);
+    let allow_codes = WARN_FILTER_ALLOW.get().cloned().unwrap_or_default();
+    let max_warn = WARN_FILTER_MAX.get().copied();
     if diags.is_empty() {
         return;
     }
@@ -406,9 +406,11 @@ fn run_formal(
     connect_pairs: &[String],
 ) -> Result<(), SimError> {
     use maria_api::formal::*;
-    let mut formal_cfg = FormalConfig::default();
-    formal_cfg.bound = bound;
-    formal_cfg.induction = induction;
+    let formal_cfg = FormalConfig {
+        bound,
+        induction,
+        ..Default::default()
+    };
     let mut formal_engine = FormalEngine::new(formal_cfg);
     let results = formal_engine.check_assertions_bmc(ir_design);
 
@@ -648,14 +650,16 @@ fn real_main() {
     // ConfigContext memakai config yang sudah di-load (tanpa baca ulang);
     // CLI override diterapkan ke config (CLI menang atas file/env).
     let mut cfgctx = maria_api::env::ConfigContext::from_loaded(cfg, cli.config.as_deref());
-    let mut cli_overrides = maria_api::env::EnvCliOptions::default();
-    cli_overrides.max_time = cli.max_time;
-    cli_overrides.force_sim = Some(cli.force_sim);
-    cli_overrides.recompile = cli.recompile;
-    cli_overrides.elab_mode = cli.config_elab_mode.clone();
-    cli_overrides.coverage_threshold = cli.coverage_threshold;
-    cli_overrides.deep_debug = Some(cli.deep_debug);
-    cli_overrides.snap_interval = Some(cli.snap_interval);
+    let cli_overrides = maria_api::env::EnvCliOptions {
+        max_time: cli.max_time,
+        force_sim: Some(cli.force_sim),
+        recompile: cli.recompile,
+        elab_mode: cli.config_elab_mode.clone(),
+        coverage_threshold: cli.coverage_threshold,
+        deep_debug: Some(cli.deep_debug),
+        snap_interval: Some(cli.snap_interval),
+        ..Default::default()
+    };
     cli_overrides.apply(&mut cfgctx);
 
     // Workspace di-seed dari CLI (sumber eksplisit) — menghindari scan
@@ -3118,11 +3122,7 @@ fn run_fast(
     // error dan TIDAK memblokir sim — sebelumnya parse_errors.len() ikut
     // menghitung warning + duplikat → "✗ Parse (234 error)" padahal error
     // nyata cuma 1-2 (OpenTitan DV filelist). (sesi opentitan fiks)
-    let parse_errs = session
-        .parse_errors
-        .iter()
-        .filter(|d| d.is_error())
-        .count();
+    let parse_errs = session.parse_errors.iter().filter(|d| d.is_error()).count();
     let has_parse_errors = parse_errs > 0;
 
     // Per-tahap validation: hitung error per kategori dari elab_diags
@@ -3775,7 +3775,7 @@ fn run_fast(
 
     let vcd_path = cli
         .output
-        .unwrap_or_else(|| format!("{}.vcd", &engine.design.top.name.to_string()));
+        .unwrap_or_else(|| format!("{}.vcd", engine.design.top.name));
     let mut vcd = VcdWriter::new(&vcd_path, &engine.design).map_err(|e| {
         SimError::with_diag(
             DiagCode::WaveformError,
@@ -4329,9 +4329,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                     "--boot-iso butuh region RAM — definisikan ram = { base, size } di config .meu (mis. 0x0:0x100000)",
                 ));
             }
-            let mut bytes = Vec::new();
-            {
-                use std::io::Read;
+            let bytes = {
                 let mut f = std::fs::File::open(iso_path).map_err(|e| {
                     SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e))
                 })?;
@@ -4350,9 +4348,9 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                     ));
                 }
                 // no-emul: BIOS muat boot image (cdboot, ~512-2048 byte).
-                bytes = maria_api::emu::iso::read_boot_image(&mut f, &eltorito.entry, 0x10000)
-                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
-            }
+                maria_api::emu::iso::read_boot_image(&mut f, &eltorito.entry, 0x10000)
+                    .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
+            };
             if bytes.len() < 512 {
                 return Err(SimError::with_diag(
                     DiagCode::InvalidSyntax,
@@ -4480,7 +4478,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
         if a.dump_memory_map {
             out.push_str(&maria_api::emu::dump::dump_memory_map(&mhir));
             if !memmap.regions.is_empty() {
-                out.push_str(&format!("\nMemory regions (host):\n"));
+                out.push_str("\nMemory regions (host):\n");
                 for r in &memmap.regions {
                     out.push_str(&format!(
                         "  0x{:08x}-0x{:08x}  {:<12} {} ({})\n",
@@ -4594,7 +4592,6 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                             }
                             std::thread::sleep(std::time::Duration::from_millis(50));
                         }
-                        mem_final = machine.mem;
                         print!("{}", out);
                         return Ok(());
                     }

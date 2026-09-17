@@ -33,6 +33,7 @@ pub struct Cqe {
 /// Async I/O submission queue.
 pub struct IoUring {
     pending: VecDeque<IoOp>,
+    #[allow(dead_code)] // hasil operasi IO async — dibaca subsystem lain/selanjutnya
     completed: VecDeque<IoResult>,
     next_id: u64,
     is_available: bool,

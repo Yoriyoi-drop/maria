@@ -123,7 +123,9 @@ mod debug_syscall_lex {
         let mut parser = Parser::new(tokens, "<test>")
             .with_source_lines(&source_with_header)
             .with_file_line_map(file_line_map);
-        let design = parser.parse_design().expect("parse harus sukses (recovery)");
+        let design = parser
+            .parse_design()
+            .expect("parse harus sukses (recovery)");
         assert_eq!(design.modules.len(), 1);
         let warns: Vec<_> = parser.errors.iter().filter(|d| !d.is_error()).collect();
         assert!(
@@ -132,11 +134,9 @@ mod debug_syscall_lex {
         );
         // Lokasi harus baris 5 (`logic d;` — token tempat ';' hilang), bukan
         // EOF/lokasi lain.
-        let any_line5 = warns.iter().any(|d| {
-            d.source_snippet
-                .as_ref()
-                .map_or(false, |s| s.line == 5)
-        });
+        let any_line5 = warns
+            .iter()
+            .any(|d| d.source_snippet.as_ref().map_or(false, |s| s.line == 5));
         assert!(
             any_line5,
             "warning harus berlokasi di baris 5, dapat {:?}",
@@ -169,15 +169,17 @@ mod debug_syscall_lex {
         let mut parser = Parser::new(tokens, "<test>")
             .with_source_lines(&source_with_header)
             .with_file_line_map(file_line_map);
-        let _ = parser.parse_design().expect("parse harus sukses (recovery)");
+        let _ = parser
+            .parse_design()
+            .expect("parse harus sukses (recovery)");
         let warns: Vec<_> = parser.errors.iter().filter(|d| !d.is_error()).collect();
         assert!(
             !warns.is_empty(),
             "header modul invalid harus memunculkan warning (dulu diam-diam)"
         );
-        let any_line1 = warns.iter().any(|d| {
-            d.source_snippet.as_ref().map_or(false, |s| s.line == 1)
-        });
+        let any_line1 = warns
+            .iter()
+            .any(|d| d.source_snippet.as_ref().map_or(false, |s| s.line == 1));
         assert!(
             any_line1,
             "warning harus berlokasi di baris 1 (token `LBrace`), dapat {:?}",

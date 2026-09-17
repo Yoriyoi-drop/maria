@@ -415,7 +415,7 @@ impl CompileSession {
                 // file_line_map: tracks `line directive mappings for resolve_source_file.
                 // Positions are CUMULATIVE in the per-file combined (same as token lines).
                 // Adjusted by base offset after lexing, same as tokens.
-                let mut file_line_map: Vec<(usize, usize, String)> = Vec::new();
+                let file_line_map: Vec<(usize, usize, String)>;
                 let tokens = if use_fast_lexer {
                     // FastLexer keeps cumulative line numbers; content after the
                     // initial `line 1 "file" directive starts at internal line 2,
@@ -1332,8 +1332,11 @@ impl CompileSession {
         // file OpenTitan (fs::read + serialize_design bincode + include hash —
         // SEQUENTIAL). Semua komponen baca-only → par_iter (skala core).
         use rayon::prelude::*;
-        let entries: Vec<(PathBuf, &Design)> =
-            self.prev_designs.iter().map(|(p, d)| (p.clone(), d)).collect();
+        let entries: Vec<(PathBuf, &Design)> = self
+            .prev_designs
+            .iter()
+            .map(|(p, d)| (p.clone(), d))
+            .collect();
         // Pre-hash SEMUA distinct include sekali (paralel) — cache by path
         // tanpa kontensi Mutex antar worker.
         let distinct_incs: std::collections::HashSet<PathBuf> =
@@ -1341,7 +1344,9 @@ impl CompileSession {
         let inc_hashes: HashMap<PathBuf, u64> = distinct_incs
             .par_iter()
             .map(|inc| {
-                let h = std::fs::read(inc).map(|b| compute_checksum(&b)).unwrap_or(0);
+                let h = std::fs::read(inc)
+                    .map(|b| compute_checksum(&b))
+                    .unwrap_or(0);
                 (inc.clone(), h)
             })
             .collect();
@@ -1352,17 +1357,28 @@ impl CompileSession {
             u64,             // size
             Vec<PathBuf>,    // deps
             micd::FileStatus,
-            Option<String>,  // combined
-            Option<Vec<u8>>, // design_bytes
+            Option<String>,      // combined
+            Option<Vec<u8>>,     // design_bytes
             Vec<(PathBuf, u64)>, // include_hashes
-            u64,             // ast_hash
-            bool,            // was_changed
+            u64,                 // ast_hash
+            bool,                // was_changed
         )> = entries
             .par_iter()
             .map(|(path, design)| {
                 // F10: path inline (buffer transpile `.mv`) tidak direkam ke MICD.
                 if self.config.inline_sources.contains_key(path) {
-                    return (None, 0, 0, Vec::new(), micd::FileStatus::Unchanged, None, None, Vec::new(), 0, false);
+                    return (
+                        None,
+                        0,
+                        0,
+                        Vec::new(),
+                        micd::FileStatus::Unchanged,
+                        None,
+                        None,
+                        Vec::new(),
+                        0,
+                        false,
+                    );
                 }
                 let is_restored = self.micd_restored_paths.contains(path);
                 let (content_hash, combined, design_bytes, ast_hash) = if is_restored {
@@ -2330,8 +2346,7 @@ mod tests {
         let mut session = CompileSession::new(config);
         let _ = session.compile().unwrap();
         assert!(
-            session.timing.preprocess_us + session.timing.lex_us + session.timing.parse_us > 0
-                || session.timing.total_us >= 0,
+            session.timing.preprocess_us + session.timing.lex_us + session.timing.parse_us > 0,
             "at least one phase should have timing > 0"
         );
     }
@@ -2395,7 +2410,7 @@ mod tests {
 
         // Cache should have entries
         let stats = session.cache_stats();
-        assert!(stats.ast_entries > 0 || stats.total_invalidations >= 0);
+        assert!(stats.ast_entries > 0);
     }
 
     #[test]
@@ -2912,7 +2927,7 @@ fn discover_names_in_source(
                             classes.insert(n);
                             break;
                         }
-                        _ => break,
+                        _ => continue,
                     }
                 }
             }

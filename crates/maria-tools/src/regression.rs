@@ -178,6 +178,7 @@ pub enum RegressionTrend {
     Degrading,
 }
 
+#[allow(dead_code)] // util waktu — dipakai fitur report selanjutnya
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -185,6 +186,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+#[allow(dead_code)] // util waktu — dipakai fitur report selanjutnya
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

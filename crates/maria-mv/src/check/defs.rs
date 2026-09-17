@@ -2,7 +2,7 @@
 //! interface validate. 1 file = 1 tanggung jawab.
 
 use super::expr::check_type;
-use super::{err_at, new_scope, td_name, Ctx};
+use super::{err_at, new_scope, Ctx};
 use crate::ast::*;
 use crate::MvError;
 use std::collections::HashSet;

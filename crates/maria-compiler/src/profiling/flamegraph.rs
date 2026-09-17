@@ -198,7 +198,7 @@ impl std::fmt::Display for FlamegraphProfiler {
 
 /// Demo: buat sample folded stacks untuk testing.
 pub fn demo_folded() -> String {
-    let mut p = FlamegraphProfiler::new();
+    let p = FlamegraphProfiler::new();
     p.start();
     p.record(&[
         "BlockingAssign",

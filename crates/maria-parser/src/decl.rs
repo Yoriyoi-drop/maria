@@ -331,8 +331,7 @@ impl Parser {
             // unsigned = default, no-op
         }
 
-        let decl_expr_range = if self.peek() == &Token::LBrack
-            && self.peek_ahead(1) != &Token::Star
+        let decl_expr_range = if self.peek() == &Token::LBrack && self.peek_ahead(1) != &Token::Star
         {
             self.parse_range()?
         } else {

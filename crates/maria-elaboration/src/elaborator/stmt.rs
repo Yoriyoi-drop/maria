@@ -364,8 +364,8 @@ pub(crate) fn propagate_context_width(e: &mut IrExpr, ctx: usize, signals: &[Sig
                     // Bug: using ctx.max(wb0) leaked assignment width
                     // into shift, widening ~(2'b10) from 2 to 8/32.
                     let cmp_ctx = wb0.max(wa0);
-                    let wa1 = propagate_context_width(a, cmp_ctx, signals);
-                    let wb1 = propagate_context_width(b, cmp_ctx, signals);
+                    let _wa1 = propagate_context_width(a, cmp_ctx, signals);
+                    let _wb1 = propagate_context_width(b, cmp_ctx, signals);
                     wrap_cast(e, ctx, signals)
                 }
                 BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl => {
@@ -947,8 +947,7 @@ impl Elaborator {
                 // sehingga `PD < 0` (PD = localparam int -2) salah ter-fold
                 // jadi false; biarkan runtime mengevaluasi dgn IrExpr::Signed
                 // (probe p12f/p12g — signedness hilang).
-                let can_fold =
-                    !super::expr_refs_signed_param(cond, &self.param_is_signed);
+                let can_fold = !super::expr_refs_signed_param(cond, &self.param_is_signed);
                 if can_fold {
                     if let Ok(val) = const_eval_with_params(cond, &self.param_vals) {
                         if val != 0 {
@@ -962,12 +961,9 @@ impl Elaborator {
                         } else {
                             // Condition is always false — keep only false branch
                             match false_branch {
-                                Some(fb) => self.elaborate_stmt(
-                                    fb,
-                                    signal_map,
-                                    known_modules,
-                                    signals,
-                                ),
+                                Some(fb) => {
+                                    self.elaborate_stmt(fb, signal_map, known_modules, signals)
+                                }
                                 None => Ok(IrStmt::Block { stmts: vec![] }),
                             }
                         }

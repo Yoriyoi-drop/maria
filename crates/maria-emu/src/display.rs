@@ -89,6 +89,7 @@ pub struct VgaDisplay {
     #[cfg(feature = "window")]
     window: Option<minifb::Window>,
     /// Title.
+    #[allow(dead_code)] // dipakai konstruktor window/feature — field disimpan
     title: String,
     /// Apakah perlu re-render.
     dirty: bool,

@@ -647,6 +647,7 @@ fn u64_digits(mut n: u64) -> usize {
 }
 
 /// Jumlah digit hex dari u64 (1 untuk 0) — hindari format! alloc di %h.
+#[allow(dead_code)] // util: dipakai tool/feature selanjutnya
 fn u64_hex_digits(mut n: u64) -> usize {
     let mut d = 1usize;
     while n >= 16 {
@@ -791,8 +792,7 @@ mod tests {
     use super::*;
 
     fn test_engine() -> SimulationEngine {
-        let design =
-            crate::test_util::compile_str("module top; endmodule").unwrap();
+        let design = crate::test_util::compile_str("module top; endmodule").unwrap();
         SimulationEngine::new(design, 100)
     }
 

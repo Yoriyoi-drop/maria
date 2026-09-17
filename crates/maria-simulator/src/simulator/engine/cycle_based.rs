@@ -149,7 +149,7 @@ pub(crate) fn analyze_plan(engine: &SimulationEngine) -> Result<CyclePlan, Strin
     let mut ff_count = 0usize;
     let mut clock_opt: Option<SignalId> = None;
 
-    let mut check_clock = |sid: SignalId, clock: &mut Option<SignalId>| -> Result<(), String> {
+    let check_clock = |sid: SignalId, clock: &mut Option<SignalId>| -> Result<(), String> {
         match clock {
             None => *clock = Some(sid),
             Some(c) if *c == sid => {}

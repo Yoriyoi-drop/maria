@@ -390,11 +390,14 @@ impl Parser {
                                     })
                                     .collect();
                                 self.expect(Token::RBrace)?;
-                                exprs.into_iter().reduce(|acc, e| Expr::BinaryOp {
-                                    op: BinaryOp::LogicalAnd,
-                                    lhs: Box::new(acc),
-                                    rhs: Box::new(e),
-                                }).unwrap_or(Expr::Value(Value::Decimal(1)))
+                                exprs
+                                    .into_iter()
+                                    .reduce(|acc, e| Expr::BinaryOp {
+                                        op: BinaryOp::LogicalAnd,
+                                        lhs: Box::new(acc),
+                                        rhs: Box::new(e),
+                                    })
+                                    .unwrap_or(Expr::Value(Value::Decimal(1)))
                             }
                             Err(_) => {
                                 self.pos.set(saved);

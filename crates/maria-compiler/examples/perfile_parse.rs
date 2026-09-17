@@ -26,7 +26,7 @@ fn discover(src: &str, classes: &mut HashSet<Symbol>, typedefs: &mut HashSet<Sym
                         classes.insert(n);
                         break;
                     }
-                    _ => break,
+                    _ => continue,
                 }
             },
             Token::Typedef => {

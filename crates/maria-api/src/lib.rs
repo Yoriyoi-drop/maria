@@ -723,10 +723,7 @@ pub fn compile_str_analyze(source: &str) -> Result<maria_ir::IrDesign, SimError>
     let mut parser = Parser::new(tokens, &first_source)
         .with_source_lines(&source_with_header)
         .with_file_line_map(file_line_map);
-    let mut design = match parser.parse_design() {
-        Ok(d) => d,
-        Err(e) => return Err(e),
-    };
+    let mut design = parser.parse_design()?;
     if parser.errors.iter().any(|d| d.is_error()) {
         // Parse error fatal — recovery tetap lanjut bila modul masih utuh.
     }

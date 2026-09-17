@@ -178,15 +178,11 @@ fn expr_uses_enum_method(e: &Expr) -> bool {
             let m = method.as_str();
             (m == "first" || m == "num" || m == "next") || args.iter().any(expr_uses_enum_method)
         }
-        Expr::BinaryOp { lhs, rhs, .. } => {
-            expr_uses_enum_method(lhs) || expr_uses_enum_method(rhs)
-        }
+        Expr::BinaryOp { lhs, rhs, .. } => expr_uses_enum_method(lhs) || expr_uses_enum_method(rhs),
         Expr::UnaryOp { expr, .. } => expr_uses_enum_method(expr),
         Expr::Cast { expr, .. } => expr_uses_enum_method(expr),
         Expr::RangeSelect { expr, msb, lsb } => {
-            expr_uses_enum_method(expr)
-                || expr_uses_enum_method(msb)
-                || expr_uses_enum_method(lsb)
+            expr_uses_enum_method(expr) || expr_uses_enum_method(msb) || expr_uses_enum_method(lsb)
         }
         Expr::TernaryOp {
             cond,
@@ -206,8 +202,7 @@ fn expr_uses_enum_method(e: &Expr) -> bool {
 /// `t=t.next()`).
 fn stmt_uses_enum_method(s: &Stmt) -> bool {
     match s {
-        Stmt::BlockingAssign { lhs, rhs, .. }
-        | Stmt::NonBlockingAssign { lhs, rhs, .. } => {
+        Stmt::BlockingAssign { lhs, rhs, .. } | Stmt::NonBlockingAssign { lhs, rhs, .. } => {
             expr_uses_enum_method(lhs) || expr_uses_enum_method(rhs)
         }
         Stmt::IfElse {
@@ -218,7 +213,9 @@ fn stmt_uses_enum_method(s: &Stmt) -> bool {
         } => {
             expr_uses_enum_method(cond)
                 || stmt_uses_enum_method(true_branch)
-                || false_branch.as_ref().is_some_and(|b| stmt_uses_enum_method(b))
+                || false_branch
+                    .as_ref()
+                    .is_some_and(|b| stmt_uses_enum_method(b))
         }
         Stmt::Block { stmts, .. } | Stmt::NamedBlock { stmts, .. } => {
             stmts.iter().any(stmt_uses_enum_method)

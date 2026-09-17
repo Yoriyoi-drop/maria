@@ -93,9 +93,9 @@ fn expr_refs_signed_param(expr: &Expr, signed_params: &std::collections::HashSet
     }
     match expr {
         Expr::Ident { name, .. } => signed_params.contains(name),
-        Expr::ScopedIdent { package, item, .. } => {
-            signed_params.contains(&Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str())))
-        }
+        Expr::ScopedIdent { package, item, .. } => signed_params.contains(&Symbol::intern(
+            &format!("{}::{}", package.as_str(), item.as_str()),
+        )),
         Expr::Paren(inner) => expr_refs_signed_param(inner, signed_params),
         Expr::UnaryOp { expr: inner, .. } => expr_refs_signed_param(inner, signed_params),
         Expr::BinaryOp { lhs, rhs, .. } => {
@@ -110,32 +110,49 @@ fn expr_refs_signed_param(expr: &Expr, signed_params: &std::collections::HashSet
                 || expr_refs_signed_param(true_expr, signed_params)
                 || expr_refs_signed_param(false_expr, signed_params)
         }
-        Expr::Concat(parts) => {
-            parts.iter().any(|p| expr_refs_signed_param(p, signed_params))
-        }
+        Expr::Concat(parts) => parts
+            .iter()
+            .any(|p| expr_refs_signed_param(p, signed_params)),
         Expr::Replicate { count, expr: inner } => {
-            expr_refs_signed_param(count, signed_params) || expr_refs_signed_param(inner, signed_params)
+            expr_refs_signed_param(count, signed_params)
+                || expr_refs_signed_param(inner, signed_params)
         }
         Expr::MemberAccess { obj, .. } => expr_refs_signed_param(obj, signed_params),
-        Expr::RangeSelect { expr: inner, msb, lsb } => {
+        Expr::RangeSelect {
+            expr: inner,
+            msb,
+            lsb,
+        } => {
             expr_refs_signed_param(inner, signed_params)
                 || expr_refs_signed_param(msb, signed_params)
                 || expr_refs_signed_param(lsb, signed_params)
         }
         Expr::BitSelect { expr: inner, index } => {
-            expr_refs_signed_param(inner, signed_params) || expr_refs_signed_param(index, signed_params)
+            expr_refs_signed_param(inner, signed_params)
+                || expr_refs_signed_param(index, signed_params)
         }
-        Expr::PartSelect { expr: inner, base, width } => {
+        Expr::PartSelect {
+            expr: inner,
+            base,
+            width,
+        } => {
             expr_refs_signed_param(inner, signed_params)
                 || expr_refs_signed_param(base, signed_params)
                 || expr_refs_signed_param(width, signed_params)
         }
-        Expr::FuncCall { args, .. } => {
-            args.iter().any(|a| expr_refs_signed_param(a, signed_params))
-        }
-        Expr::MethodCall { obj, args, with_clause, .. } => {
+        Expr::FuncCall { args, .. } => args
+            .iter()
+            .any(|a| expr_refs_signed_param(a, signed_params)),
+        Expr::MethodCall {
+            obj,
+            args,
+            with_clause,
+            ..
+        } => {
             expr_refs_signed_param(obj, signed_params)
-                || args.iter().any(|a| expr_refs_signed_param(a, signed_params))
+                || args
+                    .iter()
+                    .any(|a| expr_refs_signed_param(a, signed_params))
                 || with_clause
                     .as_ref()
                     .map_or(false, |w| expr_refs_signed_param(w, signed_params))
@@ -143,13 +160,18 @@ fn expr_refs_signed_param(expr: &Expr, signed_params: &std::collections::HashSet
         Expr::Cast { expr: inner, .. } | Expr::CastWidth { expr: inner, .. } => {
             expr_refs_signed_param(inner, signed_params)
         }
-        Expr::Inside { expr: inner, range_list } => {
+        Expr::Inside {
+            expr: inner,
+            range_list,
+        } => {
             expr_refs_signed_param(inner, signed_params)
-                || range_list.iter().any(|r| expr_refs_signed_param(r, signed_params))
+                || range_list
+                    .iter()
+                    .any(|r| expr_refs_signed_param(r, signed_params))
         }
-        Expr::StreamingConcat { slices, .. } => {
-            slices.iter().any(|s| expr_refs_signed_param(s, signed_params))
-        }
+        Expr::StreamingConcat { slices, .. } => slices
+            .iter()
+            .any(|s| expr_refs_signed_param(s, signed_params)),
         Expr::Dist { expr: inner, items } => {
             expr_refs_signed_param(inner, signed_params)
                 || items.iter().any(|d| match d {
@@ -1202,7 +1224,7 @@ impl Elaborator {
             expanded_set.insert(self.design.modules[i].name);
             let mod_t0 = std::time::Instant::now();
             let ctx = self.collect_package_param_ctx(&self.design.modules[i]);
-            let ctx_us = mod_t0.elapsed().as_micros();
+            let _ctx_us = mod_t0.elapsed().as_micros();
             // Konteks package untuk evaluasi PENUH default param ($bits(typedef),
             // inlining fungsi package) pada jalur resolusi localparam header.
             // `structs` = index struct package GLOBAL (base name → fields,
@@ -1393,9 +1415,7 @@ impl Elaborator {
                     .modules
                     .iter()
                     .enumerate()
-                    .filter(|(_, m)| {
-                        reachable.contains(&m.name) && !expanded_set.contains(&m.name)
-                    })
+                    .filter(|(_, m)| reachable.contains(&m.name) && !expanded_set.contains(&m.name))
                     .map(|(i, _)| i)
                     .collect();
                 if newly.is_empty() {
@@ -1441,9 +1461,7 @@ impl Elaborator {
             // dibangun dari design.modules setelah titik ini).
             let reachable = self.compute_reachable_set(top_sym, false);
             let before = self.design.modules.len();
-            self.design
-                .modules
-                .retain(|m| reachable.contains(&m.name));
+            self.design.modules.retain(|m| reachable.contains(&m.name));
             if std::env::var("DBG_ELAB").is_ok() {
                 eprintln!(
                     "[DBG-ELAB] dropped {} non-reachable module AST(s) (cone={} before={})",
@@ -3297,7 +3315,8 @@ impl Elaborator {
             eprintln!(
                 "[DBG-ELAB] cheriot_regs_reg_top imports={:?} pkg_in_symbols={} pkg_plain_len={}",
                 imports,
-                self.package_symbols.contains_key(&Symbol::intern("cheriot_reg_pkg")),
+                self.package_symbols
+                    .contains_key(&Symbol::intern("cheriot_reg_pkg")),
                 self.pkg_plain_params
                     .get(&Symbol::intern("cheriot_reg_pkg"))
                     .map(|m| m.len())
@@ -3343,7 +3362,8 @@ impl Elaborator {
                                                     effective_params.insert(p.name, 0);
                                                 }
                                                 if std::env::var("DBG_ELAB").is_ok()
-                                                    && p.name.as_str() == "CHERIOT_ALERT_TEST_OFFSET"
+                                                    && p.name.as_str()
+                                                        == "CHERIOT_ALERT_TEST_OFFSET"
                                                 {
                                                     eprintln!(
                                                         "[DBG-ELAB] import param CHERIOT_ALERT_TEST_OFFSET inserted in module {}",
@@ -5081,7 +5101,8 @@ impl Elaborator {
                             Ok(process) => processes.push(process),
                             Err(e) => {
                                 let mut diag = e.to_diagnostic();
-                                if !self.is_current_module_reachable() || self.is_fragment_module() {
+                                if !self.is_current_module_reachable() || self.is_fragment_module()
+                                {
                                     diag.level = DiagLevel::Warning;
                                 }
                                 self.diag_sink.push(diag);
@@ -5104,7 +5125,8 @@ impl Elaborator {
                             Ok(body) => processes.push(Process::Initial { name, body }),
                             Err(e) => {
                                 let mut diag = e.to_diagnostic();
-                                if !self.is_current_module_reachable() || self.is_fragment_module() {
+                                if !self.is_current_module_reachable() || self.is_fragment_module()
+                                {
                                     diag.level = DiagLevel::Warning;
                                 }
                                 self.diag_sink.push(diag);
@@ -5283,10 +5305,7 @@ impl Elaborator {
                                 // memperlakukan Ident sbg unsigned sehingga
                                 // `assign y = (N<0)` (N=-2) salah jadi 0
                                 // (probe p19).
-                                if expr_refs_signed_param(
-                                    &assign.rhs,
-                                    &self.param_is_signed,
-                                ) {
+                                if expr_refs_signed_param(&assign.rhs, &self.param_is_signed) {
                                     propagate_context_width(&mut rhs, lhs_w, &signals);
                                 } else if let Some(c) =
                                     try_fold_const_at_width(&assign.rhs, &self.param_vals, lhs_w)
@@ -5524,7 +5543,9 @@ impl Elaborator {
                                     Ok(process) => processes.push(process),
                                     Err(e) => {
                                         let mut diag = e.to_diagnostic();
-                                        if !self.is_current_module_reachable() || self.is_fragment_module() {
+                                        if !self.is_current_module_reachable()
+                                            || self.is_fragment_module()
+                                        {
                                             diag.level = DiagLevel::Warning;
                                         }
                                         self.diag_sink.push(diag);

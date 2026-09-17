@@ -2627,7 +2627,7 @@ impl Parser {
     /// Bungkus ke module sintetik agar deklarasi/instance/assign/always level-file
     /// tidak error "declaration outside of module".
     fn parse_implicit_unit_module(&mut self, mod_name: Symbol) -> Option<Module> {
-        let mut ports = Vec::new();
+        let ports = Vec::new();
         let mut params = Vec::new();
         let mut decls = Vec::new();
         let mut items = Vec::new();
@@ -2691,11 +2691,7 @@ impl Parser {
                         // Preserve synchronization without turning an
                         // unsupported verification construct into a fatal
                         // parse error for the whole filelist.
-                        self.push_warning_at(
-                            e.to_string(),
-                            self.peek_line(),
-                            self.peek_col(),
-                        );
+                        self.push_warning_at(e.to_string(), self.peek_line(), self.peek_col());
                         let _ = self.skip_until_semi_or_end();
                     }
                 },
@@ -2706,9 +2702,7 @@ impl Parser {
                     // synchronized without reporting a parser error.
                     let _ = self.skip_until_semi_or_end();
                 }
-                Token::Ident(_)
-                    if self.peek_ahead(1) == &Token::LParen =>
-                {
+                Token::Ident(_) if self.peek_ahead(1) == &Token::LParen => {
                     let _ = self.skip_until_semi_or_end();
                 }
                 Token::Ident(_) => {
@@ -2724,11 +2718,7 @@ impl Parser {
                             }
                         }
                         Err(e) => {
-                            self.push_warning_at(
-                                e.to_string(),
-                                self.peek_line(),
-                                self.peek_col(),
-                            );
+                            self.push_warning_at(e.to_string(), self.peek_line(), self.peek_col());
                             let _ = self.skip_until_semi_or_end();
                         }
                     }
@@ -2745,11 +2735,7 @@ impl Parser {
                             }
                         }
                         Err(e) => {
-                            self.push_warning_at(
-                                e.to_string(),
-                                self.peek_line(),
-                                self.peek_col(),
-                            );
+                            self.push_warning_at(e.to_string(), self.peek_line(), self.peek_col());
                             let _ = self.skip_until_semi_or_end();
                         }
                     }

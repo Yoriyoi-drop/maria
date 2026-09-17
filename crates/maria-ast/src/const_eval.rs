@@ -234,6 +234,19 @@ pub fn sized_width(e: &Expr) -> Option<u64> {
             | UnaryOp::ReductionXnor => Some(1),
             UnaryOp::BitNot | UnaryOp::Minus | UnaryOp::Plus => sized_width(expr),
         },
+        // Shift: hasil selebar LHS (LRM §11.8.1) — tanpa ini Sshr
+        // const_fold tidak tahu lebar intermediate (shift_chain_fuzz).
+        // Harus SEBELUM arm `Expr::BinaryOp` umum — kalau sesudahnya, arm
+        // umum menelan semua BinaryOp → shift jadi unreachable dan lebar
+        // shift tak pernah terisi (bug latent yang di-expose clippy).
+        Expr::BinaryOp { op, lhs, .. }
+            if matches!(
+                op,
+                BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr
+            ) =>
+        {
+            sized_width(lhs)
+        }
         // Perbandingan/relasional/logical biner → 1 bit.
         Expr::BinaryOp { op, .. } => matches!(
             op,
@@ -256,16 +269,6 @@ pub fn sized_width(e: &Expr) -> Option<u64> {
             .iter()
             .map(sized_width)
             .try_fold(0u64, |acc, w| w.map(|w| acc + w)),
-        // Shift: hasil selebar LHS (LRM §11.8.1) — tanpa ini Sshr
-        // const_fold tidak tahu lebar intermediate (shift_chain_fuzz).
-        Expr::BinaryOp { op, lhs, .. }
-            if matches!(
-                op,
-                BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr
-            ) =>
-        {
-            sized_width(lhs)
-        }
         _ => None,
     }
 }

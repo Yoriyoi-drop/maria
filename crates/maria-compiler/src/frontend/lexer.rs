@@ -497,13 +497,7 @@ impl<'a> FastLexer<'a> {
         // Collect digits and format characters
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
-            if c.is_ascii_digit()
-                || c == b'_'
-                || c == b'x'
-                || c == b'z'
-                || c == b'X'
-                || c == b'Z'
-            {
+            if c.is_ascii_digit() || c == b'_' || c == b'x' || c == b'z' || c == b'X' || c == b'Z' {
                 self.skip_byte();
             } else if c == b'\'' {
                 // Check for size cast: 22'(expr)
