@@ -351,11 +351,38 @@ impl Elaborator {
                 }
                 if let IrExpr::Signal(sid, _) = &inner_expr {
                     let sig = &signals[*sid];
-                    // Multi-dim packed array: a[i] = flat bit-select pada
-                    // representasi packed (SV LRM §7.4.1). Elemen a[i][j]
-                    // ditangani oleh BitSelect bertingkat di bawah.
+                    // Multi-dim packed array: `mem[i]` memilih ELEMEN (sub-array),
+                    // bukan bit tunggal — `logic [3:0][7:0] mem; mem[2]` = 8 bit
+                    // (bit 23:16), bukan bit 2. Jalur tulis (elaborate_lvalue)
+                    // sudah benar; jalur baca dulu BitSelect 1-bit → `mem[k]`
+                    // jadi 0/1 (probe t05b: flat benar tapi mem[2]=0).
+                    // Lebar elemen = width / packed_dims[0] (dim terluar).
                     if sig.packed_dims.len() > 1 {
-                        if let Ok(idx) = const_eval_params(index, &self.param_vals) {
+                        let elem_w =
+                            sub_elem_width_from_packed(signals, *sid, sig.width).unwrap_or(1);
+                        if elem_w > 1 {
+                            if let Ok(idx) = const_eval_params(index, &self.param_vals) {
+                                let lsb = (idx as usize).saturating_mul(elem_w);
+                                let msb = lsb + elem_w - 1;
+                                Ok(IrExpr::RangeSelect(*sid, msb, lsb))
+                            } else {
+                                let index_expr =
+                                    self.elaborate_expr(index, signal_map, signals)?;
+                                let base_expr = IrExpr::BinaryOp(
+                                    BinaryIrOp::Mul,
+                                    Box::new(index_expr),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(
+                                        elem_w as u64,
+                                        32,
+                                    ))),
+                                );
+                                Ok(IrExpr::ExprPartSelect(
+                                    Box::new(IrExpr::Signal(*sid, sig.width)),
+                                    Box::new(base_expr),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(elem_w as u64, 32))),
+                                ))
+                            }
+                        } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
                             Ok(IrExpr::BitSelect(*sid, idx as usize))
                         } else {
                             let index_expr = self.elaborate_expr(index, signal_map, signals)?;

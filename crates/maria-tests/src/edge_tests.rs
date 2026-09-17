@@ -1142,6 +1142,35 @@ endmodule"#,
     assert_eq!(g("g_and"), 1, "generate if ((N<0)&&(P>0)) harus true");
 }
 
+// Packed multi-dim array: baca elemen `mem[i]` = ELEMEN (lebar
+// width/packed_dims[0]), bukan bit tunggal. Dulu BitSelect 1-bit → mem[2]=0
+// (probe t05b).
+#[test]
+fn test_edge_packed_multidim_read() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    logic [3:0][7:0] mem;
+    logic [7:0] e2;
+    logic [31:0] flat;
+    initial begin
+        mem[0] = 8'h11;
+        mem[1] = 8'h22;
+        mem[2] = 8'h33;
+        mem[3] = 8'h44;
+        e2 = mem[2];
+        flat = mem;
+        #1 $finish;
+    end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let g = |n: &str| sigs.iter().find(|(x, _)| x == n).unwrap().1.to_u64();
+    assert_eq!(g("e2"), 0x33, "mem[2] harus elemen 8-bit 0x33");
+    assert_eq!(g("flat"), 0x4433_2211, "packed layout mem");
+}
+
 // === 15. Assignment patterns ===
 
 #[test]
