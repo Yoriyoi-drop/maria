@@ -1227,6 +1227,29 @@ endmodule"#,
     assert_eq!(hit.to_u64(), 1, "join harus selesai setelah -> ev");
 }
 
+// $stime = waktu simulasi 32-bit (IEEE 1800 §20.17); dulu tak dikenal → 0.
+#[test]
+fn test_edge_stime() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+    integer st;
+    time t;
+    initial begin
+        #10;
+        st = $stime;
+        t = $time;
+        #1 $finish;
+    end
+endmodule"#,
+        30,
+    )
+    .unwrap();
+    let g = |n: &str| sigs.iter().find(|(x, _)| x == n).unwrap().1.to_u64();
+    assert_eq!(g("st"), 10, "$stime harus 10");
+    assert_eq!(g("t"), 10, "$time harus 10");
+}
+
 // === 15. Assignment patterns ===
 
 #[test]

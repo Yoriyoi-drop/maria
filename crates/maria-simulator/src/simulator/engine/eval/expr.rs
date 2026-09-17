@@ -1250,6 +1250,9 @@ impl SimulationEngine {
                         }
                     }
                     "$time" => Ok(LogicVec::from_u64(self.state.time, 64)),
+                    // $stime = waktu simulasi 32-bit (IEEE 1800 §20.17); $time
+                    // 64-bit. Sebelumnya $stime tak dikenal → 0 (probe x01).
+                    "$stime" => Ok(LogicVec::from_u64(self.state.time & 0xFFFF_FFFF, 32)),
                     "$realtime" => {
                         let t = self.state.time as f64;
                         Ok(LogicVec::from_u64(t.to_bits(), 64))
