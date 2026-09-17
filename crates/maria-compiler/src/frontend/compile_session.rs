@@ -2251,15 +2251,19 @@ impl CompileSession {
     /// Get merged source info: (source_lines, first_source_file)
     /// Returns None if merged_source hasn't been populated (e.g., before first compile).
     /// Lepas cache parse-hit dari memori setelah `save_micd()` (run_fast jalur
-    /// main.rs): prev_designs + prev_combined_sources TIDAK lagi dibutuhkan —
-    /// sudah ditulis ke disk oleh save_micd, dan compile berikutnya (bila ada)
-    /// me-restore dari MICD. Menahan keduanya menambah ~1GB+ (AST penuh) selama
-    /// ELABORASI berikut — bocor memori penyebab OOM utk design besar
-    /// (OpenTitan: RSS parse ~2.9GB → elaborasi harus muat di sisa RAM).
+    /// main.rs): prev_designs + prev_combined_sources + combined_parts +
+    /// cache in-memory MICD (ast_cache/preproc_cache — sudah ditulis ke disk
+    /// oleh save; ~1GB+ AST bytes pada design besar). TIDAK lagi dibutuhkan
+    /// selama ELABORASI/SIMULASI berikutnya — bocor memori penyebab OOM utk
+    /// design besar (OpenTitan): parse ~2.9GB → elaborasi/sim harus muat
+    /// di sisa RAM mesin kecil.
     pub fn release_parse_cache(&mut self) {
         self.prev_designs.clear();
         self.prev_combined_sources.clear();
         self.combined_parts.lock().unwrap().clear();
+        if let Some(db) = self.micd.as_mut() {
+            db.release_memory_cache();
+        }
     }
 
     pub fn source_info(&self) -> Option<(Vec<String>, String)> {

@@ -561,6 +561,64 @@ impl Elaborator {
             .unwrap_or(false)
     }
 
+    /// Set module reachable dari top (BFS closure atas instance graph).
+    /// Dipakai DUA kali: (a) PRE-expansion utk meng-gate generate expansion
+    /// (hemat kerja di luar cone saat `--top`), (b) POST-expansion (block
+    /// asli di elaborate) utk pruning main-elaborate + warning unreachable.
+    /// Top eksplisit → closure darinya; tanpa top → kandidat root pertama
+    /// (module yang tidak diinstansiasi module lain) — konsisten dgn
+    /// pemilihan auto-top di bawah elaborate().
+    pub(crate) fn compute_reachable_set(
+        &self,
+        top: Option<Symbol>,
+        _include_warnings: bool,
+    ) -> std::collections::HashSet<Symbol> {
+        use std::collections::{HashSet, VecDeque};
+        let module_map: HashMap<Symbol, &Module> =
+            self.design.modules.iter().map(|m| (m.name, m)).collect();
+        let all_names: HashSet<Symbol> = module_map.keys().copied().collect();
+        let mut reachable: HashSet<Symbol> = HashSet::new();
+        let mut queue: VecDeque<Symbol> = VecDeque::new();
+        if let Some(ref t) = top {
+            if all_names.contains(t) {
+                queue.push_back(*t);
+                reachable.insert(*t);
+            }
+        } else if let Some(cand) = {
+            let mut instantiated: HashSet<Symbol> = HashSet::new();
+            for m in &self.design.modules {
+                let mut insts = Vec::new();
+                collect_instance_names(&m.items, &mut insts);
+                for mn in insts {
+                    instantiated.insert(mn);
+                }
+            }
+            self.design
+                .modules
+                .iter()
+                .find(|m| !instantiated.contains(&m.name))
+        } {
+            queue.push_back(cand.name);
+            reachable.insert(cand.name);
+        } else if let Some(first) = self.design.modules.first() {
+            queue.push_back(first.name);
+            reachable.insert(first.name);
+        }
+        while let Some(name) = queue.pop_front() {
+            if let Some(module) = module_map.get(&name) {
+                let mut insts = Vec::new();
+                collect_instance_names(&module.items, &mut insts);
+                for mn in insts {
+                    if all_names.contains(&mn) && !reachable.contains(&mn) {
+                        reachable.insert(mn);
+                        queue.push_back(mn);
+                    }
+                }
+            }
+        }
+        reachable
+    }
+
     pub fn with_source(design: Design, source_lines: Vec<String>, source_file: String) -> Self {
         let mut package_symbols: HashMap<Symbol, HashMap<Symbol, PackageItem>> = HashMap::new();
         // First pass: collect directly declared items
@@ -889,6 +947,22 @@ impl Elaborator {
                 ));
             }
         }
+        // ── Reachability PRE-expansion: hitung SEKALI di sini (sebelum
+        // bind/inline/generate — semua prepass per-module) utk meng-gate
+        // kerja hanya ke cone top saat `--top` diberikan. Binder/impor/inline
+        // tidak mengubah instance module, jadi closure stabil hingga generate
+        // (yang menambah instance → reachable dihitung ulang post-expansion
+        // utk pruning main-elaborate). ──
+        let top_sym = top_module.map(Symbol::intern);
+        let reachable_pre: std::collections::HashSet<Symbol> =
+            self.compute_reachable_set(top_sym, false);
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!(
+                "[DBG-ELAB] pre-expansion reachable={} (top={:?})",
+                reachable_pre.len(),
+                top_sym.map(|s| s.as_str().to_string())
+            );
+        }
         if std::env::var("DBG_ELAB").is_ok() {
             let n_arr_elems: usize = self.pkg_const_arrays.values().map(|v| v.len()).sum();
             eprintln!("[DBG-ELAB] global package param ctx built in {}us ({} entries; scalars={} arrays={} array_elems={})", elab_t0.elapsed().as_micros(), self.pkg_param_ctx.len(), self.pkg_const_scalars.len(), self.pkg_const_arrays.len(), n_arr_elems);
@@ -941,6 +1015,10 @@ impl Elaborator {
         let unit_tasks = &self.design.unit_tasks;
         let unit_imports = &self.design.unit_imports;
         for module in &mut self.design.modules {
+            // ── Gate prepass ke cone top (--top) ──
+            if top_sym.is_some() && !reachable_pre.contains(&module.name) {
+                continue;
+            }
             // Collect module-level imports
             let imports: Vec<(Symbol, Symbol)> = module
                 .items
@@ -1049,6 +1127,11 @@ impl Elaborator {
         }
         // Inline function calls in all modules
         for module in &mut self.design.modules {
+            // ── Gate inline ke cone top (--top) ──   (per-module AST rewrite
+            // mahal; module di luar cone tidak di-elaborasi pula)
+            if top_sym.is_some() && !reachable_pre.contains(&module.name) {
+                continue;
+            }
             if std::env::var("DBG_ELAB").is_ok() {
                 eprintln!("[DBG-ELAB] inline module '{}'", module.name.as_str());
             }
@@ -1105,7 +1188,18 @@ impl Elaborator {
             );
         }
         // Expand generates in all modules (with resolved params)
+        // Gate: dengan `--top`, hanya expand module di cone (reachable_pre);
+        // module di luar cone TIDAK di-expand → hemat waktu+memori besar
+        // (generate expansion = fase berat OpenTitan: 975 modul bertambah
+        // ribuan generate instance). Setelah expansion, reachable dihitung
+        // ulang (generate bisa menambah instance) — module baru yang ter-
+        // reveal di-expand oleh sweep lanjutan di bawah.
+        let mut expanded_set: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
         for i in 0..self.design.modules.len() {
+            if top_sym.is_some() && !reachable_pre.contains(&self.design.modules[i].name) {
+                continue;
+            }
+            expanded_set.insert(self.design.modules[i].name);
             let mod_t0 = std::time::Instant::now();
             let ctx = self.collect_package_param_ctx(&self.design.modules[i]);
             let ctx_us = mod_t0.elapsed().as_micros();
@@ -1287,6 +1381,78 @@ impl Elaborator {
             reachable
         };
         self.reachable = reachable.clone();
+
+        // ── Sweep: expand module yang baru ter-reveal oleh generate ──
+        // Generate di module cone bisa menginstansiasi modul yang TIDAK
+        // direferensikan pre-expansion → modul itu reachable (post) tapi
+        // belum di-expand. Expand mereka + hitung ulang reachable (bounded).
+        if top_sym.is_some() {
+            for _sweep in 0..4 {
+                let newly: Vec<usize> = self
+                    .design
+                    .modules
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| {
+                        reachable.contains(&m.name) && !expanded_set.contains(&m.name)
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                if newly.is_empty() {
+                    break;
+                }
+                for &i in &newly {
+                    let ctx = self.collect_package_param_ctx(&self.design.modules[i]);
+                    let pkg_full = PkgFullCtx {
+                        scalars: &self.pkg_const_scalars,
+                        arrays: &self.pkg_const_arrays,
+                        package_symbols: &self.package_symbols,
+                        structs: &self.pkg_struct_ref_index,
+                    };
+                    if let Ok(param_vals) = resolve_param_values_with_ctx(
+                        &self.design.modules[i],
+                        &HashMap::new(),
+                        &ctx,
+                        Some(&pkg_full),
+                    ) {
+                        let module = &mut self.design.modules[i];
+                        let _ = expand_all_generates(
+                            module,
+                            &param_vals,
+                            &self.diag_sink,
+                            &self.source_lines,
+                            &self.source_file,
+                        );
+                        expanded_set.insert(module.name);
+                    }
+                }
+                let reachable2: std::collections::HashSet<Symbol> =
+                    self.compute_reachable_set(top_sym, false);
+                if reachable2.len() == reachable.len() {
+                    break;
+                }
+            }
+            // ── DROP module di luar cone dari AST ──
+            // Main-elaborate hanya memproses cone (prune_unreachable), tapi
+            // design.modules (AST penuh ~1.5GB utk OpenTitan DV+multi-top)
+            // tetap di RAM selama elaborasi+sim → OOM. Buang module non-cone
+            // SEKARANG (setelah generate expansion + reachability final):
+            // module di luar cone tidak diperlukan lagi (topo/checksum/module_idx
+            // dibangun dari design.modules setelah titik ini).
+            let reachable = self.compute_reachable_set(top_sym, false);
+            let before = self.design.modules.len();
+            self.design
+                .modules
+                .retain(|m| reachable.contains(&m.name));
+            if std::env::var("DBG_ELAB").is_ok() {
+                eprintln!(
+                    "[DBG-ELAB] dropped {} non-reachable module AST(s) (cone={} before={})",
+                    before - self.design.modules.len(),
+                    self.design.modules.len(),
+                    before
+                );
+            }
+        }
 
         // ── Index module name → design.modules (SEKALI, bukan per-module) ──
         // design.modules tidak berubah lagi setelah titik ini (bind/import/

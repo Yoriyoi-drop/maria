@@ -744,6 +744,17 @@ impl MicdDatabase {
         }
     }
 
+    /// Lepas cache AST/preprocessed IN-MEMORY setelah disimpan ke disk
+    /// (release_parse_cache). Payload sudah content-addressed immutable —
+    /// restore berikutnya membaca dari disk; menahan ~1GB+ bytes AST
+    /// dalam RAM selama elaborasi/sim = bocor memori (OOM design besar).
+    pub fn release_memory_cache(&mut self) {
+        self.ast_cache.clear();
+        self.preproc_cache.clear();
+        self.ast_bytes = 0;
+        self.preproc_bytes = 0;
+    }
+
     pub fn cache_preprocessed(&mut self, path: PathBuf, entry: PreprocEntry) {
         let changed = match self.preproc_cache.get(&path) {
             Some(old) => old.content_hash != entry.content_hash || old.combined != entry.combined,
