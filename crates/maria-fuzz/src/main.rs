@@ -46,7 +46,7 @@ USAGE:
   maria-fuzz report  [<dir>]
   maria-fuzz help
 
-TARGETS: all | lexer | parser | elab | sim | fmt | cli | preproc | mv | vcd | sdf | micd
+TARGETS: all | lexer | parser | elab | sim | fmt | cli | preproc | mv | vcd | sdf | micd | synth
 Default: all (2000 cases/target). Corpus default: {corpus}
 Bug output: {bugs}
 "#,

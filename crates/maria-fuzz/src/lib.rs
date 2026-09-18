@@ -54,6 +54,10 @@ pub enum Target {
     /// `--recompile` (fresh) harus identik — cache drift / silent
     /// miscompilation = bug. Area BELUM tersentuh.
     Micd,
+    /// Synthesis pipeline (`maria synth --check-only`): parse → RTL→SIR
+    /// lowering (`maria-sir`) → SYN-1..9 sintesizability check. SIR lowering
+    /// parser tak pernah di-fuzz. O1 no-crash + O4 double-run.
+    Synth,
 }
 
 impl Target {
@@ -69,6 +73,7 @@ impl Target {
         Target::Vcd,
         Target::Sdf,
         Target::Micd,
+        Target::Synth,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -85,6 +90,7 @@ impl Target {
             Target::Vcd => "vcd",
             Target::Sdf => "sdf",
             Target::Micd => "micd",
+            Target::Synth => "synth",
         }
     }
 
@@ -102,6 +108,7 @@ impl Target {
             "vcd" | "wave" => Some(Target::Vcd),
             "sdf" => Some(Target::Sdf),
             "micd" | "fast" => Some(Target::Micd),
+            "synth" | "sir" => Some(Target::Synth),
             _ => None,
         }
     }

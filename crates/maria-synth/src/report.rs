@@ -3,7 +3,8 @@
 use std::fmt::Write;
 
 use crate::netlist::Netlist;
-use crate::subset::{SynCheck, SynSeverity};
+use crate::subset::{SynCheck, SynIssue, SynSeverity};
+use maria_core::intern::Symbol;
 
 /// Kapasitas device default fpga-x7 (bisa di-override tool).
 #[derive(Debug, Clone, Copy)]
@@ -129,7 +130,13 @@ pub fn render_syn_report(check: &SynCheck) -> String {
         check.error_count(),
         check.warning_count()
     );
-    for (name, err, warn, score) in &check.per_module {
+    // Sortir DETERMINISTIK (ditemukan maria-fuzz target synth: SYN-9 latatan
+    // latch dari proses berbeda keluar dalam urutan acak antar 2 run identik —
+    // urutan proses IR hasil merge parallel tidak stabil). Sortir di sini
+    // menjamin output tool stabil walau urutan IR bervariasi.
+    let mut per_module: Vec<&(Symbol, usize, usize, f64)> = check.per_module.iter().collect();
+    per_module.sort_by_key(|x| x.0.as_str().to_string());
+    for (name, err, warn, score) in &per_module {
         let _ = writeln!(
             s,
             "  {:<24} error={:<3} warning={:<3} score={:.1}",
@@ -139,7 +146,16 @@ pub fn render_syn_report(check: &SynCheck) -> String {
             score
         );
     }
-    for issue in &check.issues {
+    let mut issues: Vec<&SynIssue> = check.issues.iter().collect();
+    issues.sort_by(|a, b| {
+        a.module
+            .as_str()
+            .cmp(b.module.as_str())
+            .then_with(|| a.code.cmp(b.code))
+            .then_with(|| a.severity.name().cmp(b.severity.name()))
+            .then_with(|| a.message.cmp(&b.message))
+    });
+    for issue in &issues {
         let _ = writeln!(
             s,
             "  [{}] {:>7} {} — {}",
@@ -188,5 +204,56 @@ mod tests {
     fn pct_formats() {
         assert_eq!(pct(0, 0), "-");
         assert_eq!(pct(100, 200), "50.0 %");
+    }
+
+    /// Regresi maria-fuzz (target synth): output SYN report harus DETERMINISTIK
+    /// walau urutan issues input acak (urutan proses IR merge parallel tak
+    /// stabil) — render_syn_report sortir issues + per_module.
+    #[test]
+    fn syn_report_render_deterministic() {
+        use crate::subset::{SynCheck, SynIssue, SynSeverity};
+        let mk = |code: &'static str, module: &str, msg: &str| SynIssue {
+            code,
+            severity: SynSeverity::Warning,
+            module: Symbol::intern(module),
+            message: msg.to_string(),
+        };
+        let issues_a = vec![
+            mk("SYN-9", "top", "potensi LATCH pada 'sig#6'"),
+            mk("SYN-9", "top", "potensi LATCH pada 'sig#3'"),
+            mk("SYN-9", "zmod", "potensi LATCH pada 'sig#7'"),
+            mk("SYN-7", "top", "multi-driver"),
+        ];
+        let issues_b = vec![
+            mk("SYN-7", "top", "multi-driver"),
+            mk("SYN-9", "zmod", "potensi LATCH pada 'sig#7'"),
+            mk("SYN-9", "top", "potensi LATCH pada 'sig#3'"),
+            mk("SYN-9", "top", "potensi LATCH pada 'sig#6'"),
+        ];
+        let per_a = vec![
+            (Symbol::intern("zmod"), 0usize, 1usize, 98.0f64),
+            (Symbol::intern("top"), 0usize, 1usize, 98.0f64),
+        ];
+        let per_b = vec![
+            (Symbol::intern("top"), 0usize, 1usize, 98.0f64),
+            (Symbol::intern("zmod"), 0usize, 1usize, 98.0f64),
+        ];
+        let a = render_syn_report(&SynCheck {
+            issues: issues_a,
+            per_module: per_a,
+        });
+        let b = render_syn_report(&SynCheck {
+            issues: issues_b,
+            per_module: per_b,
+        });
+        assert_eq!(a, b, "render SYN report harus identik walau order input beda");
+        // Urutan: module asc → code asc → severity → message.
+        let pos3 = a.find("sig#3").unwrap();
+        let pos6 = a.find("sig#6").unwrap();
+        let pos7 = a.find("sig#7").unwrap();
+        assert!(
+            pos3 < pos6 && pos6 < pos7,
+            "issues ter-sortir modul+kode: sig#3 < sig#6 < sig#7"
+        );
     }
 }

@@ -23,6 +23,7 @@ pub fn evaluate(target: Target, source: &str, timeout_ms: u64) -> CaseResult {
         Target::Mv => evaluate_mv(source),
         Target::Sdf => evaluate_sdf(source, timeout_ms),
         Target::Micd => evaluate_micd(source, timeout_ms),
+        Target::Synth => evaluate_synth(source, timeout_ms),
         Target::All => unreachable!("Target::All dipecah di run()"),
     }
 }
@@ -1509,6 +1510,108 @@ fn evaluate_micd(source: &str, timeout_ms: u64) -> CaseResult {
     )
 }
 
+/// Fuzzing SYNTHESIS pipeline (`maria synth --check-only`) — area BELUM
+/// tersentuh: RTL→SIR lowering (`maria-sir`) + SYN-1..9 sintesizability check.
+/// Mutasi SV seed → subprocess `maria synth <sv> --check-only`.
+/// O1 no-crash (panic/hang SIR parser = bug) + O4 double-run determinisme
+/// (stdout logis identik antar run, baris timing di-strip).
+fn evaluate_synth(source: &str, timeout_ms: u64) -> CaseResult {
+    let mk_y = |c: Category, o: Oracle, d: &str| mk(Target::Synth, o, c, d, source);
+
+    let dir = std::env::temp_dir();
+    let stem = format!(
+        "mariafzy_{}_{}",
+        std::process::id(),
+        crate::next_crash_seq()
+    );
+    let sv = dir.join(format!("{stem}.sv"));
+    if std::fs::write(&sv, source).is_err() {
+        return mk_y(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            "gagal tulis temp sv",
+        );
+    }
+    let args = vec![
+        "synth".to_string(),
+        sv.to_string_lossy().to_string(),
+        "--check-only".to_string(),
+    ];
+    let outcome = with_micd_isolated(|| crate::runner::run_args(&args, timeout_ms));
+
+    // O4: double-run — output logis identik (strip timing). Hanya berlaku
+    // bila run pertama Ok; jangan klasifikasi bug ganda pada run pertama
+    // error (klasifikasi run pertama di bawah).
+    // NOTE: `sv` TIDAK dihapus di sini — run kedua butuh file yang sama.
+    let second = with_micd_isolated(|| crate::runner::run_args(&args, timeout_ms));
+    let _ = std::fs::remove_file(&sv);
+    if outcome.kind == crate::runner::Kind::Ok {
+        if second.kind == crate::runner::Kind::Ok {
+            let strip = |s: &str| -> Vec<String> {
+                s.lines()
+                    .filter(|l| {
+                        !l.contains("time") && !l.contains("µs") && !l.contains("ms)")
+                    })
+                    .map(|l| l.trim().to_string())
+                    .collect()
+            };
+            if strip(&outcome.stdout) != strip(&second.stdout) {
+                return mk_y(
+                    Category::NonDeterministic,
+                    Oracle::O4Determinism,
+                    "synth --check-only output beda antar 2 run identik",
+                );
+            }
+        } else {
+            return mk_y(
+                Category::Differential,
+                Oracle::O5Differential,
+                &format!(
+                    "synth run kedua gagal padahal run pertama ok: {}",
+                    second.stderr.lines().next().unwrap_or("")
+                ),
+            );
+        }
+    }
+
+    let args_desc = args.join(" ");
+    match outcome.kind {
+        crate::runner::Kind::Ok => mk_y(
+            Category::Ok,
+            Oracle::O1NoCrash,
+            &format!("synth check-only ok: {args_desc}"),
+        ),
+        crate::runner::Kind::CleanError => mk_y(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            &format!(
+                "synth clean error: {}",
+                outcome.stderr.lines().next().unwrap_or("")
+            ),
+        ),
+        crate::runner::Kind::Panic => mk_y(
+            Category::Panic,
+            Oracle::O1NoCrash,
+            &format!("synth panic: {}", outcome.stderr),
+        ),
+        crate::runner::Kind::Abort => mk_y(
+            Category::Abort,
+            Oracle::O1NoCrash,
+            &format!("synth abort: {}", outcome.stderr),
+        ),
+        crate::runner::Kind::Crash(code) => mk_y(
+            Category::Panic,
+            Oracle::O1NoCrash,
+            &format!("synth crash code {code}: {}", outcome.stderr),
+        ),
+        crate::runner::Kind::Hang => mk_y(
+            Category::Hang,
+            Oracle::O1NoCrash,
+            &format!("synth hang > {} ms", timeout_ms),
+        ),
+    }
+}
+
 /// Argumen CLI untuk satu kasus fuzz: tool subcommand ATAU pipeline flags,
 /// atas satu file temp. RNG per-case (bukan global) → deterministik.
 fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> Vec<String> {
@@ -1516,12 +1619,13 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
     let mut args = Vec::new();
 
     // 50%: tool subcommand `maria <tool> <file> [flags]` — area maria-tools
-    // (mcheck/melab/msim/mfmt/mlint/minspect/mprof) tak pernah di-fuzz atas
-    // source mutasi sebelumnya. mbench/mcov/mwave/synth sengaja dilewatkan
-    // (berat/butuh VCD — timeout palsu).
+    // (mcheck/melab/msim/mfmt/mlint/minspect/mprof/synth) di-fuzz atas
+    // source mutasi. mbench/mcov/mwave sengaja dilewatkan (berat/butuh VCD —
+    // timeout palsu); synth pakai --check-only (cepat, 0.03s).
     if rng.chance(50) {
         let tools = [
             "mcheck", "melab", "msim", "mfmt", "mlint", "minspect", "mprof",
+            "synth",
         ];
         let t = tools[rng.below(tools.len())];
         args.push(t.to_string());
@@ -1535,6 +1639,9 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
                 if rng.chance(25) {
                     args.push("--check".to_string());
                 }
+            }
+            "synth" => {
+                args.push("--check-only".to_string());
             }
             _ => {}
         }
