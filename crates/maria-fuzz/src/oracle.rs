@@ -15,12 +15,14 @@ pub fn evaluate(target: Target, source: &str, timeout_ms: u64) -> CaseResult {
     match target {
         Target::Lexer => evaluate_lexer(source),
         Target::Vcd => evaluate_vcd(source, timeout_ms),
-        Target::Parser | Target::Elaborator => evaluate_compile(target, source),
+        Target::Parser | Target::Elaborator => evaluate_compile(target, source, timeout_ms),
         Target::Simulator => evaluate_sim(source, timeout_ms),
         Target::Fmt => evaluate_fmt(source),
         Target::Cli => evaluate_cli(source, timeout_ms),
         Target::Preproc => evaluate_preproc(source),
         Target::Mv => evaluate_mv(source),
+        Target::Sdf => evaluate_sdf(source, timeout_ms),
+        Target::Micd => evaluate_micd(source, timeout_ms),
         Target::All => unreachable!("Target::All dipecah di run()"),
     }
 }
@@ -41,6 +43,29 @@ fn mk(
     }
 }
 
+/// Isolasi MICD DB per-case: `MARIA_MICD_DIR` → temp unik. Subprocess maria
+/// (sim/sdf/cli/vcd/micd) TIDAK menyentuh `.maria/database` project →
+/// bebas lock contention + stale-lock cascade dari subprocess yang di-kill
+/// (terukur: 39 lock basi + hang palsu beruntun di kampanye SDF).
+fn with_micd_isolated<T>(f: impl FnOnce() -> T) -> T {
+    use std::ffi::OsString;
+    let dir = std::env::temp_dir().join(format!(
+        "mariafz_iso_{}_{}",
+        std::process::id(),
+        crate::next_crash_seq()
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    let prev: Option<OsString> = std::env::var_os("MARIA_MICD_DIR");
+    std::env::set_var("MARIA_MICD_DIR", &dir);
+    let r = f();
+    match prev {
+        Some(p) => std::env::set_var("MARIA_MICD_DIR", p),
+        None => std::env::remove_var("MARIA_MICD_DIR"),
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    r
+}
+
 /// Error GLOBAL tanpa lokasi tunggal (by design) — bukan diag_missing.
 fn is_global_error(msg: &str) -> bool {
     let pats = [
@@ -54,27 +79,52 @@ fn is_global_error(msg: &str) -> bool {
     pats.iter().any(|p| msg.contains(p))
 }
 
-/// O1 + O2 untuk compile pipeline (lexer/parser/elaborator).
+/// O1 + O2 untuk compile pipeline (lexer/parser/elaborator) + deteksi HANG.
 ///
 /// Dijalankan dalam thread stack BESAR (256MB) — parser rekursif pada
 /// expression dalam hasil mutasi (contoh: `x0|x1|...` rantai panjang) bisa
 /// overflow stack default 8MB (ditemukan fuzzer seed 7: stack overflow di
 /// parser). Konsisten dgn simulate_in_thread.
-fn evaluate_compile(target: Target, source: &str) -> CaseResult {
+///
+/// FILEZERO (fuzzer gap): sebelumnya TANPA watchdog — input blowup
+/// (mutasi duplicate chunk → seed 13MB, 537 module) membuat compile
+/// super-lambat/freeze dan kampanye macet total tanpa deteksi. Sekarang
+/// watchdog `recv_timeout` → Hang terdeteksi, worker thread dibiarkan
+/// selesai di background (tidak bisa di-kill di Rust) — kampanye lanjut.
+fn evaluate_compile(target: Target, source: &str, timeout_ms: u64) -> CaseResult {
+    use std::time::Duration;
     let source_owned = source.to_string();
-    let result: Option<CaseResult> = std::thread::Builder::new()
+    let (tx, rx) = std::sync::mpsc::channel::<CaseResult>();
+    let spawned = std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
         .name("maria-fuzz-compile".into())
-        .spawn(move || compile_in_thread(target, &source_owned))
-        .ok()
-        .and_then(|h| h.join().ok());
-    match result {
-        Some(r) => r,
-        None => mk(
+        .spawn(move || {
+            let r = compile_in_thread(target, &source_owned);
+            let _ = tx.send(r);
+        });
+    if spawned.is_err() {
+        return mk(
             target,
             Oracle::O1NoCrash,
             Category::Panic,
-            "thread compile gagal (join err)",
+            "thread compile gagal spawn",
+            source,
+        );
+    }
+    match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+        Ok(r) => r,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => mk(
+            target,
+            Oracle::O1NoCrash,
+            Category::Hang,
+            &format!("compile hang/slow > {} ms (worker dilanjutkan di background)", timeout_ms),
+            source,
+        ),
+        Err(_) => mk(
+            target,
+            Oracle::O1NoCrash,
+            Category::Panic,
+            "thread compile disconnected",
             source,
         ),
     }
@@ -236,7 +286,7 @@ fn evaluate_lexer(source: &str) -> CaseResult {
 /// 6. Assertion detection: deteksi assertion/violation di output.
 fn evaluate_sim(source: &str, timeout_ms: u64) -> CaseResult {
     // ── 1. Subprocess check (O1) ──
-    let outcome = crate::runner::run_file(source, timeout_ms);
+    let outcome = with_micd_isolated(|| crate::runner::run_file(source, timeout_ms));
     match outcome.kind {
         crate::runner::Kind::CleanError => {
             return mk(
@@ -872,7 +922,7 @@ fn evaluate_cli(source: &str, timeout_ms: u64) -> CaseResult {
     let mut rng = crate::Rng::new(h);
 
     let args = gen_cli_args(&mut rng, &path, source);
-    let outcome = crate::runner::run_args(&args, timeout_ms);
+    let outcome = with_micd_isolated(|| crate::runner::run_args(&args, timeout_ms));
     let _ = std::fs::remove_file(&path);
 
     let args_desc = args.join(" ");
@@ -885,7 +935,7 @@ fn evaluate_cli(source: &str, timeout_ms: u64) -> CaseResult {
         Some("mfmt") | Some("mcheck") | Some("mlint") | Some("minspect")
     );
     if is_static_tool && outcome.kind == crate::runner::Kind::Ok && rng.chance(40) {
-        let second = crate::runner::run_args(&args, timeout_ms);
+        let second = with_micd_isolated(|| crate::runner::run_args(&args, timeout_ms));
         if second.kind == crate::runner::Kind::Ok {
             let strip = |s: &str| -> Vec<String> {
                 s.lines()
@@ -1037,14 +1087,16 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
     }
 
     let mcmd = |args2: Vec<String>| -> crate::runner::Outcome {
-        crate::runner::run_args(&args2, timeout_ms)
+        with_micd_isolated(|| crate::runner::run_args(&args2, timeout_ms))
     };
     let vcd_mut_s = vcd_mut.to_string_lossy().to_string();
     let vcd_base_s = vcd_base.to_string_lossy().to_string();
     let vcd_out_s = vcd_out.to_string_lossy().to_string();
 
-    // ── 3. Kombinasi mwave subcommand (2 acak dari 8) ──
-    let cmds: [Vec<String>; 8] = [
+    // ── 3. Kombinasi mwave subcommand (2 acak dari 10) ──
+    // WAV-16 decode (protokol APB/AXI4Lite/AHB) — area BELUM di-fuzz
+    // sebelumnya (daftar lama 8 subcommand tanpa decode).
+    let cmds: [Vec<String>; 10] = [
         vec!["mwave".into(), "stats".into(), vcd_mut_s.clone()],
         vec!["mwave".into(), "tree".into(), vcd_mut_s.clone()],
         vec![
@@ -1081,6 +1133,20 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
             vcd_mut_s.clone(),
             "--at".into(),
             "0".into(),
+        ],
+        vec![
+            "mwave".into(),
+            "decode".into(),
+            vcd_mut_s.clone(),
+            "--proto".into(),
+            "apb".into(),
+        ],
+        vec![
+            "mwave".into(),
+            "decode".into(),
+            vcd_mut_s.clone(),
+            "--proto".into(),
+            "axi4lite".into(),
         ],
     ];
     let n = 1 + rng.below(2);
@@ -1164,6 +1230,285 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
     )
 }
 
+/// SDF base valid minimal — seed transisi utk mutasi teks SDF. SDF parser
+/// (`crates/maria-simulator/src/simulator/sdf.rs`) TIDAK pernah di-fuzz.
+const SDF_BASE: &str = "(DELAYFILE
+  (SDFVERSION \"3.0\")
+  (DESIGN \"top\")
+  (VENDOR \"maria\")
+  (PROGRAM \"maria-fuzz\")
+  (VERSION \"1.0\")
+  (DIVIDER .)
+  (TIMESCALE 1ns)
+  (CELL (CELLTYPE \"top\") (INSTANCE u1)
+    (DELAY (ABSOLUTE (IOPATH clk q (0.1:0.2:0.3) (0.4:0.5:0.6))))
+  )
+)
+";
+
+/// Fuzzing SDF timing pipeline (SIM-09) — area BELUM tersentuh:
+/// 1. SDF teks di-mutasi 0-2x dari SDF_BASE (parser SDF stress).
+/// 2. SV source TIDAK di-mutasi di sini — run_single sudah mutasi SV 0-4x
+///    sebelum evaluate; mutasi ganda = amplifier blowup (terukur 267MB).
+/// 3. Subprocess `maria <sv> --sdf <sdf> -T 200` — parse_file + annotate_sdf
+///    + sim dengan timing delay.
+/// 4. O1 no-crash: panic/abort/hang di jalur SDF = bug (parser SDF, annotator,
+///    atau engine timing). CleanError = SDF/SV invalid wajar.
+fn evaluate_sdf(source: &str, timeout_ms: u64) -> CaseResult {
+    use std::path::PathBuf;
+    let mk_s = |c: Category, o: Oracle, d: &str| mk(Target::Sdf, o, c, d, source);
+
+    // RNG deterministik per-case (hash source) → mutasi reproducible.
+    let mut h: u64 = 0x9E3779B97F4A7C15;
+    for b in source.bytes() {
+        h = h.rotate_left(5) ^ u64::from(b).wrapping_mul(0x100000001B3);
+        h = h.wrapping_mul(0x9E3779B97F4A7C15);
+    }
+    let mut rng = crate::Rng::new(h);
+    let empty_corpus = crate::corpus::Corpus::load(Some(&PathBuf::from("/nonexistent-fz-sdf")));
+
+    // 1. SDF text mutasi 0-2x.
+    let mut sdf_text = SDF_BASE.to_string();
+    let n_sdf = rng.below(3);
+    if n_sdf > 0 {
+        let mut mutator = crate::mutator::Mutator::new(&mut rng);
+        for _ in 0..n_sdf {
+            sdf_text = mutator.mutate(&sdf_text, &empty_corpus);
+        }
+    }
+
+    // SV: seed fuzz as-is (sudah di-mutasi oleh run_single).
+    let sv_text = source;
+
+    // Env hook: tulis SDF pre-eval untuk repro hang/panic (pasangan dari
+    // MARIA_FUZZ_TRACE — SV saja tidak cukup: kasus hang butuh SDF mutasi
+    // yang juga per-case).
+    if let Ok(trace_path) = std::env::var("MARIA_FUZZ_SDF_TRACE") {
+        let _ = std::fs::write(&trace_path, &sdf_text);
+    }
+
+    // Capture per-case (sv+sdf persisten) — untuk lokalasi kasus hang/panic
+    // yang butuh PASANGAN persis. Dipakai debug; normalnya tidak di-set.
+    if let Ok(cap_dir) = std::env::var("MARIA_FUZZ_CAPTURE_DIR") {
+        let _ = std::fs::create_dir_all(&cap_dir);
+        let seq = crate::next_crash_seq();
+        let _ = std::fs::write(
+            std::path::Path::new(&cap_dir).join(format!("{seq}.sv")),
+            sv_text,
+        );
+        let _ = std::fs::write(
+            std::path::Path::new(&cap_dir).join(format!("{seq}.sdf")),
+            &sdf_text,
+        );
+    }
+
+    // 3. Tulis temp + jalankan.
+    let dir = std::env::temp_dir();
+    let stem = format!(
+        "mariafzs_{}_{}",
+        std::process::id(),
+        crate::next_crash_seq()
+    );
+    let sv = dir.join(format!("{stem}.sv"));
+    let sdf = dir.join(format!("{stem}.sdf"));
+    if std::fs::write(&sv, &sv_text).is_err() || std::fs::write(&sdf, &sdf_text).is_err() {
+        return mk_s(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            "gagal tulis temp sv/sdf",
+        );
+    }
+    let args = vec![
+        sv.to_string_lossy().to_string(),
+        "--sdf".to_string(),
+        sdf.to_string_lossy().to_string(),
+        "-T".to_string(),
+        "200".to_string(),
+    ];
+    let outcome = with_micd_isolated(|| crate::runner::run_args(&args, timeout_ms));
+    let _ = std::fs::remove_file(&sv);
+    let _ = std::fs::remove_file(&sdf);
+
+    match outcome.kind {
+        crate::runner::Kind::Ok => mk_s(
+            Category::Ok,
+            Oracle::O1NoCrash,
+            &format!("sdf pipeline ok: parse+annotate+sim ({:?})", stem),
+        ),
+        crate::runner::Kind::CleanError => mk_s(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            &format!("sdf clean error: {}", outcome.stderr.lines().next().unwrap_or("")),
+        ),
+        crate::runner::Kind::Panic => mk_s(
+            Category::Panic,
+            Oracle::O1NoCrash,
+            &format!("sdf panic: {}", outcome.stderr),
+        ),
+        crate::runner::Kind::Abort => mk_s(
+            Category::Abort,
+            Oracle::O1NoCrash,
+            &format!("sdf abort: {}", outcome.stderr),
+        ),
+        crate::runner::Kind::Crash(code) => mk_s(
+            Category::Panic,
+            Oracle::O1NoCrash,
+            &format!("sdf crash code {code}: {}", outcome.stderr),
+        ),
+        crate::runner::Kind::Hang => mk_s(
+            Category::Hang,
+            Oracle::O1NoCrash,
+            &format!("sdf hang > {} ms", timeout_ms),
+        ),
+    }
+}
+
+/// Fuzzing MICD incremental database (`--fast` = run_fast + CompileSession +
+/// MICD cache) — area BELUM tersentuh:
+/// 1. Base: `maria --fast <sv> -T 200` (cold cache, seed).
+/// 2. Incremental: run ulang (cache hit) → hasil harus == fresh.
+/// 3. Fresh: `--recompile` (lewati MICD) → base of truth.
+/// 4. O4: incremental vs recompile output identik (setelah strip timing)?
+///    Jika beda → cache drift / silent miscompilation = bug CRITICAL.
+/// 5. O1: panic/hang di jalur --fast = bug.
+///
+/// MARIA_MICD_DIR diarahkan ke temp per-case agar tidak mencemari
+/// `.maria/database` project.
+fn evaluate_micd(source: &str, timeout_ms: u64) -> CaseResult {
+    let mk_m = |c: Category, o: Oracle, d: &str| mk(Target::Micd, o, c, d, source);
+
+    let dir = std::env::temp_dir();
+    let stem = format!(
+        "mariafzm_{}_{}",
+        std::process::id(),
+        crate::next_crash_seq()
+    );
+    let sv = dir.join(format!("{stem}.sv"));
+    if std::fs::write(&sv, source).is_err() {
+        return mk_m(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            "gagal tulis temp sv",
+        );
+    }
+
+    let sv_s = sv.to_string_lossy().to_string();
+    let base: Vec<String> = vec![
+        "--fast".to_string(),
+        sv_s.clone(),
+        "-T".to_string(),
+        "200".to_string(),
+    ];
+    let recompile: Vec<String> = vec![
+        "--fast".to_string(),
+        sv_s.clone(),
+        "-T".to_string(),
+        "200".to_string(),
+        "--recompile".to_string(),
+    ];
+
+    // Isolasi MICD per-case via helper (temp unik + cleanup otomatis).
+    let (r1, r2, r3) = with_micd_isolated(|| {
+        (
+            crate::runner::run_args(&base, timeout_ms),      // cold cache — seed
+            crate::runner::run_args(&base, timeout_ms),      // incremental
+            crate::runner::run_args(&recompile, timeout_ms), // fresh
+        )
+    });
+    let _ = std::fs::remove_file(&sv);
+
+    if r1.kind != crate::runner::Kind::Ok {
+        // Compile/sim gagal di run pertama (SV invalid) — bukan area MICD.
+        return mk_m(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            &format!("run pertama gagal: {}", r1.stderr.lines().next().unwrap_or("")),
+        );
+    }
+
+    // O1: crash/hang pada jalur incremental/fresh.
+    for (label, r) in [("incremental", &r2), ("recompile", &r3)] {
+        match r.kind {
+            crate::runner::Kind::Ok => {}
+            crate::runner::Kind::CleanError => {
+                return mk_m(
+                    Category::Differential,
+                    Oracle::O5Differential,
+                    &format!(
+                        "{label} clean-error padahal run pertama ok: {}",
+                        r.stderr.lines().next().unwrap_or("")
+                    ),
+                );
+            }
+            crate::runner::Kind::Panic => {
+                return mk_m(
+                    Category::Panic,
+                    Oracle::O1NoCrash,
+                    &format!("{label} panic: {}", r.stderr),
+                );
+            }
+            crate::runner::Kind::Abort => {
+                return mk_m(
+                    Category::Abort,
+                    Oracle::O1NoCrash,
+                    &format!("{label} abort: {}", r.stderr),
+                );
+            }
+            crate::runner::Kind::Crash(code) => {
+                return mk_m(
+                    Category::Panic,
+                    Oracle::O1NoCrash,
+                    &format!("{label} crash code {code}: {}", r.stderr),
+                );
+            }
+            crate::runner::Kind::Hang => {
+                return mk_m(
+                    Category::Hang,
+                    Oracle::O1NoCrash,
+                    &format!("{label} hang > {} ms", timeout_ms),
+                );
+            }
+        }
+    }
+
+    // O4: MICD incremental == fresh (strip baris timing/`[TIMING]` stderr tak
+    // dipakai — stdout saja; baris metrik waktu di-strip).
+    let strip = |s: &str| -> Vec<String> {
+        s.lines()
+            .filter(|l| {
+                !l.contains("time") && !l.contains("µs") && !l.contains("ms)")
+            })
+            .map(|l| l.trim().to_string())
+            .collect()
+    };
+    let out_incr = strip(&r2.stdout);
+    let out_fresh = strip(&r3.stdout);
+    if out_incr != out_fresh {
+        return mk_m(
+            Category::NonDeterministic,
+            Oracle::O4Determinism,
+            "MICD drift: incremental != --recompile (cache mengubah hasil sim)",
+        );
+    }
+
+    // Bandingkan juga dengan run pertama (cold) — konsistensi tiga arah.
+    let out_cold = strip(&r1.stdout);
+    if out_cold != out_incr {
+        return mk_m(
+            Category::NonDeterministic,
+            Oracle::O4Determinism,
+            "MICD drift: cold run != incremental run",
+        );
+    }
+
+    let _ = r1;
+    mk_m(
+        Category::Ok,
+        Oracle::O1NoCrash,
+        "micd ok: incremental == recompile == cold",
+    )
+}
+
 /// Argumen CLI untuk satu kasus fuzz: tool subcommand ATAU pipeline flags,
 /// atas satu file temp. RNG per-case (bukan global) → deterministik.
 fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> Vec<String> {
@@ -1206,9 +1551,11 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
         args.push("-T".to_string());
         args.push(["50", "100", "200", "1000"][rng.below(4)].to_string());
     }
-    // mode run_fast: 20% jalur MICD penuh (beda pipeline vs `maria run`).
+    // mode run_fast: 20% jalur MICD penuh (`--fast` memicu run_fast — NOTA:
+    // dulu sisipkan "run_fast" sbg argv[0] yang dianggap FILE oleh maria →
+    // clean error noise; sekarang flag `--fast` yang benar).
     if rng.chance(20) {
-        args.insert(0, "run_fast".to_string());
+        args.push("--fast".to_string());
     }
 
     let flags = [

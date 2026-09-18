@@ -46,6 +46,14 @@ pub enum Target {
     /// filter/merge/get) atas VCD hasil sim yang di-mutasi — parser VCD
     /// robustness + determinisme.
     Vcd,
+    /// SDF timing annotation pipeline (SIM-09): `SdfData::parse` + `--sdf`
+    /// annotate + sim — area BELUM tersentuh (parser SDF tidak pernah di-fuzz).
+    /// Mutasi teks SDF + SV seed → subprocess `maria <sv> --sdf <sdf> -T 200`.
+    Sdf,
+    /// MICD incremental database (`--fast` run_fast): incremental vs
+    /// `--recompile` (fresh) harus identik — cache drift / silent
+    /// miscompilation = bug. Area BELUM tersentuh.
+    Micd,
 }
 
 impl Target {
@@ -59,6 +67,8 @@ impl Target {
         Target::Preproc,
         Target::Mv,
         Target::Vcd,
+        Target::Sdf,
+        Target::Micd,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -73,6 +83,8 @@ impl Target {
             Target::Preproc => "preproc",
             Target::Mv => "mv",
             Target::Vcd => "vcd",
+            Target::Sdf => "sdf",
+            Target::Micd => "micd",
         }
     }
 
@@ -88,6 +100,8 @@ impl Target {
             "preproc" | "pp" => Some(Target::Preproc),
             "mv" | "transpile" => Some(Target::Mv),
             "vcd" | "wave" => Some(Target::Vcd),
+            "sdf" => Some(Target::Sdf),
+            "micd" | "fast" => Some(Target::Micd),
             _ => None,
         }
     }
@@ -232,10 +246,12 @@ impl Default for FuzzConfig {
             target: Target::All,
             cases: 2000,
             seed: 0xC0FFEE,
-            // Kasus in-process (lexer/parser/elab/fmt) < 500ms ideal.
-            // Subprocess sim butuh waktu cold-start binary + compile real RTL:
-            // 2000ms = hang asli (infinite loop), bukan compile lambat.
-            timeout_ms: 2000,
+            // Budget per-case sengaja LONG (5s): subprocess maria CLI (sim/sdf/
+            // cli/vcd/micd) harus full-parse + elaborasi per case — jalur elab
+            // ERROR terukur 2-3.5s untuk file 4KB (pair 21/24/27 kampanye SDF).
+            // Timeout pendek (1.5-2s) = false hang massal (terukur hang=99/400
+            // palsu). 5s menangkap hang ASLI (infinite loop) tanpa noise speed.
+            timeout_ms: 5000,
             corpus_dir: None,
             save_bugs: true,
         }
@@ -248,8 +264,16 @@ pub struct TargetSummary {
     pub target: Target,
     pub total: usize,
     pub bugs: usize,
+    /// Kasus di-skip karena source membengkak > SIZE_CAP pasca-mutasi
+    /// (input raksasa 100MB+ = lambat di tool mana pun, bukan bug maria).
+    pub skipped_big: usize,
     pub categories: std::collections::BTreeMap<Category, usize>,
 }
+
+/// Cap ukuran source pasca-mutasi. Corpus seed max 4MB, tapi duplicate_chunk
+/// bisa meledakkan seed jadi 267MB (terukur kampanye SDF: hang=93/300 = noise
+/// blowup, bukan bug). Input > cap tidak dievaluasi (skip → skipped_big).
+pub const SIZE_CAP: usize = 2_000_000;
 
 /// Laporan kampanye fuzz.
 #[derive(Debug, Default, Clone)]
@@ -480,6 +504,7 @@ fn run_single(cfg: FuzzConfig) -> FuzzReport {
     let mut results: Vec<CaseResult> = Vec::new();
     let mut categories: BTreeMap<Category, usize> = BTreeMap::new();
     let mut seen_sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut skipped_big: usize = 0;
 
     for i in 0..cfg.cases {
         // Ambil seed nyata dari corpus (100% — tanpa template sintetis).
@@ -562,6 +587,13 @@ fn run_single(cfg: FuzzConfig) -> FuzzReport {
             let _ = std::fs::write(&trace_path, &source);
         }
 
+        // Size guard pasca-mutasi: source raksasa (duplicate_chunk blowup)
+        // lambat di tool mana pun — skip, jangan evaluasi (bukan bug maria).
+        if source.len() > SIZE_CAP {
+            skipped_big += 1;
+            continue;
+        }
+
         let result = oracle::evaluate(cfg.target, &source, cfg.timeout_ms);
         *categories.entry(result.category).or_insert(0) += 1;
 
@@ -577,7 +609,13 @@ fn run_single(cfg: FuzzConfig) -> FuzzReport {
         }
 
         if (i + 1) % 500 == 0 {
-            eprint!("\r  [{}/{}] bugs: {}", i + 1, cfg.cases, results.len());
+            eprint!(
+                "\r  [{}/{}] bugs: {} skip_big: {}",
+                i + 1,
+                cfg.cases,
+                results.len(),
+                skipped_big
+            );
         }
     }
     if cfg.cases >= 500 {
@@ -588,6 +626,7 @@ fn run_single(cfg: FuzzConfig) -> FuzzReport {
         target: cfg.target,
         total: cfg.cases,
         bugs: results.len(),
+        skipped_big,
         categories,
     };
 

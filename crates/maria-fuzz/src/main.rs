@@ -46,7 +46,7 @@ USAGE:
   maria-fuzz report  [<dir>]
   maria-fuzz help
 
-TARGETS: all | lexer | parser | elab | sim | fmt | cli | preproc | mv | vcd
+TARGETS: all | lexer | parser | elab | sim | fmt | cli | preproc | mv | vcd | sdf | micd
 Default: all (2000 cases/target). Corpus default: {corpus}
 Bug output: {bugs}
 "#,
@@ -89,9 +89,15 @@ fn cmd_run(args: &[String]) -> i32 {
         .as_deref()
         .and_then(parse_target)
         .unwrap_or(Target::All);
-    let cases = cases_s.and_then(|s| s.parse().ok()).unwrap_or(2000);
-    let seed = seed_s.and_then(|s| s.parse().ok()).unwrap_or(0xC0FFEE);
-    let timeout = timeout_s.and_then(|s| s.parse().ok()).unwrap_or(2000);
+    let cases = cases_s
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(FuzzConfig::default().cases);
+    let seed = seed_s
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(FuzzConfig::default().seed);
+    let timeout = timeout_s
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(FuzzConfig::default().timeout_ms);
     let corpus_dir = corpus_s.map(PathBuf::from);
 
     let cfg = FuzzConfig {
@@ -123,10 +129,11 @@ fn cmd_run(args: &[String]) -> i32 {
             .collect();
         parts.sort();
         println!(
-            "[{}] total={} bugs={} :: {}",
+            "[{}] total={} bugs={} skip_big={} :: {}",
             s.target.as_str(),
             s.total,
             s.bugs,
+            s.skipped_big,
             parts.join(" ")
         );
     }
@@ -147,9 +154,11 @@ fn cmd_run(args: &[String]) -> i32 {
 fn cmd_replay(args: &[String]) -> i32 {
     let (target_s, rest) = take_flag(args, "--target");
     let (timeout_s, rest) = take_flag(&rest, "--timeout");
+    let detail = rest.iter().any(|a| a == "--detail");
+    let rest: Vec<String> = rest.into_iter().filter(|a| a != "--detail").collect();
     let file = rest.first().cloned().unwrap_or_default();
     if file.is_empty() {
-        eprintln!("usage: maria-fuzz replay <file.sv> [--target <t>] [--timeout <ms>]");
+        eprintln!("usage: maria-fuzz replay <file.sv> [--target <t>] [--timeout <ms>] [--detail]");
         return 1;
     }
     let source = match std::fs::read_to_string(&file) {
@@ -163,7 +172,19 @@ fn cmd_replay(args: &[String]) -> i32 {
         .as_deref()
         .and_then(parse_target)
         .unwrap_or(Target::Simulator);
-    let timeout = timeout_s.and_then(|s| s.parse().ok()).unwrap_or(2000);
+    let timeout = timeout_s
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(FuzzConfig::default().timeout_ms);
+
+    // --detail: dumpt bukti per-sinyal (validate::collect) — isolasi akar
+    // differential/x-stuck tanpa menebak.
+    if detail {
+        let ev = maria_fuzz::validate::collect(&source, 1000);
+        eprintln!("EVIDENCE: {}", ev.summary());
+        for d in &ev.diff_details {
+            println!("DIFF: {d}");
+        }
+    }
 
     eprintln!("REPLAY: {file} -> target={}", target.as_str());
     let result = maria_fuzz::oracle::evaluate(target, &source, timeout);
@@ -241,7 +262,9 @@ fn cmd_minimize(args: &[String]) -> i32 {
         .as_deref()
         .and_then(parse_target)
         .unwrap_or(Target::Simulator);
-    let timeout = timeout_s.and_then(|s| s.parse().ok()).unwrap_or(2000);
+    let timeout = timeout_s
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(FuzzConfig::default().timeout_ms);
 
     // Predikat: bug ter-reproduksi (bukan Ok/CleanError)
     let predicate = |s: &str| {
@@ -286,7 +309,9 @@ fn cmd_verify(args: &[String]) -> i32 {
     let (timeout_s, rest) = take_flag(args, "--timeout");
     let (cases_s, rest) = take_flag(&rest, "--cases");
     let (seed_s, rest) = take_flag(&rest, "--seed");
-    let timeout = timeout_s.and_then(|s| s.parse().ok()).unwrap_or(4000);
+    let timeout = timeout_s
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(FuzzConfig::default().timeout_ms);
 
     if let Some(cases_s) = cases_s {
         let cases: usize = cases_s.parse().unwrap_or(200);
