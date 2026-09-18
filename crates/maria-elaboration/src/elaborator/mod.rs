@@ -1197,6 +1197,7 @@ impl Elaborator {
                         assoc_key_type: None,
                         is_rand: false,
                         is_const: false,
+                        is_static: false,
                         expr: None,
                     }],
                 });

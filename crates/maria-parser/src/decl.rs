@@ -744,6 +744,7 @@ impl Parser {
                         assoc_key_type,
                         is_rand: false,
                         is_const: false,
+                        is_static: false,
                         expr: init_expr,
                     });
                 }

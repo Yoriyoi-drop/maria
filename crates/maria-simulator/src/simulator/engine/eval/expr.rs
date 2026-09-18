@@ -347,10 +347,32 @@ impl SimulationEngine {
                 })
             }
             IrExpr::Concat(exprs) => {
+                // String concat (`{s1, s2}` / `{"a", s}`) mempertahankan urutan
+                // operan kiri→kanan — string bukan bit-vector (IEEE 1800 §6.16.2).
+                // Bit concat: operan source MSB-first → bangun LSB-first (rev)
+                // karena `extend` menambahkan part sebagai bit rendah.
+                let is_string_concat = exprs.iter().any(|e| match e {
+                    IrExpr::String(_) => true,
+                    IrExpr::Signal(id, _) => self
+                        .design
+                        .top
+                        .signals
+                        .get(*id)
+                        .map(|s| s.is_string)
+                        .unwrap_or(false),
+                    _ => false,
+                });
                 let mut result = LogicVec::new(0);
-                for e in exprs.iter().rev() {
-                    let part = self.evaluate_expr(e)?;
-                    result = result.extend(&part);
+                if is_string_concat {
+                    for e in exprs.iter() {
+                        let part = self.evaluate_expr(e)?;
+                        result = result.extend(&part);
+                    }
+                } else {
+                    for e in exprs.iter().rev() {
+                        let part = self.evaluate_expr(e)?;
+                        result = result.extend(&part);
+                    }
                 }
                 Ok(result)
             }
@@ -2552,21 +2574,55 @@ impl SimulationEngine {
             }
         }
 
-        // Initialize internal variables with X
+        // Initialize internal variables. Automatic: X setiap call (initializer
+        // ditangani jalur inline; runtime path hanya untuk function recursive
+        // / ber-static yang tidak di-inline). Static (IEEE 1800 §6.21):
+        // inisialisasi SEKALI di store persisten `static_locals`, nilai
+        // dipertahankan antar pemanggilan function/task yang sama.
+        let mut static_init_jobs: Vec<(Symbol, usize)> = Vec::new();
         for decl in &func.decls {
             for var in &decl.names {
-                if !locals.contains_key(&var.name) {
-                    let width = if let Some(r) = &var.range {
-                        r.width()
+                if locals.contains_key(&var.name) {
+                    continue;
+                }
+                let width = if let Some(r) = &var.range {
+                    r.width()
+                } else {
+                    1
+                };
+                if var.is_static {
+                    let key = (*name, var.name);
+                    if let Some(existing) = self.static_locals.get(&key) {
+                        locals.insert(var.name, existing.clone());
                     } else {
-                        1
-                    };
+                        locals.insert(var.name, LogicVec::new(width));
+                        static_init_jobs.push((var.name, width));
+                    }
+                } else {
                     locals.insert(var.name, LogicVec::new(width));
                 }
             }
         }
 
         self.method_locals.push(locals);
+
+        // Evaluasi initializer static lokal PERTAMA KALI (frame sudah aktif
+        // agar ekspresi init bisa membaca argumen/port via get_local).
+        for (var_name, width) in static_init_jobs {
+            let mut init_val = LogicVec::new(width);
+            for decl in &func.decls {
+                if let Some(var) = decl.names.iter().find(|v| v.name == var_name) {
+                    if let Some(init_expr) = &var.expr {
+                        if let Ok(v) = self.evaluate_ast_expr(init_expr) {
+                            init_val = v;
+                        }
+                    }
+                    break;
+                }
+            }
+            self.static_locals.insert((*name, var_name), init_val.clone());
+            self.set_local(var_name.as_str(), init_val);
+        }
 
         // Save and set current_method so Stmt::Return stores into method_locals
         let saved_method = self.current_method.take();
@@ -2584,6 +2640,18 @@ impl SimulationEngine {
         // tidak bocor ke evaluasi blok lain setelah function selesai.
         self.ast_return_pending = false;
         self.current_method = saved_method;
+
+        // Simpan nilai static lokal saat ini kembali ke store persisten
+        // (body bisa mengubah static var; nilai harus survive truncate frame).
+        for decl in &func.decls {
+            for var in &decl.names {
+                if var.is_static {
+                    if let Some(v) = self.get_local(var.name.as_str()) {
+                        self.static_locals.insert((*name, var.name), v);
+                    }
+                }
+            }
+        }
 
         // Read return value from method_locals. `__func_ret` di-set oleh
         // Stmt::Return (gaya ANSI `return expr`); `name` di-set oleh LHS

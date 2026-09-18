@@ -1357,8 +1357,14 @@ impl Parser {
         // di-parse sebagai instance. Static/auto hanyalah modifier; deklarasi
         // sisanya di-parse via parse_decl (termasuk `Type v = expr`).
         if matches!(self.peek(), Token::Static | Token::Auto) {
+            let is_static = matches!(self.peek(), Token::Static);
             self.advance();
-            let decl = self.parse_decl()?;
+            let mut decl = self.parse_decl()?;
+            if is_static {
+                for var in &mut decl.names {
+                    var.is_static = true;
+                }
+            }
             return Ok(Stmt::NamedBlock {
                 name: Symbol::EMPTY,
                 stmts: vec![],
@@ -2383,6 +2389,7 @@ impl Parser {
                 assoc_key_type: None,
                 is_rand: false,
                 is_const: true,
+                is_static: false,
                 expr,
             });
             if self.peek() == &Token::Comma {

@@ -5491,7 +5491,7 @@ endmodule
         .find(|(n, _)| n == "s")
         .map(|(_, v)| logicvec_to_string(v))
         .unwrap_or_default();
-    assert_eq!(s, "0xff", "sformatf with %h");
+    assert_eq!(s, "000000ff", "sformatf with %h (plain = full width, IEEE 1800 §21.2.1.3)");
 }
 
 #[test]
@@ -5513,7 +5513,7 @@ endmodule
         .find(|(n, _)| n == "s")
         .map(|(_, v)| logicvec_to_string(v))
         .unwrap_or_default();
-    assert_eq!(s, "1010", "sformatf with %b");
+    assert_eq!(s, "00000000000000000000000000001010", "sformatf with %b (plain = full width, IEEE 1800 §21.2.1.3)");
 }
 
 #[test]

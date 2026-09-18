@@ -820,9 +820,15 @@ impl Parser {
                 }
                 Token::Auto | Token::Static => {
                     // automatic/static variable declaration in function body
+                    let is_static = matches!(self.peek(), Token::Static);
                     self.advance();
                     // Try to parse as declaration
-                    if let Ok(decl) = self.parse_decl() {
+                    if let Ok(mut decl) = self.parse_decl() {
+                        if is_static {
+                            for var in &mut decl.names {
+                                var.is_static = true;
+                            }
+                        }
                         decls.push(decl);
                     } else {
                         return Err(self.err("expected declaration after automatic/static"));
@@ -1235,8 +1241,14 @@ impl Parser {
                 }
                 Token::Auto | Token::Static => {
                     // static/automatic variable declaration in task body
+                    let is_static = matches!(self.peek(), Token::Static);
                     self.advance();
-                    if let Ok(decl) = self.parse_decl() {
+                    if let Ok(mut decl) = self.parse_decl() {
+                        if is_static {
+                            for var in &mut decl.names {
+                                var.is_static = true;
+                            }
+                        }
                         decls.push(decl);
                     } else {
                         return Err(self.err("expected declaration after automatic/static"));

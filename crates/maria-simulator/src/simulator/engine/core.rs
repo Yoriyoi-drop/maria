@@ -52,6 +52,7 @@ impl SimulationEngine {
             signal_stats: None,
             current_this: None,
             method_locals: Vec::new(),
+            static_locals: HashMap::new(),
             current_method: None,
             disable_pending: None,
             rng: rand::rngs::StdRng::seed_from_u64(42),

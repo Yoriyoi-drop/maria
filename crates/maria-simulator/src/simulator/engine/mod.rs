@@ -163,6 +163,10 @@ pub struct SimulationEngine {
     pub signal_stats: Option<SignalStats>,
     pub current_this: Option<ObjId>,
     pub method_locals: Vec<HashMap<Symbol, LogicVec>>,
+    /// Nilai persisten variabel `static` lokal function/task — key
+    /// (function_name, var_name). Inisialisasi SEKALI saat call pertama,
+    /// lalu dipertahankan antar pemanggilan (IEEE 1800 §6.21).
+    pub static_locals: HashMap<(Symbol, Symbol), LogicVec>,
     pub current_method: Option<Symbol>,
     pub rng: StdRng,
     /// Jumlah panggilan fungsi random (untuk $get_randcount).

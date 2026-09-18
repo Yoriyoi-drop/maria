@@ -382,6 +382,10 @@ pub struct DeclVar {
     pub assoc_key_type: Option<DataType>,
     pub is_rand: bool,
     pub is_const: bool,
+    /// Qualifier `static` pada variabel prosedural (function/task body).
+    /// Variabel static menginisialisasi sekali dan mempertahankan nilainya
+    /// antar pemanggilan function/task yang sama (IEEE 1800 §6.21).
+    pub is_static: bool,
     pub expr: Option<Expr>,
 }
 

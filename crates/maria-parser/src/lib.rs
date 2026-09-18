@@ -1668,6 +1668,7 @@ impl Parser {
                         assoc_key_type: None,
                         is_rand: false,
                         is_const: false,
+                        is_static: false,
                         expr: None,
                     }];
                     self.skip_semi();
@@ -1923,6 +1924,7 @@ impl Parser {
                                 assoc_key_type,
                                 is_rand: false,
                                 is_const: false,
+                                is_static: false,
                                 expr: None,
                             });
                         } else {
@@ -2036,6 +2038,7 @@ impl Parser {
                         assoc_key_type: None,
                         is_rand: false,
                         is_const: false,
+                        is_static: false,
                         expr,
                     }];
                     Ok(Some(ModuleItem::Decl(Decl {

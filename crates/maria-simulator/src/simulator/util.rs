@@ -364,6 +364,7 @@ impl SimulationEngine {
             if c == '%' {
                 let mut zero_fill = false;
                 let mut width = 0usize;
+                let mut precision: Option<usize> = None;
                 if let Some(&next) = chars.peek() {
                     if next == '0' {
                         zero_fill = true;
@@ -379,6 +380,55 @@ impl SimulationEngine {
                     }
                 }
                 match chars.next() {
+                    Some('o') => {
+                        if let Some((val, _)) = value_args.next() {
+                            // `%o` octal — leading '0' HANYA dibuang bila
+                            // zero-fill `%0o` (IEEE 1800 §21.2.1.3).
+                            let vw = val.width;
+                            let ndigits = vw.div_ceil(3);
+                            let mut s = String::new();
+                            let mut started = false;
+                            for i in (0..ndigits).rev() {
+                                let mut tri = 0u8;
+                                let mut has_x = false;
+                                let mut has_z = false;
+                                for j in 0..3 {
+                                    let bi = i * 3 + j;
+                                    if bi >= vw {
+                                        continue;
+                                    }
+                                    match val.bits[bi] {
+                                        LogicVal::One => tri |= 1 << j,
+                                        LogicVal::X => has_x = true,
+                                        LogicVal::Z => has_z = true,
+                                        LogicVal::Zero => {}
+                                    }
+                                }
+                                if !started && tri == 0 && !has_x && !has_z && i > 0 && zero_fill {
+                                    continue;
+                                }
+                                started = true;
+                                if has_x {
+                                    s.push('x');
+                                } else if has_z {
+                                    s.push('z');
+                                } else {
+                                    let tri_u32: u32 = tri as u32;
+                                s.push(char::from_digit(tri_u32, 8).unwrap_or('0'));
+                                }
+                            }
+                            if !started {
+                                s.push('0'); // nilai "0"
+                            }
+                            if width > s.len() {
+                                let pad = if zero_fill { '0' } else { ' ' };
+                                for _ in 0..(width - s.len()) {
+                                    result.push(pad);
+                                }
+                            }
+                            result.push_str(&s);
+                        }
+                    }
                     Some('d') => {
                         if let Some((val, is_signed)) = value_args.next() {
                             if is_signed && val.width <= 64 {
@@ -408,35 +458,31 @@ impl SimulationEngine {
                     }
                     Some('b') => {
                         if let Some((val, _)) = value_args.next() {
-                            // Tulis bit MSB-first, buang leading '0' (tanpa alokasi).
-                            let mut seen_nonzero = false;
-                            let mut trimmed_len = 0usize;
-                            for bit in val.bits.iter().rev() {
-                                if *bit == LogicVal::Zero && !seen_nonzero {
-                                    continue;
-                                }
-                                seen_nonzero = true;
-                                trimmed_len += 1;
-                            }
-                            if !seen_nonzero {
-                                trimmed_len = 1; // nilai "0"
-                            }
-                            if width > trimmed_len {
-                                let pad = if zero_fill { '0' } else { ' ' };
-                                for _ in 0..(width - trimmed_len) {
-                                    result.push(pad);
-                                }
-                            }
-                            if !seen_nonzero {
-                                result.push('0');
-                            } else {
-                                let mut wrote = false;
+                            // `%0b` membuang leading '0'; `%b` plain mencetak
+                            // FULL width nilai (IEEE 1800 §21.2.1.3).
+                            let mut chars_out: Vec<char> = Vec::new();
+                            if zero_fill {
+                                let mut seen_nonzero = false;
                                 for bit in val.bits.iter().rev() {
-                                    if *bit == LogicVal::Zero && !wrote {
+                                    if *bit == LogicVal::Zero && !seen_nonzero {
                                         continue;
                                     }
-                                    wrote = true;
-                                    result.push(match bit {
+                                    seen_nonzero = true;
+                                    chars_out.push(match bit {
+                                        LogicVal::Zero => '0',
+                                        LogicVal::One => '1',
+                                        LogicVal::X => 'x',
+                                        LogicVal::Z => 'z',
+                                    });
+                                }
+                                if !seen_nonzero {
+                                    chars_out.push('0'); // nilai "0"
+                                }
+                            } else if val.bits.is_empty() {
+                                chars_out.push('0');
+                            } else {
+                                for bit in val.bits.iter().rev() {
+                                    chars_out.push(match bit {
                                         LogicVal::Zero => '0',
                                         LogicVal::One => '1',
                                         LogicVal::X => 'x',
@@ -444,9 +490,97 @@ impl SimulationEngine {
                                     });
                                 }
                             }
+                            let out_len = chars_out.len();
+                            if width > out_len {
+                                let pad = if zero_fill { '0' } else { ' ' };
+                                for _ in 0..(width - out_len) {
+                                    result.push(pad);
+                                }
+                            }
+                            result.extend(chars_out);
                         }
                     }
-                    Some('h') => {
+                    Some('o') => {
+                        if let Some((val, _)) = value_args.next() {
+                            // `%o` octal — plain = FULL width (3 bit/group,
+                            // X/Z-aware), `%0o` = buang leading '0' group,
+                            // `%0o` sama seperti %0b/%0h (IEEE 1800 §21.2.1.3).
+                            // Dibagi per-grup 3-bit dari LSB; group ber-X → 'x',
+                            // ber-Z (tanpa X) → 'z', else digit octal.
+                            let vw = val.width;
+                            let ngroups = vw.div_ceil(3);
+                            let mut chars_out: Vec<char> = Vec::new();
+                            if zero_fill {
+                                let mut started = false;
+                                for i in (0..ngroups).rev() {
+                                    let mut grp = 0u8;
+                                    let mut has_x = false;
+                                    let mut has_z = false;
+                                    for j in 0..3 {
+                                        let bi = i * 3 + j;
+                                        if bi >= vw {
+                                            continue;
+                                        }
+                                        match val.bits[bi] {
+                                            LogicVal::One => grp |= 1 << j,
+                                            LogicVal::X => has_x = true,
+                                            LogicVal::Z => has_z = true,
+                                            LogicVal::Zero => {}
+                                        }
+                                    }
+                                    if !started && grp == 0 && !has_x && !has_z && i > 0 {
+                                        continue;
+                                    }
+                                    started = true;
+                                    if has_x {
+                                        chars_out.push('x');
+                                    } else if has_z {
+                                        chars_out.push('z');
+                                    } else {
+                                        chars_out.push(char::from_digit(grp as u32, 8).unwrap_or('0'));
+                                    }
+                                }
+                                if !started {
+                                    chars_out.push('0');
+                                }
+                            } else if val.bits.is_empty() {
+                                chars_out.push('0');
+                            } else {
+                                for i in (0..ngroups).rev() {
+                                    let mut grp = 0u8;
+                                    let mut has_x = false;
+                                    let mut has_z = false;
+                                    for j in 0..3 {
+                                        let bi = i * 3 + j;
+                                        if bi >= vw {
+                                            continue;
+                                        }
+                                        match val.bits[bi] {
+                                            LogicVal::One => grp |= 1 << j,
+                                            LogicVal::X => has_x = true,
+                                            LogicVal::Z => has_z = true,
+                                            LogicVal::Zero => {}
+                                        }
+                                    }
+                                    if has_x {
+                                        chars_out.push('x');
+                                    } else if has_z {
+                                        chars_out.push('z');
+                                    } else {
+                                        chars_out.push(char::from_digit(grp as u32, 8).unwrap_or('0'));
+                                    }
+                                }
+                            }
+                            let out_len = chars_out.len();
+                            if width > out_len {
+                                let pad = if zero_fill { '0' } else { ' ' };
+                                for _ in 0..(width - out_len) {
+                                    result.push(pad);
+                                }
+                            }
+                            result.extend(chars_out);
+                        }
+                    }Some('h') => {
                         if let Some((val, _)) = value_args.next() {
                             // Format per-nibble dari pola bit — X/Z-aware.
                             // (Bug render: to_u64() memetakan X/Z → 0 sehingga
@@ -474,7 +608,10 @@ impl SimulationEngine {
                                         LogicVal::Zero => {}
                                     }
                                 }
-                                if !started && nib == 0 && !has_x && !has_z && i > 0 {
+                                // Skip leading zero nibble HANYA saat `%0h` trims
+                                // (IEEE 1800 §21.2.1.3) — plain `%h` mencetak
+                                // full width (iverilog differential: 8'h05 → "05").
+                                if zero_fill && !started && nib == 0 && !has_x && !has_z && i > 0 {
                                     continue;
                                 }
                                 started = true;
@@ -500,7 +637,16 @@ impl SimulationEngine {
                     }
                     Some('f') => {
                         if let Some((val, _)) = value_args.next() {
-                            let _ = write!(result, "{}", f64::from_bits(val.to_u64()));
+                            // `%f` default precision 6 (IEEE 1800 §21.2.1.4);
+                            // `%.Nf`/`%0.Nf` → N digit presisi.
+                            let prec = precision.unwrap_or(6);
+                            let _ = write!(result, "{:.data$}", f64::from_bits(val.to_u64()), data = prec.min(20));
+                        }
+                    }
+                    Some('e') | Some('E') => {
+                        if let Some((val, _)) = value_args.next() {
+                            let prec = precision.unwrap_or(6);
+                            let _ = write!(result, "{:.data$e}", f64::from_bits(val.to_u64()), data = prec.min(20));
                         }
                     }
                     Some('t') => {
