@@ -1,6 +1,6 @@
 use crate::simulator::packed::PackedLogicVec;
 use crate::simulator::packed_eval::{eval_binary_packed, is_packable_binary_op};
-use crate::simulator::util::{is_signed_expr, string_to_logicvec};
+use crate::simulator::util::{is_signed_expr, sanitize_for_2state, string_to_logicvec};
 use crate::simulator::value::*;
 use maria_core::error::SimError;
 use maria_ir::{
@@ -138,10 +138,18 @@ pub fn evaluate_expr_simple(
     match expr {
         IrExpr::Const(val) => Ok(val.clone()),
         IrExpr::FillLit(val) => Ok(LogicVec::fill(*val, 1)),
-        IrExpr::Signal(id, _) => Ok(signals
-            .get(*id)
-            .map(|a| (**a).clone())
-            .unwrap_or_else(|| LogicVec::new(1))),
+        IrExpr::Signal(id, _) => {
+            let mut val = signals
+                .get(*id)
+                .map(|a| (**a).clone())
+                .unwrap_or_else(|| LogicVec::new(1));
+            // 2-state coercion pada READ — mirror serial eval/expr.rs:207.
+            // Sinyal 2-state (`bit`) yang kebetulan berisi X/Z harus dibaca
+            // sbg 0; parallel path sebelumnya membaca X mentah → differential
+            // vs serial (fuzzer: traffic.mv `bit red` = X di jalur dag).
+            sanitize_for_2state(sig_info, *id, &mut val);
+            Ok(val)
+        }
         IrExpr::RangeSelect(sig_id, msb, lsb) => {
             if let Some(val) = signals.get(*sig_id) {
                 let (start, end) = if *msb > *lsb {
@@ -344,10 +352,29 @@ pub fn evaluate_expr_simple(
             let w = tv.width.max(fv.width);
             let tv = if tv.width < w { tv.resize(w) } else { tv };
             let fv = if fv.width < w { fv.resize(w) } else { fv };
-            if cond_val.to_bool().unwrap_or(false) {
-                Ok(tv)
-            } else {
-                Ok(fv)
+            match cond_val.to_bool() {
+                Some(true) => Ok(tv),
+                Some(false) => Ok(fv),
+                // IEEE 1800-2017 §11.4.11 Tabel 11-22: kondisi unknown/z →
+                // hasil kombinasi bitwise (bit kedua-branch sama → nilai itu;
+                // berbeda/x/z → X). Sebelumnya jatuh ke cabang else
+                // (`to_bool().unwrap_or(false)`) — salah utk operator
+                // kondisional: `x ? a : b` harus menghasilkan X, bukan b.
+                // Differential fuzzer: RTL real opentitan/openc910 —
+                // `dbgon ? x : y` dgn dbgon=X → serial X, parallel cabang
+                // else (bug_0096 piu_sysio_jdb_pm, bug_0032 complete_d).
+                None => {
+                    let mut bits = Vec::with_capacity(w);
+                    for i in 0..w {
+                        let out = match (tv.bits.get(i), fv.bits.get(i)) {
+                            (Some(LogicVal::Zero), Some(LogicVal::Zero)) => LogicVal::Zero,
+                            (Some(LogicVal::One), Some(LogicVal::One)) => LogicVal::One,
+                            _ => LogicVal::X,
+                        };
+                        bits.push(out);
+                    }
+                    Ok(LogicVec { bits, width: w })
+                }
             }
         }
         IrExpr::Signed(inner) => evaluate_expr_simple(inner, signals, sig_info),
@@ -698,11 +725,16 @@ fn write_lvalue_simple(
             };
             // Defensif: normalisasi nilai korup (width>0 tapi bits kosong)
             // agar tidak mencemari state dan memicu panic di jalur eval lain.
-            let resized = if resized.width > 0 && resized.bits.is_empty() {
+            let mut resized = if resized.width > 0 && resized.bits.is_empty() {
                 LogicVec::fill(LogicVal::X, resized.width)
             } else {
                 resized
             };
+            // 2-state coercion pada WRITE — mirror serial lvalue.rs (X/Z→0
+            // untuk target `bit`). Parallel path tak pernah sanitize →
+            // `bit red = (state==RED)` dgn state=X = X di jalur dag, 0 di
+            // serial (fuzzer: traffic.mv).
+            sanitize_for_2state(sig_info, *id, &mut resized);
             signals.set(*id, Arc::new(resized.clone()));
             writes.push((*id, resized));
         }
@@ -724,6 +756,7 @@ fn write_lvalue_simple(
                 let src_idx = (i - start).min(val.bits.len().saturating_sub(1));
                 existing.bits[i] = val.bits.get(src_idx).copied().unwrap_or(LogicVal::X);
             }
+            sanitize_for_2state(sig_info, *sig_id, &mut existing);
             signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
@@ -735,6 +768,7 @@ fn write_lvalue_simple(
             if *idx < existing.width {
                 existing.bits[*idx] = val.bits.first().copied().unwrap_or(LogicVal::X);
             }
+            sanitize_for_2state(sig_info, *sig_id, &mut existing);
             signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
@@ -755,6 +789,7 @@ fn write_lvalue_simple(
                     existing.bits[start + i] = val.bits.get(i).copied().unwrap_or(LogicVal::X);
                 }
             }
+            sanitize_for_2state(sig_info, *sig_id, &mut existing);
             signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
@@ -787,6 +822,7 @@ fn write_lvalue_simple(
                     existing.bits[abs] = val.bits.get(src_idx).copied().unwrap_or(LogicVal::X);
                 }
             }
+            sanitize_for_2state(sig_info, *sig_id, &mut existing);
             signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
@@ -807,6 +843,7 @@ fn write_lvalue_simple(
             if abs < existing.width {
                 existing.bits[abs] = val.bits.first().copied().unwrap_or(LogicVal::X);
             }
+            sanitize_for_2state(sig_info, *sig_id, &mut existing);
             signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
@@ -826,6 +863,7 @@ fn write_lvalue_simple(
                     existing.bits[start + i] = val.bits.get(i).copied().unwrap_or(LogicVal::X);
                 }
             }
+            sanitize_for_2state(sig_info, *sig_id, &mut existing);
             signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
@@ -888,11 +926,12 @@ fn write_lvalue_simple(
             } else {
                 val
             };
-            let resized = if resized.width > 0 && resized.bits.is_empty() {
+            let mut resized = if resized.width > 0 && resized.bits.is_empty() {
                 LogicVec::fill(LogicVal::X, resized.width)
             } else {
                 resized
             };
+            sanitize_for_2state(sig_info, id, &mut resized);
             signals.set(id, Arc::new(resized.clone()));
             writes.push((id, resized));
         }

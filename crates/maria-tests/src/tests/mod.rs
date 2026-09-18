@@ -5491,7 +5491,11 @@ endmodule
         .find(|(n, _)| n == "s")
         .map(|(_, v)| logicvec_to_string(v))
         .unwrap_or_default();
-    assert_eq!(s, "000000ff", "sformatf with %h (plain = full width, IEEE 1800 §21.2.1.3)");
+    assert_eq!(
+        s,
+        "0x000000ff",
+        "sformatf \"0x%h\" = literal '0x' + full-width hex (IEEE 1800 §21.2.1.3)"
+    );
 }
 
 #[test]

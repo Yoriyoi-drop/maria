@@ -982,8 +982,15 @@ mod tests {
             "00f0"
         );
         let z0 = LogicVec::from_u64(0, 8);
+        // `%h` plain = lebar nibble penuh nilai (IEEE 1800 §21.2.1.3 +
+        // differential iverilog): 8'h00 → "00" (bukan "0"), 4'h0 → "0".
         assert_eq!(
             e.format_display_fmt("%h", vec![(z0, false)].into_iter()),
+            "00"
+        );
+        let z4 = LogicVec::from_u64(0, 4);
+        assert_eq!(
+            e.format_display_fmt("%h", vec![(z4, false)].into_iter()),
             "0"
         );
     }

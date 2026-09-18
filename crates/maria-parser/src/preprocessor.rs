@@ -876,25 +876,37 @@ impl Preprocessor {
                     rest = rest_of_line;
                 }
                 "elsif" => {
-                    if let Some(frame) = stack.last_mut() {
-                        if frame.branch_taken {
-                            frame.taking_branch = false;
-                        } else {
-                            let arg_text = after_dir.trim_start();
-                            let (expr, rest_of_line) = match arg_text.find('\n') {
-                                Some(nl) => (&arg_text[..nl], &arg_text[nl..]),
-                                None => {
-                                    let end = arg_text
-                                        .find(|c: char| c.is_whitespace())
-                                        .unwrap_or(arg_text.len());
-                                    (&arg_text[..end], &arg_text[end..])
+                    match stack.last_mut() {
+                        Some(frame) => {
+                            if frame.branch_taken {
+                                frame.taking_branch = false;
+                                // lanjutkan scan SETELAH direktif — tanpa ini
+                                // `rest` tidak pernah maju → infinite loop
+                                // (ditemukan maria-fuzz: `// `elsif FZ` dalam
+                                // komentar hang preprocessor).
+                                rest = after_dir;
+                            } else {
+                                let arg_text = after_dir.trim_start();
+                                let (expr, rest_of_line) = match arg_text.find('\n') {
+                                    Some(nl) => (&arg_text[..nl], &arg_text[nl..]),
+                                    None => {
+                                        let end = arg_text
+                                            .find(|c: char| c.is_whitespace())
+                                            .unwrap_or(arg_text.len());
+                                        (&arg_text[..end], &arg_text[end..])
+                                    }
+                                };
+                                if self.eval_ifdef_expr(expr.trim()) {
+                                    frame.taking_branch = true;
+                                    frame.branch_taken = true;
                                 }
-                            };
-                            if self.eval_ifdef_expr(expr.trim()) {
-                                frame.taking_branch = true;
-                                frame.branch_taken = true;
+                                rest = rest_of_line;
                             }
-                            rest = rest_of_line;
+                        }
+                        // `elsif tanpa `ifdef dalam teks yang di-fold (mis.
+                        // `// `elsif` di komentar biasa) — jangan hang; lewati.
+                        None => {
+                            rest = after_dir;
                         }
                     }
                 }
@@ -1563,4 +1575,47 @@ fn trailing_backslash_is_continuation(line: &str) -> bool {
         j += 1;
     }
     !in_line && !in_block && !in_string
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Preprocessor;
+
+    /// Regresi maria-fuzz (kampanye sim seed 9999, bug_0004 hang uart_tx):
+    /// `` `elsif `` tanpa `` `ifdef `` (di sini: di dalam komentar `//`) membuat
+    /// `fold_expanded_conditionals` loop selamanya (rest tak pernah maju).
+    /// Preprocess harus selesai — bukan hang.
+    #[test]
+    fn elsif_in_comment_no_hang() {
+        let mut pp = Preprocessor::new();
+        let out = pp
+            .preprocess(
+                "module m;\n  // `elsif FZ\n  initial $finish;\nendmodule\n",
+                None,
+            )
+            .unwrap();
+        assert!(
+            out.contains("initial $finish"),
+            "output harus memuat kode modul: {out}"
+        );
+    }
+
+    /// `elsif setelah `ifdef branch_taken: `rest` harus maju (fix kedua pada
+    /// arm yang sama) — preprocess selesai dan cabang kedua benar di-skip.
+    #[test]
+    fn elsif_after_taken_ifdef_advances() {
+        let mut pp = Preprocessor::new();
+        pp.preprocess("`define FZ_YES 1\n", None).unwrap();
+        let out = pp
+            .preprocess(
+                "`ifdef FZ_YES\nmodule a; endmodule\n`elsif FZ_NO\nmodule b; endmodule\n`endif\n",
+                None,
+            )
+            .unwrap();
+        assert!(out.contains("module a"), "branch pertama harus ter-emisi: {out}");
+        assert!(
+            !out.contains("module b"),
+            "branch elsif setelah ifdef diambil harus di-skip: {out}"
+        );
+    }
 }

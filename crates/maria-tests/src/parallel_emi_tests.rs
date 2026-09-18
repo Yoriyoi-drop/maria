@@ -279,3 +279,100 @@ endmodule
         msg
     );
 }
+
+// ─── Regresi maria-fuzz (kampanye sim seed 9999) — evaluator parallel ───
+//
+// Dua bug differential default-vs-dag ditemukan fuzzer:
+// 1. `IrExpr::Cond` di evaluate_expr_simple: kondisi X → `to_bool().unwrap_or(false)`
+//    → pilih cabang else. Serial mengikuti IEEE 1800 §11.4.11 Tabel 11-22:
+//    kondisi unknown → merge bitwise (bit sama → nilai itu, beda → X).
+//    Gejala: `assign y = dbgon ? x : y2` dgn dbgon=X → serial X, dag 0/1.
+// 2. Tidak ada 2-state coercion X/Z→0 pada read/write jalur parallel —
+//    `output bit red = (state == RED)` dgn state=X → serial 0, dag X.
+//    Serial menerapkan sanitize_for_2state di lvalue.rs (write) & expr.rs (read).
+//
+// Fix: parallel.rs Cond miror merge serial + sanitize_for_2state read & tiap
+// write site.
+
+/// Jalankan satu source pada config parallel tertentu, kembalikan string bit
+/// (MSB-first) dari sinyal `name`.
+fn run_pcfg_signal(
+    source: &str,
+    name: &str,
+    mut pcfg: maria_simulator::simulator::parallel::ParallelConfig,
+) -> String {
+    let design = compile_str(source).unwrap();
+    let mut engine = maria_simulator::simulator::SimulationEngine::new(design, 100);
+    engine.set_parallel_config(pcfg);
+    engine.run().unwrap();
+    let sigs = engine.design.top.signals.clone();
+    let idx = sigs
+        .iter()
+        .position(|s| s.name.as_str() == name)
+        .unwrap_or_else(|| panic!("sinyal {name} harus ada"));
+    let val = engine.state.read_signal(idx);
+    val.bits
+        .iter()
+        .rev()
+        .map(|b| match b {
+            maria_ir::LogicVal::Zero => '0',
+            maria_ir::LogicVal::One => '1',
+            maria_ir::LogicVal::X => 'x',
+            maria_ir::LogicVal::Z => 'z',
+        })
+        .collect()
+}
+
+/// Ternary kondisi X: serial & parallel wajib merge bitwise (Tabel 11-22).
+#[test]
+fn test_ternary_x_cond_serial_vs_parallel() {
+    let src = r#"
+module top;
+  logic       sel;         // X (tidak di-drive)
+  logic [1:0] tv, fv;
+  wire  [1:0] y;
+  assign tv = 2'b10;
+  assign fv = 2'b01;
+  assign y  = sel ? tv : fv;   // sel=X → bitwise merge 10 & 01 = xx
+  initial begin #1 $finish; end
+endmodule
+"#;
+    let mut serial = maria_simulator::simulator::parallel::ParallelConfig::default();
+    serial.parallel_processes = false;
+    let mut par = maria_simulator::simulator::parallel::ParallelConfig::default();
+    par.min_processes_parallel = 1;
+    let s = run_pcfg_signal(src, "y", serial);
+    let p = run_pcfg_signal(src, "y", par);
+    assert_eq!(s, "xx", "serial: sel=X → merge bitwise = xx, got {s}");
+    assert_eq!(
+        p, s,
+        "parallel: ternary X-cond harus identik serial (Tabel 11-22), serial={s} par={p}"
+    );
+}
+
+/// 2-state coercion: `output bit` menerima X → 0 di serial DAN parallel.
+#[test]
+fn test_bit_output_coercion_serial_vs_parallel() {
+    let src = r#"
+module sub(output bit red, input logic [1:0] s);
+  always_comb red = (s == 2'b00);   // s=X → == meng-X → bit coercion 0
+endmodule
+module top;
+  logic [1:0] s;
+  bit r;
+  sub u(.red(r), .s(s));
+  initial begin #1 $finish; end
+endmodule
+"#;
+    let mut serial = maria_simulator::simulator::parallel::ParallelConfig::default();
+    serial.parallel_processes = false;
+    let mut par = maria_simulator::simulator::parallel::ParallelConfig::default();
+    par.min_processes_parallel = 1;
+    let s = run_pcfg_signal(src, "r", serial);
+    let p = run_pcfg_signal(src, "r", par);
+    assert_eq!(s, "0", "serial: bit menerima X → 0, got {s}");
+    assert_eq!(
+        p, s,
+        "parallel: 2-state coercion harus identik serial, serial={s} par={p}"
+    );
+}
