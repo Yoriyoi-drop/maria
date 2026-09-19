@@ -52,16 +52,12 @@ impl FstWaveWriter {
             .build()
             .map_err(|e| format!("FST writer build failed: {}", e))?;
 
-        // Write header
-        let mut header = Header::default();
-        header.version = "Maria RTL Simulator".to_string();
-        header.timescale_exponent = -9; // 1ns
-        header.end_time = 0;
-        writer
-            .write_header(header)
-            .map_err(|e| format!("FST header write failed: {}", e))?;
-
         // ── Build scope hierarchy ──
+        // NOTA: wavefst menghitung scope_count/var_count/geometry/hierarchy
+        // SAAT write_header() dipanggil — header WAJIB ditulis SETELAH semua
+        // scope + variable dideklarasikan (write_header menutup metadata:
+        // begin_scope/add_variable setelahnya = error "metadata definitions
+        // must occur before writing the header").
         // Step 1: Group signals by scope
         let mut scope_map: HashMap<Vec<String>, Vec<(String, usize, usize)>> = HashMap::new();
         for sig in &design.top.signals {
@@ -162,6 +158,15 @@ impl FstWaveWriter {
         writer
             .end_scope()
             .map_err(|e| format!("FST scope end failed: {}", e))?;
+
+        // Write header — SETELAH hierarchy lengkap (lihat nota di atas).
+        let mut header = Header::default();
+        header.version = "Maria RTL Simulator".to_string();
+        header.timescale_exponent = -9; // 1ns
+        header.end_time = 0;
+        writer
+            .write_header(header)
+            .map_err(|e| format!("FST header write failed: {}", e))?;
 
         Ok(FstWaveWriter {
             writer: Some(writer),

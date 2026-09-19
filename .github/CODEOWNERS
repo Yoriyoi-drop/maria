@@ -1,0 +1,249 @@
+# CODEOWNERS for Maria Project
+
+# Default: All repository files require review by main maintainer
+* @Yoriyoi-drop
+
+# Core compiler and simulator components (high-risk areas)
+/crates/maria-lexer/ @Yoriyoi-drop
+/crates/maria-parser/ @Yoriyoi-drop
+/crates/maria-core/ @Yoriyoi-drop
+/crates/maria-ast/ @Yoriyoi-drop
+/crates/maria-elaboration/ @Yoriyoi-drop
+/crates/maria-ir/ @Yoriyoi-drop
+/crates/maria-simulator/ @Yoriyoi-drop
+/crates/maria-simulator/src/engine/ @Yoriyoi-drop
+/crates/maria-simulator/src/waveform/ @Yoriyoi-drop
+/crates/maria-simulator/src/debugger/ @Yoriyoi-drop
+/crates/maria-simulator/src/parallel.rs @Yoriyoi-drop
+/crates/maria-simulator/src/engine.rs @Yoriyoi-drop
+/crates/maria-simulator/src/sdf.rs @Yoriyoi-drop
+/crates/maria-simulator/src/jit.rs @Yoriyoi-drop
+/crates/maria-simulator/src/parallel.rs @Yoriyoi-drop
+/crates/maria-simulator/src/engine.rs @Yoriyoi-drop
+/crates/maria-simulator/src/sdf.rs @Yoriyoi-drop
+/crates/maria-simulator/src/jit.rs @Yoriyoi-drop
+/crates/maria-tools/ @Yoriyoi-drop
+/crates/maria-env/ @Yoriyoi-drop
+/crates/maria-api/ @Yoriyoi-drop
+/crates/maria-tests/ @Yoriyoi-drop
+
+# CI, release, and installation scripts (package management)
+/.github/workflows/ @Yoriyoi-drop
+/install.sh @Yoriyoi-drop
+/Makefile @Yoriyoi-drop
+/Makefile.test @Yoriyoi-drop
+/Dockerfile @Yoriyoi-drop
+/Dockerfile.test @Yoriyoi-drop
+/docker-compose.test.yml @Yoriyoi-drop
+
+# Core configuration and lock files
+/Cargo.toml @Yoriyoi-drop
+/Cargo.lock @Yoriyoi-drop
+/rust-toolchain.toml @Yoriyoi-drop
+/.rust-version @Yoriyoi-drop
+/.codecov.yml @Yoriyoi-drop
+/.github/labels.yml @Yoriyoi-drop
+
+# CI/CD pipeline configuration
+/.github/workflows/ @Yoriyoi-drop
+/.github/CODEOWNERS @Yoriyoi-drop
+
+# Documentation (important for user-facing updates)
+/README.md @Yoriyoi-drop
+/README.md @Yoriyoi-drop
+/AGENTS.md @Yoriyoi-drop
+/tools.md @Yoriyoi-drop
+/ROADMAP.md @Yoriyoi-drop
+/DESIGN.md @Yoriyoi-drop
+/INSTALLATION.md @Yoriyoi-drop
+/SYNTHESIS.md @Yoriyoi-drop
+/VERILATOR_COMPAT.md @Yoriyoi-drop
+/IEEE_1800_MATRIX.md @Yoriyoi-drop
+
+# Landing page and web assets
+/landing_page/ @Yoriyoi-drop
+/landing_page/src/ @Yoriyoi-drop
+/landing_page/public/ @Yoriyoi-drop
+/landing_page/package.json @Yoriyoi-drop
+/landing_page/astro.config.mjs @Yoriyoi-drop
+
+# Testing and fuzzing
+/tests/ @Yoriyoi-drop
+/crates/maria-fuzz/ @Yoriyoi-drop
+/crates/maria-tests/src/ @Yoriyoi-drop
+/crates/maria-tests/tests/ @Yoriyoi-drop
+/src/tests/ @Yoriyoi-drop
+/src/debug_lexer.rs @Yoriyoi-drop
+
+# Build and distribution artifacts
+/target/ @Yoriyoi-drop
+*.vcd @Yoriyoi-drop
+*.vcd.lxt @Yoriyoi-drop
+*.fst @Yoriyoi-drop
+*.fst.gz @Yoriyoi-drop
+*.mvnet @Yoriyoi-drop
+*.mv @Yoriyoi-drop
+*.mcs @Yoriyoi-drop
+*.lib @Yoriyoi-drop
+*.iso @Yoriyoi-drop
+*.html @Yoriyoi-drop
+*.json @Yoriyoi-drop
+*.toml @Yoriyoi-drop
+*.md @Yoriyoi-drop
+*.txt @Yoriyoi-drop
+*.log @Yoriyoi-drop
+
+# External dependencies and submodules (managed)
+/opentitan/ @Yoriyoi-drop
+/cva6/ @Yoriyoi-drop
+/uvm-core/ @Yoriyoi-drop
+/openc910/ @Yoriyoi-drop
+/picotr32/ @Yoriyoi-drop
+/cores-vee-r-eh1/ @Yoriyoi-drop
+
+# Generated documentation and artifacts (should not be modified manually)
+/doc/ @Yoriyoi-drop
+/doc/ @Yoriyoi-drop
+/*.pdf @Yoriyoi-drop
+/*.rst @Yoriyoi-drop
+
+# Configuration files that affect build/test behavior
+/.cargo/ @Yoriyoi-drop
+/.cargo/config.toml @Yoriyoi-drop
+/.cargo/registry/ @Yoriyoi-drop
+/.vscode/ @Yoriyoi-drop
+/.idea/ @Yoriyoi-drop
+
+# Scripts that affect CI/CD or installation (automation risk)
+/*.sh @Yoriyoi-drop
+/*.ps1 @Yoriyoi-drop
+/*.bat @Yoriyoi-drop
+
+# Generated cache and state (should not be modified)
+/.maria/ @Yoriyoi-drop
+/.maria/database/ @Yoriyoi-drop
+/.maria/cache/ @Yoriyoi-drop
+/.maria/snapshots/ @Yoriyoi-drop
+
+# Temporary files (should be ignored)
+*~ @Yoriyoi-drop
+*.tmp @Yoriyoi-drop
+*.temp @Yoriyoi-drop
+*.bak @Yoriyoi-drop
+
+# Project-specific configuration files
+/.eslintrc.* @Yoriyoi-drop
+/.prettierrc.* @Yoriyoi-drop
+/.stylelintrc.* @Yoriyoi-drop
+/*.editorconfig @Yoriyoi-drop
+
+# System files that could accidentally be committed
+/.DS_Store @Yoriyoi-drop
+*.Thumbs.db @Yoriyoi-drop
+
+# Environment files (sensitive)
+*.env @Yoriyoi-drop
+*.env.* @Yoriyoi-drop
+*.env.* @Yoriyoi-drop
+
+# License files (project maintenance)
+LICENSE* @Yoriyoi-drop
+COPYING* @Yoriyoi-drop
+
+# Emergency contacts (maintenance)
+/maria-contributors @Yoriyoi-drop
+/maria-maintainer @Yoriyoi-drop
+
+# Documentation (README and changelog)
+/*.rst @Yoriyoi-drop
+/*.md @Yoriyoi-drop
+
+# GitHub workflow files
+/.github/ @Yoriyoi-drop
+/.github/workflows/ @Yoriyoi-drop
+/.github/dependabot.yml @Yoriyoi-drop
+/.github/FUNDING.yml @Yoriyoi-drop
+
+# Security related files
+/.github/security/ @Yoriyoi-drop
+/.github/SECURITY.md @Yoriyoi-drop
+
+# Patch file modifications (binary files that could cause issues)
+*.bin @Yoriyoi-drop
+*.dat @Yoriyoi-drop
+*.data @Yoriyoi-drop
+*.serialized @Yoriyoi-drop
+
+# Test and benchmark artifacts
+/*.bench @Yoriyoi-drop
+/*.prof @Yoriyoi-drop
+/*.prof @Yoriyoi-drop
+
+# IDE and development tools configuration
+/.idea/ @Yoriyoi-drop
+/.vscode/ @Yoriyoi-drop
+*.code-workspace @Yoriyoi-drop
+
+# Build output directories
+/dist/ @Yoriyoi-drop
+/*.egg-info @Yoriyoi-drop
+*.egg-info/ @Yoriyoi-drop
+
+# Node.js / TypeScript artifacts (landing page)
+/landing_page/node_modules/ @Yoriyoi-drop
+/landing_page/dist/ @Yoriyoi-drop
+/landing_page/.astro/ @Yoriyoi-drop
+
+# Cargo target directories (build artifacts)
+/target/ @Yoriyoi-drop
+*.rlib @Yoriyoi-drop
+*.rmeta @Yoriyoi-drop
+
+# Fuzzing corpus and bug databases
+/.maria-fuzz-bugs/ @Yoriyoi-drop
+/.maria-fuzz-bugdb.json @Yoriyoi-drop
+
+# Metrics and performance reports
+/*.metrics @Yoriyoi-drop
+/*.perf @Yoriyoi-drop
+
+# Configuration for external tools
+/.verilator.rc @Yoriyoi-drop
+/*.mk @Yoriyoi-drop
+/*.cmake @Yoriyoi-drop
+
+# Generated assembly and binary artifacts
+/*.s @Yoriyoi-drop
+/*.asm @Yoriyoi-drop
+/*.o @Yoriyoi-drop
+/*.so @Yoriyoi-drop
+/*.dylib @Yoriyoi-drop
+/*.exe @Yoriyoi-drop
+
+# Local and temporary files (should never be committed)
+*.log @Yoriyoi-drop
+*.cache @Yoriyoi-drop
+*.lock @Yoriyoi-drop
+
+# Third-party licenses
+/ThirdPartyLicenses @Yoriyoi-drop
+
+# Implementation files (Rust source)
+/src/ @Yoriyoi-drop
+/crates/ @Yoriyoi-drop
+
+# Documentation that is auto-generated but tracked (example)
+/docs/api/ @Yoriyoi-drop
+/docs/architecture/ @Yoriyoi-drop
+
+# Desktop application files (if present)
+src-tauri/ @Yoriyoi-drop
+
+# Quick access to most important files
+*
+/crates/maria-parser/** @Yoriyoi-drop
+/crates/maria-simulator/** @Yoriyoi-drop
+/Cargo.toml @Yoriyoi-drop
+/README.md @Yoriyoi-drop
+/install.sh @Yoriyoi-drop
+/.github/workflows/ci.yml @Yoriyoi-drop

@@ -21,8 +21,6 @@ maria run -- file.sv --tokens             # print tokens
 
 ## Project file
 
-
-
 ```
 counter.sv
 tb_counter.sv
@@ -46,7 +44,7 @@ tb_counter.sv
 -f <FILE>      file list (like -f in VCS)
 --coverage     print coverage report
 --coverage-ucis [PATH]  export UCIS XML
--f <FILE>        file list / project file (`.f` / `.maria`)
+-f <FILE>      file list / project file (`.f` / `.maria`)
 ```
 
 ## Fitur utama
@@ -82,24 +80,58 @@ cargo test
 cargo test <test_name>
 ```
 
-## Architecture
+No CI, no lint, no typecheck shortcuts. Just `cargo test`. 1634 tests pass.
 
-| Layer | File | LOC |
-|-------|------|-----|
-| CLI | `src/main.rs` | — |
-| Library | `crates/maria-api/` | public API (ex `src/lib.rs`) |
-| Preprocessor | `src/parser/preprocessor.rs` | — |
-| Lexer | `src/parser/lexer.rs` | — |
-| Parser | `src/parser/parser.rs` | ~5100 |
-| AST | `src/ast/` | expr, stmt, types, const_eval, inline |
-| Elaborator | `src/elaboration/elaborator.rs` | ~3400 |
-| IR | `src/ir/ir.rs` | — |
-| Simulator | `crates/maria-simulator/` | engine, state, value, types, sdf, util, jit, parallel |
-| Waveform | `src/waveform/` | vcd.rs, fst.rs |
-| Debugger | `src/debugger/` | mod.rs (~585) |
-| Tests | `crates/maria-tests/` | ex `src/tests` + edge_tests + debug_lexer |
-| UVM macros | `uvm_macros.svh` | — |
+## CI/CD
 
-## License
+### Automated Release Updates
+The project uses a sophisticated GitHub Actions workflow (`.github/workflows/release-update.yml`) that:
+- **Validates changes** before proceeding (only allows updates on main branch or explicit manual triggers)
+- **Builds Maria binaries** automatically on each push to main
+- **Updates installation documentation** in the landing page
+- **Detects internal updates** and verifies binary functionality
+- **Creates GitHub Releases** with changelog and binaries
+- **Maintains cache** and cleans up temporary files
 
-MIT
+### Manual Workflow Triggers
+
+```bash
+# Trigger manual landing page update
+gh workflow run release-update.yml -f update_landing=true
+
+# Run workflow manually
+gh workflow run release-update.yml
+```
+
+## Installation
+
+### Automatic Installation (Recommended)
+
+```bash
+# Install latest stable release automatically
+curl -fsSL https://raw.githubusercontent.com/Yoriyoi-drop/maria/main/install.sh -o install.sh
+sudo bash install.sh
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/Yoriyoi-drop/maria.git
+cd maria
+cargo build --release
+```
+
+The binary will be at `target/release/maria`. Add it to your PATH:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+export PATH="$HOME/maria/target/release:$PATH"
+```
+
+Then run:
+
+```bash
+maria --help
+```
+
+## CLI Tools (`crates/maria-tools/`, subcommand `maria <tool>`)

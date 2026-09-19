@@ -1634,6 +1634,22 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
             "msim" => {
                 args.push("-T".to_string());
                 args.push(["50", "100", "200", "1000"][rng.below(4)].to_string());
+                // FST waveform writer (`{top}.fst` di cwd) — wilayah belum
+                // di-jangkau: FstWaveWriter (crates/maria-simulator/waveform/
+                // fst.rs) tidak pernah di-fuzz (VCD fuzzer via mwave hanya
+                // sentuh teks VCD, bukan writer FST binary). `--fst` memicu
+                // jalur write_header/hierarchy — any panic/abort/hang = bug.
+                if rng.chance(50) {
+                    args.push("--fst".to_string());
+                }
+                // Assertion/coverage ringkasan pasca-sim — jalur report yang
+                // belum pernah di-fuzz (assert/cover statement handling).
+                if rng.chance(30) {
+                    args.push("--assertions".to_string());
+                }
+                if rng.chance(30) {
+                    args.push("--coverage".to_string());
+                }
             }
             "mfmt" => {
                 if rng.chance(25) {

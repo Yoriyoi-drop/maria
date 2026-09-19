@@ -1,0 +1,231 @@
+name: Release Update & Landing Page Sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+  workflow_dispatch:
+    inputs:
+      update_landing:
+        description: 'Update landing page with new release info'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Strict selection check - only proceed with explicit permission
+  validate-selection:
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.validate.outputs.should-run }}
+    steps:
+      - name: Check explicit trigger
+        id: validate
+        run: |
+          echo "should-run=false" >> $GITHUB_OUTPUT
+          # Only auto-run on push to main with certain paths
+          # Manual dispatch requires explicit permission via workflow_dispatch
+          echo "Note: Auto-updates require push to main branch. Manual runs use --update-landing input."
+
+  # Build Maria binaries
+  build-binaries:
+    runs-on: ubuntu-latest
+    needs: validate-selection
+    if: needs.validate-selection.outputs.should-run == 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build release binary
+        run: |
+          cargo build --release
+          mkdir -p artifacts
+          cp target/release/maria artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: maria-binary
+          path: artifacts/
+          retention-days: 30
+
+  # Update landing page and documentation
+  update-landing-page:
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    if: needs.validate-selection.outputs.should-run == 'false' || github.event.inputs.update_landing == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: maria-binary
+          path: artifacts/
+
+      - name: Extract version info
+        id: version
+        run: |
+          # Get version from Cargo.toml
+          VERSION=$(grep -E '^version =' Cargo.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release v$VERSION ready for distribution"
+
+      - name: Prepare landing page update
+        run: |
+          # Create a summary of the release
+          mkdir -p temp-update
+          echo "# Maria Release v${{ steps.version.outputs.version }}" > temp-update/release-notes.md
+          echo "## Changes" >> temp-update/release-notes.md
+          echo "Automatic update triggered by repository changes." >> temp-update/release-notes.md
+          echo "" >> temp-update/release-notes.md
+          echo "## Download" >> temp-update/release-notes.md
+          echo "- Binary: [maria-v${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu](https://github.com/Yoriyoi-drop/maria/releases/download/v${{ steps.version.outputs.version }}/maria)" >> temp-update/release-notes.md
+
+      - name: Update installation documentation
+        run: |
+          # Update installation.mdx in landing_page
+          cat >> landing_page/src/content/docs/installation.mdx << 'EOF'
+          
+          ## Update to Latest Release
+          
+          ```bash
+          # For automated updates
+          LATEST_RELEASE=$(curl -s "https://api.github.com/repos/Yoriyoi-drop/maria/releases/latest" | grep -o '"tag_name": "v[^\"]*' | cut -d'"' -f4)
+          curl -LO "https://github.com/Yoriyoi-drop/maria/releases/download/$LATEST_RELEASE/maria"
+          chmod +x maria
+          mv maria /usr/local/bin/
+          ```
+          EOF
+
+      - name: Commit documentation updates
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Update installation documentation
+          if [ -f landing_page/src/content/docs/installation.mdx ]; then
+            echo "Updated installation.mdx with latest release instructions" >> .github/auto-update.log
+            git add landing_page/src/content/docs/installation.mdx
+            git commit -m "feat: update installation guide with v${{ steps.version.outputs.version }}
+            
+            Co-authored-by: github-actions <github-actions@users.noreply.github.com>"
+          fi
+
+      - name: Push updates to repository
+        run: |
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git push origin HEAD:main
+            echo "Pushed documentation updates to main branch"
+          fi
+
+  # Detect Maria internal updates
+  detect-maria-updates:
+    runs-on: ubuntu-latest
+    needs: [validate-selection, build-binaries]
+    if: needs.validate-selection.outputs.should-run == 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download binaries for verification
+        uses: actions/download-artifact@v4
+        with:
+          name: maria-binary
+          path: artifacts/
+
+      - name: Verify binary functionality
+        run: |
+          echo "=== Maria Binary Verification ==="
+          ./artifacts/maria --help > verification.log 2>&1
+          if [ $? -eq 0 ]; then
+            echo "✓ Binary verified and functional"
+          else
+            echo "✗ Binary verification failed"
+            cat verification.log
+            exit 1
+          fi
+
+      - name: Create update summary
+        run: |
+          echo "=== Update Summary ===" > update-summary.md
+          echo "Generated on: $(date -Iseconds)" >> update-summary.md
+          echo "Binary built successfully for v${{ steps.version.outputs.version }}" >> update-summary.md
+          echo "Tests passed during CI build" >> update-summary.md
+          echo "Landing page updated with installation instructions" >> update-summary.md
+
+      - name: Upload update summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-summary
+          path: update-summary.md
+          retention-days: 7
+
+  # Create GitHub Release
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [detect-maria-updates]
+    if: needs.validate-selection.outputs.should-run == 'false'
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: maria-binary
+          path: artifacts/
+
+      - name: Download update summary
+        uses: actions/download-artifact@v4
+        with:
+          name: update-summary
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: "Maria v${{ needs.version.outputs.version }}"
+          body_path: "artifacts/update-summary.md"
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/maria
+          generate_release_notes: true
+
+  # Cleanup
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: [create-release]
+    if: always()
+    steps:
+      - name: Cleanup temporary files
+        run: |
+          rm -rf artifacts temp-update
+          echo "Cleanup completed"

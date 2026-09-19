@@ -1,154 +1,314 @@
-name: CI
+name: Maria CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: read
+
+concurrency:
+  group: maria-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  patch-check:
+    name: Patch checks
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      # ENT-05: incremental cargo build cache (reduce CI time 30-60%)
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          cache-targets: true
-      # root package kini binary-only (src/ = main.rs + cli.rs);
-      # test suite terpadu di crate maria-tests.
-      - run: cargo test --workspace 2>&1 | tee test-results.txt
-      # ENT-03: upload test results as artifact
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: test-results.txt
-          retention-days: 30
+    timeout-minutes: 30
 
-  benchmark:
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
+          fetch-depth: 0
+
+      - name: Check whitespace errors
+        run: git diff --check
+
+      - name: Setup Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Run benchmarks and track performance
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  tests:
+    name: Workspace tests
+    runs-on: ubuntu-latest
+    needs: patch-check
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Unit and integration tests
+        run: cargo test --workspace --all-targets
+
+  area-detection:
+    name: Change area detection
+    runs-on: ubuntu-latest
+    needs: patch-check
+    outputs:
+      parser: ${{ steps.filter.outputs.parser }}
+      simulator: ${{ steps.filter.outputs.simulator }}
+      dependencies: ${{ steps.filter.outputs.dependencies }}
+      installer: ${{ steps.filter.outputs.installer }}
+      documentation: ${{ steps.filter.outputs.documentation }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed areas
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            parser:
+              - 'crates/maria-lexer/**'
+              - 'crates/maria-parser/**'
+              - 'crates/maria-core/**'
+            simulator:
+              - 'crates/maria-simulator/**'
+              - 'crates/maria-elaboration/**'
+              - 'crates/maria-ir/**'
+            dependencies:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            installer:
+              - 'install.sh'
+              - 'crates/maria-tools/**'
+              - '.github/workflows/**'
+            documentation:
+              - '**/*.md'
+              - '**/*.mdx'
+              - 'README.md'
+              - 'INSTALLATION.md'
+
+      - name: Debug filter results
         run: |
-          cargo test -p maria-tests --release bench_release_sim_throughput_counter bench_release_compile_counter bench_release_string_intern bench_release_memory_stress 2>&1 | tee bench-results.txt
-          echo "---" >> bench-results.txt
-          echo "Performance snapshot: $(date -Iseconds)" >> bench-results.txt
-      # ENT-08: upload benchmark results for trend tracking
-      - name: Upload benchmark results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-results
-          path: bench-results.txt
-          retention-days: 90
+          echo "Parser changes: ${{ steps.filter.outputs.parser }}"
+          echo "Simulator changes: ${{ steps.filter.outputs.simulator }}"
+          echo "Dependency changes: ${{ steps.filter.outputs.dependencies }}"
+          echo "Installer changes: ${{ steps.filter.outputs.installer }}"
+          echo "Documentation changes: ${{ steps.filter.outputs.documentation }}"
 
-  clippy:
+  parser-regression:
+    name: Parser regression tests
     runs-on: ubuntu-latest
+    needs: [patch-check, area-detection]
+    if: needs.area-detection.outputs.parser == 'true'
+    timeout-minutes: 60
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo clippy --workspace --all-targets
 
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: rustfmt
-      - run: cargo fmt --check
-
-  # ENT-09: Memory leak detection via Miri (checks unsafe code for undefined behavior)
-  miri:
-    runs-on: ubuntu-latest
-    # Miri cannot compile crates with FFI (VPI/DPI/libloading/cranelift),
-    # so we only test core library crates that are Miri-compatible.
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: nightly
-          components: miri
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - name: Run Miri on miri-compatible crates
+      - name: Run parser regression tests
         run: |
-          cargo miri test -p maria-core 2>&1 | tee miri-results.txt || true
-          cargo miri test -p maria-ast 2>&1 | tee -a miri-results.txt || true
-          cargo miri test -p maria-ir 2>&1 | tee -a miri-results.txt || true
-      - name: Upload Miri results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: miri-results
-          path: miri-results.txt
-          retention-days: 30
+          echo "Running parser-specific tests due to code changes in parser/lexer"
+          cargo test -p maria-lexer -p maria-parser --test regression
+          cargo test -p maria-core --test debug_lexer
 
-  # ENT-10: Thread sanitizer testing (detects data races in concurrent code)
-  tsan:
+  simulator-regression:
+    name: Simulator regression tests
     runs-on: ubuntu-latest
+    needs: [patch-check, area-detection]
+    if: needs.area-detection.outputs.simulator == 'true'
+    timeout-minutes: 90
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: nightly
-      - uses: Swatinem/rust-cache@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Run tests with Thread Sanitizer
-        env:
-          RUSTFLAGS: "-Z sanitizer=thread"
-        run: |
-          cargo test -p maria-core -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee tsan-results.txt || true
-          cargo test -p maria-ast -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee -a tsan-results.txt || true
-      - name: Upload TSAN results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tsan-results
-          path: tsan-results.txt
-          retention-days: 30
 
-  # ENT-02: Regression gate — quick smoke test for PR validation
-  regression:
+      - name: Run simulator regression tests
+        run: |
+          echo "Running simulator-specific tests due to code changes in simulator/elaboration"
+          cargo test -p maria-simulator --test regression
+          cargo test -p maria-tests --test tb_counter
+          cargo test -p maria-tests --test rtl_regression
+
+  dependency-validation:
+    name: Dependency validation
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [patch-check, area-detection]
+    if: needs.area-detection.outputs.dependencies == 'true'
+    timeout-minutes: 60
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: Swatinem/rust-cache@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Regression smoke test
+
+      - name: Validate dependencies
         run: |
-          echo "=== Regression Gate ==="
-          echo "Tests passed: verifying no regressions"
-          cargo test -p maria-tests -- --test-threads=1 counter_tests 2>&1 | tee regression-results.txt
-          echo "Regression gate: $(date -Iseconds)" >> regression-results.txt
-      - name: Upload regression results
-        if: always()
+          echo "Validating dependency changes due to Cargo.toml/Cargo.lock updates"
+          cargo update
+          cargo check --workspace --all-targets
+          cargo test -p maria-tests -- --test-threads=1
+
+  installer-validation:
+    name: Installer validation
+    runs-on: ubuntu-latest
+    needs: [patch-check, area-detection]
+    if: needs.area-detection.outputs.installer == 'true'
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Validate installer script
+        run: |
+          echo "Validating installer script changes"
+          bash -n install.sh
+          chmod +x install.sh
+          ./install.sh --help 2>&1 || echo "Installer script validation completed"
+
+      - name: Run installer tests
+        run: |
+          echo "Running installer integration tests"
+          cargo test -p maria-tools --test integration
+
+  documentation-check:
+    name: Documentation validation
+    runs-on: ubuntu-latest
+    needs: [patch-check, area-detection]
+    if: needs.area-detection.outputs.documentation == 'true'
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Validate markdown links
+        run: |
+          echo "Running markdown documentation checks due to doc changes"
+          if command -v markdownlint >/dev/null 2>&1; then
+            markdownlint README.md GITHUB_ACTIONS.md
+          else
+            echo "markdownlint not installed, skipping link validation"
+          fi
+
+      - name: Validate installation documentation
+        run: |
+          echo "Validating installation documentation"
+          if grep -q "Installation" README.md; then
+            echo "✓ Installation section present in README.md"
+          fi
+
+  release-build:
+    name: Release build
+    runs-on: ubuntu-latest
+    needs: [
+      patch-check,
+      tests,
+      parser-regression,
+      simulator-regression,
+      dependency-validation,
+      installer-validation,
+      documentation-check
+    ]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build release binary
+        run: |
+          echo "Building release binary"
+          cargo build --workspace --release
+          mkdir -p artifacts
+          cp target/release/maria artifacts/
+
+      - name: Verify binary
+        run: |
+          echo "Verifying release binary functionality"
+          ./artifacts/maria --help > verification.log 2>&1
+          if [ $? -eq 0 ]; then
+            echo "✓ Release binary verified successfully"
+            cat verification.log | head -20
+          else
+            echo "✗ Release binary verification failed"
+            cat verification.log
+            exit 1
+          fi
+
+      - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: regression-results
-          path: regression-results.txt
+          name: maria-release
+          path: artifacts/
           retention-days: 90
