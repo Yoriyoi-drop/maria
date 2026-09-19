@@ -682,33 +682,216 @@ impl Parser {
                         }
                     };
                     // Dimensi unpacked LANJUTAN `[..][..]` (mis. `bit a[4][8]`,
-                    // `sw_logs[string][addr_data_t]`) — AST hanya representasikan
-                    // SATU dim; sisanya di-skip buta sampai `]` seimbang agar
-                    // deklarasi multi-dim user-type tidak gagal parse.
+                    // `logic [7:0] mat [0:1][0:1]`) — tiap `[` berikutnya
+                    // di-parse sebagai range `[msb:lsb]` / size `[N]` dan
+                    // disimpan ke `extra_unpacked_dims` (F39). Sebelumnya
+                    // di-skip buta → array multi-dim jadi flat single-dim
+                    // (bug: `mat[0][0]` = 0, lebar total salah).
+                    // Bentuk eksotik (`[string]`, `[$]`, `[*]`, key type
+                    // `[addr_data_t]`) tetap di-skip buta (perilaku lama).
+                    let mut extra_unpacked_dims: Vec<(Option<Range>, Option<Expr>)> = Vec::new();
                     while self.peek() == &Token::LBrack {
-                        self.advance(); // '['
-                        let mut bdepth = 0i32;
-                        loop {
-                            match self.peek() {
-                                Token::Eof => break,
-                                Token::LParen | Token::LBrace | Token::LBrack => {
-                                    bdepth += 1;
-                                    self.advance();
-                                }
-                                Token::RParen | Token::RBrace => {
-                                    bdepth = bdepth.saturating_sub(1);
-                                    self.advance();
-                                }
-                                Token::RBrack => {
-                                    if bdepth <= 0 {
+                        let ahead = self.peek_ahead(1);
+                        // Hanya fixed dim: `[N]` / `[msb:lsb]` (bukan dynamic/
+                        // queue/assoc/key-type, yang tidak valid di dim lanjutan).
+                        let fixed = !matches!(
+                            ahead,
+                            Token::RBrack
+                                | Token::Dollar
+                                | Token::Star
+                                | Token::String
+                                | Token::Int
+                                | Token::Unsigned
+                                | Token::Bit
+                                | Token::Logic
+                                | Token::Byte
+                                | Token::Shortint
+                                | Token::Longint
+                        );
+                        if !fixed {
+                            // Blind-skip bracket ini (dan sisanya) — perilaku lama.
+                            self.advance(); // '['
+                            let mut bdepth = 0i32;
+                            loop {
+                                match self.peek() {
+                                    Token::Eof => break,
+                                    Token::LParen | Token::LBrace | Token::LBrack => {
+                                        bdepth += 1;
                                         self.advance();
-                                        break;
                                     }
-                                    bdepth -= 1;
-                                    self.advance();
+                                    Token::RParen | Token::RBrace => {
+                                        bdepth = bdepth.saturating_sub(1);
+                                        self.advance();
+                                    }
+                                    Token::RBrack => {
+                                        if bdepth <= 0 {
+                                            self.advance();
+                                            break;
+                                        }
+                                        bdepth -= 1;
+                                        self.advance();
+                                    }
+                                    _ => {
+                                        self.advance();
+                                    }
                                 }
-                                _ => {
-                                    self.advance();
+                            }
+                            // Sisa bracket berikutnya pun ikut di-skip buta.
+                            while self.peek() == &Token::LBrack {
+                                self.advance(); // '['
+                                let mut bdepth = 0i32;
+                                loop {
+                                    match self.peek() {
+                                        Token::Eof => break,
+                                        Token::LParen | Token::LBrace | Token::LBrack => {
+                                            bdepth += 1;
+                                            self.advance();
+                                        }
+                                        Token::RParen | Token::RBrace => {
+                                            bdepth = bdepth.saturating_sub(1);
+                                            self.advance();
+                                        }
+                                        Token::RBrack => {
+                                            if bdepth <= 0 {
+                                                self.advance();
+                                                break;
+                                            }
+                                            bdepth -= 1;
+                                            self.advance();
+                                        }
+                                        _ => {
+                                            self.advance();
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                        // Fixed dim: coba parse range/size.
+                        // CATATAN: `parse_range` mengkonsumsi `[msb:lsb]`
+                        // SENDIRI (expect LBrack di dalamnya) — jangan
+                        // `advance()` `[` lebih dulu (bug: semua dim lanjutan
+                        // jatuh ke Err → blind-skip). Deteksi range lewat
+                        // `peek_bracket_has_range_colon` (peek masih `[`).
+                        if self.peek_bracket_has_range_colon() || self.peek_ahead(1) == &Token::Colon
+                        {
+                            match self.parse_range() {
+                                Ok(Some(er)) => {
+                                    if let (Ok(m), Ok(l)) = (
+                                        const_eval_simple(&er.msb),
+                                        const_eval_simple(&er.lsb),
+                                    ) {
+                                        extra_unpacked_dims.push((
+                                            Some(Range {
+                                                msb: m as usize,
+                                                lsb: l as usize,
+                                            }),
+                                            None,
+                                        ));
+                                    } else {
+                                        // `|msb-lsb|+1` sebagai size-expr (pola
+                                        // simetris dgn dim pertama) — elaborator
+                                        // resolve via const_eval_params.
+                                        let span = |a: &Expr, b: &Expr| Expr::BinaryOp {
+                                            op: BinaryOp::Sub,
+                                            lhs: Box::new(a.clone()),
+                                            rhs: Box::new(b.clone()),
+                                        };
+                                        let plus_one = |e: Expr| Expr::BinaryOp {
+                                            op: BinaryOp::Add,
+                                            lhs: Box::new(e),
+                                            rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                                        };
+                                        let sz_expr = Expr::TernaryOp {
+                                            cond: Box::new(Expr::BinaryOp {
+                                                op: BinaryOp::Ge,
+                                                lhs: Box::new(er.msb.clone()),
+                                                rhs: Box::new(er.lsb.clone()),
+                                            }),
+                                            true_expr: Box::new(plus_one(span(&er.msb, &er.lsb))),
+                                            false_expr: Box::new(plus_one(span(&er.lsb, &er.msb))),
+                                        };
+                                        extra_unpacked_dims.push((None, Some(sz_expr)));
+                                    }
+                                }
+                                Ok(None) | Err(_) => {
+                                    // Blind-skip bracket ini.
+                                    let mut bdepth = 0i32;
+                                    loop {
+                                        match self.peek() {
+                                            Token::Eof => break,
+                                            Token::LParen | Token::LBrace | Token::LBrack => {
+                                                bdepth += 1;
+                                                self.advance();
+                                            }
+                                            Token::RParen | Token::RBrace => {
+                                                bdepth = bdepth.saturating_sub(1);
+                                                self.advance();
+                                            }
+                                            Token::RBrack => {
+                                                if bdepth <= 0 {
+                                                    self.advance();
+                                                    break;
+                                                }
+                                                bdepth -= 1;
+                                                self.advance();
+                                            }
+                                            _ => {
+                                                self.advance();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // `[N]` / `[Width]` — size-expr.
+                            // Const-eval dulu; gagal → (None, Some(sz)).
+                            self.advance(); // '['
+                            match self.parse_expr(0) {
+                                Ok(sz) => {
+                                    let _ = self.expect(Token::RBrack);
+                                    match const_eval_simple(&sz) {
+                                        Ok(n) if n > 0 => {
+                                            extra_unpacked_dims.push((
+                                                Some(Range {
+                                                    msb: (n - 1) as usize,
+                                                    lsb: 0,
+                                                }),
+                                                None,
+                                            ));
+                                        }
+                                        _ => {
+                                            extra_unpacked_dims.push((None, Some(sz)));
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    // Blind-skip bracket ini (isi bukan ekspresi).
+                                    let mut bdepth = 0i32;
+                                    loop {
+                                        match self.peek() {
+                                            Token::Eof => break,
+                                            Token::LParen | Token::LBrace | Token::LBrack => {
+                                                bdepth += 1;
+                                                self.advance();
+                                            }
+                                            Token::RParen | Token::RBrace => {
+                                                bdepth = bdepth.saturating_sub(1);
+                                                self.advance();
+                                            }
+                                            Token::RBrack => {
+                                                if bdepth <= 0 {
+                                                    self.advance();
+                                                    break;
+                                                }
+                                                bdepth -= 1;
+                                                self.advance();
+                                            }
+                                            _ => {
+                                                self.advance();
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -737,6 +920,7 @@ impl Parser {
                         expr_range: var_expr_range,
                         array_range,
                         array_size_expr,
+                        extra_unpacked_dims,
                         extra_packed_dims: extra_packed_dims.clone(),
                         is_dynamic,
                         is_queue,

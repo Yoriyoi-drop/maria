@@ -1661,6 +1661,7 @@ impl Parser {
                         expr_range: None,
                         array_range: None,
                         array_size_expr: None,
+                        extra_unpacked_dims: vec![],
                         extra_packed_dims: vec![],
                         is_dynamic: false,
                         is_queue: false,
@@ -1911,12 +1912,124 @@ impl Parser {
                                     }
                                 }
                             }
+                            // Dimensi unpacked LANJUTAN `[..][..]` (F39) —
+                            // user-type multi-dim (`my_type mat [2][3]`).
+                            let mut extra_unpacked_dims: Vec<(Option<Range>, Option<Expr>)> =
+                                Vec::new();
+                            while self.peek() == &Token::LBrack {
+                                // Exotik (`[$]`, `[]`, key-type) di dim lanjutan
+                                // tidak didukung — blind-skip (perilaku lama).
+                                let exo = matches!(
+                                    self.peek_ahead(1),
+                                    Token::Dollar
+                                        | Token::RBrack
+                                        | Token::String
+                                        | Token::Int
+                                        | Token::Unsigned
+                                        | Token::Star
+                                        | Token::Bit
+                                        | Token::Logic
+                                        | Token::Byte
+                                        | Token::Shortint
+                                        | Token::Longint
+                                );
+                                if exo {
+                                    self.skip_extra_unpacked_dims();
+                                    break;
+                                }
+                                if self.peek_bracket_has_range_colon()
+                                    || self.peek_ahead(1) == &Token::Colon
+                                {
+                                    // `parse_range` mengkonsumsi `[msb:lsb]`
+                                    // sendiri — jangan advance `[` lebih dulu.
+                                    match self.parse_range() {
+                                        Ok(Some(er)) => {
+                                            if let (Ok(m), Ok(l)) = (
+                                                const_eval_simple(&er.msb),
+                                                const_eval_simple(&er.lsb),
+                                            ) {
+                                                extra_unpacked_dims.push((
+                                                    Some(Range {
+                                                        msb: m as usize,
+                                                        lsb: l as usize,
+                                                    }),
+                                                    None,
+                                                ));
+                                            } else {
+                                                let sz_expr = Expr::TernaryOp {
+                                                    cond: Box::new(Expr::BinaryOp {
+                                                        op: BinaryOp::Ge,
+                                                        lhs: Box::new(er.msb.clone()),
+                                                        rhs: Box::new(er.lsb.clone()),
+                                                    }),
+                                                    true_expr: Box::new(Expr::BinaryOp {
+                                                        op: BinaryOp::Add,
+                                                        lhs: Box::new(Expr::BinaryOp {
+                                                            op: BinaryOp::Sub,
+                                                            lhs: Box::new(er.msb.clone()),
+                                                            rhs: Box::new(er.lsb.clone()),
+                                                        }),
+                                                        rhs: Box::new(Expr::Value(
+                                                            Value::Decimal(1),
+                                                        )),
+                                                    }),
+                                                    false_expr: Box::new(Expr::BinaryOp {
+                                                        op: BinaryOp::Add,
+                                                        lhs: Box::new(Expr::BinaryOp {
+                                                            op: BinaryOp::Sub,
+                                                            lhs: Box::new(er.lsb.clone()),
+                                                            rhs: Box::new(er.msb.clone()),
+                                                        }),
+                                                        rhs: Box::new(Expr::Value(
+                                                            Value::Decimal(1),
+                                                        )),
+                                                    }),
+                                                };
+                                                extra_unpacked_dims
+                                                    .push((None, Some(sz_expr)));
+                                            }
+                                        }
+                                        Ok(None) | Err(_) => {
+                                            self.skip_extra_unpacked_dims();
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    // `[N]` size-expr
+                                    self.advance(); // '['
+                                    match self.parse_expr(0) {
+                                        Ok(sz) => {
+                                            let _ = self.expect(Token::RBrack);
+                                            match const_eval_simple(&sz) {
+                                                Ok(n) if n > 0 => {
+                                                    extra_unpacked_dims.push((
+                                                        Some(Range {
+                                                            msb: (n - 1) as usize,
+                                                            lsb: 0,
+                                                        }),
+                                                        None,
+                                                    ));
+                                                }
+                                                _ => {
+                                                    extra_unpacked_dims
+                                                        .push((None, Some(sz)));
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            self.skip_extra_unpacked_dims();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                             names.push(DeclVar {
                                 name: vname,
                                 range: None,
                                 expr_range: None,
                                 array_range,
                                 array_size_expr,
+                                extra_unpacked_dims: extra_unpacked_dims.clone(),
                                 extra_packed_dims: vec![],
                                 is_dynamic,
                                 is_queue,
@@ -2031,6 +2144,7 @@ impl Parser {
                         expr_range: None,
                         array_range: None,
                         array_size_expr: None,
+                        extra_unpacked_dims: vec![],
                         extra_packed_dims: vec![],
                         is_dynamic: false,
                         is_queue: false,

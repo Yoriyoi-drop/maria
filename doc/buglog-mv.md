@@ -31,20 +31,41 @@ bug di maria utama (parser/elaborator/simulator). Status: ✅ fixed / ⏳ open.
    sebelum eval signed → l=252. Fix: clip operand Div/Mod ke lebar ASLI signal
    (signed_raw_operand menembus Cast/Signed wrapper) → -4/2 = -2 (0xFE).
 
+8. **`>>>` arithmetic shift signed** — `signed [7:0] a=-5; a >>> 1` → 125
+   (harus -3/0xFD). Sudah tertutup `test_arithmetic_shift_right_signedness`
+   (ROUND 36: `s>>>2`=0xE0, `>>` selalu logical, int signed) + ekspresi
+   majemuk `(a*2) >>> 2` = -4 — diverifikasi ulang probe `t_p2`:
+   `B=-3 C=253` benar. Buglog usang.
+
+4. **Unpacked array MULTI-dimensi (F39)** — parser SV (`maria-parser`) hanya
+   menyimpan SATU dimensi unpacked; `logic [7:0] mat [0:1][0:1]` menjadi
+   width 16 / 2 elemen (harus 32 / 4), init `'{'{1,2},'{3,4}}` tak
+   ter-decompose → semua elemen 0; index 2-d `mat[i][j]` = bit-select lebar 1.
+   Fix lengkap:
+   - **AST** (`maria-ast/src/types.rs`): `DeclVar.extra_unpacked_dims` +
+     `Port.extra_unpacked_dims` — `Vec<(Option<Range>, Option<Expr>)>` utk
+     dim lanjutan (range ter-resolve / size-expr utk param).
+   - **Parser** (`decl.rs`, `lib.rs` user-type branch, `instance.rs` port):
+     3 site ganti skip-buta → parse range/size; bentuk eksotik
+     (`[string]`, `[$]`, `[*]`, key-type) tetap skip (helper baru
+     `skip_extra_unpacked_dims` di `proc.rs`). JANGAN `advance()` `[` sebelum
+     `parse_range()` (ia mengkonsumsi bracket sendiri — bug awal: semua dim
+     lanjutan jatuh ke Err → blind-skip).
+   - **Elaborasi** (`elaborator/mod.rs`): `array_dims=[d0..dn]`,
+     `array_depth=Π dims`, `total_width=elem_width × Π`, init fill semua
+     elemen; decl-init decompose via `flatten_array_init` (nested concat →
+     flat row-major; daftar datar juga diterima); port array_dims di-set.
+   - **Index fold** (`expr.rs` baca + `stmt.rs` tulis): `mat[i][j]` → SATU
+     `ArrayIndex` dgn index gabungan `inner_idx×dims[c] + current_idx`,
+     `elem_width = inner_width/dims[c]` (engine tak berubah — ArrayIndex
+     flat: start = idx × ew). Index pertama pada multi-dim = ROW
+     (`elem_width × Π dims[1..]`) — `mat[i]`/`m3d[0]` sub-array terbaca utuh.
+   - Verifikasi: probe `mat2d.sv` → `m00=1 m01=2 m10=3 m11=4 mdyn=4`;
+     `mat_edge.sv` (write dinamis 42, row 0x2A01, 3D `m3d[1][0][1]`=6,
+     port `out_port[1][0]`=99); `.mv` multi-dim → sim OK; 4 test baru
+     (`test_multidim_unpacked_array_{read_decl_init,write_dynamic,3d_and_row,port}`)
+     — full workspace **2597 pass, 0 gagal**.
+
 ## ⏳ Open
 
-8. **`>>>` arithmetic shift signed salah** — `signed [7:0] a=-5; a >>> 1`
-   → 125 (harus -3/0xFD); jalur evaluasi utk ekspresi ini tidak melalui
-   jalur IR/AST binary yang dikenal (debug tak pernah terpanggil — kemungkinan
-   evaluasi langsung/const-fold lain). Fix is_signed_expr(Cast) sudah masuk
-   tapi jalur tersebut tak tereksekusi utk kasus ini. Reproduksi: t_p2.
-
-4. **Unpacked array MULTI-dimensi hanya 1 dim disimpan** — parser SV
-   (`maria-parser/src/decl.rs` skip blind) hanya menyimpan SATU dimensi
-   unpacked; `logic [7:0] mat [0:1] [0:1]` menjadi width 16 / 2 elemen
-   (harus 4), init `'{'{1,2},'{3,4}}` tak ter-decompose → semua elemen 0.
-   Butuh representasi multi unpacked dims di AST `Decl` + elaborasi
-   (array_dims, width product) + engine index — skope besar.
-   Reproduksi SV murni: `logic [7:0] mat [0:1][0:1] = '{{1,2},{3,4}};` →
-   `mat[0][0]` = 0 (harus 1). `.mv`: `sig mat : logic[8][2][2] = ...`.
-   Catatan: engine juga belum dukung index 2-d (`mat[i][j]` → E1002).
+(tidak ada item open — semua bug historis sudah tertutup)

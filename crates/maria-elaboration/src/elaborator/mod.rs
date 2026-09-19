@@ -12,6 +12,37 @@ use maria_core::intern::Symbol;
 pub mod ext;
 pub mod flatten;
 
+/// Flatten nested array-literal `Concat` ke daftar elemen row-major (F39).
+/// `elems` = elemen terluar `'{...}`; `dims` = seluruh dimensi unpacked
+/// (`array_dims` sinyal). Contoh: dims [2,2] dan `'{'{1,2},'{3,4}}` →
+/// [1,2,3,4]. Daftar datar (`'{1,2,3,4}` dengan len == produk dims) juga
+/// diterima: flat index == elemen row-major. Struktur yang tidak cocok
+/// (panjang salah / bercampur) → None (pemanggil jatuh ke write utuh).
+fn flatten_array_init<'a>(elems: &'a [Expr], dims: &[usize]) -> Option<Vec<&'a Expr>> {
+    if dims.is_empty() {
+        return None;
+    }
+    if elems.len() == dims.iter().product::<usize>() {
+        // Daftar datar menutupi semua elemen — flat langsung.
+        return Some(elems.iter().collect());
+    }
+    if elems.len() != dims[0] {
+        return None;
+    }
+    // Bersarang: tiap elemen = Concat untuk sisa dims.
+    let mut out: Vec<&Expr> = Vec::with_capacity(dims.iter().product());
+    for e in elems {
+        match e {
+            Expr::Concat(inner) => {
+                let sub = flatten_array_init(inner, &dims[1..])?;
+                out.extend(sub);
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
 /// Format a prefix + integer counter into a Symbol without heap allocation.
 /// Uses a stack buffer and writes the decimal number directly.
 fn format_sym(prefix: &[u8], n: usize) -> Symbol {
@@ -1189,7 +1220,7 @@ impl Elaborator {
                         }),
                         array_range: arr_range,
                         array_size_expr: arr_size,
-
+                        extra_unpacked_dims: vec![],
                         extra_packed_dims: vec![],
                         is_dynamic: false,
                         is_queue: false,
@@ -2790,9 +2821,17 @@ impl Elaborator {
                 delta.insert(*k, *v);
             }
         }
+        // ── Bake unit-import delta ke pkg_param_ctx GLOBAL ──
+        // Setiap module menerima extend(unit_import_ctx) yang SAMA di
+        // collect_package_param_ctx — baking ke base sekali membuat module
+        // TANPA import/enum milik sendiri bisa meminjam base (Cow::Borrowed)
+        // tanpa clone 104k-entry per module (kerja berulang terbesar).
+        for (k, v) in &delta {
+            self.pkg_param_ctx.insert(*k, *v);
+        }
         self.unit_import_ctx = delta;
 
-        // ── Plain param per package — sekali, untuk import milik module ──
+// ── Plain param per package — sekali, untuk import milik module ──
         // Base: context global yang sudah lengkap (qualified + unit imports).
         let base: HashMap<Symbol, i64> = self.unit_import_ctx.clone();
         let mut plain_map: HashMap<Symbol, HashMap<Symbol, i64>> = HashMap::new();
@@ -2867,7 +2906,39 @@ impl Elaborator {
     /// parameter default, dll.) sehingga package parameter bisa di-resolve.
     /// Package param yang di-referensikan secara scoped (`pkg::name`) juga
     /// didaftarkan agar `const_eval_with_params` bisa me-resolve.
-    fn collect_package_param_ctx(&self, module: &Module) -> HashMap<Symbol, i64> {
+    fn collect_package_param_ctx(
+        &self,
+        module: &Module,
+    ) -> std::borrow::Cow<'_, HashMap<Symbol, i64>> {
+        // ── Fast path: module TANPA import pkg milik sendiri & tanpa enum
+        // modul → base GLOBAL (pkg_param_ctx dengan unit-import delta sudah
+        // di-bake saat build) dipinjam TANPA clone. Sebelumnya map 100k+
+        // entry di-clone utk SETIAP module × setiap fase (expansion loop +
+        // tiap resolve_param_values) = kerja berulang terbesar elaborate. ──
+        let mut has_own_imports = false;
+        let mut has_own_enums = false;
+        for item in &module.items {
+            match item {
+                ModuleItem::Import { .. } => {
+                    has_own_imports = true;
+                    if has_own_enums {
+                        break;
+                    }
+                }
+                ModuleItem::Typedef(td) => {
+                    if matches!(td.dtype, DataType::EnumType { .. }) {
+                        has_own_enums = true;
+                        if has_own_imports {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !has_own_imports && !has_own_enums {
+            return std::borrow::Cow::Borrowed(&self.pkg_param_ctx);
+        }
         let dbg = std::env::var("DBG_ELAB").is_ok();
         let t0 = std::time::Instant::now();
         let mut ctx: HashMap<Symbol, i64> = self.pkg_param_ctx.clone();
@@ -3016,7 +3087,7 @@ impl Elaborator {
         if dbg && t0.elapsed().as_micros() > 50_000 {
             eprintln!("[DBG-ELAB]   collect total: {}us", t0.elapsed().as_micros());
         }
-        ctx
+        std::borrow::Cow::Owned(ctx)
     }
 
     /// Buat structured diagnostic untuk elaboration error dengan error code tepat.
@@ -3858,15 +3929,38 @@ impl Elaborator {
                 PortDirection::Inout => NetType::Tri,
                 _ => NetType::Wire,
             };
-            // Unpacked array port: lipat dimensi array ke lebar total.
-            let (array_depth, total_width, port_msb, port_lsb) = if let Some(ar) = &port.array_range
-            {
-                let depth = if ar.msb >= ar.lsb {
+            // Unpacked array port: lipat dimensi array ke lebar total
+            // (F39: multi-dimensi `[a][b]` didukung — array_dims penuh).
+            let dims = |ar: &Range| {
+                if ar.msb >= ar.lsb {
                     ar.msb - ar.lsb + 1
                 } else {
                     ar.lsb - ar.msb + 1
-                };
-                (depth, width * depth, width * depth - 1, 0)
+                }
+            };
+            let mut port_all_dims: Vec<usize> = Vec::new();
+            if let Some(ar) = &port.array_range {
+                port_all_dims.push(dims(ar));
+                for (ext_r, ext_sz) in &port.extra_unpacked_dims {
+                    if let Some(r) = ext_r {
+                        port_all_dims.push(dims(r));
+                    } else if let Some(sz) = ext_sz {
+                        match const_eval_params(sz, &effective_params) {
+                            Ok(n) if n > 0 => port_all_dims.push(n as usize),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let (array_depth, total_width, port_msb, port_lsb) = if !port_all_dims.is_empty()
+            {
+                let total_depth: usize = port_all_dims.iter().product();
+                (
+                    total_depth,
+                    width * total_depth,
+                    width * total_depth - 1,
+                    0,
+                )
             } else {
                 (1, width, p_msb, p_lsb)
             };
@@ -3918,6 +4012,12 @@ impl Elaborator {
                 if let Some((_, mp)) = tn.as_str().split_once('.') {
                     sig.iface_modport = Some(Symbol::intern(mp));
                 }
+            }
+            // Set array_dims untuk port array multi-dimensi (F39) — indexing
+            // `mat[i][j]` & fold di elaborator memakai array_dims.
+            if !port_all_dims.is_empty() {
+                let sig = &mut signals[sid];
+                sig.array_dims = port_all_dims.clone();
             }
             // Set packed_dims untuk port packed multi-dimensi (`[a:b][c:d] name`)
             // agar akses elemen `name[k]` benar (via RangeSelect).
@@ -4597,12 +4697,28 @@ impl Elaborator {
                     })
                 });
                 if let Some(ar) = &resolved_arr {
-                    let depth = if ar.msb >= ar.lsb {
-                        ar.msb - ar.lsb + 1
-                    } else {
-                        ar.lsb - ar.msb + 1
+                    // F39: dimensi unpacked SEMUA (pertama + lanjutan `[a][b]`)
+                    // → array_dims [d0, d1, ...]; total depth = produk.
+                    let dims = |ar: &Range| {
+                        if ar.msb >= ar.lsb {
+                            ar.msb - ar.lsb + 1
+                        } else {
+                            ar.lsb - ar.msb + 1
+                        }
                     };
-                    let total_width = elem_width * depth;
+                    let mut all_dims: Vec<usize> = vec![dims(ar)];
+                    for (ext_r, ext_sz) in &var.extra_unpacked_dims {
+                        if let Some(r) = ext_r {
+                            all_dims.push(dims(r));
+                        } else if let Some(sz) = ext_sz {
+                            match const_eval_params(sz, &effective_params) {
+                                Ok(n) if n > 0 => all_dims.push(n as usize),
+                                _ => {} // ukuran tak ter-resolve → dim diabaikan
+                            }
+                        }
+                    }
+                    let total_depth: usize = all_dims.iter().product();
+                    let total_width = elem_width * total_depth;
                     let sid = get_or_create_signal(
                         var.name,
                         total_width,
@@ -4611,7 +4727,7 @@ impl Elaborator {
                         &mut signals,
                         &mut signal_map,
                         &mut next_id,
-                        depth,
+                        total_depth,
                         elem_width,
                         total_width - 1,
                         0,
@@ -4636,7 +4752,7 @@ impl Elaborator {
                         LogicVec::fill(LogicVal::X, total_width)
                     };
                     let init_n = full_init.bits.len();
-                    for i in 0..depth {
+                    for i in 0..total_depth {
                         for j in 0..elem_width {
                             let idx = i * elem_width + j;
                             if idx < init_n && j < elem_init.bits.len() {
@@ -4645,15 +4761,8 @@ impl Elaborator {
                         }
                     }
                     sig.init_val = full_init;
-                    // Populate array_dims for unpacked arrays
-                    if let Some(ar) = &resolved_arr {
-                        let depth = if ar.msb >= ar.lsb {
-                            ar.msb - ar.lsb + 1
-                        } else {
-                            ar.lsb - ar.msb + 1
-                        };
-                        sig.array_dims = vec![depth];
-                    }
+                    // Populate array_dims for unpacked arrays (F39: semua dim).
+                    sig.array_dims = all_dims.clone();
                     if let Some(ref class) = class_name {
                         sig.class_name = Some(Symbol::intern(class));
                         if class == "__mailbox" {
@@ -5976,9 +6085,51 @@ impl Elaborator {
                     // dengan statement assign (stmt.rs:805): decompose ke per-elemen
                     // assign `rom[i] = ei;` di level IR.
                     let mut per_elem_stmts: Vec<IrStmt> = Vec::new();
-                    if let (Some(sid), Expr::Concat(elems)) = (lvalue_signal_id(&lhs), init_expr) {
+                    if let (Some(sid), Expr::Concat(elems)) = (lvalue_signal_id(&lhs), init_expr)
+                    {
                         if let Some(sig) = signals.get(sid) {
-                            if sig.array_depth > 1 && elems.len() == sig.array_depth {
+                            if sig.array_depth > 1 {
+                                // F39: multi-dimensi — nested concat
+                                // `'{'{1,2},'{3,4}}` di-flatten row-major ke
+                                // elemen flat [e0..eN] (array_dims penuh).
+                                // Daftar datar `'{1,2,3,4}` (len == total_depth)
+                                // juga diterima — flat index == elemen row-major.
+                                let flat = flatten_array_init(elems, &sig.array_dims);
+                                if let Some(flat) = flat {
+                                    for (i, elem) in flat.iter().enumerate() {
+                                        let ir_elem =
+                                            self.elaborate_expr(elem, &signal_map, &signals)?;
+                                        per_elem_stmts.push(IrStmt::BlockingAssign {
+                                            lhs: IrLValue::ArrayIndex {
+                                                sig_id: sid,
+                                                index: Box::new(IrExpr::Const(
+                                                    LogicVec::from_u64(i as u64, 32),
+                                                )),
+                                                elem_width: sig.elem_width.max(1),
+                                            },
+                                            rhs: ir_elem,
+                                            delay: None,
+                                        });
+                                    }
+                                } else if elems.len() == sig.array_depth {
+                                    // single-dim fallback (list datar)
+                                    for (i, elem) in elems.iter().enumerate() {
+                                        let ir_elem =
+                                            self.elaborate_expr(elem, &signal_map, &signals)?;
+                                        per_elem_stmts.push(IrStmt::BlockingAssign {
+                                            lhs: IrLValue::ArrayIndex {
+                                                sig_id: sid,
+                                                index: Box::new(IrExpr::Const(
+                                                    LogicVec::from_u64(i as u64, 32),
+                                                )),
+                                                elem_width: sig.elem_width.max(1),
+                                            },
+                                            rhs: ir_elem,
+                                            delay: None,
+                                        });
+                                    }
+                                }
+                            } else if elems.len() == sig.array_depth {
                                 for (i, elem) in elems.iter().enumerate() {
                                     let ir_elem =
                                         self.elaborate_expr(elem, &signal_map, &signals)?;

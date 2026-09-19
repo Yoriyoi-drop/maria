@@ -28,6 +28,7 @@
 /XiangShan/
 /.tools/
 /openc910/
+/landing_page
 *.f
 *.lock
 *.mv 

@@ -2955,6 +2955,15 @@ fn run_fast(
         emit_diags(&session.parse_errors);
     }
 
+    let mut pmark = std::time::Instant::now();
+    let mut mark = |label: &str| {
+        if std::env::var("MARIA_PHASE_TIMING").is_ok() {
+            eprintln!("[PHASE] {} = {:?}", label, pmark.elapsed());
+        }
+        pmark = std::time::Instant::now();
+    };
+    mark("after-compile-parsed");
+
     if anim_active(&anim) {
         anim_phase_done(&anim, Phase::Lex);
         anim_phase_done(&anim, Phase::Par);
@@ -2975,6 +2984,7 @@ fn run_fast(
     // butuh RAM; menahan clone AST penuh kedua selama elaborate = OOM pada
     // mesin kecil (sebelumnya peak ~2.9GB parse, lalu elaborate +AST → swap). ──
     session.release_parse_cache();
+    mark("after-save-release");
 
     if design.modules.is_empty() {
         // Tidak fatal bila ada package/interface/class — mode analisis:
@@ -3065,6 +3075,7 @@ fn run_fast(
             }
         } else {
             let (source_lines, source_file) = session.source_info().unwrap_or_default();
+            mark("before-elaborator");
             let mut elab = if source_lines.is_empty() {
                 Elaborator::new(design)
             } else {
@@ -3091,6 +3102,7 @@ fn run_fast(
                 }
             };
             elab_diags = elab.flush_diagnostics();
+            mark("after-elaborate");
             if anim_active(&anim) {
                 anim_phase_done(&anim, Phase::Ela);
                 anim_phase_done(&anim, Phase::Opt);

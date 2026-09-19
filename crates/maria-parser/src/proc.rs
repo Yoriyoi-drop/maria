@@ -33,6 +33,42 @@ impl Parser {
         Ok(())
     }
 
+    /// Blind-skip dimensi unpacked LANJUTAN `[..][..]` yang TIDAK bisa
+    /// diparse sebagai fixed dim (eksotik: key-type `[string]`/`[int]`,
+    /// dynamic `[]`, queue `[$]`, atau isi bukan ekspresi). Dipakai F39
+    /// sebagai fallback saat dim lanjutan array multi-dimensi tidak
+    /// representable di AST — perilaku lama (skip buta) dipertahankan.
+    pub(crate) fn skip_extra_unpacked_dims(&mut self) {
+        while self.peek() == &Token::LBrack {
+            self.advance(); // '['
+            let mut bdepth = 0i32;
+            loop {
+                match self.peek() {
+                    Token::Eof => break,
+                    Token::LParen | Token::LBrace | Token::LBrack => {
+                        bdepth += 1;
+                        self.advance();
+                    }
+                    Token::RParen | Token::RBrace => {
+                        bdepth = bdepth.saturating_sub(1);
+                        self.advance();
+                    }
+                    Token::RBrack => {
+                        if bdepth <= 0 {
+                            self.advance();
+                            break;
+                        }
+                        bdepth -= 1;
+                        self.advance();
+                    }
+                    _ => {
+                        self.advance();
+                    }
+                }
+            }
+        }
+    }
+
     /// Parse range packed `[msb:lsb]` ATAU lewati dimensi unpacked (`[N]`,
     /// `[]`) setelah nama port. Mengembalikan `Some(range)` hanya untuk
     /// `[expr:expr]`. Saat `parse_range` gagal (mis. `[8]` single-ekspresi),

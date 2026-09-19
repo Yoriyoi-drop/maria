@@ -2413,10 +2413,21 @@ impl Elaborator {
                             }
                         } else if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
                             let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                            // F39: multi-dim unpacked — index pertama memilih
+                            // ROW: lebar = elem_width × Π dims[1..] (bit offset
+                            // i × row_w terbaca/tertulis utuh oleh engine).
+                            let ew = if sig.array_dims.len() > 1 {
+                                sig.array_dims[1..]
+                                    .iter()
+                                    .product::<usize>()
+                                    .saturating_mul(sig.elem_width)
+                            } else {
+                                sig.elem_width
+                            };
                             Ok(IrLValue::ArrayIndex {
                                 sig_id: sid,
                                 index: Box::new(index_expr),
-                                elem_width: sig.elem_width,
+                                elem_width: ew,
                             })
                         } else if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
                             Ok(IrLValue::BitSelect(sid, idx as usize))
@@ -2452,6 +2463,51 @@ impl Elaborator {
                         index,
                         elem_width,
                     } => {
+                        // F39: index berantai pada array unpacked multi-dimensi
+                        // `mat[i][j] = x` — fold ke satu ArrayIndex (index
+                        // gabungan unit elemen, lihat jalur baca expr.rs).
+                        let mut folded: Option<IrLValue> = None;
+                        if let Some(sig) = signals.get(sig_id) {
+                            let dims = &sig.array_dims;
+                            let ew = sig.elem_width;
+                            if dims.len() > 1 && elem_width > ew && ew > 0 {
+                                let remaining = elem_width / ew;
+                                let mut c = dims.len();
+                                let mut prod = 1usize;
+                                while c > 0 {
+                                    c -= 1;
+                                    prod *= dims[c];
+                                    if prod == remaining {
+                                        break;
+                                    }
+                                }
+                                if prod == remaining && c < dims.len() {
+                                    let new_ew = elem_width / dims[c];
+                                    let idx_expr =
+                                        self.elaborate_expr(bs_index, signal_map, signals)?;
+                                    let combined = IrExpr::BinaryOp(
+                                        BinaryIrOp::Add,
+                                        Box::new(IrExpr::BinaryOp(
+                                            BinaryIrOp::Mul,
+                                            Box::new((*index).clone()),
+                                            Box::new(IrExpr::Const(LogicVec::from_u64(
+                                                dims[c] as u64,
+                                                32,
+                                            ))),
+                                        )),
+                                        Box::new(idx_expr),
+                                    );
+                                    folded = Some(IrLValue::ArrayIndex {
+                                        sig_id,
+                                        index: Box::new(combined),
+                                        elem_width: new_ew,
+                                    });
+                                }
+                            }
+                        }
+                        if let Some(lv) = folded {
+                            return Ok(lv);
+                        }
                         if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
                             Ok(IrLValue::ArrayBitSelect {
                                 sig_id,

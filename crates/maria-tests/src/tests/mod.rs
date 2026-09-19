@@ -6545,6 +6545,109 @@ endmodule
 }
 
 #[test]
+fn test_multidim_unpacked_array_read_decl_init() {
+    // F39 — multi-dimensi unpacked array (buglog-mv #4, sebelumnya SKIP
+    // buta dim lanjutan): `logic [7:0] mat [0:1][0:1] = '{{1,2},{3,4}}`
+    // → width 32 (4 elemen 8-bit), array_dims [2,2]; init nested di-flatten
+    // row-major [1,2,3,4]; index `mat[i][j]` = elemen flat i*2+j.
+    // Sebelumnya: width 16/2 elemen, init tak ter-decompose → semua 0.
+    let source = r#"
+module tb;
+    logic [7:0] mat [0:1][0:1] = '{{1,2},{3,4}};
+    logic [7:0] m00, m01, m10, m11;
+    integer i, j;
+    initial begin
+        m00 = mat[0][0];
+        m01 = mat[0][1];
+        m10 = mat[1][0];
+        m11 = mat[1][1];
+        i = 1; j = 1;
+        m11 = mat[i][j];   // dinamis → 4
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("m00"), 1, "mat[0][0]");
+    assert_eq!(get("m01"), 2, "mat[0][1]");
+    assert_eq!(get("m10"), 3, "mat[1][0]");
+    assert_eq!(get("m11"), 4, "mat[1][1] dynamic");
+}
+
+#[test]
+fn test_multidim_unpacked_array_write_dynamic() {
+    // F39 — tulis dinamis multi-dimensi `mat[i][j] = x` (fold lvalue).
+    let source = r#"
+module tb;
+    logic [7:0] mat [0:1][0:1] = '{{1,2},{3,4}};
+    logic [7:0] p00, p01;
+    integer i, j;
+    initial begin
+        i = 0; j = 1;
+        mat[i][j] = 42;
+        p00 = mat[0][0];
+        p01 = mat[0][1];
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("p00"), 1, "element tidak tersentuh");
+    assert_eq!(get("p01"), 42, "write dinamis mat[0][1]");
+}
+
+#[test]
+fn test_multidim_unpacked_array_3d_and_row() {
+    // F39 — 3-dimensi + row select `mat[0]` (16-bit dari 2 elemen 8-bit).
+    let source = r#"
+module tb;
+    logic [7:0] m3d [0:1][0:1][0:1] = '{{'{1,2},'{3,4}}, '{'{5,6},'{7,8}}};
+    logic [7:0] w;
+    logic [31:0] row;
+    integer i, j, k;
+    initial begin
+        i = 1; j = 0; k = 1;
+        w = m3d[i][j][k];   // m3d[1][0][1] = 6
+        row = m3d[0];       // baris 0 = {1,2,3,4} → 0x04030201 (MSB-first)
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("w"), 6, "m3d[1][0][1] = 6");
+    assert_eq!(get("row"), 0x0403_0201, "row select m3d[0] (32-bit sub-array)");
+}
+
+#[test]
+fn test_multidim_unpacked_array_port() {
+    // F39 — port array multi-dimensi `output logic [7:0] out [0:1][0:1]`.
+    let source = r#"
+module dut(input logic [7:0] d [0:1][0:1], output logic [7:0] q [0:1][0:1]);
+    always_comb q = d;
+endmodule
+module tb;
+    logic [7:0] d [0:1][0:1] = '{{1,2},{3,4}};
+    logic [7:0] q [0:1][0:1];
+    dut u(.d(d), .q(q));
+    logic [7:0] r1, r4;
+    initial begin
+        #1;               // tunggu always_comb q = d propagasi
+        r1 = q[0][0];
+        r4 = q[1][1];
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("r1"), 1, "port multi-dim q[0][0]");
+    assert_eq!(get("r4"), 4, "port multi-dim q[1][1]");
+}
+
+#[test]
 fn test_package_import_typedef() {
     let source = r#"
 package my_pkg;

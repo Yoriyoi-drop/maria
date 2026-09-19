@@ -925,6 +925,10 @@ impl Parser {
                                 //   data_i [msb:lsb]    — rentang eksplisit
                                 // (multi-dimensi diperbolehkan, dimensi ekstra di-skip)
                                 let mut array_range = None;
+                                let mut extra_unpacked_dims: Vec<(
+                                    Option<Range>,
+                                    Option<Expr>,
+                                )> = Vec::new();
                                 if self.peek() == &Token::LBrack {
                                     self.advance(); // [
                                     if self.peek() != &Token::RBrack {
@@ -959,15 +963,74 @@ impl Parser {
                                     } else {
                                         self.advance(); // ]
                                     }
-                                    // Skip additional dims (multi-dimensi)
+                                    // Dimensi unpacked LANJUTAN `[..][..]`
+                                    // (F39): parse range/size → simpan ke
+                                    // extra_unpacked_dims (sebelumnya di-skip).
                                     while self.peek() == &Token::LBrack {
-                                        self.advance(); // [
-                                        let _ = self.parse_expr(0)?;
-                                        if self.peek() == &Token::Colon {
-                                            self.advance();
-                                            let _ = self.parse_expr(0)?;
+                                        let exo = matches!(
+                                            self.peek_ahead(1),
+                                            Token::RBrack
+                                                | Token::Dollar
+                                                | Token::String
+                                                | Token::Int
+                                                | Token::Unsigned
+                                                | Token::Star
+                                                | Token::Bit
+                                                | Token::Logic
+                                                | Token::Byte
+                                                | Token::Shortint
+                                                | Token::Longint
+                                        );
+                                        if exo {
+                                            // Exotik — skip buta (perilaku lama).
+                                            self.skip_extra_unpacked_dims();
+                                            break;
                                         }
-                                        self.expect(Token::RBrack)?;
+                                        if self.peek_bracket_has_range_colon() {
+                                            // `parse_range` mengkonsumsi
+                                            // `[msb:lsb]` sendiri — jangan
+                                            // advance `[` lebih dulu.
+                                            match self.parse_range() {
+                                                Ok(Some(er)) => {
+                                                    if let (Ok(m), Ok(l)) = (
+                                                        const_eval_simple(&er.msb),
+                                                        const_eval_simple(&er.lsb),
+                                                    ) {
+                                                        extra_unpacked_dims.push((
+                                                            Some(Range {
+                                                                msb: m as usize,
+                                                                lsb: l as usize,
+                                                            }),
+                                                            None,
+                                                        ));
+                                                    } else {
+                                                        extra_unpacked_dims.push((None, None));
+                                                    }
+                                                }
+                                                Ok(None) | Err(_) => {
+                                                    self.skip_extra_unpacked_dims();
+                                                    break;
+                                                }
+                                            }
+                                        } else {
+                                            self.advance(); // [
+                                            let sz = self.parse_expr(0)?;
+                                            self.expect(Token::RBrack)?;
+                                            match const_eval_simple(&sz) {
+                                                Ok(n) if n > 0 => {
+                                                    extra_unpacked_dims.push((
+                                                        Some(Range {
+                                                            msb: (n - 1) as usize,
+                                                            lsb: 0,
+                                                        }),
+                                                        None,
+                                                    ));
+                                                }
+                                                _ => {
+                                                    extra_unpacked_dims.push((None, Some(sz)));
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 // Initializer port ANSI: `output reg [7:0] b
@@ -988,6 +1051,7 @@ impl Parser {
                                     expr_range: expr_range.clone(),
                                     dtype_name: dtype_name.as_ref().map(|s| Symbol::intern(s)),
                                     array_range: array_range_pre.clone().or(array_range),
+                                    extra_unpacked_dims,
                                     extra_packed_dims: extra_packed_dims.clone(),
                                     init_expr,
                                 });

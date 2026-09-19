@@ -2382,6 +2382,7 @@ impl Parser {
                 expr_range: expr_range.clone(),
                 array_range: None,
                 array_size_expr: None,
+                extra_unpacked_dims: vec![],
                 extra_packed_dims: vec![],
                 is_dynamic: false,
                 is_queue: false,

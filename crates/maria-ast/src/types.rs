@@ -151,6 +151,10 @@ pub struct Port {
     pub dtype_name: Option<Symbol>,
     /// Unpacked array dimension `[msb:lsb]` (atau `[N]` → [N-1:0]) pada port.
     pub array_range: Option<Range>,
+    /// Dimensi unpacked LANJUTAN `[a][b]` setelah dimensi pertama
+    /// (`array_range`) pada port — `input logic [7:0] mat [0:1][0:1]`.
+    /// Pasangan (range ter-resolve saat parse, ekspresi ukuran utk parameter).
+    pub extra_unpacked_dims: Vec<(Option<Range>, Option<Expr>)>,
     /// Dimensi packed tambahan sebelum nama port: `[a:b][c:d] name`.
     /// Dimensi pertama di `range`/`expr_range`, sisanya di sini.
     pub extra_packed_dims: Vec<ExprRange>,
@@ -375,6 +379,10 @@ pub struct DeclVar {
     /// elaborator bersama `effective_params`. Untuk `[N]` literal langsung
     /// di-resolve ke `array_range` ([N-1:0]) saat parse.
     pub array_size_expr: Option<Expr>,
+    /// Dimensi unpacked LANJUTAN `[a][b]` setelah dimensi pertama
+    /// (`array_range`/`array_size_expr`) — `logic [7:0] mat [0:1][0:1]`.
+    /// Pasangan (range ter-resolve saat parse, ekspresi ukuran utk parameter).
+    pub extra_unpacked_dims: Vec<(Option<Range>, Option<Expr>)>,
     pub extra_packed_dims: Vec<(ExprRange, Option<Range>)>,
     pub is_dynamic: bool,
     pub is_queue: bool,

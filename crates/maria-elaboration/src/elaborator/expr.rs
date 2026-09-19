@@ -394,10 +394,22 @@ impl Elaborator {
                         }
                     } else if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
                         let index_expr = self.elaborate_expr(index, signal_map, signals)?;
+                        // F39: multi-dim unpacked — index pertama memilih ROW
+                        // (sub-array): lebar = elem_width × Π dims[1..].
+                        // ArrayIndex engine: start = idx × elem_width → row
+                        // terbaca utuh (bit offset i × row_w).
+                        let ew = if sig.array_dims.len() > 1 {
+                            sig.array_dims[1..]
+                                .iter()
+                                .product::<usize>()
+                                .saturating_mul(sig.elem_width)
+                        } else {
+                            sig.elem_width
+                        };
                         Ok(IrExpr::ArrayIndex {
                             sig_id: *sid,
                             index: Box::new(index_expr),
-                            elem_width: sig.elem_width,
+                            elem_width: ew,
                         })
                     } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
                         Ok(IrExpr::BitSelect(*sid, idx as usize))
@@ -447,6 +459,81 @@ impl Elaborator {
                             Box::new(index_expr),
                             Box::new(IrExpr::Const(LogicVec::from_u64(1, 32))),
                         ))
+                    }
+                } else if let IrExpr::ArrayIndex {
+                        sig_id,
+                        index: inner_idx,
+                        elem_width: inner_ew,
+                    } = &inner_expr
+                {
+                    // F39: index berantai pada array unpacked multi-dimensi
+                    // `mat[i][j]` — fold ke SATU ArrayIndex dengan index
+                    // gabungan (unit elemen relatif thd elem_width baru).
+                    // inner membaca row selebar inner_ew = ew × Π dims[c..];
+                    // index saat ini mengkonsumsi dims[c]:
+                    //   combined_index = inner_idx × dims[c] + current
+                    //   new_ew         = inner_ew / dims[c]
+                    // Engine ArrayIndex: start = idx × ew → bit offset
+                    // (i×row_w + j×elem_w) benar.
+                    let mut folded: Option<(SignalId, IrExpr, usize)> = None;
+                    if let Some(sig) = signals.get(*sig_id) {
+                        let dims = &sig.array_dims;
+                        let ew = sig.elem_width;
+                        if dims.len() > 1 && *inner_ew > ew && ew > 0 {
+                            let remaining = *inner_ew / ew;
+                            let mut c = dims.len();
+                            let mut prod = 1usize;
+                            while c > 0 {
+                                c -= 1;
+                                prod *= dims[c];
+                                if prod == remaining {
+                                    break;
+                                }
+                            }
+                            if prod == remaining && c < dims.len() {
+                                let new_ew = *inner_ew / dims[c];
+                                let idx_expr =
+                                    self.elaborate_expr(index, signal_map, signals)?;
+                                let combined = IrExpr::BinaryOp(
+                                    BinaryIrOp::Add,
+                                    Box::new(IrExpr::BinaryOp(
+                                        BinaryIrOp::Mul,
+                                        Box::new((**inner_idx).clone()),
+                                        Box::new(IrExpr::Const(LogicVec::from_u64(
+                                            dims[c] as u64,
+                                            32,
+                                        ))),
+                                    )),
+                                    Box::new(idx_expr),
+                                );
+                                folded = Some((*sig_id, combined, new_ew));
+                            }
+                        }
+                    }
+                    match folded {
+                        Some((sid2, combined, new_ew)) => Ok(IrExpr::ArrayIndex {
+                            sig_id: sid2,
+                            index: Box::new(combined),
+                            elem_width: new_ew,
+                        }),
+                        None => {
+                            // Bukan fold valid (`mat[i][j]` dgn semua dim habis
+                            // = bit-select; bukan multi-dim) — perilaku lama.
+                            if let Ok(idx) = const_eval_params(index, &self.param_vals) {
+                                Ok(IrExpr::ExprBitSelect(
+                                    Box::new(inner_expr.clone()),
+                                    idx as usize,
+                                ))
+                            } else {
+                                let index_expr =
+                                    self.elaborate_expr(index, signal_map, signals)?;
+                                Ok(IrExpr::ExprPartSelect(
+                                    Box::new(inner_expr.clone()),
+                                    Box::new(index_expr),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(1, 32))),
+                                ))
+                            }
+                        }
                     }
                 } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
                     Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx as usize))
