@@ -601,6 +601,7 @@ fn real_main() {
             crate::cli::MariaCmd::Check(a) => dispatch_check(a),
             crate::cli::MariaCmd::Bench(a) => dispatch_bench(a),
             crate::cli::MariaCmd::Synth(a) => dispatch_synth(a),
+            crate::cli::MariaCmd::Update(a) => dispatch_update(a),
             crate::cli::MariaCmd::Emu(a) => dispatch_emu(a),
             crate::cli::MariaCmd::Batch(a) => dispatch_batch(a),
             crate::cli::MariaCmd::Memcheck(a) => dispatch_memcheck(a),
@@ -4298,6 +4299,20 @@ fn dispatch_synth(a: &crate::cli::SynthArgs) -> ! {
         quiet: a.quiet,
     };
     exit_tool(maria_api::tools::synth::run(&args));
+}
+
+fn dispatch_update(a: &crate::cli::UpdateArgs) -> ! {
+    let check_only = matches!(a.cmd, Some(crate::cli::UpdateCmd::Check));
+    let args = maria_api::tools::update::UpdateArgs {
+        check_only,
+        channel: Some(a.channel.as_str()),
+        version: a.version.as_deref(),
+        rollback: a.rollback,
+        yes: a.yes,
+        manifest_url: a.manifest_url.as_deref(),
+        exe_path: None,
+    };
+    exit_tool(maria_api::tools::update::run(&args));
 }
 
 fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {

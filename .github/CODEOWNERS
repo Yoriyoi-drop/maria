@@ -30,6 +30,7 @@
 # CI, release, and installation scripts (package management)
 /.github/workflows/ @Yoriyoi-drop
 /install.sh @Yoriyoi-drop
+/scripts/ @Yoriyoi-drop
 /Makefile @Yoriyoi-drop
 /Makefile.test @Yoriyoi-drop
 /Dockerfile @Yoriyoi-drop

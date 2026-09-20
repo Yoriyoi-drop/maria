@@ -58,6 +58,7 @@ pub mod sta_interface;
 pub mod synth;
 pub mod synth_interface;
 pub mod tbgen;
+pub mod update;
 pub mod testdb;
 pub mod vault;
 pub mod vip_lib;

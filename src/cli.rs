@@ -48,6 +48,11 @@ pub enum MariaCmd {
     /// Nama lama: `msynth` (alias)
     #[command(name = "synth", alias = "msynth")]
     Synth(SynthArgs),
+    /// mupdate — auto-update Maria dari release resmi (manifest + checksum +
+    /// rollback). `maria update check` untuk deteksi, `maria update` untuk
+    /// memasang.
+    #[command(alias = "mupdate")]
+    Update(UpdateArgs),
 
     // ── Emulator (EMULATOR.md) — Hardware-Software Emulator ──
     /// emu — Maria emulator; R0: MHIR extraction (device/register/clock/
@@ -678,6 +683,44 @@ pub struct SynthArgs {
     /// Suppress output
     #[arg(short = 'q', long)]
     pub quiet: bool,
+}
+
+/// mupdate — Maria auto-update.
+#[derive(clap::Args, Clone)]
+pub struct UpdateArgs {
+    /// Subcommand opsional: `check` (lapor saja) | `update` (pasang)
+    #[command(subcommand)]
+    pub cmd: Option<UpdateCmd>,
+
+    /// Kanal rilis: stable (default) | beta
+    #[arg(long, default_value = "stable")]
+    pub channel: String,
+
+    /// Pasang versi spesifik (mis. 0.4.0) dari release resmi v<version>
+    #[arg(long)]
+    pub version: Option<String>,
+
+    /// Kembalikan ke binary sebelumnya (backup terakhir)
+    #[arg(long)]
+    pub rollback: bool,
+
+    /// Lewati konfirmasi
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
+    /// Override URL manifest — hook uji
+    #[arg(long, value_name = "URL", hide = true)]
+    pub manifest_url: Option<String>,
+}
+
+/// mupdate subcommand.
+#[derive(Subcommand, Clone)]
+pub enum UpdateCmd {
+    /// Cek ketersediaan update (tanpa mengubah apa pun)
+    Check,
+    /// Pasang update terbaru
+    #[command(alias = "apply")]
+    Update,
 }
 
 /// emu — Maria emulator (EMULATOR.md). R0: MHIR extraction + memory map dump.

@@ -1,194 +1,195 @@
 #!/bin/bash
+# Maria RTL Simulator Installation Script
+# Version: 0.3.0
+# Auto-updates from GitHub releases when new patches are available
 
-# maria Simulator Installation Script
-# Automatically detects and installs the latest stable release
-n
-# Strict mode - exit on error
-set -e
-n
-# Colors for output
+set -euo pipefail
+
+# Color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-n
-# Function to print colored output
-print_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-print_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
+print_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+print_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+# Configuration
+REPO="Yoriyoi-drop/maria"
+BINARY_NAME="maria"
+INSTALL_DIR="${MARIA_INSTALL_DIR:-/usr/local/bin}"
+VERSION_FILE="${MARIA_VERSION_FILE:-/tmp/maria-version.txt}"
+RELEASES_URL="https://api.github.com/repos/${REPO}/releases/latest"
+RAW_URL="https://github.com/${REPO}/releases/download"
 
-# Function to detect the current platform
+# Detect OS and architecture
 detect_platform() {
-    local arch="$(uname -m)"
-    local os="$(uname -s)"
-
-    case "${arch}" in
-        x86_64) ARCH="x86_64" ;;
-        arm64) ARCH="aarch64" ;;
-        *) print_error "Unsupported architecture: ${arch}"; exit 1 ;;
+    local os arch
+    
+    case "$(uname -s)" in
+        Linux*)  os="linux" ;;
+        Darwin*) os="macos" ;;
+        *) print_error "Unsupported OS: $(uname -s)"; exit 1 ;;
     esac
-
-    case "${os}" in
-        Linux*) OS="unknown-linux-gnu" ;;
-        Darwin*) OS="apple-darwin" ;;
-        *) print_error "Unsupported OS: ${os}"; exit 1 ;;
+    
+    case "$(uname -m)" in
+        x86_64|amd64) arch="x86_64" ;;
+        aarch64|arm64) arch="aarch64" ;;
+        *) print_error "Unsupported architecture: $(uname -m)"; exit 1 ;;
     esac
-
-    echo "${ARCH}-${OS}"
+    
+    echo "${arch}-${os}-gnu"
 }
 
-# Function to fetch the latest release version from GitHub API
-fetch_latest_version() {
-    local repo="Yoriyoi-drop/maria"
+# Get latest release version from GitHub
+get_latest_version() {
+    local platform=$1
+    local version
     
-    if command -v curl >/dev/null 2>&1; then
-        VERSION=$(curl -s "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": "v[^"]*' | cut -d'"' -f4)
-    elif command -v wget >/dev/null 2>&1; then
-        VERSION=$(wget -qO- "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": "v[^"]*' | cut -d'"' -f4)
+    version=$(curl -sL "${RELEASES_URL}" | grep -o '"tag_name": "v[^"]*"' | cut -d'"' -f4 2>/dev/null || echo "")
+    
+    if [ -z "$version" ]; then
+        print_warn "Could not fetch latest version from GitHub API"
+        return 1
+    fi
+    
+    echo "$version"
+}
+
+# Check if update is available
+check_for_updates() {
+    local current_version=$1
+    local latest_version=$2
+    
+    if [ "$current_version" != "$latest_version" ]; then
+        print_info "New version available: $latest_version (current: $current_version)"
+        return 0
     else
-        print_error "Neither curl nor wget found. Please install one of them."
+        print_info "Maria is up to date (v$current_version)"
+        return 1
+    fi
+}
+
+# Download and install binary
+install_binary() {
+    local version=$1
+    local platform=$2
+    local tmpfile="/tmp/maria-${version}-${platform}"
+    
+    print_step "Downloading Maria v${version} for ${platform}..."
+    
+    if ! curl -fsSL "${RAW_URL}/${version}/maria" -o "${tmpfile}"; then
+        print_error "Failed to download binary"
         exit 1
     fi
 
-    if [[ "$VERSION" == v* ]]; then
-        echo "${VERSION#v}"
+    # Verifikasi SHA-256 terhadap release resmi: jangan pasang binary yang
+    # checksum-nya tidak cocok (fail-closed).
+    if ! curl -fsSL "${RAW_URL}/${version}/maria.sha256" -o "${tmpfile}.sha256"; then
+        print_error "Failed to download checksum (${version}/maria.sha256)"
+        rm -f "${tmpfile}"
+        exit 1
+    fi
+    expected=$(awk '{print $1}' "${tmpfile}.sha256")
+    actual=$(sha256sum "${tmpfile}" | awk '{print $1}')
+    if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        print_error "Checksum mismatch! expected ${expected:-?}, got ${actual}"
+        rm -f "${tmpfile}" "${tmpfile}.sha256"
+        exit 1
+    fi
+    print_info "Checksum SHA-256 verified"
+    rm -f "${tmpfile}.sha256"
+
+    chmod +x "${tmpfile}"
+    
+    print_step "Installing to ${INSTALL_DIR}..."
+    if [ -w "${INSTALL_DIR}" ]; then
+        mv "${tmpfile}" "${INSTALL_DIR}/${BINARY_NAME}"
     else
-        print_error "Failed to fetch version from GitHub API"
+        print_warn "Need sudo to install to ${INSTALL_DIR}"
+        sudo mv "${tmpfile}" "${INSTALL_DIR}/${BINARY_NAME}"
+    fi
+    
+    print_info "Maria v${version} installed successfully!"
+}
+
+# Verify installation
+verify_installation() {
+    if command -v maria &> /dev/null; then
+        print_info "Maria binary verified:"
+        maria --version 2>/dev/null || maria --help | head -1
+    else
+        print_error "Maria binary not found in PATH"
+        print_info "Add ${INSTALL_DIR} to your PATH:"
+        print_info "  export PATH=\"${INSTALL_DIR}:\$PATH\""
         exit 1
     fi
 }
 
-# Function to install the latest stable release
-install_latest() {
-    local version="$1"
-    local platform="$2"
+# Self-update function
+self_update() {
+    local current_version
+    current_version=$(grep -E '^version =' Cargo.toml 2>/dev/null | cut -d'"' -f2 || echo "0.0.0")
     
-    print_info "Installing Maria v${version} for ${platform}"
+    print_step "Checking for updates (current: v${current_version})..."
     
-    # Download URL
-    local download_url="https://github.com/Yoriyoi-drop/maria/releases/download/v${version}/maria-${platform}"
+    local latest_version
+    latest_version=$(get_latest_version "$(detect_platform)" 2>/dev/null || echo "")
     
-    # Check if we have the correct binary name
-    if ! curl -s -f "${download_url}" >/dev/null 2>&1; then
-        # Try alternative naming
-        download_url="https://github.com/Yoriyoi-drop/maria/releases/download/v${version}/maria"
+    if [ -z "$latest_version" ]; then
+        print_warn "Could not determine latest version, staying on v${current_version}"
+        return 0
     fi
     
-    # Download the binary
-    print_info "Downloading from ${download_url}"
+    if check_for_updates "$current_version" "$latest_version"; then
+        echo "$latest_version" > "$VERSION_FILE"
+        install_binary "$latest_version" "$(detect_platform)"
+    fi
+}
+
+# Main installation
+main() {
+    echo "=========================================="
+    echo "  Maria RTL Simulator Installation"
+    echo "=========================================="
+    echo ""
     
-    if command -v curl >/dev/null 2>&1; then
-        curl -L -o /usr/local/bin/maria "${download_url}" 2>/dev/null
-    elif command -v wget >/dev/null 2>&1; then
-        wget -O /usr/local/bin/maria "${download_url}"
+    # If --update flag, just self-update
+    if [ "${1:-}" = "--update" ] || [ "${1:-}" = "-u" ]; then
+        self_update
+        verify_installation
+        exit 0
     fi
-
-    # Verify download
-    if [[ ! -f "/usr/local/bin/maria" ]]; then
-        print_error "Download failed. Please check your internet connection."
-        exit 1
-    fi
-
-    # Make it executable
-    chmod +x /usr/local/bin/maria
-
-    # Verify installation
-    if command -v /usr/local/bin/maria >/dev/null 2>&1; then
-        local installed_version="$($/usr/local/bin/maria --version 2>/dev/null || echo 'unknown')"
-        print_info "Maria v${installed_version} installed successfully!"
+    
+    # Check if Maria is already installed
+    if command -v maria &> /dev/null; then
+        print_info "Maria is already installed"
+        maria --version 2>/dev/null || true
         
-        # Add to PATH if not already in PATH
-        if ! command -v maria >/dev/null 2>&1; then
-            # Add to user's PATH
-            if [[ "$(uname)" == "Darwin" ]]; then
-                echo "export PATH=\$PATH:/usr/local/bin" >> ~/.zshrc
-                echo "Added /usr/local/bin to PATH in ~/.zshrc"
-            else
-                echo "export PATH=\$PATH:/usr/local/bin" >> ~/.bashrc
-                echo "Added /usr/local/bin to PATH in ~/.bashrc"
-            fi
-            print_warn "Please restart your shell or run 'source ~/.bashrc' to update PATH"
+        read -rp "Would you like to check for updates? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            self_update
         fi
     else
-        print_error "Installation failed. Please check permissions."
-        exit 1
+        print_step "Installing Maria..."
+        local platform
+        platform=$(detect_platform)
+        
+        local version
+        version=$(get_latest_version "$platform" 2>/dev/null || echo "v0.3.0")
+        
+        install_binary "$version" "$platform"
     fi
+    
+    echo ""
+    verify_installation
+    echo ""
+    print_info "Installation complete!"
+    print_info "Run 'maria --help' to get started"
 }
 
-# Function to build from source
-build_from_source() {
-    print_info "Building Maria from source..."
-    
-    # Check if Rust is installed
-    if ! command -v cargo >/dev/null 2>&1; then
-        print_error "Rust/cargo not found. Please install Rust: https://rustup.rs/"
-        exit 1
-    fi
-    
-    # Check if we are in the maria repository
-    if [[ ! -f "Cargo.toml" ]] || [[ ! -d "crates" ]]; then
-        print_error "This does not appear to be the Maria repository. Please clone it first."
-        exit 1
-    fi
-    
-    # Build release version
-    cargo build --release
-    
-    # Install binary
-    if [[ -f "target/release/maria" ]]; then
-        cp target/release/maria /usr/local/bin/
-        chmod +x /usr/local/bin/maria
-        print_info "Maria built and installed from source!"
-    else
-        print_error "Build failed. Check the Cargo output above."
-        exit 1
-    fi
-}
-
-# Main installation logic
-main() {
-    echo "=== Maria Simulator Installer ==="
-    echo
-    
-    # Detect platform
-    local platform="$(detect_platform)"
-    print_info "Detected platform: ${platform}"
-    
-    # Check if we're in the Maria source directory
-    if [[ -f "Cargo.toml" ]] && [[ -d "crates" ]] && [[ -d ".maria" ]]; then
-        print_info "Maria source detected. Building from source..."
-        build_from_source
-        exit 0
-    fi
-    
-    # Check if user wants to install latest stable release
-    print_info "This will install the latest stable release from GitHub."
-    
-    # Fetch latest version
-    print_info "Fetching latest release version..."
-    local version="$(fetch_latest_version)"
-    
-    # Confirm installation
-    echo
-    print_warn "This will install Maria v${version} to /usr/local/bin/"
-    read -p "Do you want to continue? (y/N): " -n 1 -r
-    echo
-    
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        install_latest "${version}" "${platform}"
-    else
-        print_info "Installation cancelled."
-        exit 0
-    fi
-}
-
-# Run main function with all arguments passed
 main "$@"

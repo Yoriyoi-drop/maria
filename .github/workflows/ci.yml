@@ -87,9 +87,9 @@ jobs:
         with:
           filters: |
             parser:
-              - 'crates/maria-lexer/**'
               - 'crates/maria-parser/**'
               - 'crates/maria-core/**'
+              - 'crates/maria-ast/**'
             simulator:
               - 'crates/maria-simulator/**'
               - 'crates/maria-elaboration/**'

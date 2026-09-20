@@ -1,329 +1,76 @@
-# GitHub Actions Management - Maria Project
+# GitHub Actions Management — Maria
 
-This repository implements a sophisticated GitHub Actions workflow system for **automated release updates and landing page management** with strict validation.
+Desain penuh: [`doc/release-pipeline.md`](doc/release-pipeline.md).
+Ringkasan eksekutif di bawah.
 
-## Overview
+## Tiga hasil yang dibedakan
 
-The workflow system ensures that:
-- **Only authorized changes** are made to documentation
-- **Manual triggers** are required for non-automatic updates
-- **All changes** are validated before execution
-- **Complete audit trail** is maintained for all updates
+| Hasil | Dipicu oleh |
+|-------|-------------|
+| **CI hijau** | Automatis — tiap push/PR (`ci.yml`) |
+| **Patch diterima untuk rilis** | Lolos seluruh gerbang wajib + persetujuan (ruleset main) |
+| **Update diterbitkan** | **Tag versi yang di-push user eksplisit** (`release.yml`) |
 
-## Workflow Files
+Prinsip: CI boleh berjalan otomatis untuk semua perubahan. Publikasi stabil
+harus lebih ketat daripada CI — dan tidak pernah mulai sebelum user
+memerintahkan lewat `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
-### 1. `release-update.yml` - Automated Release Updates
+## Arsitektur
 
-**Triggers:**
-- Push to main branch with specific source paths (`src/**`, `Cargo.toml`, `Cargo.lock`, `crates/**`)
-- Manual workflow dispatch with `update_landing` input
-
-**Key Features:**
-- **Path-based filtering** - Only updates when source code changes
-- **Validation gate** - Strict selection check before proceeding
-- **Automatic binary building** and verification
-- **Documentation updates** in landing page
-- **GitHub Release creation** with binaries
-- **Comprehensive cleanup**
-
-**Manual Trigger Usage:**
-
-```bash
-# Trigger manual landing page update
-gh workflow run release-update.yml -f update_landing=true
-
-# Re-run workflow manually
-gh workflow run release-update.yml
+```
+push/PR ─▶ ci.yml (AUTO: fmt, clippy -D warnings, test workspace, regresi per-area, release build)
+   └─ hijau ─▶ user push tag vX ─▶ release.yml
+        ├─ seleksi: tag == version Cargo.toml · CI hijau · izin pelaku · (env release)
+        ├─ build + checksum + smoke test
+        ├─ GitHub Release (binary + maria.sha256)
+        └─ sinkron: landing installation.mdx · install.sh · dist/latest.json
 ```
 
-### 2. `trigger-management.yml` - Manual Trigger Management
-
-**Triggers:**
-- Only manual workflow dispatch (no automatic execution)
-
-**Inputs:**
-- `trigger_type`: `manual`, `test`, or `update_landing`
-- `force_update`: Boolean to bypass validation (for emergency updates)
-
-**Key Features:**
-- **Explicit permission required** for all operations
-- **Three-tier validation** (normal, force, test)
-- **Separate update flows** for landing page vs. internal updates
-- **Complete audit logging** for all actions
-- **Status reporting** for workflow execution
-
-**Manual Trigger Usage:**
+## Pemakaian
 
 ```bash
-# Normal manual update
-gh workflow run trigger-management.yml -f trigger_type=manual
+# 1. Bump versi di Cargo.toml, push → CI hijau (otomatis)
 
-# Force update (bypasses validation)
-gh workflow run trigger-management.yml -f trigger_type=manual -f force_update=true
+# 2. Rilis resmi — HANYA pada perintah user:
+git tag v0.4.0 && git push origin v0.4.0
 
-# Test environment update
-gh workflow run trigger-management.yml -f trigger_type=test
-
-# Landing page specific update
-gh workflow run trigger-management.yml -f trigger_type=update_landing
+# 3. Konsumen:
+curl -fsSL https://raw.githubusercontent.com/Yoriyoi-drop/maria/main/install.sh | bash
+maria update check    # deteksi
+maria update          # pasang (verifikasi SHA-256 + backup + smoke test)
+maria update --rollback   # kembali ke binary sebelumnya
 ```
 
-## Update Process Flow
-
-### Standard Automated Updates (`release-update.yml`)
-
-1. **Path Validation** (push to main)
-   - Check if changed files match source code paths
-   - If not, workflow ends without action
-
-2. **Build Pipeline**
-   - Setup Rust toolchain
-   - Cache cargo artifacts
-   - Build release binary
-   - Upload artifacts
-
-3. **Documentation Updates**
-   - Update installation.mdx in landing page
-   - Add version-specific instructions
-   - Commit and push to main
-
-4. **Binary Verification**
-   - Download built binaries
-   - Verify functionality with `--help` command
-   - Create update summary
-
-5. **GitHub Release**
-   - Create official release with tag v<version>
-   - Include binary in release assets
-   - Generate release notes
-
-6. **Cleanup**
-   - Remove temporary files
-   - Finalize workflow
-
-### Manual Updates (`trigger-management.yml`)
-
-1. **Validation Phase**
-   - Verify manual trigger type
-   - Check force update permission
-   - Approve or deny execution
-
-2. **Artifact Preparation**
-   - Build release binary
-   - Upload for downstream jobs
-
-3. **Targeted Updates**
-   - **Landing Page**: Update README.md and install.sh
-   - **Install Script**: Update with current workflow metadata
-
-4. **Verification**
-   - Test binary functionality
-   - Confirm all documentation changes
-
-5. **Release Creation** (manual only)
-   - Create GitHub release with detailed metadata
-   - Include workflow execution context
-
-## Installation Updates
-
-### Automatic Updates (Recommended)
-
-The most common way to update Maria is through automatic release updates:
-
-```bash
-# Automatic installation from GitHub releases
-curl -fsSL https://raw.githubusercontent.com/Yoriyoi-drop/maria/main/install.sh -o install.sh
-sudo bash install.sh
-```
-
-### Build from Source
-
-```bash
-git clone https://github.com/Yoriyoi-drop/maria.git
-cd maria
-cargo build --release
-```
-
-### Update Documentation
-
-For documentation updates:
-
-```bash
-# Trigger manual landing page update
-gh workflow run release-update.yml -f update_landing=true
-```
-
-## Security Considerations
-
-### Validation Rules
-
-1. **Branch Protection**: All updates require main branch changes
-2. **Path Filtering**: Only source code paths trigger automatic updates
-3. **Explicit Manual Triggers**: All manual updates require workflow_dispatch
-4. **Force Update Safety**: Force updates require explicit approval
-
-### Access Control
-
-- All workflows run with GitHub Actions bot account
-- Secret tokens are managed through repository secrets
-- Read-only access for most operations
-- Write access only for committed changes
-
-## Troubleshooting
-
-### Common Issues
-
-#### Workflow Not Triggering
-
-```bash
-# Check workflow file syntax
-gh workflow list
-```
-
-#### Manual Trigger Errors
-
-```bash
-# Verify required inputs
-gh workflow view trigger-management.yml --json inputs
-```
-
-#### Binary Verification Failures
-
-```bash
-# Check binary functionality
-./artifacts/maria --help
-```
-
-### Debugging
-
-```bash
-# View workflow run logs
-gh run list
-# Get specific run logs
-gh run view <run-id> --log-fuse
-```
-
-## Integration with CI/CD
-
-### Local Testing
-
-```bash
-# Test local builds
-cargo build --release
-./target/release/maria --help
-```
-
-### Branch Management
-
-```bash
-# Create feature branch
-git checkout -b feature/update-docs
-# Make changes
-# Update when ready
-```
-
-### Pull Request Process
-
-1. Make changes to source code or documentation
-2. Commit changes with appropriate commit message
-3. Push to feature branch
-4. Create pull request to main
-5. Wait for CI/CD validation
-6. Merge when all checks pass
-
-## Files Modified
-
-### During Workflow Execution
-
-- `README.md`: Updated with latest release information
-- `install.sh`: Updated with current workflow logic
-- `.github/auto-update.log`: Internal workflow logging
-- Various generated files in `artifacts/` directory
-
-### During Manual Updates
-
-- `README.md`: Enhanced with version-specific instructions
-- `install.sh`: Enhanced with workflow metadata
-- GitHub Releases: Created for each manual update
-
-## Monitoring
-
-### Workflow Status
-
-Track workflow execution:
-
-```bash
-# List recent runs
-gh run list --limit 10
-
-# Check workflow status
-gh api repos/Yoriyoi-drop/maria/actions/runs
-```
-
-### Update Notifications
-
-Subscribe to workflow notifications:
-
-```bash
-# Enable workflow run notifications
-gh api user/subscriptions -X PUT repos/Yoriyoi-drop/maria
-```
-
-## Best Practices
-
-### For Contributors
-
-1. **Always test locally** before making changes
-2. **Use feature branches** for all modifications
-3. **Follow conventional commits** for commit messages
-4. **Document changes** in commit messages
-
-### For Maintainers
-
-1. **Review workflow changes** before merging
-2. **Test manual triggers** before relying on them
-3. **Monitor workflow logs** for issues
-4. **Maintain documentation** for update processes
-
-## FAQ
-
-### How do I trigger an update?
-
-Use GitHub CLI:
-```bash
-gh workflow run <workflow-name> -f <input>=<value>
-```
-
-### What are the required permissions?
-
-Repository write access for most operations, admin access for emergency force updates.
-
-### How do I check workflow status?
-
-Use GitHub CLI:
-```bash
-gh run list
-gh run view <run-id>
-```
-
-### Can I customize the update process?
-
-Yes, modify the workflow YAML files in `.github/workflows/`.
-
-### What happens if a workflow fails?
-
-Check the workflow logs for error details and follow troubleshooting steps.
-
-## Support
-
-For issues with GitHub Actions:
-1. Check workflow logs
-2. Verify syntax and permissions
-3. Test manually with `gh workflow run`
-4. Review recent changes to workflow files
-
-For installation issues:
-1. Use the automatic install script
-2. Build from source if needed
-3. Check PATH and permissions
-4. Verify binary functionality with `--help`
+## File workflow
+
+- **`ci.yml`** — Gerbang teknis. Auto di push/PR. Filter area memakai crate
+  aktual (`maria-parser`, `maria-core`, `maria-ast`; `maria-simulator`,
+  `maria-elaboration`, `maria-ir`). Read-only.
+- **`release.yml`** — Publikasi stabil. Hanya `push tags: v*` (atau
+  `workflow_dispatch`). Seleksi ketat → build → `gh release create` →
+  sinkron landing/install.sh/manifest. `environment: release` untuk
+  required reviewers opsional.
+
+## Auto-update dalam binary
+
+`maria update` (alias `mupdate`, implementasi `crates/maria-tools/src/update.rs`):
+
+- `check` / pasang / `--channel` / `--version` / `--rollback` / `-y`
+- alur: manifest → semver compare → unduh → SHA-256 verify (fail-closed) →
+  backup `maria.bak` → `rename` atomik → smoke test → rollback otomatis
+- 8 unit test inline, semua lulus.
+
+## Sekuritas
+
+- `RELEASE_BOT_TOKEN` (PAT) wajib jika main diproteksi untuk commit sinkron
+  (`sync-distribution`). GITHUB_TOKEN fallback untuk main tak diproteksi.
+- Gerbang: branch main, tag==versi, CI hijau, permission `admin|write|maintain`.
+- Manifest hanya dibuat setelah release valid → konsumen tak pernah melihat
+  versi belum rilis. `install.sh` + `maria update` verifikasi SHA-256.
+
+## Catatan migrasi
+
+`release-update.yml`, `trigger-management.yml` (rusak: logika terbalik,
+referensi job tak ada, install.sh korup, push otomatis), serta draft-based
+`release-prep.yml`/`release-publish.yml` dihapus — digantikan arsitektur
+tag-gated di atas.

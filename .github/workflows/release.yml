@@ -1,0 +1,335 @@
+# =============================================================================
+# release.yml — RILIS RESMI (TAG = PERINTAH USER)
+#
+# Prinsip desain (doc/release-pipeline.md):
+#   - CI berjalan otomatis untuk SEMUA perubahan (ci.yml).
+#   - Publikasi stabil LEBIH KETAT daripada CI dan HANYA dipicu oleh user
+#     yang secara eksplisit membuat & push tag versi:
+#         git tag v0.4.0 && git push origin v0.4.0
+#   - Tanpa tag v* → workflow ini tidak pernah berjalan.
+#
+# Tiga hasil yang dibedakan:
+#   1. CI hijau        : automatis, oleh ci.yml.
+#   2. Patch diterima  : lolos semua gerbang wajib + persetujuan (ruleset).
+#   3. Update diterbitkan: artefak dibangun, diverifikasi, dipublikasikan ke
+#      GitHub Release + manifest. HANYA di sini landing page / install.sh /
+#      `maria update` boleh melihat versi baru sebagai update stabil.
+# =============================================================================
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag versi (mis. v0.4.0) — dipakai = versi Cargo.toml"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: maria-release-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gerbang 1–3: seleksi ketat sebelum rilis.
+  #  - gerbang 1 (patch): validasi tag vX == versi Cargo.toml
+  #  - gerbang 2 (teknis): CI hijau pada commit yang di-tag
+  #  - gerbang 3 (persetujuan): izin pelaku + environment release
+  #    (Settings → Environments → required reviewers) bila dikonfigurasi.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Seleksi rilis (1–3)
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      sha: ${{ steps.meta.outputs.sha }}
+      can_release: ${{ steps.gate.outputs.can_release }}
+    steps:
+      - name: Checkout pada SHA yang di-tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ekstrak versi (tag vs Cargo.toml)
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            echo "::error::Tidak ada tag v*. Push tag: git tag vX.Y.Z && git push origin vX.Y.Z"
+            exit 1
+          fi
+          VERSION=$(grep -E '^version =' Cargo.toml | head -1 | cut -d'"' -f2 | tr -d ' ')
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG} | cargo=${VERSION}"
+
+      - name: Gerbang 1 — tag harus cocok dengan versi Cargo.toml
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          EXP="${TAG#v}"
+          if [ "$EXP" != "$VERSION" ]; then
+            echo "::error::Tag '${TAG}' tidak cocok dengan version='${VERSION}' di Cargo.toml"
+            exit 1
+          fi
+
+      - name: Gerbang 2 — CI harus hijau pada commit ini
+        env:
+          SHA: ${{ steps.meta.outputs.sha }}
+        run: |
+          set -euo pipefail
+          CI_OK=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+                   -q '[.check_runs[] | select(.name == "Maria CI" and .status == "completed" and .conclusion == "success")] | length')
+          CI_BAD=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
+                    -q '[.check_runs[] | select(.status == "completed" and .conclusion != "success")] | length')
+          [ "${CI_OK}" -ge 1 ]  || { echo "::error::CI belum hijau untuk ${SHA}"; exit 1; }
+          [ "${CI_BAD}" -eq 0 ] || { echo "::error::Ada check gagal untuk ${SHA}"; exit 1; }
+
+      - name: Gerbang 3 — izin pelaku (write/admin/maintain)
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          PERM=$(gh api "repos/${{ github.repository }}/collaborators/${ACTOR}/permission" -q .permission 2>/dev/null || echo none)
+          case "$PERM" in
+            admin|write|maintain) ;;
+            *) echo "::error::${ACTOR} tidak punya izin tulis (permission=${PERM})"; exit 1 ;;
+          esac
+
+      - name: Lolos semua gerbang
+        id: gate
+        run: |
+          echo "can_release=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::Semua gerbang lolos — siap merilis v${{ steps.meta.outputs.version }}"
+
+  # ---------------------------------------------------------------------------
+  # Build + checksum artefak rilis (deterministik, pada SHA yang di-tag).
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build + checksum (x86_64-unknown-linux-gnu)
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.can_release == 'true'
+    timeout-minutes: 90
+    steps:
+      - name: Checkout pada SHA yang di-tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build release
+        run: cargo build --release --bin maria --locked
+
+      - name: Bundle + SHA256
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/maria dist/maria
+          strip dist/maria || true
+          (cd dist && sha256sum maria > maria.sha256)
+          cat dist/maria.sha256
+
+      - name: Verify binary
+        run: |
+          set -euo pipefail
+          ./dist/maria --version
+          ./dist/maria --help > /dev/null
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maria-release-artifacts
+          path: dist/
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Terbitkan GitHub Release (tag sudah dibuat user). Manifest dibuat SETELAH
+  # release valid — konsumen tidak akan pernah melihat versi yang belum rilis.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Terbitkan GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, build]
+    if: needs.validate.outputs.can_release == 'true'
+    environment: release
+    steps:
+      - name: Download artefak
+        uses: actions/download-artifact@v4
+        with:
+          name: maria-release-artifacts
+          path: dist/
+
+      - name: Buat/refresh release untuk tag vX
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          # Idempoten: hapus release lama dengan tag sama (kalau rerun).
+          if gh release view "$TAG" --json id -q .id > /dev/null 2>&1; then
+            gh release delete "$TAG" --yes
+          fi
+          gh release create "$TAG" \
+            dist/maria \
+            dist/maria.sha256 \
+            --target "$SHA" \
+            --title "Maria v${VERSION}" \
+            --latest \
+            --generate-notes \
+            --notes "Rilis dari tag ${TAG} (diterbitkan manual). Artefak: maria + maria.sha256"
+          echo "::notice::Release v${VERSION}: https://github.com/${{ github.repository }}/releases/tag/$TAG"
+
+  # ---------------------------------------------------------------------------
+  # Sinkron distribusi: landing page + install.sh + manifest dist/latest.json.
+  # Commit bot satu kali; hanya menyentuh path distribusi (tidak memicu rilis
+  # ulang — release hanya dipicu tag v*).
+  # ---------------------------------------------------------------------------
+  sync-distribution:
+    name: Sinkron landing + install.sh + manifest
+    runs-on: ubuntu-latest
+    needs: [validate, publish]
+    if: needs.validate.outputs.can_release == 'true'
+    environment: release
+    steps:
+      - name: Checkout main (token bot)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Variabel rilis
+        id: meta
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/${{ github.repository }}/releases/download/v${VERSION}/maria" >> "$GITHUB_OUTPUT"
+          echo "checksum_url=https://github.com/${{ github.repository }}/releases/download/v${VERSION}/maria.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Ambil SHA256 dari release
+        id: checksum
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          SHA=$(gh release view "v${VERSION}" --json assets -q '.assets[] | select(.name == "maria.sha256") | .url')
+          echo "sha256=$(curl -sL "$SHA" | grep -oE '^[0-9a-f]{64}' | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Update blok versi landing page (idempoten)
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          URL: ${{ steps.meta.outputs.url }}
+        run: |
+          set -euo pipefail
+          F=landing_page/src/content/docs/installation.mdx
+          mkdir -p "$(dirname "$F")"
+          BLOCK=$(cat <<EOF
+          <!-- MARIA-LATEST-BEGIN -->
+          ## Versi terbaru: ${TAG}
+
+          Installation resmi:
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh -o install.sh
+          sudo bash install.sh
+          \`\`\`
+
+          Binary: [${TAG}/maria](${URL}) · Checksum: [maria.sha256](https://github.com/${{ github.repository }}/releases/download/${TAG}/maria.sha256)
+          <!-- MARIA-LATEST-END -->
+          EOF
+          )
+          if [ -f "$F" ] && grep -q MARIA-LATEST-BEGIN "$F"; then
+            awk -v b="$BLOCK" -v s="MARIA-LATEST-BEGIN" -v e="MARIA-LATEST-END" '
+              index($0, s) { print; print b; inb=1; next }
+              index($0, e) { inb=0; print; next }
+              !inb { print }
+            ' "$F" > "$F.tmp" && mv "$F.tmp" "$F"
+          else
+            printf '\n%s\n' "$BLOCK" >> "$F"
+          fi
+
+      - name: Update header versi install.sh (idempoten)
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          bash -n install.sh
+          sed -i "s/^# Version: .*/# Version: ${VERSION}/" install.sh
+          sed -i "s/echo \"v[0-9][0-9.]*\"/echo \"v${VERSION}\"/" install.sh
+          bash -n install.sh
+
+      - name: Buat manifest dist/latest.json + landing page public/version.json
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          URL: ${{ steps.meta.outputs.url }}
+          SHA256: ${{ steps.checksum.outputs.sha256 }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist landing_page/public
+          jq -n \
+            --arg v "$VERSION" \
+            --arg tag "$TAG" \
+            --arg date "$(date -u +%FT%TZ)" \
+            --arg url "$URL" \
+            --arg sha "$SHA256" \
+            '{version:$v, tag:$tag, published_at:$date,
+              platforms: {"x86_64-unknown-linux-gnu": {url:$url, sha256:$sha}}}' \
+            > dist/latest.json
+          cp dist/latest.json landing_page/public/version.json
+          cat dist/latest.json
+
+      - name: Commit + push sinkronisasi
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A landing_page dist install.sh
+          if git diff --cached --quiet; then
+            echo "Tidak ada perubahan distribusi"
+          else
+            git commit -m "release: sinkronkan distribusi v${VERSION} (bot)" || true
+            git push origin HEAD:main
+            echo "::notice::Sinkron distribusi v${VERSION} selesai"
+          fi
+
+  report:
+    name: Ringkasan rilis
+    runs-on: ubuntu-latest
+    needs: [validate, publish, sync-distribution]
+    if: always()
+    steps:
+      - name: Ringkasan
+        run: |
+          echo "versi     : v${{ needs.validate.outputs.version }}"
+          echo "seleksi   : ${{ needs.validate.outputs.can_release }}"
+          echo "publish   : ${{ needs.publish.result }}"
+          echo "sinkron   : ${{ needs.sync-distribution.result }}"
+          echo "Jalankan  : maria update check && maria update"
