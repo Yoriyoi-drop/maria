@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh F30 — multi-file (MARIA-HDL.md §7.4)
+// Contoh F30 — multi-file (MIVON-HDL.md §7.4)
 //   File 2/3: DUT — memakai tipe dari `types.mv` (file lain, F9) +
 //   port interface `mem_if` + seq clock lewat field interface (F27).
 // ─────────────────────────────────────────────────────────────

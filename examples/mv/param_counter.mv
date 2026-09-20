@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh F31 — parameter module & override parameter (MARIA-HDL.md §6)
+// Contoh F31 — parameter module & override parameter (MIVON-HDL.md §6)
 //   * `module counter_w #(WIDTH = 4, STEP = 1)` — parameter ber-default.
 //   * `inst counter_w u_big #(.WIDTH(8), .STEP(2)) (...)` — override
 //     parameter saat instansiasi (validasi nama parameter di check.rs:
 //     parameter tak dikenal → E2001, override dua kali → E2007).
-// Generate: maria mgen param_counter.mv
-// Simulasi: maria param_counter.sv --top tb_param -T 200
+// Generate: mivon mgen param_counter.mv
+// Simulasi: mivon param_counter.sv --top tb_param -T 200
 // ─────────────────────────────────────────────────────────────
 
 module counter_w #(WIDTH = 4, STEP = 1) {

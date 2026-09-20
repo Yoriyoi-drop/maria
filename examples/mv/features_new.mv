@@ -4,7 +4,7 @@
 //   - default-arg function `factor : int = 4`
 //   - named-arg call `scale(10, factor = 3)`
 //   - foreach (rom[i]) utk isi ROM
-// Simulasi: maria features_new.sv --top tb_fn -T 50
+// Simulasi: mivon features_new.sv --top tb_fn -T 50
 // ─────────────────────────────────────────────────────────────
 
 func scale(v : int, factor : int = 4) -> int {

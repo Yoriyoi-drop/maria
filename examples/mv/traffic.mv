@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh Maria HDL (.mv) — FSM traffic light.
-// Generate: maria mgen traffic.mv  →  traffic.sv + traffic.svh
+// Contoh Mivon HDL (.mv) — FSM traffic light.
+// Generate: mivon mgen traffic.mv  →  traffic.sv + traffic.svh
 // ─────────────────────────────────────────────────────────────
 
 package traffic_pkg {

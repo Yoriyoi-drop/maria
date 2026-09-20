@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh F30 — multi-file (MARIA-HDL.md §7.4)
+// Contoh F30 — multi-file (MIVON-HDL.md §7.4)
 //   File 3/3: testbench — `inst memory_dut` dengan module yang
 //   didefinisikan di `dut.mv` (file LAIN). Validasi koneksi port F29
 //   berjalan lintas-file lewat konteks gabungan check_many: target

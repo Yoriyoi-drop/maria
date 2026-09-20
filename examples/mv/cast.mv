@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh F33 — type cast di Maria HDL (MARIA-HDL.md §6)
+// Contoh F33 — type cast di Mivon HDL (MIVON-HDL.md §6)
 //   * `Word16'(a)` — cast ke typedef (lebar 16) — emit SV `Word16'(a)`,
 //     elaborator resolve lebar typedef level file (.svh).
 //   * `logic'(a)` — cast 1-bit (nilai bit-0).
 //   * `bit'(a[0])` — cast ke tipe dasar dari ekspresi index.
 //   * Cast divalidasi di check.rs: tipe target dikenal (E2005) + lebar
 //     ikut E2002 (RHS cast lebih lebar dari LHS → error).
-// Generate: maria mgen cast.mv
-// Simulasi: maria sim cast.sv cast.svh --top tb_cast -T 50
+// Generate: mivon mgen cast.mv
+// Simulasi: mivon sim cast.sv cast.svh --top tb_cast -T 50
 //   (cast.svh berisi typedef Word16 — sim butuh kedua file)
 // ─────────────────────────────────────────────────────────────
 

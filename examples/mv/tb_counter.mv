@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh F6 — testbench (MARIA-HDL.md §7)
+// Contoh F6 — testbench (MIVON-HDL.md §7)
 //   * instansiasi DUT + signal internal (clk/rst_n/enable/count)
 //   * initial / forever / repeat / @(posedge clk) / #delay
 //   * assert immediate + assert property (emisi 1:1)
 //   * $-task: $display, $info, $fatal, $finish
-// Generate: maria mgen tb_counter.mv
-// Simulasi: maria tb_counter.sv --top tb_counter -T 2000
+// Generate: mivon mgen tb_counter.mv
+// Simulasi: mivon tb_counter.sv --top tb_counter -T 2000
 // ─────────────────────────────────────────────────────────────
 
 module counter_dut #(WIDTH = 8) {
@@ -52,7 +52,7 @@ module tb_counter {
 
         // Catatan: `assert property` body di-emit 1:1 (raw). Bentuk SVA `|->`
         // (mis. `enable |-> count == $past(count) + 1`) juga didukung — lihat
-        // MARIA-HDL.md §7.2 — tapi butuh tool EDA yang mendukung operator
-        // implication (Verilator/VCS); parser SV Maria belum lex `|->`.
+        // MIVON-HDL.md §7.2 — tapi butuh tool EDA yang mendukung operator
+        // implication (Verilator/VCS); parser SV Mivon belum lex `|->`.
     }
 }

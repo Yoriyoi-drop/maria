@@ -1,11 +1,11 @@
-// AXI-Lite interface (F26/F28 — MARIA-HDL.md §6.10)
+// AXI-Lite interface (F26/F28 — MIVON-HDL.md §6.10)
 // Interface di-emit ke .svh; port module bertipe interface di-emit tanpa
 // arah; field interface diakses via dot: `axi_if.awvalid`.
 //
 // F28: `sig bus : axi_lite` di-emit sebagai INSTANCE interface
 // (`axi_lite bus();`) sehingga hasil `mgen` benar-benar bisa di-simulasikan:
-//     maria mgen examples/mv/axi_interface.mv
-//     maria sim  examples/mv/axi_interface.sv examples/mv/axi_interface.svh \
+//     mivon mgen examples/mv/axi_interface.mv
+//     mivon sim  examples/mv/axi_interface.sv examples/mv/axi_interface.svh \
 //                --top tb_axi -T 200
 
 interface axi_lite {

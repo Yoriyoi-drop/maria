@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 // Contoh F42 — array literal `'{e0, e1, ...}` (ROM/LUT).
-// Decl-init unpacked array via assignment pattern — engine maria
+// Decl-init unpacked array via assignment pattern — engine mivon
 // (fix decl_init decompose) menerapkan urutan elemen benar.
 // ─────────────────────────────────────────────────────────────
 

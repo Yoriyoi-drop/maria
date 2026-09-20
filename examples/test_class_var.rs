@@ -1,5 +1,5 @@
-use maria_api::compile_str;
-use maria_core::intern::Symbol;
+use mivon_api::compile_str;
+use mivon_core::intern::Symbol;
 fn main() {
     let source = r#"
 class counter;

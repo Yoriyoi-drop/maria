@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh F32 — type parameter di Maria HDL (MARIA-HDL.md §6)
+// Contoh F32 — type parameter di Mivon HDL (MIVON-HDL.md §6)
 //   * `type Word16 = logic[15:0]` — typedef alias (F4).
 //   * `module shifter #(T : type = logic[7:0], N = 2)` — param TIPE
 //     dengan default; `T` sah sbg tipe port/signal di dalam module
@@ -7,8 +7,8 @@
 //     ter-resolve dari default.
 //   * `inst shifter u16 #(.T(Word16), .N(3)) (...)` — override type
 //     param (nilai = nama tipe) + override nilai param biasa.
-// Generate: maria mgen type_param.mv
-// Simulasi: maria type_param.sv --top tb_tp -T 200
+// Generate: mivon mgen type_param.mv
+// Simulasi: mivon type_param.sv --top tb_tp -T 200
 // ─────────────────────────────────────────────────────────────
 
 type Word16 = logic[15:0]

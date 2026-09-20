@@ -1,7 +1,7 @@
-// F39 — multi-dimensi unpacked array di Maria HDL.
+// F39 — multi-dimensi unpacked array di Mivon HDL.
 // `sig mat : logic[8][2][2]` → `logic [7:0] mat [0:1][0:1]` (4 elemen 8-bit).
 // Init nested `'{{1,2},{3,4}}` di-flatten row-major → mat[0][0]=1..mat[1][1]=4.
-// Jalankan: maria run examples/mv/multidim.mv — output `MD_OK m00=1 m11=4`.
+// Jalankan: mivon run examples/mv/multidim.mv — output `MD_OK m00=1 m11=4`.
 module tb_md {
     in clk : bit
     out m00, m11, mi : logic[7:0]

@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh F7 — class mandiri (MARIA-HDL.md §8)
+// Contoh F7 — class mandiri (MIVON-HDL.md §8)
 //   * field / func (constructor) / task / constraint
 //   * Lolos type-check penuh (semua tipe internal)
-// Generate: maria mgen class_model.mv
+// Generate: mivon mgen class_model.mv
 // ─────────────────────────────────────────────────────────────
 
 class counter_model {

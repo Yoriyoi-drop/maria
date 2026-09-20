@@ -1,4 +1,4 @@
-use maria_api::compile_str;
+use mivon_api::compile_str;
 fn main() {
     let source = r#"
 class counter;
@@ -23,7 +23,7 @@ endmodule
         Ok(design) => {
             if let Some(cls) = design
                 .classes
-                .get(&maria_core::intern::Symbol::intern("counter"))
+                .get(&mivon_core::intern::Symbol::intern("counter"))
             {
                 println!(
                     "Class 'counter': {} fields, {} methods",

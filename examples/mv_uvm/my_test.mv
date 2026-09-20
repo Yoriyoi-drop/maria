@@ -1,12 +1,12 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh F7 — class + UVM subset (MARIA-HDL.md §8)
+// Contoh F7 — class + UVM subset (MIVON-HDL.md §8)
 //   * extends uvm_test, rand field, constraint, method func/task
 //   * `uvm_config_db::set(...)` (static scoped), `super.new(...)`,
 //     method call `seqr.start_item(...)`, delay-only `#100`
 //
 // CATATAN: contoh ini memakai tipe UVM eksternal (`uvm_sequencer`)
 // yang tidak didefinisikan di file ini → generate dengan escape hatch:
-//     maria mgen my_test.mv --no-check
+//     mivon mgen my_test.mv --no-check
 // Output class SV valid untuk tool dengan pustaka UVM (Verilator/VCS).
 // ─────────────────────────────────────────────────────────────
 

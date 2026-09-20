@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────
-// Contoh Maria HDL (.mv) — counter 8-bit dengan enable.
-// Generate: maria mgen counter.mv  →  counter.sv + counter.svh
+// Contoh Mivon HDL (.mv) — counter 8-bit dengan enable.
+// Generate: mivon mgen counter.mv  →  counter.sv + counter.svh
 // ─────────────────────────────────────────────────────────────
 
 package counter_pkg {
