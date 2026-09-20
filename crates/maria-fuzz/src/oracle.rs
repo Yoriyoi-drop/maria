@@ -24,6 +24,7 @@ pub fn evaluate(target: Target, source: &str, timeout_ms: u64) -> CaseResult {
         Target::Sdf => evaluate_sdf(source, timeout_ms),
         Target::Micd => evaluate_micd(source, timeout_ms),
         Target::Synth => evaluate_synth(source, timeout_ms),
+        Target::Astdiff => evaluate_astdiff(source, timeout_ms),
         Target::All => unreachable!("Target::All dipecah di run()"),
     }
 }
@@ -1617,6 +1618,338 @@ fn evaluate_synth(source: &str, timeout_ms: u64) -> CaseResult {
     }
 }
 
+/// Fuzzing AST-diff pipeline (`mcheck a.sv --ast-diff b.sv`) — area BARU:
+/// 1. a.sv = source seed (sudah di-mutasi run_single); b.sv = mutasi KEDUA
+///    dari source yang sama (0-2x) agar diff struktural benar-benar muncul
+///    (bukan trivially-identical). Corpus kosong → splice 0.
+/// 2. Dua arah: `mcheck a.sv --ast-diff b.sv` DAN `mcheck b.sv --ast-diff a.sv`.
+/// 3. Simetri: himpunan diff ternormalisasi A→B == B→A. Swap membalik arah
+///    nilai ("8 vs 16" → "16 vs 8") — himpunan (kind,node,loc) + nilai
+///    TERURUT harus identik. Asimetri = bug render/recovery.
+/// 4. O4: A→B double-run → stdout logis identik (strip timing).
+/// 5. O1: panic/hang/abort/crash = bug.
+///
+/// CATATAN klasifikasi exit code: `mcheck --ast-diff` exit 0 = AST identik;
+/// exit 1 = diff DITEMUKAN (jalur normal, bukan error!) ATAU "gagal compile"
+/// (mutasi merusak sintaks). Keduanya bukan bug — tapi diff yang ditemukan
+/// WAJIB diperiksa simetri + determinism-nya (di situ letak nilai fuzz).
+fn evaluate_astdiff(source: &str, timeout_ms: u64) -> CaseResult {
+    use std::path::PathBuf;
+    let mk_a = |c: Category, o: Oracle, d: &str| mk(Target::Astdiff, o, c, d, source);
+
+    // RNG deterministik per-case (hash source) → mutasi b reproducible.
+    let mut h: u64 = 0x9E3779B97F4A7C15;
+    for b in source.bytes() {
+        h = h.rotate_left(5) ^ u64::from(b).wrapping_mul(0x100000001B3);
+        h = h.wrapping_mul(0x9E3779B97F4A7C15);
+    }
+    let mut rng = crate::Rng::new(h);
+    let empty_corpus = crate::corpus::Corpus::load(Some(&PathBuf::from("/nonexistent-fz-astdiff")));
+
+    // b.sv = mutasi kedua (0-2x) — a.sv = source asli.
+    let mut b_src = source.to_string();
+    let n_mut = rng.below(3);
+    if n_mut > 0 {
+        let mut mutator = crate::mutator::Mutator::new(&mut rng);
+        for _ in 0..n_mut {
+            b_src = mutator.mutate(&b_src, &empty_corpus);
+        }
+    }
+
+    let dir = std::env::temp_dir();
+    let stem = format!(
+        "mariafza_{}_{}",
+        std::process::id(),
+        crate::next_crash_seq()
+    );
+    let a = dir.join(format!("{stem}_a.sv"));
+    let b = dir.join(format!("{stem}_b.sv"));
+    if std::fs::write(&a, source).is_err() || std::fs::write(&b, &b_src).is_err() {
+        return mk_a(
+            Category::CleanError,
+            Oracle::O1NoCrash,
+            "gagal tulis temp sv a/b",
+        );
+    }
+
+    // Capture per-case (a+b persisten) — untuk lokalasi kasus asimetri/
+    // nondeterminisme yang butuh PASANGAN persis (kontras: run_single hanya
+    // simpan source kasus, bukan pasangan diff-nya). Dipakai debug; normal
+    // tidak di-set (mirip MARIA_FUZZ_CAPTURE_DIR pada target SDF).
+    if let Ok(cap_dir) = std::env::var("MARIA_FUZZ_CAPTURE_DIR") {
+        let _ = std::fs::create_dir_all(&cap_dir);
+        let seq = crate::next_crash_seq();
+        let _ = std::fs::write(
+            std::path::Path::new(&cap_dir).join(format!("{seq}_a.sv")),
+            source,
+        );
+        let _ = std::fs::write(
+            std::path::Path::new(&cap_dir).join(format!("{seq}_b.sv")),
+            &b_src,
+        );
+    }
+    let a_s = a.to_string_lossy().to_string();
+    let b_s = b.to_string_lossy().to_string();
+    let fwd_args = vec![
+        "mcheck".to_string(),
+        a_s.clone(),
+        "--ast-diff".to_string(),
+        b_s.clone(),
+    ];
+    let rev_args = vec![
+        "mcheck".to_string(),
+        b_s.clone(),
+        "--ast-diff".to_string(),
+        a_s.clone(),
+    ];
+    let fwd = with_micd_isolated(|| crate::runner::run_args(&fwd_args, timeout_ms));
+    let rev = with_micd_isolated(|| crate::runner::run_args(&rev_args, timeout_ms));
+    let fwd2 = if fwd.kind == crate::runner::Kind::Ok {
+        with_micd_isolated(|| crate::runner::run_args(&fwd_args, timeout_ms))
+    } else {
+        crate::runner::Outcome {
+            kind: crate::runner::Kind::CleanError,
+            code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            ms: 0,
+        }
+    };
+    let _ = std::fs::remove_file(&a);
+    let _ = std::fs::remove_file(&b);
+
+    // O1: crash/hang/abort pada kedua arah = bug.
+    for (label, o) in [("fwd", &fwd), ("rev", &rev)] {
+        match o.kind {
+            crate::runner::Kind::Ok | crate::runner::Kind::CleanError => {}
+            crate::runner::Kind::Panic => {
+                return mk_a(
+                    Category::Panic,
+                    Oracle::O1NoCrash,
+                    &format!("ast-diff {label} panic: {}", o.stderr),
+                );
+            }
+            crate::runner::Kind::Abort => {
+                return mk_a(
+                    Category::Abort,
+                    Oracle::O1NoCrash,
+                    &format!("ast-diff {label} abort: {}", o.stderr),
+                );
+            }
+            crate::runner::Kind::Crash(code) => {
+                return mk_a(
+                    Category::Panic,
+                    Oracle::O1NoCrash,
+                    &format!("ast-diff {label} crash code {code}: {}", o.stderr),
+                );
+            }
+            crate::runner::Kind::Hang => {
+                return mk_a(
+                    Category::Hang,
+                    Oracle::O1NoCrash,
+                    &format!("ast-diff {label} hang > {} ms", timeout_ms),
+                );
+            }
+        }
+    }
+
+    // Gagal compile di salah satu arah → diff tak bisa dihitung — bukan
+    // area ast-diff (mutasi merusak sintaks/elab). CleanError wajar.
+    for (label, o) in [("fwd", &fwd), ("rev", &rev)] {
+        if o.kind == crate::runner::Kind::CleanError && !looks_like_diff_found(o) {
+            return mk_a(
+                Category::CleanError,
+                Oracle::O1NoCrash,
+                &format!(
+                    "ast-diff {label}: {}",
+                    o.stderr.lines().next().unwrap_or("")
+                ),
+            );
+        }
+    }
+
+    // Kedua arah jalan (identik ATAU diff ditemukan) — O4 double-run fwd.
+    if fwd.kind == crate::runner::Kind::Ok
+        && fwd2.kind == crate::runner::Kind::Ok
+        && strip_logical(&fwd.stdout) != strip_logical(&fwd2.stdout)
+    {
+        return mk_a(
+            Category::NonDeterministic,
+            Oracle::O4Determinism,
+            "ast-diff fwd output beda antar 2 run identik",
+        );
+    }
+
+    // Ekstrak diff lines `  - ...` dan cek SIMETRI himpunan A→B == B→A.
+    let fwd_diffs = extract_diff_lines(&fwd.stdout);
+    let rev_diffs = extract_diff_lines(&rev.stdout);
+    let fwd_set: std::collections::BTreeSet<String> =
+        fwd_diffs.iter().map(|d| normalize_diff_line(d)).collect();
+    let rev_set: std::collections::BTreeSet<String> =
+        rev_diffs.iter().map(|d| normalize_diff_line(d)).collect();
+    if fwd_set != rev_set {
+        // Asimetri render diff — himpunan beda walau isi AST sama.
+        let only_fwd: Vec<&String> = fwd_set.difference(&rev_set).collect();
+        let only_rev: Vec<&String> = rev_set.difference(&fwd_set).collect();
+        return mk_a(
+            Category::Differential,
+            Oracle::O5Differential,
+            &format!(
+                "ast-diff ASIMETRIS A→B != B→A: only-fwd={} only-rev={}",
+                only_fwd.len(),
+                only_rev.len()
+            ),
+        );
+    }
+
+    if fwd_diffs.is_empty() {
+        mk_a(
+            Category::Ok,
+            Oracle::O1NoCrash,
+            "ast-diff ok: AST identik, simetri terjaga",
+        )
+    } else {
+        mk_a(
+            Category::Ok,
+            Oracle::O5Differential,
+            &format!(
+                "ast-diff ok: {} perbedaan struktural, himpunan simetris + deterministik",
+                fwd_diffs.len()
+            ),
+        )
+    }
+}
+
+/// Apakah output mcheck menunjukkan diff DITEMUKAN (bukan gagal compile)?
+/// Exit 1 dipakai dua hal: diff ditemukan (jalur NORMAL) vs gagal compile.
+fn looks_like_diff_found(o: &crate::runner::Outcome) -> bool {
+    let s = format!("{}\n{}", o.stdout, o.stderr);
+    s.contains("perbedaan struktural") || s.contains("AST berbeda") || s.contains("AST identik")
+}
+
+/// Strip baris timing/metrik (konsisten dgn target lain).
+fn strip_logical(s: &str) -> Vec<String> {
+    s.lines()
+        .filter(|l| !l.contains("time") && !l.contains("µs") && !l.contains("ms)"))
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+/// Ekstrak baris diff `  - ...` dari stdout mcheck.
+fn extract_diff_lines(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim_start();
+            if let Some(rest) = t.strip_prefix("- ") {
+                Some(rest.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Normalisasi satu diff line utk perbandingan simetri lintas arah:
+/// 0. Label "only in A"/"only in B" → "only in ONE" (swap membalik ARAH
+///    label — identitas diff = ada di satu design saja).
+/// 0b. Pasangan boolean "true/false vs ..." → diurutkan.
+/// 1. Nilai pasangan "A vs B" di-urutkan -> "min vs max", jadi
+///    "width: 8 vs 16" (A→B) == "width: 16 vs 8" (B→A).
+/// 2. Indeks posisi `signal[N]` di-buang -> `signal[*]`: `compare_ir_designs`
+///    membandingkan signal PAIRWISE BY INDEX (Vec order). Dua design dengan
+///    URUTAN signal berbeda (b.sv = hasil mutasi, urutan bisa beda dari
+///    a.sv) membuat pasangan index bergeser per arah — nama di index yang
+///    sama bisa beda → asimetri SEMU, bukan bug render. Identitas diff yang
+///    benar = (kind, nama signal, nilai) — posisi tidak relevan.
+fn normalize_diff_line(line: &str) -> String {
+    let mut s = line.to_string();
+    // (0) Label only-in kanonik: swap membalik ARAH label ("only in A" ↔
+    // "only in B" tukar posisi file). Identitas diff = signal ada di SATU
+    // design (arah tidak relevan untuk himpunan simetri).
+    s = s
+        .replace(" only in A", " only in ONE")
+        .replace(" only in B", " only in ONE");
+    // (0b) Pasangan boolean: "true vs false" / "false vs true" → urutkan.
+    if s.contains("true vs false") || s.contains("false vs true") {
+        s = s
+            .replace("true vs false", "\u{1}T")
+            .replace("false vs true", "\u{1}T")
+            .replace('\u{1}', "false vs true");
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit() {
+            let mut j = i;
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                j += 1;
+            }
+            let num = chars[i..j].iter().collect::<String>();
+            // (2) `signal[N]` → `signal[*]` — position-insensitive.
+            let idx_is_signal_position = {
+                let before = &chars[..i];
+                let mut k = before.len();
+                let mut word_end = k;
+                while k > 0 && (chars[k - 1].is_ascii_alphanumeric() || chars[k - 1] == '_') {
+                    k -= 1;
+                }
+                let word: String = before[k..].iter().collect();
+                word == "signal" && chars.get(word_end).map(|c| *c == '[').unwrap_or(false)
+            };
+            if idx_is_signal_position {
+                // cari `]` penutup
+                let mut m = j;
+                while m < chars.len() && chars[m] != ']' {
+                    m += 1;
+                }
+                if m < chars.len() {
+                    out.push_str("signal[*]");
+                    i = m + 1;
+                    continue;
+                }
+            }
+            // (1) pola "<num> vs <num>": urutkan nilainya.
+            let is_vs = j + 4 <= chars.len()
+                && chars[j] == ' '
+                && chars[j + 1] == 'v'
+                && chars[j + 2] == 's'
+                && chars[j + 3] == ' ';
+            if is_vs {
+                // cari angka kedua
+                let mut k = j + 4;
+                while k < chars.len() && chars[k] == ' ' {
+                    k += 1;
+                }
+                let mut m = k;
+                while m < chars.len() && chars[m].is_ascii_digit() {
+                    m += 1;
+                }
+                if m > k {
+                    let num2 = chars[k..m].iter().collect::<String>();
+                    let (a, b) = (
+                        num.parse::<u64>().unwrap_or(0),
+                        num2.parse::<u64>().unwrap_or(0),
+                    );
+                    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+                    out.push_str(&lo.to_string());
+                    out.push_str(" vs ");
+                    out.push_str(&hi.to_string());
+                    i = m;
+                    continue;
+                }
+            }
+            out.push_str(&num);
+            i = j;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Argumen CLI untuk satu kasus fuzz: tool subcommand ATAU pipeline flags,
 /// atas satu file temp. RNG per-case (bukan global) → deterministik.
 fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> Vec<String> {
@@ -1843,6 +2176,18 @@ fn maria_preproc(source: &str) -> Result<String, String> {
 /// - output SV harus parseable (transpile merusak source = bug)
 /// - panic saat MV aneh = bug
 fn evaluate_mv(source: &str) -> CaseResult {
+    // Source kosong/whitespace-only hasil mutasi (file habis terhapus) —
+    // transpile input kosong → output tak parseable wajar, BUKAN bug
+    // transpiler (temuan kampanye: klass roundtrip_mismatch palsu).
+    if source.trim().is_empty() {
+        return mk(
+            Target::Mv,
+            Oracle::O1NoCrash,
+            Category::CleanError,
+            "source kosong setelah mutasi — bukan bug transpiler",
+            source,
+        );
+    }
     let r1 = std::panic::catch_unwind(|| maria_api::mv::transpile(source, "fz"));
     let r2 = std::panic::catch_unwind(|| maria_api::mv::transpile(source, "fz"));
     match (r1, r2) {

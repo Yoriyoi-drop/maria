@@ -413,18 +413,46 @@ fn compare_ir_designs(a: &maria_ir::IrDesign, b: &maria_ir::IrDesign) -> Vec<Str
             b.top.processes.len()
         ));
     }
-    for (i, (sa, sb)) in a.top.signals.iter().zip(b.top.signals.iter()).enumerate() {
-        if sa.width != sb.width {
-            diffs.push(format!(
-                "signal[{}] '{}' width: {} vs {}",
-                i, sa.name, sa.width, sb.width
-            ));
-        }
-        if sa.is_signed != sb.is_signed {
-            diffs.push(format!(
-                "signal[{}] '{}' signed: {} vs {}",
-                i, sa.name, sa.is_signed, sb.is_signed
-            ));
+    // Bandingkan signal per-NAMA (bukan pairwise index): index-pairing
+    // menyesatkan saat urutan/set signal dua design beda — diff palsu dan
+    // ASIMETRIS A→B != B→A (ditemukan maria-fuzz target astdiff). Cocokkan
+    // by nama, laporkan only-in-A/B eksplisit. Sort by nama → deterministik.
+    {
+        use std::collections::BTreeMap;
+        let ma = a
+            .top
+            .signals
+            .iter()
+            .map(|s| (s.name.to_string(), s))
+            .collect::<BTreeMap<String, &maria_ir::SignalInfo>>();
+        let mb = b
+            .top
+            .signals
+            .iter()
+            .map(|s| (s.name.to_string(), s))
+            .collect::<BTreeMap<String, &maria_ir::SignalInfo>>();
+        let names: std::collections::BTreeSet<String> =
+            ma.keys().chain(mb.keys()).cloned().collect();
+        for name in &names {
+            match (ma.get(name), mb.get(name)) {
+                (Some(sa), Some(sb)) => {
+                    if sa.width != sb.width {
+                        diffs.push(format!(
+                            "signal '{}' width: {} vs {}",
+                            name, sa.width, sb.width
+                        ));
+                    }
+                    if sa.is_signed != sb.is_signed {
+                        diffs.push(format!(
+                            "signal '{}' signed: {} vs {}",
+                            name, sa.is_signed, sb.is_signed
+                        ));
+                    }
+                }
+                (Some(_), None) => diffs.push(format!("signal '{}' only in A", name)),
+                (None, Some(_)) => diffs.push(format!("signal '{}' only in B", name)),
+                _ => {}
+            }
         }
     }
     if a.classes.len() != b.classes.len() {
@@ -570,6 +598,46 @@ mod tests {
         assert!(
             diffs.iter().any(|d| d.contains("process count")),
             "jumlah proses harus terdeteksi: {:?}",
+            diffs
+        );
+    }
+
+    #[test]
+    fn test_ast_diff_order_insensitive() {
+        // PARSER-13: dua design dengan SET signal sama tapi URUTAN deklarasi
+        // beda harus 0 perbedaan (name-based, bukan pairwise index). Sebelum
+        // fix by-name: zip by index membandingkan q vs r → diff palsu
+        // "width: 8 vs 15" + asimetri A→B != B→A (ditemukan maria-fuzz
+        // target astdiff).
+        let a = elabor(
+            "module m(input clk); reg [7:0] q; reg [15:0] r; always @(posedge clk) q <= q + 1; endmodule",
+        );
+        let b = elabor(
+            "module m(input clk); reg [15:0] r; reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule",
+        );
+        let diffs = compare_ir_designs(&a, &b);
+        assert!(
+            diffs.is_empty(),
+            "order deklarasi beda tidak boleh menghasilkan diff: {:?}",
+            diffs
+        );
+        // Simetri: arah swap juga 0 diff.
+        assert!(compare_ir_designs(&b, &a).is_empty());
+    }
+
+    #[test]
+    fn test_ast_diff_missing_signal() {
+        // PARSER-13: signal hanya ada di A → dilaporkan "only in A" eksplisit
+        // (bukan diff width palsu hasil zip index yang bergeser).
+        let a = elabor(
+            "module m(input clk); reg [7:0] q; reg [7:0] r; always @(posedge clk) q <= q + 1; endmodule",
+        );
+        let b =
+            elabor("module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule");
+        let diffs = compare_ir_designs(&a, &b);
+        assert!(
+            diffs.iter().any(|d| d.contains("'r' only in A")),
+            "signal hilang harus 'only in A': {:?}",
             diffs
         );
     }

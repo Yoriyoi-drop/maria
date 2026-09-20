@@ -301,15 +301,7 @@ pub(crate) fn emit_module_item_at(
                 line(
                     out,
                     indent,
-                    &format!(
-                        "{}{};",
-                        names
-                            .iter()
-                            .map(|nm| emit_signal_decl(ty, nm))
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        init_s
-                    ),
+                    &format!("{}{};", super::emit_signal_decl_multi(ty, names), init_s),
                 );
             }
         }
@@ -320,15 +312,7 @@ pub(crate) fn emit_module_item_at(
             line(
                 out,
                 indent,
-                &format!(
-                    "{}{};",
-                    names
-                        .iter()
-                        .map(|nm| emit_signal_decl(ty, nm))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    init_s
-                ),
+                &format!("{}{};", super::emit_signal_decl_multi(ty, names), init_s),
             );
         }
         MItem::Const {

@@ -58,6 +58,14 @@ pub enum Target {
     /// lowering (`maria-sir`) → SYN-1..9 sintesizability check. SIR lowering
     /// parser tak pernah di-fuzz. O1 no-crash + O4 double-run.
     Synth,
+    /// Differential AST struktural (`mcheck a.sv --ast-diff b.sv` vs
+    /// `b.sv --ast-diff a.sv`): HIMPUNAN pasangan diff harus simetris A→B ==
+    /// B→A (swap membalik arah "only-in-A/B", TAPI himpunan (kind, node, loc)
+    /// pasangan identik) — determinisme + recovery simetri. Area BARU —
+    /// AST-diff report tak pernah di-fuzz dan `mcheck --ast-diff` memakai
+    /// HashSet-iteration di render (SYN-9-class nondeterminisme kembali masuk
+    /// lewat pintu lain).
+    Astdiff,
 }
 
 impl Target {
@@ -74,6 +82,7 @@ impl Target {
         Target::Sdf,
         Target::Micd,
         Target::Synth,
+        Target::Astdiff,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -91,6 +100,7 @@ impl Target {
             Target::Sdf => "sdf",
             Target::Micd => "micd",
             Target::Synth => "synth",
+            Target::Astdiff => "astdiff",
         }
     }
 
@@ -109,6 +119,7 @@ impl Target {
             "sdf" => Some(Target::Sdf),
             "micd" | "fast" => Some(Target::Micd),
             "synth" | "sir" => Some(Target::Synth),
+            "astdiff" | "ast-diff" => Some(Target::Astdiff),
             _ => None,
         }
     }

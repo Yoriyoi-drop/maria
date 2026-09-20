@@ -187,15 +187,7 @@ pub(crate) fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             line(
                 out,
                 indent,
-                &format!(
-                    "{}{};",
-                    names
-                        .iter()
-                        .map(|nm| super::emit_signal_decl(ty, nm))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    init_s
-                ),
+                &format!("{}{};", super::emit_signal_decl_multi(ty, names), init_s),
             );
         }
         Stmt::Assert { cond, pass, fail } => {

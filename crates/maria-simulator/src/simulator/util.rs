@@ -364,7 +364,7 @@ impl SimulationEngine {
             if c == '%' {
                 let mut zero_fill = false;
                 let mut width = 0usize;
-                let mut precision: Option<usize> = None;
+                let precision: Option<usize> = None;
                 if let Some(&next) = chars.peek() {
                     if next == '0' {
                         zero_fill = true;

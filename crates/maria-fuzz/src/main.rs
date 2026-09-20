@@ -46,7 +46,7 @@ USAGE:
   maria-fuzz report  [<dir>]
   maria-fuzz help
 
-TARGETS: all | lexer | parser | elab | sim | fmt | cli | preproc | mv | vcd | sdf | micd | synth
+TARGETS: all | lexer | parser | elab | sim | fmt | cli | preproc | mv | vcd | sdf | micd | synth | astdiff
 Default: all (2000 cases/target). Corpus default: {corpus}
 Bug output: {bugs}
 "#,
@@ -77,6 +77,15 @@ fn take_flag(args: &[String], flag: &str) -> (Option<String>, Vec<String>) {
     (val, rest)
 }
 
+/// Parse u64 — dukung hex `0x`/`0X` prefix (default fuzz seed hex dipakai
+/// kampanye). Falls back ke decimal biasa.
+fn parse_u64(s: &str) -> Option<u64> {
+    s.strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .and_then(|h| u64::from_str_radix(h, 16).ok())
+        .or_else(|| s.parse().ok())
+}
+
 fn cmd_run(args: &[String]) -> i32 {
     let (target_s, rest) = take_flag(args, "--target");
     let (cases_s, rest) = take_flag(&rest, "-c");
@@ -93,7 +102,7 @@ fn cmd_run(args: &[String]) -> i32 {
         .and_then(|s| s.parse().ok())
         .unwrap_or(FuzzConfig::default().cases);
     let seed = seed_s
-        .and_then(|s| s.parse().ok())
+        .and_then(|s| parse_u64(&s))
         .unwrap_or(FuzzConfig::default().seed);
     let timeout = timeout_s
         .and_then(|s| s.parse().ok())
@@ -315,7 +324,7 @@ fn cmd_verify(args: &[String]) -> i32 {
 
     if let Some(cases_s) = cases_s {
         let cases: usize = cases_s.parse().unwrap_or(200);
-        let seed: u64 = seed_s.and_then(|s| s.parse().ok()).unwrap_or(0x1CA_2026);
+        let seed: u64 = seed_s.and_then(|s| parse_u64(&s)).unwrap_or(0x1CA_2026);
         return verify_mutated(cases, seed, timeout);
     }
 

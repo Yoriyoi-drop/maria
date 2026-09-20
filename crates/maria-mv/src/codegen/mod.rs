@@ -169,6 +169,36 @@ pub(crate) fn for_inc(var: &str, step: Option<&Expr>) -> String {
     }
 }
 
+/// Deklarasi signal multi-nama yang BENAR utk SV: tipe di-emit SEKALI,
+/// nama dipisah koma, dims array SETELAH tiap nama:
+/// `sig a, b : logic[8][4]` → `logic [7:0] a [0:3], b [0:3]`
+/// (sebelumnya `logic [7:0] a [0:3], logic [7:0] b [0:3]` — SV INVALID,
+/// tipe berulang per nama). Dipakai deklarasi `sig`/`reg`/`var` multi-nama.
+pub(crate) fn emit_signal_decl_multi(ty: &MvType, names: &[String]) -> String {
+    let mut dims: Vec<&Expr> = Vec::new();
+    let mut elem = ty;
+    while let MvType::Array(inner, ds) = elem {
+        dims.extend(ds.iter());
+        elem = inner;
+    }
+    let ty_s = expr::emit_type(elem);
+    let name_parts: Vec<String> = names
+        .iter()
+        .map(|n| {
+            let mut s = n.clone();
+            for d in &dims {
+                let nn = match d {
+                    Expr::Int(v) => format!("{}", v.saturating_sub(1)),
+                    other => format!("{} - 1", expr::emit_expr(other)),
+                };
+                s.push_str(&format!(" [0:{nn}]"));
+            }
+            s
+        })
+        .collect();
+    format!("{ty_s} {}", name_parts.join(", "))
+}
+
 /// Deklarasi signal array unpacked yang BENAR utk SV:
 /// `logic[8][4]` → `logic [7:0] name [0:3]` (dims `[0:N-1]` SETELAH nama,
 /// bukan `logic [7:0] [4] name` yang di-parse SV sbg packed multi-dim).

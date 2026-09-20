@@ -110,25 +110,46 @@ pub fn compare_asts(design_a: &maria_ir::IrDesign, design_b: &maria_ir::IrDesign
         ));
     }
 
-    // Compare each signal info
-    for (i, (sa, sb)) in design_a
-        .top
-        .signals
-        .iter()
-        .zip(design_b.top.signals.iter())
-        .enumerate()
+    // Bandingkan signal per-NAMA (bukan pairwise index): index-pairing
+    // menyesatkan saat urutan/set signal dua design beda — diff palsu dan
+    // ASIMETRIS A→B != B→A (ditemukan maria-fuzz target astdiff). Cocokkan
+    // by nama, laporkan only-in-A/B eksplisit. Sort by nama → deterministik.
     {
-        if sa.width != sb.width {
-            diffs.push(format!(
-                "signal[{}] '{}' width: {} vs {}",
-                i, sa.name, sa.width, sb.width
-            ));
-        }
-        if sa.is_signed != sb.is_signed {
-            diffs.push(format!(
-                "signal[{}] '{}' signed: {} vs {}",
-                i, sa.name, sa.is_signed, sb.is_signed
-            ));
+        use std::collections::BTreeMap;
+        let ma = design_a
+            .top
+            .signals
+            .iter()
+            .map(|s| (s.name.to_string(), s))
+            .collect::<BTreeMap<String, &maria_ir::SignalInfo>>();
+        let mb = design_b
+            .top
+            .signals
+            .iter()
+            .map(|s| (s.name.to_string(), s))
+            .collect::<BTreeMap<String, &maria_ir::SignalInfo>>();
+        let names: std::collections::BTreeSet<String> =
+            ma.keys().chain(mb.keys()).cloned().collect();
+        for name in &names {
+            match (ma.get(name), mb.get(name)) {
+                (Some(sa), Some(sb)) => {
+                    if sa.width != sb.width {
+                        diffs.push(format!(
+                            "signal '{}' width: {} vs {}",
+                            name, sa.width, sb.width
+                        ));
+                    }
+                    if sa.is_signed != sb.is_signed {
+                        diffs.push(format!(
+                            "signal '{}' signed: {} vs {}",
+                            name, sa.is_signed, sb.is_signed
+                        ));
+                    }
+                }
+                (Some(_), None) => diffs.push(format!("signal '{}' only in A", name)),
+                (None, Some(_)) => diffs.push(format!("signal '{}' only in B", name)),
+                _ => {}
+            }
         }
     }
 
