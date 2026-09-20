@@ -1,45 +1,45 @@
-# Maria Synthesis — Desain Arsitektur (SIR + Pass Manager, ala Vivado/Yosys)
+# Mivon Synthesis — Desain Arsitektur (SIR + Pass Manager, ala Vivado/Yosys)
 
 > **Status:** Draf Desain v0.2 — mengadopsi arsitektur SIR node-based + pass manager
-> **Versi target Maria:** 0.5.0
+> **Versi target Mivon:** 0.5.0
 > **Referensi flow:** Xilinx Vivado (synth_design → opt/place/route → report_timing)
-> **Prinsip:** (1) reuse maksimal pipeline Maria (elaborator → `IrDesign`);
+> **Prinsip:** (1) reuse maksimal pipeline Mivon (elaborator → `IrDesign`);
 > (2) **SIR node-based** sebagai IR tengah synthesis — jangan langsung AST →
-> Verilog; (3) teknologi hanya lewat device abstraction (`maria-tech`).
+> Verilog; (3) teknologi hanya lewat device abstraction (`mivon-tech`).
 
 ---
 
 ## 1. Pendahuluan & Visi
 
-Maria saat ini adalah **simulator RTL** yang lengkap: preprocessor → lexer →
+Mivon saat ini adalah **simulator RTL** yang lengkap: preprocessor → lexer →
 parser → AST → elaborator (`IrDesign`) → engine simulasi → VCD/FST. AUDIT.md
 mencatat dua celah strategis yang desain ini jawab:
 
 - **COMP-10** — *Tidak ada gate-level optimization* (High)
 - **ENT-33** — *No integration with synthesis tools (DC, Genus, Yosys)* (Critical)
 
-**Visi:** Maria bertransformasi dari *simulator* menjadi **hardware compiler
+**Visi:** Mivon bertransformasi dari *simulator* menjadi **hardware compiler
 lengkap**: source HDL → elaboration → synthesis → technology mapping →
 timing/area → netlist. Flow end-to-end ala Vivado:
 
 ```text
 RTL (.sv/.svh/.mv)
-   │  maria synth
+   │  mivon synth
    ▼
-SIR (node-based) ──► optimizer passes ──► technology mapping (maria-tech)
+SIR (node-based) ──► optimizer passes ──► technology mapping (mivon-tech)
    │
    ▼
 Netlist gate-level (mapped)             ──► laporan utilisasi (LUT/FF/BRAM/DSP)
-   │  maria mimpl
+   │  mivon mimpl
    ▼
 Place & Route (FPGA grid)               ──► laporan util pasca-P&R
-   │  maria msta
+   │  mivon msta
    ▼
 STA (setup/hold, WNS/TNS)               ──► laporan timing + critical path
    │
    ▼
-Netlist + SDF ──► gate-level simulation (mesin sim Maria sendiri!)
-   └──► equivalence check RTL ↔ netlist (Z3 via maria-formal)
+Netlist + SDF ──► gate-level simulation (mesin sim Mivon sendiri!)
+   └──► equivalence check RTL ↔ netlist (Z3 via mivon-formal)
 ```
 
 Tiga prinsip desain:
@@ -50,7 +50,7 @@ Tiga prinsip desain:
 | 2 | **SIR node-based** | Synthesis IR adalah **graf nilai node** (`AND/OR/ADD/MUX/REGISTER`), BUKAN pohon statement (`always_ff`/`if`). Jangan pertahankan bentuk AST/Verilog terlalu lama. |
 | 3 | **Pass manager, bukan pipeline hardcode** | Optimasi/mapping adalah kumpulan pass terdaftar (`SynthPass`) yang bisa dikomposisi via preset — bukan satu fungsi raksasa. |
 | 4 | **Device abstraction** | Satu flow, banyak back-end: **Generic / FPGA / ASIC / Custom**. Tidak ada logika device di dalam core. |
-| 5 | **Hasil selalu bisa diverifikasi** | Netlist harus bisa (a) disimulasikan engine Maria, (b) dicek setara dengan RTL via Z3, (c) dilaporkan utilisasi & timing ala Vivado. |
+| 5 | **Hasil selalu bisa diverifikasi** | Netlist harus bisa (a) disimulasikan engine Mivon, (b) dicek setara dengan RTL via Z3, (c) dilaporkan utilisasi & timing ala Vivado. |
 
 ---
 
@@ -78,13 +78,13 @@ Tiga prinsip desain:
                  │  → IrDesign     │        (reuse — sudah ada)
                  └────────┬────────┘
                           ▼
-          ═══════ maria-sir (crate baru) ═══════
+          ═══════ mivon-sir (crate baru) ═══════
                  ┌─────────────────┐
                  │  RTL → SIR      │        lowering (lower.rs)
                  │  SirModule      │        node-based, register eksplisit
                  └────────┬────────┘
                           ▼
-          ═══════ maria-synth (pass manager) ═══════
+          ═══════ mivon-synth (pass manager) ═══════
                  ┌─────────────────────────┐
                  │  Synthesis Optimizer    │  const prop · DCE · CSE
                  │  (pass manager)         │  boolean · mux · arith
@@ -92,11 +92,11 @@ Tiga prinsip desain:
                  └───────────┬─────────────┘
                              ▼
                  ┌───────────────────────┐
-                 │  Technology Mapping   │  maria-tech (generic/fpga/asic)
+                 │  Technology Mapping   │  mivon-tech (generic/fpga/asic)
                  └───────────┬───────────┘
                              ▼
                  ┌───────────────────────┐
-                 │  Technology Netlist   │  maria-netlist (mapped cells)
+                 │  Technology Netlist   │  mivon-netlist (mapped cells)
                  └───────┬───────────────┘
                          ▼
               ┌──────────┼──────────┐
@@ -105,7 +105,7 @@ Tiga prinsip desain:
           Netlist    Netlist     Area / Timing
               │
               ▼
-        maria mimpl → maria msta (P&R + STA)
+        mivon mimpl → mivon msta (P&R + STA)
 ```
 
 **Aturan emas:** `AST → Verilog` DILARANG. Semua tahap synthesis berjalan di
@@ -115,7 +115,7 @@ syntax.
 
 ---
 
-## 3. SIR — Synthesis Intermediate Representation (crate `maria-sir`)
+## 3. SIR — Synthesis Intermediate Representation (crate `mivon-sir`)
 
 ### 3.1 Mengapa SIR?
 
@@ -138,7 +138,7 @@ output y = Node1
 
 Synthesis tidak peduli struktur syntax; ia peduli *siapa menghitung apa*.
 
-### 3.2 Data model (implementasi: `crates/maria-sir/src/sir.rs`)
+### 3.2 Data model (implementasi: `crates/mivon-sir/src/sir.rs`)
 
 ```rust
 pub struct SirModule {
@@ -215,7 +215,7 @@ Dari `IrDesign` (sudah type-checked + flatten):
 - Konstruk tak didukung dicatat di `LowerResult.skipped` (jujur, bukan
   diam-diam salah).
 
-Contoh nyata `counter.sv` 8-bit (output `maria synth --dump-sir`):
+Contoh nyata `counter.sv` 8-bit (output `mivon synth --dump-sir`):
 
 ```text
 ── SIR module: counter ──
@@ -280,11 +280,11 @@ pipeline.add(TechMap);
 | Preset | Output mapping | Tujuan |
 |--------|----------------|--------|
 | `generic` | `AND OR XOR MUX ADD REGISTER...` | debugging compiler / DAG bersih |
-| `fpga` | `LUT6 FF BRAM DSP48 IO` (Xilinx 7-series style) | `maria synth --preset fpga` |
-| `asic` | cell library (`NAND2 NOR2 INV AOI OAI MUX DFF BUF`) | `maria synth --preset asic --lib sky130.lib` |
+| `fpga` | `LUT6 FF BRAM DSP48 IO` (Xilinx 7-series style) | `mivon synth --preset fpga` |
+| `asic` | cell library (`NAND2 NOR2 INV AOI OAI MUX DFF BUF`) | `mivon synth --preset asic --lib sky130.lib` |
 | `custom` | library hardware sendiri (AETHERX dll) | `--lib` + `--tech-custom` |
 
-Pemilihan preset di CLI: `maria synth --preset fpga` (default) /
+Pemilihan preset di CLI: `mivon synth --preset fpga` (default) /
 `--preset generic` / `--preset asic --lib my.lib`.
 
 ---
@@ -295,7 +295,7 @@ Pemilihan preset di CLI: `maria synth --preset fpga` (default) /
 S0  Parse                    (reuse)          S9  FSM optimization
 S1  Elaborate → IrDesign     (reuse)          S10 Register optimization
 S2  RTL normalization                          S11 Structural optimization
-S3  Lower RTL → SIR          (maria-sir)      S12 Technology mapping
+S3  Lower RTL → SIR          (mivon-sir)      S12 Technology mapping
 S4  Constant propagation                      S13 Netlist optimization
 S5  Dead logic elimination                    S14 Timing analysis (STA)
 S6  Boolean optimization                      S15 Area estimation
@@ -305,14 +305,14 @@ S8  Mux optimization
 
 Setiap pass stateless-deterministik: `SIR → SIR` (S4–S11), `SIR → Netlist`
 (S12–S13), `Netlist → laporan` (S14–S16). Hasil tiap pass dapat di-dump untuk
-debug: `maria synth --dump-sir` (sebelum opt), `--dump-sir-opt` (setelah opt),
+debug: `mivon synth --dump-sir` (sebelum opt), `--dump-sir-opt` (setelah opt),
 `--dump-netlist`.
 
 ---
 
 ## 6. Optimisasi yang Wajib (S4–S11)
 
-Minimal yang harus dimiliki Maria:
+Minimal yang harus dimiliki Mivon:
 
 | Optimasi | Contoh | Hasil |
 |----------|--------|-------|
@@ -392,7 +392,7 @@ pub struct ClockDomain {
 
 ## 10. Constraint `.mcs` & Timing Engine
 
-### 10.1 `.mcs` — Maria Constraint Specification
+### 10.1 `.mcs` — Mivon Constraint Specification
 
 ```text
 clock clk {
@@ -431,7 +431,7 @@ delay = 12.4 ns                                           → TIMING VIOLATION
 
 ---
 
-## 11. Model Netlist (crate `maria-netlist`)
+## 11. Model Netlist (crate `mivon-netlist`)
 
 Netlist hasil technology mapping (dari SIR, bukan dari AST):
 
@@ -473,13 +473,13 @@ deterministik, bisa di-diff/commit) + `netlist.v` (Verilog structural) +
 Detil implementasi (fase 3):
 
 - **Konstanta = wire + `assign`** (bukan literal di koneksi pin) — engine
-  Maria tidak mendukung literal `8'h0` pada port instance; net ber-const
+  Mivon tidak mendukung literal `8'h0` pada port instance; net ber-const
   lebih netlist-like dan portabel lintas tool.
 - **Koneksi port COMma-separated** `(.a(net), .b(net))` — fase 3 menemukan
   bug engine: koneksi space-separated `.a(net) .b(net)` tidak pernah di-parse
   `parse_instance` → instance tanpa koneksi → `always_ff` di module sel tak
   ter-resolve (FF tidak berdetak, output z). Fix root di
-  `crates/maria-parser/src/instance.rs` (branch `.name(expr)` setelah nama
+  `crates/mivon-parser/src/instance.rs` (branch `.name(expr)` setelah nama
   instance + `.*` wildcard + shorthand `.port`) + regresi
   `test_space_separated_instance_connections`; emitter memakai bentuk
   comma-separated yang paling umum.
@@ -489,7 +489,7 @@ Detil implementasi (fase 3):
   output compare/reduce 1-bit. Sel `Slice` juga parameterized (lebar operand
   penuh — potongan `a[msb:lsb]` dari nilai lebar apa pun).
 
-Detil tech mapping (fase 4, `maria-synth/src/techmap.rs`, CLI `--tech-map`):
+Detil tech mapping (fase 4, `mivon-synth/src/techmap.rs`, CLI `--tech-map`):
 
 - **Bit-blast + LUT cut** — tiap bit output node → fungsi Boolean `BitFn`
   (And/Or/Xor/Not/Mux/compare/reduce + konstanta di-fold). Cone dengan ≤ K
@@ -515,14 +515,14 @@ Detil tech mapping (fase 4, `maria-synth/src/techmap.rs`, CLI `--tech-map`):
   dihapus.
 - Emisi `<prefix>.tech.v/.json/.mvnet` — LUT6/CARRY4/DFF* sebagai modul
   parameterized + `always_comb` case untuk LUT (dapat disimulasikan engine
-  Maria). Kriteria fase 4: `alu.sv` → **LUT 8, CARRY4 2, FF 0** dan sim
+  Mivon). Kriteria fase 4: `alu.sv` → **LUT 8, CARRY4 2, FF 0** dan sim
   tech netlist = sim RTL.
 
 ---
 
-## 12. Technology Library (crate `maria-tech`)
+## 12. Technology Library (crate `mivon-tech`)
 
-Maria tidak menganggap semua hardware punya gate yang sama:
+Mivon tidak menganggap semua hardware punya gate yang sama:
 
 ```text
 Technology
@@ -534,7 +534,7 @@ Technology
 └── constraints
 ```
 
-Sumber: **Liberty (`.lib`)** → parser subset → *Maria Technology Database*
+Sumber: **Liberty (`.lib`)** → parser subset → *Mivon Technology Database*
 (biner content-addressed, pola MICD):
 
 ```text
@@ -549,7 +549,7 @@ Back-end bawaan: `generic`, `fpga` (fpga-x7: LUT6/FF/CARRY4/BRAM36/DSP48/IO/
 BUFG), `asic` (cell library dari `.lib`), `custom`. P&R ASIC → external tool
 (konservatif, ditolak `mimpl` dengan pesan jelas).
 
-**Liberty parser (fase 6 — `maria-tech/src/liberty.rs`):**
+**Liberty parser (fase 6 — `mivon-tech/src/liberty.rs`):**
 
 - Subset yang didukung: `library` (name, delay_model, time_unit),
   `cell` (area, footprint, pin), `pin` (direction, capacitance, function,
@@ -567,7 +567,7 @@ BUFG), `asic` (cell library dari `.lib`), `custom`. P&R ASIC → external tool
 
 ## 13. Report
 
-Output `maria synth` (ke `build/synth/`):
+Output `mivon synth` (ke `build/synth/`):
 
 | File | Isi |
 |------|-----|
@@ -579,7 +579,7 @@ Output `maria synth` (ke `build/synth/`):
 | `hierarchy.rpt` | hierarki modul |
 
 ```text
-Maria Synthesis Report
+Mivon Synthesis Report
 =======================
 Modules:           1,582
 Registers:         84,231
@@ -629,25 +629,25 @@ Modul tak berubah → SIR/netlist-nya di-cache content-addressed (hash
 
 ---
 
-## 15. CLI `maria synth`
+## 15. CLI `mivon synth`
 
 Nama utama **`synth`** (nama lama `msynth` tetap berfungsi sebagai alias).
 
 ```text
-maria synth --top opentitan_top
-maria synth --preset generic | fpga | asic | custom
-maria synth --preset asic --lib sky130.lib
-maria synth --constraint chip.mcs
-maria synth counter.sv --top counter --emit-mvnet --report-util
-maria synth counter.sv --dump-sir            # SIR sebelum optimasi
-maria synth counter.sv --dump-sir-opt        # SIR setelah optimasi
-maria synth counter.sv --dump-netlist
-maria synth counter.sv --top counter --tech-map          # LUT6/CARRY4/FF (phase 4)
-maria synth alu.sv --top alu --tech-map --timing \
+mivon synth --top opentitan_top
+mivon synth --preset generic | fpga | asic | custom
+mivon synth --preset asic --lib sky130.lib
+mivon synth --constraint chip.mcs
+mivon synth counter.sv --top counter --emit-mvnet --report-util
+mivon synth counter.sv --dump-sir            # SIR sebelum optimasi
+mivon synth counter.sv --dump-sir-opt        # SIR setelah optimasi
+mivon synth counter.sv --dump-netlist
+mivon synth counter.sv --top counter --tech-map          # LUT6/CARRY4/FF (phase 4)
+mivon synth alu.sv --top alu --tech-map --timing \
   --constraint chip.mcs                                 # STA + area (phase 5)
-maria synth --check-only rtl/                # hanya SYN subset check
-maria synth counter.sv --opt speed --lut-merge on
-maria synth counter.sv --equiv 20            # equivalence check Z3 (S6)
+mivon synth --check-only rtl/                # hanya SYN subset check
+mivon synth counter.sv --opt speed --lut-merge on
+mivon synth counter.sv --equiv 20            # equivalence check Z3 (S6)
 ```
 
 | Flag | Fungsi |
@@ -661,14 +661,14 @@ maria synth counter.sv --equiv 20            # equivalence check Z3 (S6)
 | `--tech-map` | mapping LUT6/CARRY4/FF → `<top>.tech.v/.json/.mvnet` (phase 4) |
 | `--timing` | STA + area → `<top>.timing.rpt` / `<top>.area.rpt` (phase 5) |
 | `--report-util` / `--report-json` | report utilisasi |
-| `--equiv [BOUND]` | equivalence check RTL↔netlist via Z3 (`maria-formal`) |
+| `--equiv [BOUND]` | equivalence check RTL↔netlist via Z3 (`mivon-formal`) |
 | `--opt area\|speed` | tujuan optimasi |
 
-Tool lain: `maria mimpl` (P&R FPGA) dan `maria msta` (STA) — membaca `.mvnet`
+Tool lain: `mivon mimpl` (P&R FPGA) dan `mivon msta` (STA) — membaca `.mvnet`
 hasil `synth`. `--timing` menyediakan STA penuh di `synth` itu sendiri
 (WNS/TNS/critical path), `msta` menyusul untuk jalur netlist mandiri.
 
-**Timing & area (phase 5, crate `maria-timing`):** model delay deterministik
+**Timing & area (phase 5, crate `mivon-timing`):** model delay deterministik
 (LUT6 0.30 ns, CARRY4 0.05×width, fanout 0.05/load, clk→q 0.50, setup 0.20;
 input/output delay dari `.mcs`) sehingga critical path bisa dihitung ulang
 manual. Verifikasi: alu → `WNS +5.60` (arrival 3.40 = 2.0 input_delay + 0.8
@@ -682,11 +682,11 @@ endpoint). Constraint: `clock clk { period = 10ns; }`, `input_delay 2ns;`,
 
 ## 16. `.mv` sebagai Source Language
 
-`.mv` (Maria HDL) adalah source language utama; SystemVerilog tetap sebagai
+`.mv` (Mivon HDL) adalah source language utama; SystemVerilog tetap sebagai
 **format interop**:
 
 ```text
-design.mv ──► Maria Compiler ──► SIR ──► Synthesis
+design.mv ──► Mivon Compiler ──► SIR ──► Synthesis
      │
      └──────────► .sv  (compatibility backend, `mgen` — tetap ada)
 ```
@@ -698,12 +698,12 @@ file `.sv`. `.sv` hanya format output/kompatibilitas.
 
 ---
 
-## 17. GUI (maria-gui)
+## 17. GUI (mivon-gui)
 
 Workspace synthesis baru:
 
 ```text
-Maria
+Mivon
 ├── Project  Sources  Hierarchy  Diagnostics  Simulation
 ├── Synthesis
 │   ├── Overview   (target, technology, cells, registers, area)
@@ -726,35 +726,35 @@ Render via `netlist.json` + panel `Schematic` (reuse canvas dependency.rs).
 ## 18. Struktur Crate & File (1 file = 1 tanggung jawab)
 
 ```text
-crates/maria-sir/          ← IR tengah synthesis (SUDAH ADA, fase 1)
+crates/mivon-sir/          ← IR tengah synthesis (SUDAH ADA, fase 1)
   src/sir.rs               data model (SirModule/SirNode/SirRegister)
   src/lower.rs             lowering IrDesign → SirModule
   src/print.rs             dump teks (--dump-sir)
 
-crates/maria-synth/        ← pass manager + optimasi + mapping
+crates/mivon-synth/        ← pass manager + optimasi + mapping
   src/pass.rs              trait SynthPass + SynthPipeline + preset
   src/opt/                 const_prop.rs · dce.rs · cse.rs · boolean.rs
                            mux.rs · arith.rs · width.rs · fsm.rs
   src/subset.rs            analisis sintesizability (SYN-1..9) [S1, ada]
   src/techmap.rs           dispatcher mapping (device abstraction)
 
-crates/maria-netlist/      ← netlist hasil mapping (dipisah dari maria-synth)
+crates/mivon-netlist/      ← netlist hasil mapping (dipisah dari mivon-synth)
   src/net.rs  cell.rs  pin.rs  wire.rs  graph.rs  emit.rs
 
-crates/maria-tech/         ← device abstraction
+crates/mivon-tech/         ← device abstraction
   src/generic.rs  fpga.rs  asic.rs  liberty.rs  timing.rs  arch.rs
 
-crates/maria-timing/       ← STA + .mcs (bisa digabung ke maria-impl dulu)
-crates/maria-area/         ← estimasi area
-crates/maria-backend/      ← emisi netlist.v / netlist.json / edif
+crates/mivon-timing/       ← STA + .mcs (bisa digabung ke mivon-impl dulu)
+crates/mivon-area/         ← estimasi area
+crates/mivon-backend/      ← emisi netlist.v / netlist.json / edif
 
-crates/maria-impl/         ← P&R + STA tools (mimpl/msta)
-crates/maria-tools/        ← CLI synth.rs (tool `synth`)
+crates/mivon-impl/         ← P&R + STA tools (mimpl/msta)
+crates/mivon-tools/        ← CLI synth.rs (tool `synth`)
 ```
 
-> Pemisahan dilakukan bertahap agar tidak menunda nilai: `maria-sir` sudah
-> menjadi crate terpisah (fase 1). `maria-netlist`/`maria-tech` dipisah dari
-> `maria-synth` saat phase 3/4 (SYNTHESIS.md v0.2 — lihat roadmap §19).
+> Pemisahan dilakukan bertahap agar tidak menunda nilai: `mivon-sir` sudah
+> menjadi crate terpisah (fase 1). `mivon-netlist`/`mivon-tech` dipisah dari
+> `mivon-synth` saat phase 3/4 (SYNTHESIS.md v0.2 — lihat roadmap §19).
 
 ---
 
@@ -765,27 +765,27 @@ technology mapping ASIC):
 
 | Phase | Cakupan | Deliverable | Verifikasi |
 |-------|---------|-------------|------------|
-| **1** ✅ | RTL → SIR | `maria-sir` (sir.rs/lower.rs/print.rs) + `--dump-sir` | `counter.sv` → SIR node ADD/EQ/MUX + register d/q/clk/rst benar; unit test 9 |
-| **2** ✅ | SIR optimizer | `pass.rs` (SynthPass trait + SynthPipeline + preset + fixed-point) + `opt/` (const_fold, arith, mux, cse, dce) + `--dump-sir-opt`/`--preset` | `counter.sv` 7→5 node (CONCAT fold, NOT push-through-MUX); `alu_opt.sv` `(a&0)|(b&FF)|~~a → a\|b`, `(a+0)+(b*4) → a+(b<<2)`; unit test 29 + 9 maria-sir; full workspace 34 suite EXIT=0 |
-| **3** ✅ | SIR → generic netlist | `maria-netlist` crate (net.rs/cell.rs/lower.rs/graph.rs/emit.rs/json.rs) + emit `.mvnet`/`netlist.v`/`netlist.json` + `--dump-netlist`/`--emit-netlist` | **sim netlist = sim RTL**: counter netlist → `TB_COUNT 10` (sama dgn RTL), alu_opt netlist → `y=7 z=19`; DAG 1-driver/N-load + deterministik; unit test 11 + regresi space-separated di maria-tests; full workspace 36 suite EXIT=0 |
-| **4** ✅ | generic tech mapping | LUT cut (n≤6 → LUT6 init), carry chain, AIG dekomposisi, resubstitution (cone fusion) + DCE | **`alu.sv` → LUT 8, CARRY4 2, FF 0** (mux chain `case` → 1 LUT6 per bit); sim tech netlist = sim RTL (alu `2 11 13 9` = RTL, counter `1 2 3 15`); unit test 41 maria-synth; full workspace 40 suite EXIT=0 |
-| **5** ✅ | timing + area | `maria-timing` crate (constraint.rs/timing.rs/area.rs) + constraint `.mcs` + `--timing`/`--constraint` | **WNS/TNS/critical path benar (manual)**: alu `WNS +5.60` (arrival 3.40 = 2.0 in_delay + 0.8 CARRY4 + 0.35 LUT + 0.15 CONCAT + 0.10 BUF); counter `WNS +4.35`, 9 endpoint (8 FF + 1 out); unit test 9 maria-timing + e2e phase5 3; full workspace 42 suite EXIT=0 |
-| **6** ✅ | Liberty (`.lib`) | parser subset → `maria-tech/liberty.rs` → `.mdb` (deterministik, ala `.mvnet`) | `generic.lib` 4 sel (NAND/NOR/INV/DFF) area+timing arc benar; unit test 8 maria-tech (parse + mdb roundtrip); full workspace 42 suite EXIT=0 |
+| **1** ✅ | RTL → SIR | `mivon-sir` (sir.rs/lower.rs/print.rs) + `--dump-sir` | `counter.sv` → SIR node ADD/EQ/MUX + register d/q/clk/rst benar; unit test 9 |
+| **2** ✅ | SIR optimizer | `pass.rs` (SynthPass trait + SynthPipeline + preset + fixed-point) + `opt/` (const_fold, arith, mux, cse, dce) + `--dump-sir-opt`/`--preset` | `counter.sv` 7→5 node (CONCAT fold, NOT push-through-MUX); `alu_opt.sv` `(a&0)|(b&FF)|~~a → a\|b`, `(a+0)+(b*4) → a+(b<<2)`; unit test 29 + 9 mivon-sir; full workspace 34 suite EXIT=0 |
+| **3** ✅ | SIR → generic netlist | `mivon-netlist` crate (net.rs/cell.rs/lower.rs/graph.rs/emit.rs/json.rs) + emit `.mvnet`/`netlist.v`/`netlist.json` + `--dump-netlist`/`--emit-netlist` | **sim netlist = sim RTL**: counter netlist → `TB_COUNT 10` (sama dgn RTL), alu_opt netlist → `y=7 z=19`; DAG 1-driver/N-load + deterministik; unit test 11 + regresi space-separated di mivon-tests; full workspace 36 suite EXIT=0 |
+| **4** ✅ | generic tech mapping | LUT cut (n≤6 → LUT6 init), carry chain, AIG dekomposisi, resubstitution (cone fusion) + DCE | **`alu.sv` → LUT 8, CARRY4 2, FF 0** (mux chain `case` → 1 LUT6 per bit); sim tech netlist = sim RTL (alu `2 11 13 9` = RTL, counter `1 2 3 15`); unit test 41 mivon-synth; full workspace 40 suite EXIT=0 |
+| **5** ✅ | timing + area | `mivon-timing` crate (constraint.rs/timing.rs/area.rs) + constraint `.mcs` + `--timing`/`--constraint` | **WNS/TNS/critical path benar (manual)**: alu `WNS +5.60` (arrival 3.40 = 2.0 in_delay + 0.8 CARRY4 + 0.35 LUT + 0.15 CONCAT + 0.10 BUF); counter `WNS +4.35`, 9 endpoint (8 FF + 1 out); unit test 9 mivon-timing + e2e phase5 3; full workspace 42 suite EXIT=0 |
+| **6** ✅ | Liberty (`.lib`) | parser subset → `mivon-tech/liberty.rs` → `.mdb` (deterministik, ala `.mvnet`) | `generic.lib` 4 sel (NAND/NOR/INV/DFF) area+timing arc benar; unit test 8 mivon-tech (parse + mdb roundtrip); full workspace 42 suite EXIT=0 |
 | **7** | ASIC mapping | boolean → pohon cell 2-input (INV/NAND/NOR/XOR/MUX) | `--preset asic --lib sky130.lib` → netlist cell |
 | **8** | FPGA mapping | LUT/FF/BRAM/DSP inference penuh + P&R (`mimpl`) + STA (`msta`) | `mimpl`/`msta` end-to-end; `msynth --equiv` Z3 pass |
 | **9** | incremental synthesis | MICD `sir.mdb`/`netlist.mdb` + dependency graph → affected region | ubah 1 modul → hanya region itu di-synth ulang |
 
 **Status:** Phase 1 (RTL→SIR), Phase 2 (SIR optimizer), Phase 3 (SIR →
 generic netlist), Phase 4 (generic tech mapping), **Phase 5 (timing +
-area)**, & **Phase 6 (Liberty parser)** selesai — `maria-sir` +
-`maria-synth` (pass manager + 5 pass optimizer + `--dump-sir-opt`/
-`--preset`) + `maria-netlist` (lowering SIR → netlist 1-driver/N-load +
+area)**, & **Phase 6 (Liberty parser)** selesai — `mivon-sir` +
+`mivon-synth` (pass manager + 5 pass optimizer + `--dump-sir-opt`/
+`--preset`) + `mivon-netlist` (lowering SIR → netlist 1-driver/N-load +
 `--dump-netlist`/`--emit-netlist`) + `--tech-map` (LUT cut / CARRY4 /
-resubstitution / DCE, detail di §12) + `maria-timing` (STA `--timing` +
-constraint `.mcs` `--constraint`, detail di §15-16) + `maria-tech/liberty.rs`
+resubstitution / DCE, detail di §12) + `mivon-timing` (STA `--timing` +
+constraint `.mcs` `--constraint`, detail di §15-16) + `mivon-tech/liberty.rs`
 (parser Liberty subset: library/cell/pin/timing arc + `save_mdb`/`load_mdb`
 `.libmdb`, detail di §12). Loop verifikasi tertutup: netlist & netlist
-ter-map yang di-emit **disimulasikan engine Maria** dan hasilnya sama dengan
+ter-map yang di-emit **disimulasikan engine Mivon** dan hasilnya sama dengan
 sim RTL. Fondasi S1 sebelumnya (SYN check + netlist pra-map + `.mvnet` +
 report utilisasi) tetap ada.
 
@@ -802,9 +802,9 @@ fase 4):**
 2. **Initializer port ANSI** — `output reg [7:0] b = 8'h2A` legal di SV tapi
    token `=` tidak di-parse `parse_port_list` → `expected RParen` → module
    gagal parse (E3001). Fix: parser `parse_port_list` membaca `= expr` ke
-   field baru `Port.init_expr` (maria-ast) + elaborator membuat
+   field baru `Port.init_expr` (mivon-ast) + elaborator membuat
    `Process::Initial` (setara `reg b = 8'h2A;`).
-Keduanya di-cover unit test baru di maria-tests
+Keduanya di-cover unit test baru di mivon-tests
 (`test_async_reset_edge_triggers_sequential`, `test_port_ansi_initializer`).
 
 **Exit criteria per phase:** `cargo test --workspace` hijau + e2e contoh di
@@ -830,7 +830,7 @@ endmodule
 
 ```shell
 # 1. Synthesis + dump SIR
-maria synth counter.sv --top counter --dump-sir --emit-mvnet --report-util
+mivon synth counter.sv --top counter --dump-sir --emit-mvnet --report-util
 #    → SIR node ADD/EQ/MUX + register; counter.mvnet; util report
 
 # 2. Constraint
@@ -841,14 +841,14 @@ output_delay 2ns;
 EOF
 
 # 3. Place & Route + 4. STA
-maria mimpl counter.mvnet --constraint counter.mcs --seed 7 --report-timing
-maria msta counter.routed.mvnet --constraint counter.mcs --report-timing counter.timing.rpt
+mivon mimpl counter.mvnet --constraint counter.mcs --seed 7 --report-timing
+mivon msta counter.routed.mvnet --constraint counter.mcs --report-timing counter.timing.rpt
 
-# 5. Gate-level simulation (timing) — engine Maria sendiri
-maria sim counter.synth.v --top counter --sdf counter.synth.sdf -T 1000
+# 5. Gate-level simulation (timing) — engine Mivon sendiri
+mivon sim counter.synth.v --top counter --sdf counter.synth.sdf -T 1000
 
 # 6. Equivalence check (Z3) — RTL vs netlist hasil synth
-maria synth counter.sv --top counter --equiv 20
+mivon synth counter.sv --top counter --equiv 20
 ```
 
 ---
@@ -875,14 +875,14 @@ maria synth counter.sv --top counter --equiv 20
 
 ## 22. Ringkasan
 
-Desain ini memberi Maria **flow synthesis lengkap ala Vivado** dengan
+Desain ini memberi Mivon **flow synthesis lengkap ala Vivado** dengan
 pendekatan yang hemat dan benar-arah:
 
 - **100% reuse elaborator** (`IrDesign`) — width/clock/reset sudah final.
-- **SIR node-based** (`maria-sir`) sebagai IR tengah — fondasi yang memungkinkan
+- **SIR node-based** (`mivon-sir`) sebagai IR tengah — fondasi yang memungkinkan
   optimasi serius tanpa melawan syntax (mengikuti pola Yosys/ABC).
 - **Pass manager + preset** — pipeline terkomposisi, bukan hardcode.
-- **Device abstraction** (`maria-tech`) — Generic/FPGA/ASIC/Custom.
+- **Device abstraction** (`mivon-tech`) — Generic/FPGA/ASIC/Custom.
 - Netlist deterministik ber-traceability (`.mvnet`/`netlist.v`), laporan
   utilisasi & timing ala Vivado, **loop verifikasi tertutup** (sim + Z3 equiv +
   STA).

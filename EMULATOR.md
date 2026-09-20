@@ -1,13 +1,13 @@
-# EMULATOR.md — Maria: Hardware-Software Emulator
+# EMULATOR.md — Mivon: Hardware-Software Emulator
 
-> **Visi**: Maria bukan "QEMU yang ditulis ulang dalam Rust" — itu terlalu kecil.
-> Maria adalah **Hardware-Software Emulator**: mesin virtual dibangun **langsung dari
+> **Visi**: Mivon bukan "QEMU yang ditulis ulang dalam Rust" — itu terlalu kecil.
+> Mivon adalah **Hardware-Software Emulator**: mesin virtual dibangun **langsung dari
 > source HDL user** (RTL adalah machine model-nya), mampu boot dan menjalankan
 > **OS nyata** (Linux/Windows) dari media yang **disediakan user** (ISO/disk/kernel).
-> OS image tidak dibundel Maria.
+> OS image tidak dibundel Mivon.
 
 Status: **Desain** (belum implementasi). Berlaku bersama DESIGN.md, ROADMAP.md,
-SYNTHESIS.md, MARIA-HDL.md, dan AUDIT.md.
+SYNTHESIS.md, MIVON-HDL.md, dan AUDIT.md.
 
 ---
 
@@ -16,20 +16,20 @@ SYNTHESIS.md, MARIA-HDL.md, dan AUDIT.md.
 | Pertanyaan | Jawaban |
 |---|---|
 | Mesin berasal dari mana? | **Source HDL user** (`.mv`/`.sv`/`.v`/`.svh`/`.vh`; VHDL/SystemC menyusul) |
-| OS berasal dari mana? | **User** (ISO/raw image/kernel+initrd/ELF) — Maria tidak menyediakan OS |
+| OS berasal dari mana? | **User** (ISO/raw image/kernel+initrd/ELF) — Mivon tidak menyediakan OS |
 | Engine eksekusi CPU? | **Full Rust** — Interpreter + JIT (Cranelift), tanpa dependensi QEMU |
-| Struktur engine? | **Dua engine terpisah**: Maria RTL Engine + Maria Machine Engine, disatukan lewat **co-simulation** |
+| Struktur engine? | **Dua engine terpisah**: Mivon RTL Engine + Mivon Machine Engine, disatukan lewat **co-simulation** |
 | Akurasi? | **Dual-mode**: `functional` (cepat) ↔ `cycle-accurate` (RTL asli), bisa dipilih per-device |
 | Mode operasi CLI? | `rtl` · `sim` · `emu` · `hybrid` · `coemu` |
 | Target ISA pertama? | **RISC-V** (sumber SoC di repo: `cva6/`, `openc910/`, `opentitan/`) |
 | Pembeda utama vs emulator lain? | **Direct RTL Device** + **debugger lintas-lapisan** (OS → bus → RTL → signal → baris source) |
 | ISO Windows? | Mungkin — bertahap via mesin x86-64 (UEFI/ACPI/APIC), setelah RISC-V/ARM terbukti |
 
-Prinsip inti: **"Berikan RTL-nya. Maria membangun mesin virtual dari hardware tersebut."**
+Prinsip inti: **"Berikan RTL-nya. Mivon membangun mesin virtual dari hardware tersebut."**
 
 ```
                  ┌──────────────────────────────────────┐
-                 │              MARIA                    │
+                 │              MIVON                    │
                  │ Hardware + Software Emulator          │
                  └──────────────────────────────────────┘
                                 │
@@ -42,7 +42,7 @@ Prinsip inti: **"Berikan RTL-nya. Maria membangun mesin virtual dari hardware te
              │                  │                  │
              └──────────────┬───┴──────────────────┘
                             ▼
-                    Maria Machine Model
+                    Mivon Machine Model
                             │
               ┌─────────────┼─────────────┐
               ▼             ▼             ▼
@@ -67,13 +67,13 @@ Prinsip inti: **"Berikan RTL-nya. Maria membangun mesin virtual dari hardware te
 ## 2. Perbedaan Fundamental dengan QEMU
 
 **QEMU** mulai dari model hardware yang sudah ditulis sebagai software (device model
-dalam C). **Maria** mulai dari RTL:
+dalam C). **Mivon** mulai dari RTL:
 
 ```
 RTL (.sv/.v/.svh/.vh/.mv)
       │
       ▼
-Maria HDL Compiler
+Mivon HDL Compiler
       │
       ▼
 Elaborated Hardware
@@ -82,30 +82,30 @@ Elaborated Hardware
 Hardware IR (MHIR)
       │
       ▼
-Maria Emulator
+Mivon Emulator
       │
       ▼
 Real OS
 ```
 
 Jika user punya `cpu.sv`, `cache.sv`, `axi.sv`, `uart.sv`, `plic.sv`, `clint.sv`,
-`memory.sv`, `soc.sv` — Maria **tidak** berkata "saya punya model CPU virtual
-bernama X". Maria berkata: **"Berikan RTL-nya. Saya bangun mesin virtual
+`memory.sv`, `soc.sv` — Mivon **tidak** berkata "saya punya model CPU virtual
+bernama X". Mivon berkata: **"Berikan RTL-nya. Saya bangun mesin virtual
 berdasarkan hardware tersebut."**
 
-Konsekuensi: bug di RTL muncul di Maria; di QEMU tidak akan pernah.
+Konsekuensi: bug di RTL muncul di Mivon; di QEMU tidak akan pernah.
 
 ---
 
 ## 3. Prinsip Desain
 
-1. **OS-agnostic**: Maria tidak membundel OS. Media boot (ISO/raw/kernel) dari user.
+1. **OS-agnostic**: Mivon tidak membundel OS. Media boot (ISO/raw/kernel) dari user.
    Syarat hanya: ISA & machine cocok dengan media.
 2. **HDL-native**: semua device boleh berasal dari RTL user. Device native
    (16550, PLIC, virtio) adalah fallback/percepatan, bukan keharusan.
 3. **Full-Rust**: seluruh engine (termasuk JIT CPU) di Rust/Cranelift. Tidak ada
    dependensi eksekusi ke QEMU.
-4. **Dua engine, jangan satu monster**: Maria RTL Engine (akurasi) dan Maria
+4. **Dua engine, jangan satu monster**: Mivon RTL Engine (akurasi) dan Mivon
    Machine Engine (kecepatan) adalah entitas terpisah, disatukan oleh
    co-simulation. Satu engine yang mencoba melakukan semuanya = resep monster
    compiler yang makan RAM.
@@ -115,11 +115,11 @@ Konsekuensi: bug di RTL muncul di Maria; di QEMU tidak akan pernah.
    resource host lewat lapisan virtual + sandbox.
 7. **Deterministik**: seed tetap → eksekusi identik; replay trace untuk bug.
 8. **Bertahap dari aset yang ada**: reuse cycle-fusion, DAG-parallel, JIT,
-   maria-sir/netlist, parallel/distributed framework.
+   mivon-sir/netlist, parallel/distributed framework.
 
 ---
 
-## 4. MHIR — Maria Hardware IR (Jantung Maria)
+## 4. MHIR — Mivon Hardware IR (Jantung Mivon)
 
 MHIR adalah bagian terpenting. Bukan sekadar netlist — MHIR adalah representasi
 **hardware yang sudah diekstraksi** namun **tetap menunjuk balik ke RTL source**.
@@ -185,19 +185,19 @@ Guest OS → CPU instruction → MMIO → UART → RTL signal → uart.sv:143
 
 | Lapisan | Struktur | Status |
 |---|---|---|
-| AST | `maria-ast` (Design) | ✅ ada |
-| IR elaborasi | `maria-ir` (IrDesign) | ✅ ada |
-| Sintesis/netlist | `maria-sir`, `maria-netlist` | ✅ ada |
-| **MHIR** | `maria-emu::mhir` (baru) — ekstraksi register/device/address-map **+** back-pointer | 🆕 dibangun di atas IrDesign + netlist |
+| AST | `mivon-ast` (Design) | ✅ ada |
+| IR elaborasi | `mivon-ir` (IrDesign) | ✅ ada |
+| Sintesis/netlist | `mivon-sir`, `mivon-netlist` | ✅ ada |
+| **MHIR** | `mivon-emu::mhir` (baru) — ekstraksi register/device/address-map **+** back-pointer | 🆕 dibangun di atas IrDesign + netlist |
 
 MHIR tidak menggantikan IrDesign — ia **meninggikan** abstraksinya: IrDesign
 tetap dipakai RTL Engine; MHIR dipakai Machine Engine dan debugger.
 
 ---
 
-## 5. Maria Machine Definition
+## 5. Mivon Machine Definition
 
-Dari MHIR, Maria membangun **Machine Definition**:
+Dari MHIR, Mivon membangun **Machine Definition**:
 
 ```
 Machine
@@ -233,7 +233,7 @@ struct MachineDef {
 
 ## 6. Dua Jalur Eksekusi — Dua Engine Terpisah
 
-### Jalur A — RTL-accurate (Maria RTL Engine)
+### Jalur A — RTL-accurate (Mivon RTL Engine)
 
 Untuk: debugging RTL, verification, waveform, assertion, timing, X/Z propagation,
 signal tracing, cycle accuracy.
@@ -245,22 +245,22 @@ CPU → ALU → Register File → Cache → AXI → DRAM   (cycle-by-cycle)
 
 = engine event-driven/cycle-based yang sudah ada (`SimulationEngine`, Tier A/B).
 
-### Jalur B — OS Emulation (Maria Machine Engine)
+### Jalur B — OS Emulation (Mivon Machine Engine)
 
 Untuk: Linux, Windows, bootloader, kernel, driver, filesystem, networking, aplikasi.
 
 ```
 RTL → Elaboration → Hardware Extraction → Executable Hardware Model
-      → Maria Machine → Guest OS
+      → Mivon Machine → Guest OS
 ```
 
-Maria **tidak** menjalankan setiap gate RTL untuk setiap instruksi CPU. RTL
+Mivon **tidak** menjalankan setiap gate RTL untuk setiap instruksi CPU. RTL
 `always_ff @(posedge clk)` diekstraksi menjadi model eksekusi yang jauh lebih cepat.
 
 ### 6.1 Co-Simulation
 
 ```
-                 Maria
+                 Mivon
                    │
         ┌──────────┴──────────┐
         ▼                     ▼
@@ -279,23 +279,23 @@ peripheral lain `execution_mode = native` — dalam satu run yang sama.
 
 ## 7. Engine Detail
 
-### 7.1 Maria RTL Engine
+### 7.1 Mivon RTL Engine
 
 | Tier | Deskripsi | Status |
 |---|---|---|
 | **Tier A** | Event-driven, IEEE 1800 13-region scheduler | ✅ ada |
 | **Tier B** | Cycle-based compiled 2-state per clock domain (reuse cycle-fusion + DAG + JIT eval) | 🆕 |
 
-### 7.2 Maria Machine Engine — CPU 4 mode
+### 7.2 Mivon Machine Engine — CPU 4 mode
 
 ```
-Maria CPU Engine
+Mivon CPU Engine
 │
 ├── Interpreter   — paling lambat, paling mudah di-debug
 │                    instruction → decode → execute → memory → interrupt
 │                    untuk: debugging CPU, bring-up, verification
 ├── JIT           — untuk Linux/Windows
-│                    guest instructions → Maria Decoder → IR → Native Code
+│                    guest instructions → Mivon Decoder → IR → Native Code
 │                    (x86-64/ARM host; Cranelift)
 ├── RTL-linked    — CPU itu sendiri berasal dari RTL (cycle-accurate, Tier A)
 └── Hybrid        — JIT untuk komputasi, RTL-linked saat masuk hardware tertentu
@@ -304,7 +304,7 @@ Maria CPU Engine
 **Hybrid adalah senjata utama**:
 
 ```
-              Maria
+              Mivon
                  │
        ┌─────────┴─────────┐
        │                   │
@@ -320,21 +320,21 @@ Maria CPU Engine
              OS state
 ```
 
-OS menjalankan kernel + aplikasi (JIT). Saat masuk MMIO → UART RTL, Maria
+OS menjalankan kernel + aplikasi (JIT). Saat masuk MMIO → UART RTL, Mivon
 **berpindah ke model RTL** untuk device tersebut, lalu kembali ke JIT.
 
-#### RTL-linked — implementasi saat ini (mode 3, `maria emu --rtl-cpu`)
+#### RTL-linked — implementasi saat ini (mode 3, `mivon emu --rtl-cpu`)
 
 Mesin (CPU) dibangun **murni dari RTL user (.sv/.v)** — bukan model software
-Rust ala QEMU. Register file, ALU, dan kontrol dieksekusi oleh Maria RTL
+Rust ala QEMU. Register file, ALU, dan kontrol dieksekusi oleh Mivon RTL
 Engine (Tier A); sisi Rust hanya menyediakan memori + orkestrasi bus.
 
-- `RtlLinkedCpu` (`crates/maria-emu/src/cpu/rtl.rs`) — implementasi `CpuCore`
+- `RtlLinkedCpu` (`crates/mivon-emu/src/cpu/rtl.rs`) — implementasi `CpuCore`
   yang mengkompilasi file RTL CPU (parser + elaborator), meresolusi port bus,
   dan menggerakkan clock. Kontrak bus wajib (picorv32-style):
   `clk, resetn, mem_valid, mem_instr, mem_addr[31:0], mem_wdata[31:0],
   mem_wstrb[3:0], mem_ready, mem_rdata[31:0], trap`.
-- `Machine` (`crates/maria-emu/src/machine.rs`) — loop eksekusi: step CPU RTL
+- `Machine` (`crates/mivon-emu/src/machine.rs`) — loop eksekusi: step CPU RTL
   + layani transaksi bus (`mem_valid`/`mem_ready`, strobe per-byte untuk
   store) sampai trap (ebreak/ecall/ilegal) atau `max_steps`.
 - Driver clock: clk ditulis **di dalam time step** via event terjadwal
@@ -350,7 +350,7 @@ Engine (Tier A); sisi Rust hanya menyediakan memori + orkestrasi bus.
 Contoh nyata (picorv32.v dari GitHub, `examples/rtl/`):
 
 ```shell
-maria emu examples/rtl/rv32_bus_wrapper.sv examples/rtl/picorv32.v \
+mivon emu examples/rtl/rv32_bus_wrapper.sv examples/rtl/picorv32.v \
   --config emu_ram.meu \
   --rtl-cpu examples/rtl/rv32_bus_wrapper.sv --rtl-cpu examples/rtl/picorv32.v \
   --rtl-cpu-top rv32_bus_wrapper --run --max-steps 200
@@ -438,9 +438,9 @@ CPU (JIT)                Dispatcher              RTL Engine (Tier A/B)
 | `coemu` | Hardware + OS co-emulation penuh | Keduanya (co-sim penuh) |
 
 ```shell
-maria run --mode rtl design.mv
-maria run --mode hybrid soc.mv --disk linux.img
-maria run --mode coemu --rtl soc.sv --firmware opensbi.bin --disk rootfs.img
+mivon run --mode rtl design.mv
+mivon run --mode hybrid soc.mv --disk linux.img
+mivon run --mode coemu --rtl soc.sv --firmware opensbi.bin --disk rootfs.img
 ```
 
 ---
@@ -448,7 +448,7 @@ maria run --mode coemu --rtl soc.sv --firmware opensbi.bin --disk rootfs.img
 ## 9. Device ABI
 
 OS tidak peduli hardware berasal dari SystemVerilog — OS hanya melihat CPU,
-Memory, PCI, UART, Storage, Network, Interrupt, Timer. Maka Maria mendefinisikan
+Memory, PCI, UART, Storage, Network, Interrupt, Timer. Maka Mivon mendefinisikan
 **kontrak device**:
 
 ```
@@ -469,7 +469,7 @@ Device
 ```
 UART
  ├── RTL implementation   — uart.sv, via Direct RTL Device
- ├── Maria software model — implementasi Rust native (fallback)
+ ├── Mivon software model — implementasi Rust native (fallback)
  └── host terminal        — terhubung ke console host (pty/stdio/socket)
 ```
 
@@ -487,9 +487,9 @@ pub trait Device: Send {
 
 ---
 
-## 10. Direct RTL Device — Pembeda Utama Maria
+## 10. Direct RTL Device — Pembeda Utama Mivon
 
-Fitur yang menjadi pembeda utama. User punya `uart.sv`, Maria mendeteksi
+Fitur yang menjadi pembeda utama. User punya `uart.sv`, Mivon mendeteksi
 `module uart`, user mendefinisikan:
 
 ```
@@ -497,7 +497,7 @@ MMIO: 0x10000000
 IRQ:  5
 ```
 
-Maria membangun:
+Mivon membangun:
 
 ```
 Guest CPU
@@ -521,8 +521,8 @@ Bukan sekadar "UART emulator" — tetapi:
 OS → virtual bus → actual RTL-derived device
 ```
 
-Implementasi: anotasi RTL `(* maria_region = "mmio", base = "0x10000000",
-size = "0x1000" *)` + `(* maria_irq = "5" *)`, atau bagian `[emu]` di project
+Implementasi: anotasi RTL `(* mivon_region = "mmio", base = "0x10000000",
+size = "0x1000" *)` + `(* mivon_irq = "5" *)`, atau bagian `[emu]` di project
 file (lihat §18).
 
 ---
@@ -553,7 +553,7 @@ Shared memory
 ### 11.3 Alur akses
 
 ```
-Guest Physical Address → Maria MMU → Memory Map → RAM / Device
+Guest Physical Address → Mivon MMU → Memory Map → RAM / Device
 ```
 
 - RAM → host mmap (zero-copy, byte-addressable, ukuran konfigurable).
@@ -569,7 +569,7 @@ Guest Physical Address → Maria MMU → Memory Map → RAM / Device
 ### 12.1 Linux (target pertama)
 
 ```
-Maria
+Mivon
  ├── RISC-V CPU RTL (cva6/C910) — atau picorv32/Ibex untuk bare-metal
  ├── AXI
  ├── CLINT
@@ -625,7 +625,7 @@ Guest
  ↓
 Virtual Device
  ↓
-Maria Sandbox
+Mivon Sandbox
  ↓
 Host Resource
 ```
@@ -633,7 +633,7 @@ Host Resource
 Contoh filesystem:
 
 ```
-Guest NTFS → Virtual Disk → Maria Storage Backend → qcow-like / raw / sparse image
+Guest NTFS → Virtual Disk → Mivon Storage Backend → qcow-like / raw / sparse image
 ```
 
 Host tetap terlindungi: guest hanya melihat device virtual; akses host
@@ -655,8 +655,8 @@ Machine
 ```
 
 ```shell
-maria snapshot create
-maria snapshot restore
+mivon snapshot create
+mivon snapshot restore
 ```
 
 Snapshot juga alat debugging RTL:
@@ -680,7 +680,7 @@ Deterministic Mode
 ```
 
 ```shell
-maria replay trace.bin
+mivon replay trace.bin
 ```
 
 Trace berisi: instruksi, MMIO, interrupt, DMA, timer events. Replay mengulang
@@ -690,8 +690,8 @@ bug secara deterministik — bernilai tinggi untuk hardware verification.
 
 ## 16. Time Engine
 
-Maria tidak boleh bergantung hanya pada wall-clock host. Gunakan
-**Maria Virtual Time**:
+Mivon tidak boleh bergantung hanya pada wall-clock host. Gunakan
+**Mivon Virtual Time**:
 
 ```
 0, 1 ns, 2 ns, 3 ns, ...
@@ -714,16 +714,16 @@ Virtual Time
 
 ---
 
-## 17. Cross-Layer Debugger — Identitas Maria
+## 17. Cross-Layer Debugger — Identitas Mivon
 
-Fitur paling "Maria": hubungan debugging end-to-end:
+Fitur paling "Mivon": hubungan debugging end-to-end:
 
 ```
 Linux application → syscall → driver → MMIO → PCI/AXI → RTL module
 → always_ff → signal
 ```
 
-Debugger Maria menunjukkan:
+Debugger Mivon menunjukkan:
 
 ```
 Guest:    PID 421
@@ -741,13 +741,13 @@ lapisan (instruksi CPU, MMIO, bus transaction, RTL signal).
 
 ---
 
-## 18. Arsitektur Software Maria
+## 18. Arsitektur Software Mivon
 
 ```
-maria/
+mivon/
 │
 ├── compiler/      lexer, parser, elaborator, resolver, optimizer
-├── hdl/           sv, verilog, systemverilog, maria_hdl
+├── hdl/           sv, verilog, systemverilog, mivon_hdl
 ├── ir/            hwir (MHIR), rtl-ir, machine-ir
 ├── emulator/      cpu, memory, bus, interrupt, timer, scheduler
 ├── devices/       uart, virtio, pci, storage, network, usb, display
@@ -762,32 +762,32 @@ maria/
 
 | Konsep desain | Crate/area yang ada | Status |
 |---|---|---|
-| compiler + hdl | `maria-parser`, `maria-compiler`, `maria-elaboration` | ✅ |
-| ir → hwir (MHIR) | `maria-ir` + **baru** `maria-emu::mhir` | 🆕 |
-| ir → rtl-ir | `maria-sir`, `maria-netlist` | ✅ |
-| emulator (rtl) | `maria-simulator` (engine, scheduler) | ✅ |
-| emulator (machine) | **baru** `maria-emu` (cpu, memory, bus, devices) | 🆕 |
+| compiler + hdl | `mivon-parser`, `mivon-compiler`, `mivon-elaboration` | ✅ |
+| ir → hwir (MHIR) | `mivon-ir` + **baru** `mivon-emu::mhir` | 🆕 |
+| ir → rtl-ir | `mivon-sir`, `mivon-netlist` | ✅ |
+| emulator (rtl) | `mivon-simulator` (engine, scheduler) | ✅ |
+| emulator (machine) | **baru** `mivon-emu` (cpu, memory, bus, devices) | 🆕 |
 | jit | Cranelift (`jit` feature) | ✅ (perlu decoder ISA) |
-| rtl_runtime | `maria-simulator` (state, value, event) | ✅ |
-| debug | `maria-simulator::debugger` | ✅ (perlu lapisan lintas) |
+| rtl_runtime | `mivon-simulator` (state, value, event) | ✅ |
+| debug | `mivon-simulator::debugger` | ✅ (perlu lapisan lintas) |
 | snapshot | checkpoint (`SIM-17/18`) + **baru** machine snapshot | 🆕 |
 
-Aturan 1 file = 1 tanggung jawab tetap berlaku; `maria-emu` adalah crate baru
-yang memakai API `maria-api`/`maria-simulator`/`maria-sir`.
+Aturan 1 file = 1 tanggung jawab tetap berlaku; `mivon-emu` adalah crate baru
+yang memakai API `mivon-api`/`mivon-simulator`/`mivon-sir`.
 
 ---
 
 ## 19. Antarmuka Antar-Lapisan (API ringkas)
 
 ```rust
-// crate baru: crates/maria-emu/
-pub mod mhir;      // Maria Hardware IR: ekstraksi + back-pointer
+// crate baru: crates/mivon-emu/
+pub mod mhir;      // Mivon Hardware IR: ekstraksi + back-pointer
 pub mod machine;   // MachineDef, builder dari MHIR
 pub mod mem;       // MemoryPort, RamRegion, MmioBackend, softmmu/TLB
 pub mod cpu;       // CpuCore trait, Interpreter, JIT (Cranelift), RtlLinked
 pub mod devices;   // Device trait + 16550, PLIC, CLINT, virtio-mmio, virtio-blk/net
 pub mod cosim;     // co-simulation dispatcher (MMIO trap, DMA notify)
-pub mod time;      // Maria Virtual Time
+pub mod time;      // Mivon Virtual Time
 pub mod sandbox;   // sandbox resource access
 pub mod snapshot;  // machine snapshot create/restore
 pub mod replay;    // trace + deterministic replay
@@ -827,22 +827,22 @@ pub struct Emulator {
 ## 20. CLI & Project File
 
 ```shell
-maria run --mode rtl design.mv
-maria run --mode sim soc.sv -T 1_000_000
-maria run --mode emu --soc cva6 --kernel vmlinux --initrd rootfs.cpio
-maria run --mode hybrid soc.mv --disk linux.img
-maria run --mode coemu --rtl soc.sv --firmware opensbi.bin --disk rootfs.img
+mivon run --mode rtl design.mv
+mivon run --mode sim soc.sv -T 1_000_000
+mivon run --mode emu --soc cva6 --kernel vmlinux --initrd rootfs.cpio
+mivon run --mode hybrid soc.mv --disk linux.img
+mivon run --mode coemu --rtl soc.sv --firmware opensbi.bin --disk rootfs.img
 
-maria emu --dump-memory-map chip.maria
-maria emu --dump-dtb chip.maria
-maria snapshot create --tag booted
-maria snapshot restore --tag booted
-maria replay trace.bin
+mivon emu --dump-memory-map chip.mivon
+mivon emu --dump-dtb chip.mivon
+mivon snapshot create --tag booted
+mivon snapshot restore --tag booted
+mivon replay trace.bin
 ```
 
 Konfigurasi emulator = **file TOML terpisah** (default ekstensi `.meu`),
-dimuat via `--config` — **BUKAN** section di project file `.maria`
-(ekstensi/direktori `.maria` dipakai MICD dan file list — tidak boleh bentrok):
+dimuat via `--config` — **BUKAN** section di project file `.mivon`
+(ekstensi/direktori `.mivon` dipakai MICD dan file list — tidak boleh bentrok):
 
 ```toml
 # soc.meu
@@ -870,10 +870,10 @@ irq = 5
 ```
 
 ```shell
-maria emu --config soc.meu rtl/ ...
+mivon emu --config soc.meu rtl/ ...
 
 # Direct RTL CPU (mode 3) — mesin dari RTL .sv/.v, bukan interpreter:
-maria emu wrapper.sv picorv32.v --config emu_ram.meu \
+mivon emu wrapper.sv picorv32.v --config emu_ram.meu \
   --rtl-cpu wrapper.sv --rtl-cpu picorv32.v --rtl-cpu-top rv32_bus_wrapper \
   --run --max-steps 10000
 ```
@@ -882,20 +882,20 @@ maria emu wrapper.sv picorv32.v --config emu_ram.meu \
 
 ## 20.5 Status Implementasi (2026-08-16)
 
-**R0 — SEBAGIAN SELESAI ✅** (crate `maria-emu`, CLI `maria emu`):
+**R0 — SEBAGIAN SELESAI ✅** (crate `mivon-emu`, CLI `mivon emu`):
 
 | Item R0 | Status |
 |---|---|
-| `maria-emu` crate (mhir: types/backptr/extract + dump) | ✅ 18 unit test |
+| `mivon-emu` crate (mhir: types/backptr/extract + dump) | ✅ 18 unit test |
 | Ekstraksi clock/reset/register (FF inference)/memory/device | ✅ |
 | Back-pointer instance (line/col) + signal (scan source) | ✅ |
 | `apply_address_map` (`--addr NAME=BASE:SIZE`, match instance/module) | ✅ |
-| CLI `maria emu --dump-mhir / --dump-memory-map` | ✅ |
+| CLI `mivon emu --dump-mhir / --dump-memory-map` | ✅ |
 | Config emulator file TOML terpisah (`.meu`, `--config`) — top/ram/devices/seed | ✅ 7 unit test |
 | Memory subsystem: `MemoryPort` + `RamRegion` (mmap) + `MemoryMap` decode | ✅ 8 unit test |
 | ELF loader (ELF32/64 LE, PT_LOAD + bss) ke MemoryPort | ✅ 6 unit test |
 | CLI `--load-elf` + `--dump-memory` (hex dump) + `--config` | ✅ |
-| Anotasi `(* maria_region *)` / `(* maria_irq *)` dari AST | ⏳ R0.5 |
+| Anotasi `(* mivon_region *)` / `(* mivon_irq *)` dari AST | ⏳ R0.5 |
 | CPU interpreter RISC-V32 (R2) — `cpu/riscv32.rs`: RV32IM + Zicsr, trap/
   interrupt berprioritas/mret, 13+ test end-to-end | ✅ |
 | **Direct RTL CPU (mode 3, §7.2)** — `cpu/rtl.rs` `RtlLinkedCpu` + `machine.rs`
@@ -919,7 +919,7 @@ maria emu wrapper.sv picorv32.v --config emu_ram.meu \
   `test_rtl_cpu_irq_timer`) | ✅ interrupt device (UART + timer) |
 | Co-sim bus cycle-accurate + mode `hybrid` | ⏳ |
 
-**Bug fix maria utama (global)**:
+**Bug fix mivon utama (global)**:
 1. `flatten_instances` mengonsumsi `top.sub_instances` tanpa mengembalikan →
    `IrDesign.top.sub_instances` selalu kosong → hierarchy tree (melab `--tree`,
    debugger, GUI outline) kosong dan distributed partitioner selalu
@@ -960,7 +960,7 @@ maria emu wrapper.sv picorv32.v --config emu_ram.meu \
    `0x6c65746e`; test vendor utuh.
 
 Verifikasi: `cargo test --workspace` **2659 test pass, 0 fail** (18 skip,
-termasuk 87 test `maria-emu`: e2e picorv32 RTL + e2e MMIO UART console
+termasuk 87 test `mivon-emu`: e2e picorv32 RTL + e2e MMIO UART console
 store/read + e2e interrupt device UART (bit 3) + timer device-initiated
 (bit 4) + MULH sign-extension + x86 INC/DEC OF).
 
@@ -977,7 +977,7 @@ Jalur boot yang benar (bukan MBR hybrid):
 → cdboot baca boot file (bi_file=667, 31662 B) via AH=42 blok 2048
 → LZMA decompress kernel → GRUB kernel pmode` → Linux (⏳, butuh JIT).
 
-Perbaikan bug + fitur sesi ini (maria-emu, `maria emu --boot-iso`):
+Perbaikan bug + fitur sesi ini (mivon-emu, `mivon emu --boot-iso`):
 
 | Item | Status |
 |---|---|
@@ -990,7 +990,7 @@ Perbaikan bug + fitur sesi ini (maria-emu, `maria emu --boot-iso`):
 | `X86Cpu.console_output()` di-wire → `MachineResult.console` — BIOS output (INT 10h teletype `"GRUB "`) kini tampil di CLI | ✅ fix, 1 test |
 | Mirror **VGA text buffer** (0xB8000+) di `write8/16/32` + `vga_text()` (untuk console pasca-pmode/kernel) | ✅ baru |
 | `iso_boot.meu` RAM 32 MB → **2 GB** (GRUB tulis ~1.06 GB selama decompress) | ✅ config |
-| `MARIA_NO_ANIM=1` — nonaktifkan animasi pipeline terminal (untuk session gdb/profiling) | ✅ guard |
+| `MIVON_NO_ANIM=1` — nonaktifkan animasi pipeline terminal (untuk session gdb/profiling) | ✅ guard |
 | `[profile.prof]` (inherits release, `debug=2`) — biner cepat + info Dwarf penuh untuk gdb membaca state guest | ✅ Cargo |
 
 Profil dengan **gdb** (sampling, `prof` build): thread emulasi tunggal,
@@ -1018,7 +1018,7 @@ Dari profil gdb/tracex, diterapkan 2 optimasi di hot path:
 Hasil terukur (`tracex compare` cuman sulit karena tracex belum final; ukur
 langsung wall-time): **200M step boot ISO = 31.1s → 21.4-23.0s (~1.4-1.5x)**,
 9.3M instr/s (release LTO). Verifikasi: seluruh suite hijau (**2683 pass**,
-maria-emu 97 test).
+mivon-emu 97 test).
 
 ### tracex (CATATAN.md) — hasil uji dengan sudo
 
@@ -1031,9 +1031,9 @@ maria-emu 97 test).
   atau filter thread running.
 - `tracex profile` ⚠️ — mode dev; ringkasan tidak muncul walau child selesai
   (sumo wait 60s). `tracex run/analyze/replay/query` jalan (syscall-level).
-- `tracex analyze maria.trx` ✅ — breakdown syscall (mmap 30, dll).
+- `tracex analyze mivon.trx` ✅ — breakdown syscall (mmap 30, dll).
 
-Verifikasi: `cargo test --workspace` pass (maria-emu **97 test**, +10 baru).
+Verifikasi: `cargo test --workspace` pass (mivon-emu **97 test**, +10 baru).
 
 ### Investigasi crash GRUB biosdisk trampolin (2026-09-08)
 
@@ -1045,7 +1045,7 @@ Verifikasi: `cargo test --workspace` pass (maria-emu **97 test**, +10 baru).
 (alih-alih return CALL @0x424fdbd3 yang disimpan di `[0xf75c]`) → eksekusi
 region NOL (`00 00` = `add [al]`,al? — opcode 0x00) selamanya, pc walk 2 B/step.
 
-**Bukti** (`MARIA_X86_DBG` + `MARIA_X86_CALLS`, env-gated di `X86Cpu::step`/
+**Bukti** (`MIVON_X86_DBG` + `MIVON_X86_CALLS`, env-gated di `X86Cpu::step`/
 handler call/ret):
 - Epilogue 0x915d-0x9163 pop 6 reg (edi/esi/ebx/eax/ecx/ebp) + ret; slot stack
   berisi DATA (`0x4c42430a` "CBL\n", `0x4f4d2e53` "S.MO") bukan register simpanan
@@ -1064,8 +1064,8 @@ handler call/ret):
   (push FLAGS/CS/IP, clear IF) + dispatch ke handler guest; IVT kosong →
   stub host (perilaku lama). Ini semantik x86 yang benar — GRUB yang
   meng-install vektor sendiri akan bekerja.
-- Instrumentasi debug env-gated `MARIA_X86_DBG` (per-step state: pc/cs/ip/
-  pmode/cr0/sp/gpr + 8 byte kode) dan `MARIA_X86_CALLS` (call/ret + return
+- Instrumentasi debug env-gated `MIVON_X86_DBG` (per-step state: pc/cs/ip/
+  pmode/cr0/sp/gpr + 8 byte kode) dan `MIVON_X86_CALLS` (call/ret + return
   address) — siap dipakai untuk sesi lanjutan.
 - `X86Disk::read_bytes`, prefetch instruksi, bulk memory (lihat §Optimasi).
 
@@ -1094,17 +1094,17 @@ MHIR → Memory/Bus → CPU interpreter → device model → Linux boot
 
 | Fase | Isi | Milestone / bukti sukses |
 |---|---|---|
-| **R0** | **MHIR** (`maria-emu::mhir`): ekstraksi register/device/address-map dari IrDesign+netlist + back-pointer source; anotasi `(* maria_region *)`; `[emu]` parse | `--dump-memory-map` benar; bare-metal ELF jalan di cva6 lewat Tier A |
+| **R0** | **MHIR** (`mivon-emu::mhir`): ekstraksi register/device/address-map dari IrDesign+netlist + back-pointer source; anotasi `(* mivon_region *)`; `[emu]` parse | `--dump-memory-map` benar; bare-metal ELF jalan di cva6 lewat Tier A |
 | **R1** | **Memory/Bus**: `mem::RamRegion` (mmap), `MemoryPort`, decode bus; ELF loader | Bare-metal ELF jalan; akses RAM zero-copy |
 | **R2** | **CPU interpreter** (RISC-V32/64, benar dulu) + `CpuCore` trait; CLINT/PLIC + UART native; boot flow OpenSBI; DTB builder; virtio-mmio + virtio-blk | ✅ RV32IM+Zicsr interpreter (riscv32.rs); ✅ RTL-linked CPU (mode 3, picorv32 boot bare-metal); ⏳ RV64 + vmlinux/initrd boot di cva6 |
 | **R3** | **JIT** (Tier C): basic-block translation via Cranelift + softmmu/TLB + MMIO trap + interrupt delivery | Boot Linux < 30 s; `$` shell; `uname -a`; ISO Linux RISC-V boot |
 | **R4** | **RTL device bridge** (Direct RTL Device end-to-end): UART RTL via bus co-sim; Tier B (cycle-based compiled) untuk peripheral RTL | ✅ store+read `0x10000000` → `uart_console.sv` RTL → host console + status register (`rv32_soc`, 4 test e2e); ✅ interrupt device UART bit 3 + timer bit 4 device-initiated (picorv32 `ENABLE_IRQ` → handler `PROGADDR_IRQ` → `eoi` ack → `retirq`, console "AB"/"T"); ⏳ mode `hybrid` |
-| **R5** | **Deterministic replay** + snapshot penuh (machine state); Virtual Time lengkap | `maria replay trace.bin` reproduksi bug; snapshot boot < 1 s |
+| **R5** | **Deterministic replay** + snapshot penuh (machine state); Virtual Time lengkap | `mivon replay trace.bin` reproduksi bug; snapshot boot < 1 s |
 | **R6** | **Windows/UEFI**: mesin x86-64 (translation ISA ketiga) + chipset (PIC/APIC/ACPI minimal) → phase bootloader → kernel → device init → Safe Mode | Windows bootloader + kernel (functional); desktop = R6 lanjutan |
 | **R7** | **Full hybrid co-emulation**: multi-core SMP, per-region accuracy, distribusi lintas host, VHDL/SystemC frontend | SMP Linux boot; mode `coemu` penuh; SoC VHDL boot |
 
 **Catatan scope**: R0–R4 adalah jalur kritis (Linux RISC-V + Direct RTL Device —
-identitas Maria). R5–R7 pararel opsional. Windows (**R6**) = investasi terbesar,
+identitas Mivon). R5–R7 pararel opsional. Windows (**R6**) = investasi terbesar,
 baru realistis setelah JIT terbukti di RISC-V dan ARM64.
 
 ---
@@ -1118,7 +1118,7 @@ baru realistis setelah JIT terbukti di RISC-V dan ARM64.
 | Translation CPU sulit (trap, privilege, atomics) | R3 molor | Interpreter benar dulu, translate per-block bertahap; test differential vs Tier A |
 | Interrupt/timing OS sensitif | Hang/gagal boot | CLINT tick berbasis instruksi; verifikasi bertahap: bare-metal → initramfs → full Linux |
 | SoC RTL kompleks (cva6) tak ter-elaborasi penuh | R0 tersendat | Target bergantian: picorv32 (✅) → Ibex → cva6; subset yang dibutuhkan boot |
-| Sandbox bocor (guest akses host langsung) | Keamanan | Semua akses host lewat `maria-emu::sandbox` + izin eksplisit; audit |
+| Sandbox bocor (guest akses host langsung) | Keamanan | Semua akses host lewat `mivon-emu::sandbox` + izin eksplisit; audit |
 | Non-determinisme (wall-clock, host timer) | Replay gagal | Virtual Time murni + seed; host hanya untuk I/O |
 | ISO x86 = scope besar | Windows molor | Eksplisit di R6; jalur alternatif: Linux RISC-V + bare-metal menutup mayoritas verifikasi produk |
 
@@ -1137,15 +1137,15 @@ baru realistis setelah JIT terbukti di RISC-V dan ARM64.
 
 ---
 
-## 24. Kaitannya dengan Fitur Maria yang Ada
+## 24. Kaitannya dengan Fitur Mivon yang Ada
 
-| Aset maria | Dipakai untuk |
+| Aset mivon | Dipakai untuk |
 |---|---|
 | `SimulationEngine` (13-region scheduler) | RTL Engine (Tier A), backend MMIO co-sim |
 | `ClockDomainAnalysis` + cycle fusion | Tier B (per-domain eval) |
 | `SimulationDag` + parallel eval | Topological order + paralelisme Tier B |
 | Cranelift JIT (`jit` feature) | JIT CPU + JIT eval Tier B |
-| `maria-sir` / netlist (FF inference) | MHIR extraction, deteksi core, memory map |
+| `mivon-sir` / netlist (FF inference) | MHIR extraction, deteksi core, memory map |
 | Distributed sim (master/slave) | R7: SMP lintas host |
 | Foreign loader (VHPI/PLI/DPI, dlopen) | SystemC bridge (R7) |
 | `picorv32` compile+sim ✅, `cva6/`, `openc910/` di repo | Target uji CPU / boot Linux |
@@ -1156,7 +1156,7 @@ baru realistis setelah JIT terbukti di RISC-V dan ARM64.
 
 ## 25. Keputusan yang Sudah Diambil
 
-1. **Maria = Hardware-Software Emulator**, bukan "QEMU dalam Rust".
+1. **Mivon = Hardware-Software Emulator**, bukan "QEMU dalam Rust".
 2. **OS tidak dibundel** — media boot (ISO/raw/kernel) sepenuhnya dari user.
 3. **Dua engine terpisah** (RTL Engine + Machine Engine) + co-simulation;
    `execution_mode` per-device (`RTL | JIT | native`).
@@ -1166,7 +1166,7 @@ baru realistis setelah JIT terbukti di RISC-V dan ARM64.
 7. **5 mode operasi**: `rtl` · `sim` · `emu` · `hybrid` · `coemu`.
 8. **Dual-mode akurasi**: functional ↔ cycle-accurate, per-device.
 9. **Sandbox**: OS tamu tidak pernah menyentuh host langsung.
-10. **Deterministik**: seed + Virtual Time + `maria replay trace.bin`.
+10. **Deterministik**: seed + Virtual Time + `mivon replay trace.bin`.
 11. **Multi-ISA bertahap**: RISC-V (R0–R4) → ARM64 → x86-64 (R6, jalur Windows).
 12. **Urutan implementasi**: MHIR → Memory/Bus → CPU interpreter → device model
     → Linux boot → JIT → RTL device bridge → deterministic replay → Windows/UEFI

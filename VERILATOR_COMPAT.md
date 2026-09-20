@@ -1,27 +1,27 @@
-# Verilator Compatibility Guide — Maria RTL Simulator
+# Verilator Compatibility Guide — Mivon RTL Simulator
 
 **Tanggal:** 19 Juli 2026 (diperbarui)
 **Versi:** 0.3
-**Standar:** Verilator 5.x + Maria 0.2.9
+**Standar:** Verilator 5.x + Mivon 0.2.9
 
 ---
 
 ## Ringkasan
 
-Maria mendukung **~70% dari Verilator-compatible subset** untuk simulasi behavioral.
-Panduan ini membantu transisi kode antara Maria dan Verilator.
+Mivon mendukung **~70% dari Verilator-compatible subset** untuk simulasi behavioral.
+Panduan ini membantu transisi kode antara Mivon dan Verilator.
 
 **Karakteristik:**
-- Maria: interpreted AST, 4-state (X/Z), behavioral simulation
+- Mivon: interpreted AST, 4-state (X/Z), behavioral simulation
 - Verilator: compiled C++, 2-state, cycle-accurate, linting + synthesis
 
 ---
 
-## 1. Fitur yang Kompatibel (Maria + Verilator)
+## 1. Fitur yang Kompatibel (Mivon + Verilator)
 
 ### 1.1 Module & Port
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `module` | ✅ | ✅ | ANSI port list |
 | `input`/`output` | ✅ | ✅ | |
@@ -32,7 +32,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.2 Data Types
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `logic` | ✅ | ✅ | |
 | `reg` | ✅ | ✅ | |
@@ -51,7 +51,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.3 Operators
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | Arithmetic `+`,`-`,`*`,`/`,`%` | ✅ | ✅ | |
 | Power `**` | ✅ | ✅ | |
@@ -68,7 +68,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.4 Process Blocks
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `always_ff @(posedge clk)` | ✅ | ✅ | Sequential logic |
 | `always_comb` | ✅ | ✅ | Combinational logic |
@@ -80,7 +80,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.5 Generate
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `generate if` | ✅ | ✅ | |
 | `generate for` | ✅ | ✅ | |
@@ -90,7 +90,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.6 Function & Task
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `function` | ✅ | ✅ | Synthesizable subset |
 | `task` | ✅ | ⚠️ | Verilator: limited (no delay) |
@@ -101,7 +101,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.7 System Functions
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `$clog2` | ✅ | ✅ | |
 | `$bits` | ✅ | ✅ | |
@@ -118,7 +118,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.8 Assertions (Immediate)
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `assert (expr)` | ✅ | ✅ | Immediate assert |
 | `assume (expr)` | ✅ | ✅ | Immediate assume |
@@ -126,7 +126,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.9 DPI-C
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `import "DPI-C" function` | ✅ | ✅ | |
 | `import "DPI-C" task` | ✅ | ✅ | |
@@ -134,7 +134,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.10 Package
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `package`/`endpackage` | ✅ | ✅ | |
 | `import pkg::*` | ✅ | ✅ | |
@@ -144,7 +144,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.11 Interface
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `interface`/`endinterface` | ✅ | ✅ | |
 | `modport` | ✅ | ✅ | |
@@ -152,7 +152,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ### 1.12 Other
 
-| Fitur | Maria | Verilator | Catatan |
+| Fitur | Mivon | Verilator | Catatan |
 |-------|-------|-----------|---------|
 | `constraint` | ✅ | ⚠️ | Verilator: random stabilization only |
 | `rand`/`randc` | ✅ | ⚠️ | Verilator: rand only, no constraint solver |
@@ -167,9 +167,9 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 
 ## 2. Fitur yang TIDAK Kompatibel
 
-### 2.1 Maria punya, Verilator tidak
+### 2.1 Mivon punya, Verilator tidak
 
-| Fitur | Maria | Verilator | Alternatif |
+| Fitur | Mivon | Verilator | Alternatif |
 |-------|-------|-----------|------------|
 | `#delay` | ✅ | ❌ | Remove delays for synthesis |
 | `@(event)` | ✅ | ⚠️ | `always_ff @(posedge clk)` |
@@ -190,9 +190,9 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 | `time`/`realtime` | ✅ | ❌ | Not synthesizable |
 | `real` | ✅ | ⚠️ | Limited support |
 
-### 2.2 Verilator punya, Maria tidak
+### 2.2 Verilator punya, Mivon tidak
 
-| Fitur | Verilator | Maria | Catatan |
+| Fitur | Verilator | Mivon | Catatan |
 |-------|-----------|-------|---------|
 | `// verilator ...` | ✅ | ❌ | Verilator directives |
 | `$countones` | ✅ | ✅ | Population count |
@@ -218,7 +218,7 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 ### 3.1 Sequential Logic (always_ff)
 
 ```systemverilog
-// ✅ Kompatibel dengan Maria + Verilator
+// ✅ Kompatibel dengan Mivon + Verilator
 module counter #(parameter WIDTH = 4)(
     input clk,
     input rst_n,
@@ -236,7 +236,7 @@ endmodule
 ### 3.2 Combinational Logic (always_comb)
 
 ```systemverilog
-// ✅ Kompatibel dengan Maria + Verilator
+// ✅ Kompatibel dengan Mivon + Verilator
 module mux4to1(
     input [1:0] sel,
     input [7:0] a, b, c, d,
@@ -257,7 +257,7 @@ endmodule
 ### 3.3 Generate
 
 ```systemverilog
-// ✅ Kompatibel dengan Maria + Verilator
+// ✅ Kompatibel dengan Mivon + Verilator
 module adder_tree #(parameter WIDTH = 8, parameter LEVELS = 3)(
     input [WIDTH-1:0] in [0:(1<<LEVELS)-1],
     output [WIDTH-1:0] out
@@ -274,7 +274,7 @@ endmodule
 ### 3.4 Function
 
 ```systemverilog
-// ✅ Kompatibel dengan Maria + Verilator
+// ✅ Kompatibel dengan Mivon + Verilator
 module alu(
     input [7:0] a, b,
     input [2:0] op,
@@ -303,7 +303,7 @@ endmodule
 ### 3.5 Package
 
 ```systemverilog
-// ✅ Kompatibel dengan Maria + Verilator
+// ✅ Kompatibel dengan Mivon + Verilator
 package my_pkg;
     localparam WIDTH = 8;
     typedef enum logic [1:0] {IDLE, RUN, DONE} state_t;
@@ -341,7 +341,7 @@ end
 ### 4.2 Latch Inference
 
 ```systemverilog
-// ⚠️ Maria: ok, Verilator: warns
+// ⚠️ Mivon: ok, Verilator: warns
 always_comb begin
     if (en)
         out = data;
@@ -360,7 +360,7 @@ end
 ### 4.3 Incomplete Sensitivity List
 
 ```systemverilog
-// ❌ Maria: ok (manual), Verilator: error
+// ❌ Mivon: ok (manual), Verilator: error
 always @(a) begin
     out = a + b;  // b not in sensitivity list
 end
@@ -374,7 +374,7 @@ end
 ### 4.4 Mixed-width Operations
 
 ```systemverilog
-// ⚠️ Maria: wraps, Verilator: truncates
+// ⚠️ Mivon: wraps, Verilator: truncates
 wire [7:0] a = 8'hFF;
 wire [3:0] b = a;  // Truncated to 4'hF
 
@@ -385,9 +385,9 @@ wire [7:0] b = {4'b0, a[3:0]};  // Explicit
 
 ---
 
-## 5. Perbandingan Maria vs Verilator
+## 5. Perbandingan Mivon vs Verilator
 
-| Aspek | Maria | Verilator |
+| Aspek | Mivon | Verilator |
 |-------|-------|-----------|
 | **Tujuan** | Behavioral simulation | Linting + synthesis |
 | **Kecepatan** | 1x (interpreted) | 100-1000x (compiled) |
@@ -406,7 +406,7 @@ wire [7:0] b = {4'b0, a[3:0]};  // Explicit
 
 ## 6. Tips Transisi
 
-### Dari Maria ke Verilator:
+### Dari Mivon ke Verilator:
 1. Hapus `#delay` dan `@(event)` (kecuali `@(posedge clk)`)
 2. Ganti `always` → `always_ff`/`always_comb`
 3. Hapus `$display`/`$finish` (testbench only)
@@ -414,7 +414,7 @@ wire [7:0] b = {4'b0, a[3:0]};  // Explicit
 5. Ganti `initial` → testbench module
 6. Periksa sensitivity list (`always_comb` auto-sensitivity)
 
-### Dari Verilator ke Maria:
+### Dari Verilator ke Mivon:
 1. Tambah `#delay` untuk timing control
 2. Tambah `initial` block untuk stimulus
 3. Tambah `$display`/`$finish` untuk monitoring
@@ -427,7 +427,7 @@ wire [7:0] b = {4'b0, a[3:0]};  // Explicit
 ## 7. Contoh Testbench yang Kompatibel
 
 ```systemverilog
-// ✅ Kompatibel dengan Maria + Verilator (testbench)
+// ✅ Kompatibel dengan Mivon + Verilator (testbench)
 module tb_counter;
     reg clk;
     reg rst_n;
@@ -448,7 +448,7 @@ module tb_counter;
 
     always #5 clk = ~clk;
 
-    // Maria: uses $display; Verilator: uses lint
+    // Mivon: uses $display; Verilator: uses lint
     // initial $monitor("time=%0t count=%h", $time, count);
 endmodule
 ```
@@ -458,7 +458,7 @@ endmodule
 ## 8. Daftar Verilator Directives (untuk Referensi)
 
 ```systemverilog
-// Verilator-specific directives (tidak didukung Maria)
+// Verilator-specific directives (tidak didukung Mivon)
 // verilator lint_off WIDTH
 // verilator lint_on WIDTH
 // verilator coverage_off
@@ -484,8 +484,8 @@ endmodule
 | Testbench | ❌ ~20% kompatibel |
 | UVM | ❌ ~10% kompatibel |
 
-**Kesimpulan:** Maria cocok untuk simulasi behavioral RTL yang juga bisa di-lint oleh Verilator. Untuk testbench, Maria memiliki fitur lengkap yang tidak tersedia di Verilator.
+**Kesimpulan:** Mivon cocok untuk simulasi behavioral RTL yang juga bisa di-lint oleh Verilator. Untuk testbench, Mivon memiliki fitur lengkap yang tidak tersedia di Verilator.
 
 ---
 
-*Panduan ini dibuat berdasarkan Maria v0.2.9 dan Verilator 5.x (18 Juli 2026)*
+*Panduan ini dibuat berdasarkan Mivon v0.2.9 dan Verilator 5.x (18 Juli 2026)*

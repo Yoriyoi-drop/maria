@@ -1,6 +1,6 @@
-# Maria ERD
+# Mivon ERD
 
-> Peta arsitektur / data-flow Maria — **reverse engineering langsung dari source code**.
+> Peta arsitektur / data-flow Mivon — **reverse engineering langsung dari source code**.
 > Setiap entity wajib punya bukti (file:line, symbol, function). Yang merupakan
 > deduksi diberi label `Evidence: inferred`; yang ditemukan eksplisit diberi
 > `Evidence: direct`. Bagian yang tidak dapat dipastikan diberi `Confidence: low`.
@@ -13,15 +13,15 @@
 ## 1. Scope
 
 Dokumen ini memetakan **entity, ownership, dependency, relationship, lifecycle,
-persistence, dan aliran data** seluruh codebase Maria (RTL simulator
+persistence, dan aliran data** seluruh codebase Mivon (RTL simulator
 SystemVerilog + toolchain sintesis). Cakupan:
 
-- 19 crate workspace + package binary `maria` (`src/main.rs`, `src/cli.rs`).
+- 19 crate workspace + package binary `mivon` (`src/main.rs`, `src/cli.rs`).
 - Pipeline compiler: discovery → preprocess → lex → parse → AST → index →
   elaborasi → IR → simulasi / sintesis.
-- MICD (Maria Incremental Compilation Database) dan lapisan cache pipeline.
-- Arsitektur enterprise (`maria-env`: GlobalEnv + 12 context).
-- Tooling CLI (11 tool), GUI (egui), formal verification, LSP, VPI, Maria HDL (`.mv`).
+- MICD (Mivon Incremental Compilation Database) dan lapisan cache pipeline.
+- Arsitektur enterprise (`mivon-env`: GlobalEnv + 12 context).
+- Tooling CLI (11 tool), GUI (egui), formal verification, LSP, VPI, Mivon HDL (`.mv`).
 
 Tidak termasuk: test-only code sebagai arsitektur produksi (ditandai bila relevan),
 artifact hasil run (`.vcd`/`.fst` di root repo), dan direktori third-party
@@ -35,46 +35,46 @@ Phase 7–9 belum (ASIC mapping, FPGA P&R penuh, incremental synthesis).
 ## 2. Codebase Map
 
 ```
-Maria (workspace root, package binary `maria` + 19 crates)
+Mivon (workspace root, package binary `mivon` + 19 crates)
 ├── src/                              ← CLI binary-only (migrasi monorepo selesai)
 │   ├── main.rs                       ← entrypoint CLI, run()/run_fast(), dispatch tool
-│   └── cli.rs                        ← MariaCmd enum + struct args per tool
+│   └── cli.rs                        ← MivonCmd enum + struct args per tool
 ├── crates/
-│   ├── maria-core                    ← fondasi: Symbol, LogicVec/LogicVal, config, diagnostics, arena, checksum
-│   ├── maria-ast                     ← AST: Design/Module/Port/Expr/Stmt/DataType + const_eval + inline
-│   ├── maria-ir                      ← IR: IrDesign/IrModule/Process/IrStmt/IrExpr (serde utk MICD)
-│   ├── maria-parser                  ← Preprocessor, Lexer, Parser (Pratt)
-│   ├── maria-elaboration             ← Elaborator (AST→IR), const fold, generate, flatten, OptStats
-│   ├── maria-compiler                ← CompileSession, MICD, cache pipeline, frontend (discovery/io/module_index), hir, scheduler
-│   ├── maria-simulator               ← SimulationEngine, state, eval, scheduler, waveform, debugger, vpi, sdf, jit, uvm, parallel
-│   ├── maria-mv                      ← bahasa Maria HDL (.mv) → transpile SV
-│   ├── maria-formal                  ← FormalEngine (BMC + Z3, feature "formal")
-│   ├── maria-sir                     ← SIR (RTL lowering) untuk sintesis
-│   ├── maria-netlist                 ← Netlist generik 1-driver/N-load
-│   ├── maria-synth                   ← SynthPipeline, pass optimizer, techmap, SYN check
-│   ├── maria-timing                  ← STA (TimingReport), Constraint (.mcs), AreaReport
-│   ├── maria-tech                    ← TechArch (generic/fpga), Liberty parser (.lib)
-│   ├── maria-env                     ← GlobalEnv + 12 context, LSP, plugin
-│   ├── maria-tools                   ← 11 CLI tool (minspect/mlint/melab/msim/mcov/mwave/mfmt/mprof/mcheck/mbench/synth)
-│   ├── maria-gui                     ← GUI egui (bin maria-gui, feature "gui")
-│   ├── maria-api                     ← API publik + re-export maria_* (compile_str/simulate_str/...)
-│   └── maria-tests                   ← suite test terpadu
+│   ├── mivon-core                    ← fondasi: Symbol, LogicVec/LogicVal, config, diagnostics, arena, checksum
+│   ├── mivon-ast                     ← AST: Design/Module/Port/Expr/Stmt/DataType + const_eval + inline
+│   ├── mivon-ir                      ← IR: IrDesign/IrModule/Process/IrStmt/IrExpr (serde utk MICD)
+│   ├── mivon-parser                  ← Preprocessor, Lexer, Parser (Pratt)
+│   ├── mivon-elaboration             ← Elaborator (AST→IR), const fold, generate, flatten, OptStats
+│   ├── mivon-compiler                ← CompileSession, MICD, cache pipeline, frontend (discovery/io/module_index), hir, scheduler
+│   ├── mivon-simulator               ← SimulationEngine, state, eval, scheduler, waveform, debugger, vpi, sdf, jit, uvm, parallel
+│   ├── mivon-mv                      ← bahasa Mivon HDL (.mv) → transpile SV
+│   ├── mivon-formal                  ← FormalEngine (BMC + Z3, feature "formal")
+│   ├── mivon-sir                     ← SIR (RTL lowering) untuk sintesis
+│   ├── mivon-netlist                 ← Netlist generik 1-driver/N-load
+│   ├── mivon-synth                   ← SynthPipeline, pass optimizer, techmap, SYN check
+│   ├── mivon-timing                  ← STA (TimingReport), Constraint (.mcs), AreaReport
+│   ├── mivon-tech                    ← TechArch (generic/fpga), Liberty parser (.lib)
+│   ├── mivon-env                     ← GlobalEnv + 12 context, LSP, plugin
+│   ├── mivon-tools                   ← 11 CLI tool (minspect/mlint/melab/msim/mcov/mwave/mfmt/mprof/mcheck/mbench/synth)
+│   ├── mivon-gui                     ← GUI egui (bin mivon-gui, feature "gui")
+│   ├── mivon-api                     ← API publik + re-export mivon_* (compile_str/simulate_str/...)
+│   └── mivon-tests                   ← suite test terpadu
 ├── configs/*.toml                    ← konfigurasi (compiler/simulasi/coverage/debug)
 ├── test/ examples/                   ← fixture SV, golden artifact (mvnet, tech, rpt)
 ├── uvm_macros.svh                    ← macro UVM
-└── .maria/database/                  ← MICD (runtime, tidak di-commit)
+└── .mivon/database/                  ← MICD (runtime, tidak di-commit)
 ```
 
 Dependency antar crate (dari `Cargo.toml` masing-masing):
 
 ```
-maria-core ← maria-ast ← maria-ir
-maria-ast ← maria-parser ← maria-elaboration ← maria-compiler
-maria-ir ← maria-simulator (juga ← maria-parser/elaboration/compiler)
-maria-core+ir ← maria-sir ← maria-netlist ← maria-timing ← maria-tools
-maria-sir/netlist/tech ← maria-synth
-maria-core ← maria-tech
-maria-compiler/... ← maria-env ← maria-api ← maria-tools/tests/main
+mivon-core ← mivon-ast ← mivon-ir
+mivon-ast ← mivon-parser ← mivon-elaboration ← mivon-compiler
+mivon-ir ← mivon-simulator (juga ← mivon-parser/elaboration/compiler)
+mivon-core+ir ← mivon-sir ← mivon-netlist ← mivon-timing ← mivon-tools
+mivon-sir/netlist/tech ← mivon-synth
+mivon-core ← mivon-tech
+mivon-compiler/... ← mivon-env ← mivon-api ← mivon-tools/tests/main
 ```
 
 ---
@@ -86,17 +86,17 @@ R=runtime (proses), S=session (per CompileSession), T=thread-local.
 
 | Entity | Kind | Source (file:line) | Persistence | Owner | Lifecycle |
 |--------|------|--------------------|-------------|-------|-----------|
-| `Symbol` | struct (u32 interned) | `maria-core/src/intern/string_intern.rs:19` | — | Global `StringTable` | R (global, proses) |
+| `Symbol` | struct (u32 interned) | `mivon-core/src/intern/string_intern.rs:19` | — | Global `StringTable` | R (global, proses) |
 | `StringTable` | struct (DashMap+RwLock) | `string_intern.rs:88` | — | global static | R |
-| `LogicVal` | enum (0/1/X/Z) | `maria-core/src/logic.rs:112` | — | value type | R |
+| `LogicVal` | enum (0/1/X/Z) | `mivon-core/src/logic.rs:112` | — | value type | R |
 | `LogicVec` | struct (bits+width) | `logic.rs:25` | — | value type (sim state / AST) | R |
-| `MariaConfig` | struct (TOML) | `maria-core/src/config.rs:19` | configs/*.toml | ConfigContext / CLI | P (file) + R |
+| `MivonConfig` | struct (TOML) | `mivon-core/src/config.rs:19` | configs/*.toml | ConfigContext / CLI | P (file) + R |
 | `Diagnostic` | struct | `diagnostics/diagnostic.rs:1070` | MICD diagnostics.mdb | DiagSink | R (+P via MICD) |
 | `DiagSink` | struct (collector) | `diagnostic.rs:1260` | — | Parser/Elaborator/Engine | S |
 | `DiagCode`/`DiagLevel` | enum | `diagnostic.rs:118` / `:44` | — | — | R |
 | `TerminalEmitter` | struct | `diagnostics/emitter.rs:50` | — | CLI | R |
 | `GlobalDiagnosticEngine` | struct | `diagnostics/global.rs:42` | — | global | R |
-| `Design` (AST) | struct | `maria-ast/src/types.rs:11` | MICD objects/<hash>.ast | CompileSession.prev_designs | S + P |
+| `Design` (AST) | struct | `mivon-ast/src/types.rs:11` | MICD objects/<hash>.ast | CompileSession.prev_designs | S + P |
 | `Module` (AST) | struct | `types.rs:100` | dalam Design | Design | S + P |
 | `Port` (AST) | struct | `types.rs:131` | dalam Design | Module | S + P |
 | `ClassDecl` | struct | `types.rs:52` | dalam Design | Design | S + P |
@@ -104,11 +104,11 @@ R=runtime (proses), S=session (per CompileSession), T=thread-local.
 | `Interface` | struct | `types.rs:121` | dalam Design | Design | S + P |
 | `ModuleInstance` (AST) | struct | `types.rs:776` | dalam Design | Module | S + P |
 | `GenerateBlock`/`GenerateItem` | struct/enum | `types.rs:603/608` | dalam Design | Module | S + P |
-| `Expr` (AST) | enum | `maria-ast/src/expr.rs:4` | dalam Design | node pemilik | S + P |
+| `Expr` (AST) | enum | `mivon-ast/src/expr.rs:4` | dalam Design | node pemilik | S + P |
 | `Value` (AST literal) | enum | `expr.rs:128` | dalam Design | Expr | S + P |
-| `Stmt` (AST) | enum | `maria-ast/src/stmt.rs:44` | dalam Design | node pemilik | S + P |
+| `Stmt` (AST) | enum | `mivon-ast/src/stmt.rs:44` | dalam Design | node pemilik | S + P |
 | `AlwaysBlock`/`SensitivityList` | struct | `stmt.rs:5/25` | dalam Design | Module | S + P |
-| `IrDesign` | struct | `maria-ir/src/ir.rs:11` | MICD elaborate IR (bincode) | CompileSession / Engine | S + P |
+| `IrDesign` | struct | `mivon-ir/src/ir.rs:11` | MICD elaborate IR (bincode) | CompileSession / Engine | S + P |
 | `IrModule` | struct | `ir.rs:161` | dalam IrDesign | IrDesign | S + P |
 | `SignalInfo` | struct | `ir.rs:224` | dalam IrDesign | IrModule | S + P |
 | `Process` (IR) | enum | `ir.rs:311` | dalam IrDesign | IrModule | S + P |
@@ -117,14 +117,14 @@ R=runtime (proses), S=session (per CompileSession), T=thread-local.
 | `IrInstance` | struct (Arc port/param map) | `ir.rs:288` | dalam IrDesign | IrModule | S + P |
 | `IrClassDef`/`IrClassMethod` | struct | `ir.rs:87/127` | dalam IrDesign | IrDesign | S + P |
 | `SignalId`/`ObjId`/`ClassId` | type alias (usize) | `ir.rs:8-9` | — | index semantics | R |
-| `Preprocessor` | struct | `maria-parser/src/preprocessor.rs:24` | combined source di MICD | CompileSession (rayon) | S + P |
-| `Token` | enum | `maria-parser/src/lexer.rs:5` | cache lexer/ (TokenRecord) | parser | S + P |
-| `Lexer`/`FastLexer` | struct | `lexer.rs:397` / `maria-compiler/src/frontend/lexer.rs:15` | — | CompileSession | S |
-| `Parser` | struct | `maria-parser/src/lib.rs:21` | cache parser/ | CompileSession | S |
-| `Elaborator` | struct | `maria-elaboration/src/elaborator/mod.rs:214` | statistik → cache optimize/expression/ | CompileSession | S |
+| `Preprocessor` | struct | `mivon-parser/src/preprocessor.rs:24` | combined source di MICD | CompileSession (rayon) | S + P |
+| `Token` | enum | `mivon-parser/src/lexer.rs:5` | cache lexer/ (TokenRecord) | parser | S + P |
+| `Lexer`/`FastLexer` | struct | `lexer.rs:397` / `mivon-compiler/src/frontend/lexer.rs:15` | — | CompileSession | S |
+| `Parser` | struct | `mivon-parser/src/lib.rs:21` | cache parser/ | CompileSession | S |
+| `Elaborator` | struct | `mivon-elaboration/src/elaborator/mod.rs:214` | statistik → cache optimize/expression/ | CompileSession | S |
 | `ElaborateMode` | enum | `elaborator/mod.rs:209` | — | caller | R |
-| `OptStats`/`OptimizeSnapshot` | struct | `maria-elaboration/src/util/opt_stats.rs:20/74` | cache optimize/+expression/ | Elaborator | S + P |
-| `CompileSession` | struct | `maria-compiler/src/frontend/compile_session.rs:72` | via MICD | CLI/GUI/tools | S |
+| `OptStats`/`OptimizeSnapshot` | struct | `mivon-elaboration/src/util/opt_stats.rs:20/74` | cache optimize/+expression/ | Elaborator | S + P |
+| `CompileSession` | struct | `mivon-compiler/src/frontend/compile_session.rs:72` | via MICD | CLI/GUI/tools | S |
 | `SessionConfig` | struct | `compile_session.rs:34` | — | CompileSession | S |
 | `SessionTiming` | struct | `compile_session.rs:117` | stats.mdb (profil) | CompileSession | S + P |
 | `FileDiscovery`/`FileEntry` | struct | `frontend/discovery.rs:44/11` | — | CompileSession | S |
@@ -134,7 +134,7 @@ R=runtime (proses), S=session (per CompileSession), T=thread-local.
 | `CacheKey`/`CacheStore` | enum/struct | `cache_manager.rs:21/81` | — | CacheManager | S |
 | `AstCache`/`HirCache`/`DepCache` | struct | `cache/ast_cache.rs:13`, `hir_cache.rs:10`, `dep_cache.rs:14` | — | CacheManager | S |
 | `FilesystemCache` | struct | `cache/remote.rs:198` | disk (remote cache) | CacheManager | P (opsional) |
-| `MicdDatabase` | struct (object DB) | `micd/mod.rs:152` | `.maria/database/` | CompileSession.micd | P |
+| `MicdDatabase` | struct (object DB) | `micd/mod.rs:152` | `.mivon/database/` | CompileSession.micd | P |
 | `FileMeta`/`FileStatus` | struct/enum | `micd/metadata.rs:27/14` | state/<pid>/metadata.mdb | MicdDatabase | P |
 | `FileGraph` | struct | `micd/graph.rs:16` | graph.mdb | MicdDatabase | P |
 | `VerifyResult`/`CheckResult` | struct | `micd/verify.rs:86/56` | verify.mdb | MicdDatabase | P |
@@ -146,42 +146,42 @@ R=runtime (proses), S=session (per CompileSession), T=thread-local.
 | `MdbWriter`/`MdbReader` | struct | `micd/format.rs:156/305` | format MDB1 | MicdDatabase | P |
 | `CacheLayer` | struct | `micd/cache/mod.rs:61` | cache/<pid>/<category>/ | MicdDatabase.cache_layer | P |
 | `CacheCategory` | enum (21 kategori) | `micd/cache/category.rs:18` | — | CacheLayer | P |
-| `SimulationEngine` | struct | `maria-simulator/src/simulator/engine/mod.rs:90` | — (state R) | CLI/GUI/tools | R |
+| `SimulationEngine` | struct | `mivon-simulator/src/simulator/engine/mod.rs:90` | — (state R) | CLI/GUI/tools | R |
 | `SimulationLimit` | enum | `engine/mod.rs:57` | — | Engine | R |
 | `SimulationState` | struct | `simulator/state.rs:12` | cache simulation/ (ringkasan) | Engine | R |
 | `SimulationArena`/`ArenaGuard` | struct | `simulator/arena.rs:84/58` | — | Engine (thread-local ctor) | R |
 | `RegionEvent`/`EventKind`/`EventRegion` | struct/enum | `simulator/types.rs:122/82/89` | — | Engine.events | R |
 | `ForkGroup`/`Continuation`/`FlowControl` | struct/enum | `types.rs:161/174/182` | — | Engine | R |
 | `Breakpoint`/`Watchpoint`/`StateSnapshot` | enum/struct | `types.rs:23/44/74` | — | Debugger/Engine | R |
-| `Debugger` | struct | `maria-simulator/src/debugger/mod.rs:9` | — | CLI --debug | R |
+| `Debugger` | struct | `mivon-simulator/src/debugger/mod.rs:9` | — | CLI --debug | R |
 | `VcdWriter` | struct | `waveform/vcd.rs:8` | `<top>.vcd` | Engine | P (artifact) |
 | `FstWaveWriter` | struct | `waveform/fst.rs:11` | `<top>.fst` | Engine | P (artifact) |
 | `CsvWaveWriter` | struct | `waveform/csv.rs:17` | `.csv` | Engine | P (artifact) |
 | `SignalStats` | struct | `waveform/statistics.rs:39` | — | Engine | R |
 | `SimulationDag` | struct | `scheduler/sim_dag.rs:341` | — | engine (analisis) | R |
 | `ClockDomainAnalysis`/`CdcAnalysis` | struct | `scheduler/clock_domain.rs:54` / `cdc.rs:150` | — | engine/tool | R |
-| `GlobalEnv` | struct (12 Arc context) | `maria-env/src/env/global/global_env.rs:21` | — | CLI (for_cli) | R (proses) |
-| `ConfigContext` | struct | `maria-env/src/env/config/config.rs:28` | config | GlobalEnv | R |
-| `WorkspaceContext` | struct | `maria-env/src/env/workspace/workspace.rs` | — | GlobalEnv | R |
-| `CompilerContext` | struct | `maria-env/src/env/compiler/compiler.rs:14` | — | GlobalEnv | R |
-| `DatabaseContext` | struct | `maria-env/src/env/database/database.rs:9` | MICD | GlobalEnv | R |
-| `CacheContext` | struct | `maria-env/src/env/cache/cache.rs:6` | .maria/cache | GlobalEnv | R |
-| `SimulationContext`/`SimulationKernel` | struct | `maria-env/src/env/simulation/simulation.rs:8` / `kernel.rs:26` | — | GlobalEnv | R |
-| `SirModule`/`SirNode`/`SirRegister` | struct | `maria-sir/src/sir.rs:208/148/179` | dump SIR (.sir text) | synth | S + P |
-| `Netlist` | struct | `maria-netlist/src/net.rs:60` | `.mvnet`/`netlist.v`/`.json` | synth | P |
-| `CellInstance`/`CellKind` | struct/enum | `maria-netlist/src/cell.rs:218/44` | dalam Netlist | Netlist | P |
-| `SynthPipeline`/`SynthPass` | struct/trait | `maria-synth/src/pass.rs:54/48` | — | synth tool | S |
-| `TechMapResult` | struct | `maria-synth/src/techmap.rs:228` | `.tech.v/.json/.mvnet` | synth | P |
-| `SynCheck` | struct | `maria-synth/src/subset.rs:38` | — | synth | S |
-| `TimingReport`/`Endpoint` | struct | `maria-timing/src/timing.rs:81/53` | `<top>.timing.rpt` | synth --timing | P |
-| `Constraint`/`ClockSpec` | struct | `maria-timing/src/constraint.rs:40/22` | `.mcs` | synth --constraint | P (input) |
-| `AreaReport` | struct | `maria-timing/src/area.rs:21` | `<top>.area.rpt` | synth | P |
-| `LibertyLibrary`/`LibertyCell` | struct | `maria-tech/src/liberty.rs:109/78` | `.lib` → `.libmdb` | synth asic | P |
-| `TechArch` trait | trait | `maria-tech/src/arch.rs:21` | — | synth | R |
-| `MariaApp` | struct (egui) | `maria-gui/src/app.rs:25` | state serde? (gui) | bin maria-gui | R |
-| `FormalEngine` | struct | `maria-formal/src/lib.rs:60` | — | `--equiv`/BMC | R |
-| `mv::Expr`/`mv::Stmt` (Maria HDL) | enum | `maria-mv/src/ast.rs:41/126` | — | transpile | S |
-| LSP backend | module | `maria-env/src/lsp/backend.rs` | — | feature "lsp" | R |
+| `GlobalEnv` | struct (12 Arc context) | `mivon-env/src/env/global/global_env.rs:21` | — | CLI (for_cli) | R (proses) |
+| `ConfigContext` | struct | `mivon-env/src/env/config/config.rs:28` | config | GlobalEnv | R |
+| `WorkspaceContext` | struct | `mivon-env/src/env/workspace/workspace.rs` | — | GlobalEnv | R |
+| `CompilerContext` | struct | `mivon-env/src/env/compiler/compiler.rs:14` | — | GlobalEnv | R |
+| `DatabaseContext` | struct | `mivon-env/src/env/database/database.rs:9` | MICD | GlobalEnv | R |
+| `CacheContext` | struct | `mivon-env/src/env/cache/cache.rs:6` | .mivon/cache | GlobalEnv | R |
+| `SimulationContext`/`SimulationKernel` | struct | `mivon-env/src/env/simulation/simulation.rs:8` / `kernel.rs:26` | — | GlobalEnv | R |
+| `SirModule`/`SirNode`/`SirRegister` | struct | `mivon-sir/src/sir.rs:208/148/179` | dump SIR (.sir text) | synth | S + P |
+| `Netlist` | struct | `mivon-netlist/src/net.rs:60` | `.mvnet`/`netlist.v`/`.json` | synth | P |
+| `CellInstance`/`CellKind` | struct/enum | `mivon-netlist/src/cell.rs:218/44` | dalam Netlist | Netlist | P |
+| `SynthPipeline`/`SynthPass` | struct/trait | `mivon-synth/src/pass.rs:54/48` | — | synth tool | S |
+| `TechMapResult` | struct | `mivon-synth/src/techmap.rs:228` | `.tech.v/.json/.mvnet` | synth | P |
+| `SynCheck` | struct | `mivon-synth/src/subset.rs:38` | — | synth | S |
+| `TimingReport`/`Endpoint` | struct | `mivon-timing/src/timing.rs:81/53` | `<top>.timing.rpt` | synth --timing | P |
+| `Constraint`/`ClockSpec` | struct | `mivon-timing/src/constraint.rs:40/22` | `.mcs` | synth --constraint | P (input) |
+| `AreaReport` | struct | `mivon-timing/src/area.rs:21` | `<top>.area.rpt` | synth | P |
+| `LibertyLibrary`/`LibertyCell` | struct | `mivon-tech/src/liberty.rs:109/78` | `.lib` → `.libmdb` | synth asic | P |
+| `TechArch` trait | trait | `mivon-tech/src/arch.rs:21` | — | synth | R |
+| `MivonApp` | struct (egui) | `mivon-gui/src/app.rs:25` | state serde? (gui) | bin mivon-gui | R |
+| `FormalEngine` | struct | `mivon-formal/src/lib.rs:60` | — | `--equiv`/BMC | R |
+| `mv::Expr`/`mv::Stmt` (Mivon HDL) | enum | `mivon-mv/src/ast.rs:41/126` | — | transpile | S |
+| LSP backend | module | `mivon-env/src/lsp/backend.rs` | — | feature "lsp" | R |
 
 > Entity bertipe "dalam Design/IrDesign" di-persist secara agregat (satu blob
 > bincode per file AST / satu blob IrDesign per top), bukan per-node.
@@ -245,12 +245,12 @@ erDiagram
     WAVEFORM ||--o{ ARTIFACT : "VCD/FST/CSV file"
     GLOBAL_ENV ||--o{ ENV_CONTEXT : "12 Arc context (config/workspace/compiler/...)"
     ENV_CONTEXT ||--o| COMPILE_SESSION : "CompilerContext wraps CompileSession"
-    IR_DESIGN ||--|| SIR_MODULE : "maria-sir lowering (LowerResult)"
+    IR_DESIGN ||--|| SIR_MODULE : "mivon-sir lowering (LowerResult)"
     SIR_MODULE ||--o{ SIR_NODE : "SirNode DAG"
-    SIR_MODULE ||--|| NETLIST : "maria-netlist lowering"
+    SIR_MODULE ||--|| NETLIST : "mivon-netlist lowering"
     NETLIST ||--o{ CELL_INSTANCE : "CellInstance DAG"
     SYNTH_PIPELINE ||--o{ NETLIST : "optimizes (pass manager)"
-    NETLIST ||--o| TIMING_REPORT : "STA (maria-timing)"
+    NETLIST ||--o| TIMING_REPORT : "STA (mivon-timing)"
     NETLIST ||--o| AREA_REPORT : "area analysis"
     LIBERTY_LIBRARY ||--o{ LIBERTY_CELL : "liberty.rs parser (.lib)"
 ```
@@ -271,11 +271,11 @@ Pola ownership aktual (dari field/container):
 | `LogicVec` | heap / `SimulationArena` ctor (thread_local `LOGICVEC_CTOR`) | nilai (pemilik field) | eval engine | — (in-MICD sbg bagian IR) | arena reset / drop |
 | `Design` (AST) | `Parser.parse_design` (per file, rayon) | `CompileSession.prev_designs` (HashMap, clone utk cache) → merge → `Elaborator.design` | elaborator (tidak mengubah AST, membaca) | MICD `serialize_design` (bincode) | `clear_cache()` / compile baru |
 | `IrDesign` | `Elaborator.elaborate` / MICD `restore_elaborate_ir` | `CompileSession.cached_ir_design` → dipindah ke `SimulationEngine.design` | engine (membaca) | MICD `store_elaborate_ir` (bincode) | compile baru / `clear_cache()` |
-| `MicdDatabase` | `MicdDatabase::open*` (CLI, main.rs:702-716) | `CompileSession.micd` (Option) | `save_micd`, `attach_micd` | dir `.maria/database/` | `clear_cache()`, GC, schema bump |
+| `MicdDatabase` | `MicdDatabase::open*` (CLI, main.rs:702-716) | `CompileSession.micd` (Option) | `save_micd`, `attach_micd` | dir `.mivon/database/` | `clear_cache()`, GC, schema bump |
 | `CacheLayer` | `MicdDatabase` (best-effort) | `MicdDatabase.cache_layer` | `CachePopulator` + tools (`put`/`get`) | `cache/<pid>/` | `run_gc`, `--cache-clear` |
 | `SimulationState` | `SimulationState::new(&IrDesign)` | `SimulationEngine.state` | engine (scheduler/eval) | ringkasan → cache simulation/ | end simulasi |
 | `GlobalEnv` | `for_cli` / `GlobalEnv::minimal` | main.rs | context accessor | — | `env::shutdown` |
-| `Netlist`/`CellInstance` | `maria-netlist` lowering | tool synth (struct) | pass optimizer | `.mvnet`/`netlist.v`/`.json` | run ulang synth |
+| `Netlist`/`CellInstance` | `mivon-netlist` lowering | tool synth (struct) | pass optimizer | `.mvnet`/`netlist.v`/`.json` | run ulang synth |
 
 Pola tersembunyi:
 - **`Arc`**: `IrInstance.port_map/param_map/type_param_map` (`ir.rs:288`) — dibagi antar flatten; `GlobalEnv` ke-12 context (`global_env.rs:21`); `RemoteCacheBackend` di `CacheManager`.
@@ -300,7 +300,7 @@ SOURCE_FILE → FileDiscovery → Preprocessor (rayon, per file)
    → Elaborator (AST→IR: const fold, generate, flatten, param resolve)
    → IR_DESIGN
    → SimulationEngine → WAVEFORM (VCD/FST/CSV)   [jalur simulasi]
-   → maria-sir → SIR → SynthPipeline → Netlist → techmap/timing  [jalur sintesis]
+   → mivon-sir → SIR → SynthPipeline → Netlist → techmap/timing  [jalur sintesis]
 ```
 
 Per stage:
@@ -362,10 +362,10 @@ erDiagram
 ```
 
 Lapisan (dibedakan tegas):
-- **AST node** — `Expr`/`Stmt`/`Module`/`Design` (maria-ast), immutabel.
+- **AST node** — `Expr`/`Stmt`/`Module`/`Design` (mivon-ast), immutabel.
 - **Resolved node** — const-eval `const_eval_with_params` (const_eval.rs:50),
   type resolution `DataType` (types.rs:438), import package resolve.
-- **Elaborated node** — `IrExpr`/`IrStmt`/`Process` (maria-ir) dengan `SignalId`
+- **Elaborated node** — `IrExpr`/`IrStmt`/`Process` (mivon-ir) dengan `SignalId`
   sudah berupa index.
 - **Runtime object** — `ObjectData` (`ir.rs:97`), `SimulationState.objects`,
   UVM data (`UvmObjectData` dst. types.rs:197+).
@@ -428,7 +428,7 @@ Tipe yang benar-benar ada di codebase:
 - **Typedef resolution**: `Elaborator.typedef_map`, `typedef_field_map`,
   `typedef_dims` (elaborator/mod.rs) — `UserDefined` → field struct + packed dims.
 - **Const eval**: `const_eval_with_params` (const_eval.rs:50) + `CVal`/`Scalars`
-  (`maria-ast::const_eval_ext`) — evaluasi param default, enum member, struct.
+  (`mivon-ast::const_eval_ext`) — evaluasi param default, enum member, struct.
 - **Type index (MICD)**: `MicdDatabase.type_index: HashMap<String,u64>` — module
   → signature hash (types.mdb).
 
@@ -485,7 +485,7 @@ Mekanisme aktual:
 Layout aktual (dokumentasi `micd/mod.rs` header + konstanta `DB_*`/`DIR_*` di `micd/mod.rs:76-95`):
 
 ```
-<db>/                        (default .maria/database, override MARIA_MICD_DIR)
+<db>/                        (default .mivon/database, override MIVON_MICD_DIR)
     VERSION                  SCHEMA_VERSION = 4
     registry.json            pid -> ProjectInfo (root, sources, times)
     locks/<pid>.lock         writer lock (WriteLock)
@@ -663,12 +663,12 @@ E3002 CircularDependency, E3003 ParamMismatch, E9xxx runtime.
 
 Dua sistem terpisah:
 
-1. **SYN check (sintesis)** — `SynCheck`/`SynIssue` (`maria-synth/src/subset.rs:38/28`),
+1. **SYN check (sintesis)** — `SynCheck`/`SynIssue` (`mivon-synth/src/subset.rs:38/28`),
    `SynSeverity` (`subset.rs:12`), check SYN-1..9, mode `--check-only`.
 2. **MICD verify cache** — `VerifyCheckKind`/`CheckResult`/`VerifyResult`
    (`micd/verify.rs:21/56/86`) — cache hasil verifikasi per content hash
    (parse/elab ok, diag counts, timing); dipakai ulang saat AST identik.
-3. **env verification context** — `maria-env/src/env/verification/`
+3. **env verification context** — `mivon-env/src/env/verification/`
    (`LintChecks`, `CoverageSettings`, assertions, xprop) — belum terlihat
    terhubung penuh ke pipeline (lihat §27).
 
@@ -729,16 +729,16 @@ Scheduler: event-driven per IEEE 1800 13-region (`EventRegion`, types.rs:89;
 ## 16. Synthesis Model
 
 **Status: Partial–Implemented** (Phase 1–6 selesai; Phase 7 ASIC mapping, 8 FPGA
-P&R, 9 incremental synthesis belum). Evidence: SYNTHESIS.md tabel fase + `maria-synth`.
+P&R, 9 incremental synthesis belum). Evidence: SYNTHESIS.md tabel fase + `mivon-synth`.
 
 ```mermaid
 erDiagram
-    IR_DESIGN ||--|| SIR_MODULE : maria-sir lowering (SirModule)
+    IR_DESIGN ||--|| SIR_MODULE : mivon-sir lowering (SirModule)
     SIR_MODULE ||--o{ SIR_NODE : SirNode DAG (SirNodeKind)
     SIR_MODULE ||--o{ SIR_REGISTER : registers (ResetSpec)
     SIR_MODULE ||--o{ SIR_WIRE : SirWire nets
     SYNTH_PIPELINE ||--o{ SYNTH_PASS : pass manager (const_fold/arith/mux/cse/dce)
-    SIR_MODULE ||--|| NETLIST : maria-netlist lowering
+    SIR_MODULE ||--|| NETLIST : mivon-netlist lowering
     NETLIST ||--o{ CELL_INSTANCE : CellInstance
     CELL_INSTANCE ||--o{ PIN_CONN : PinConn/PinRef
     NETLIST ||--|| TECH_MAP_RESULT : techmap (LUT6/CARRY4/FF)
@@ -752,24 +752,24 @@ erDiagram
 ```
 
 Entity nyata (evidence): `SirModule:208`, `SirNode:148`, `SirNodeKind:75`
-(maria-sir/src/sir.rs); `Netlist:60`, `Port:35`, `Net:43` (maria-netlist/src/net.rs);
+(mivon-sir/src/sir.rs); `Netlist:60`, `Port:35`, `Net:43` (mivon-netlist/src/net.rs);
 `CellInstance:218`, `CellKind:44`, `PinRef:14`, `PinConn:24` (cell.rs);
-`SynthPipeline:54`, `SynthPass trait:48`, `SynthContext:42` (maria-synth/src/pass.rs);
+`SynthPipeline:54`, `SynthPass trait:48`, `SynthContext:42` (mivon-synth/src/pass.rs);
 `TechMapResult:228` (techmap.rs); `SynCheck:38` (subset.rs);
-`TimingReport:81`, `Endpoint:53`, `Constraint:40`, `ClockSpec:22` (maria-timing);
-`LibertyLibrary:109`, `LibertyCell:78`, `TimingArc:57` (maria-tech/src/liberty.rs);
+`TimingReport:81`, `Endpoint:53`, `Constraint:40`, `ClockSpec:22` (mivon-timing);
+`LibertyLibrary:109`, `LibertyCell:78`, `TimingArc:57` (mivon-tech/src/liberty.rs);
 `TechArch trait:21` (arch.rs).
 
 **Status per komponen:**
 
 | Komponen | Status | Evidence |
 |----------|--------|----------|
-| RTL→SIR lowering | Implemented | maria-sir/lower.rs (LowerResult:23) |
-| SIR optimizer (5 pass) | Implemented | maria-synth/src/pass.rs + opt/ |
-| SIR→generic netlist | Implemented | maria-netlist (1-driver/N-load DAG) |
+| RTL→SIR lowering | Implemented | mivon-sir/lower.rs (LowerResult:23) |
+| SIR optimizer (5 pass) | Implemented | mivon-synth/src/pass.rs + opt/ |
+| SIR→generic netlist | Implemented | mivon-netlist (1-driver/N-load DAG) |
 | Tech mapping LUT6/CARRY4/FF | Implemented | techmap.rs (TechMapResult:228) |
-| STA + area (--timing) | Implemented | maria-timing (TimingReport, Constraint) |
-| Liberty .lib parser | Implemented (subset) | maria-tech/liberty.rs + .libmdb |
+| STA + area (--timing) | Implemented | mivon-timing (TimingReport, Constraint) |
+| Liberty .lib parser | Implemented (subset) | mivon-tech/liberty.rs + .libmdb |
 | ASIC mapping (Phase 7) | Not implemented | tabel SYNTHESIS.md fase 7 kosong |
 | FPGA P&R + STA msta (Phase 8) | Not implemented | tabel SYNTHESIS.md fase 8 kosong |
 | Incremental synthesis (Phase 9) | Not implemented | tabel SYNTHESIS.md fase 9 kosong |
@@ -780,32 +780,32 @@ Entity nyata (evidence): `SirModule:208`, `SirNode:148`, `SirNodeKind:75`
 
 Sumber konfigurasi (urutan precedence aktual, dari `real_main` di main.rs:379):
 
-1. **CLI args** (clap, `Cli`/`MariaCmd`) — menang (`apply_config_to_cli` hanya isi field yang CLI tidak setel).
-2. **Config file TOML** — `--config <path>` eksplisit; tanpa itu auto-load `configs/compiler.toml`. Format TOML/JSON (`ConfigFileFormat`, maria-env config/loader.rs).
-3. **Environment** — `MARIA_*` (MARIA_MICD_DIR, MARIA_STACK_SIZE, MARIA_DEBUG_PARSE, MARIA_DBG_MICD, ...).
-4. **Project file** — `.maria` / `.f` (daftar file, `#` komentar) via `read_project_file` (maria-api).
-5. **Defaults** — `MariaConfig::default()`.
+1. **CLI args** (clap, `Cli`/`MivonCmd`) — menang (`apply_config_to_cli` hanya isi field yang CLI tidak setel).
+2. **Config file TOML** — `--config <path>` eksplisit; tanpa itu auto-load `configs/compiler.toml`. Format TOML/JSON (`ConfigFileFormat`, mivon-env config/loader.rs).
+3. **Environment** — `MIVON_*` (MIVON_MICD_DIR, MIVON_STACK_SIZE, MIVON_DEBUG_PARSE, MIVON_DBG_MICD, ...).
+4. **Project file** — `.mivon` / `.f` (daftar file, `#` komentar) via `read_project_file` (mivon-api).
+5. **Defaults** — `MivonConfig::default()`.
 
 ```mermaid
 erDiagram
-    CONFIG_CONTEXT ||--|| MARIA_CONFIG : wraps MariaConfig
-    MARIA_CONFIG ||--o{ COMPILER_CONFIG : compiler (jobs, fast_lexer, ...)
-    MARIA_CONFIG ||--o{ SIMULATION_CONFIG : simulation (max_time, ...)
-    MARIA_CONFIG ||--o{ WAVEFORM_CONFIG : waveform
-    MARIA_CONFIG ||--o{ COVERAGE_CONFIG : coverage
-    MARIA_CONFIG ||--o{ DEBUG_CONFIG : debug
-    MARIA_CONFIG ||--o{ LINT_CONFIG : lint
-    MARIA_CONFIG ||--o{ VERIFY_CONFIG : verify
-    MARIA_CONFIG ||--o{ BENCHMARK_CONFIG : benchmark
+    CONFIG_CONTEXT ||--|| MIVON_CONFIG : wraps MivonConfig
+    MIVON_CONFIG ||--o{ COMPILER_CONFIG : compiler (jobs, fast_lexer, ...)
+    MIVON_CONFIG ||--o{ SIMULATION_CONFIG : simulation (max_time, ...)
+    MIVON_CONFIG ||--o{ WAVEFORM_CONFIG : waveform
+    MIVON_CONFIG ||--o{ COVERAGE_CONFIG : coverage
+    MIVON_CONFIG ||--o{ DEBUG_CONFIG : debug
+    MIVON_CONFIG ||--o{ LINT_CONFIG : lint
+    MIVON_CONFIG ||--o{ VERIFY_CONFIG : verify
+    MIVON_CONFIG ||--o{ BENCHMARK_CONFIG : benchmark
     CLI ||--o| CONFIG_CONTEXT : EnvCliOptions.apply (CLI menang)
-    ENV_VAR ||--o| MARIA_CONFIG : MARIA_* overrides
-    FILE_LIST ||--o{ SOURCE_FILE : .maria/.f project file
+    ENV_VAR ||--o| MIVON_CONFIG : MIVON_* overrides
+    FILE_LIST ||--o{ SOURCE_FILE : .mivon/.f project file
 ```
 
-Entity: `MariaConfig` (config.rs:19), `CompilerConfig:44`, `ParseConfig:67`,
+Entity: `MivonConfig` (config.rs:19), `CompilerConfig:44`, `ParseConfig:67`,
 `ElaborateConfig:74`, `SimulationConfig:83`, `WaveformConfig:95`, `LintConfig:103`,
 `CoverageConfig:117`, `DebugConfig:129`, `BenchmarkConfig:141`, `VerifyConfig:151`;
-`ConfigContext` (maria-env/config/config.rs:28), `ConfigSource` (config.rs:8),
+`ConfigContext` (mivon-env/config/config.rs:28), `ConfigSource` (config.rs:8),
 `EnvCliOptions` (cli.rs:10).
 
 ---
@@ -820,14 +820,14 @@ Entity: `MariaConfig` (config.rs:19), `CompilerConfig:44`, `ParseConfig:67`,
 | AST blob | MICD `serialize_design` | Design per file | `objects/<pid>/<hash>.ast` | bincode+LZ4 | P (GC) |
 | IR blob | MICD `serialize_ir` | IrDesign | MICD `ir:<top>` | bincode | P |
 | combined source | MICD | preprocessed | `objects/<pid>/<hash>.preproc` | teks | P (GC) |
-| `.mvnet` | maria-netlist emit | Netlist | `<top>.mvnet` | teks deterministik | P (run synth) |
-| `netlist.v`/`.json` | maria-netlist emit | Netlist | — | SV / JSON | P |
+| `.mvnet` | mivon-netlist emit | Netlist | `<top>.mvnet` | teks deterministik | P (run synth) |
+| `netlist.v`/`.json` | mivon-netlist emit | Netlist | — | SV / JSON | P |
 | `.tech.v`/`.json`/`.mvnet` | techmap | tech netlist | — | SV / JSON / mvnet | P |
-| `timing.rpt` | maria-timing | Netlist + Constraint | `<top>.timing.rpt` | teks | P |
-| `area.rpt` | maria-timing | Netlist | `<top>.area.rpt` | teks | P |
+| `timing.rpt` | mivon-timing | Netlist + Constraint | `<top>.timing.rpt` | teks | P |
+| `area.rpt` | mivon-timing | Netlist | `<top>.area.rpt` | teks | P |
 | `coverage.json`/`.html` | mcov (cov.rs) | coverage engine | — | JSON / HTML | P |
 | `*.ucis.xml` | engine export_coverage_ucis | coverage | — | UCIS XML | P |
-| `.libmdb` | maria-tech save_mdb | LibertyLibrary | — | teks deterministik | P |
+| `.libmdb` | mivon-tech save_mdb | LibertyLibrary | — | teks deterministik | P |
 | `sir` dump | `--dump-sir(-opt)` | SirModule | stdout/file | teks | P |
 | `netlist.json` (synth) | `--dump-netlist` | Netlist | — | JSON | P |
 | MICD `cache/<pid>/` | CachePopulator + tools | payload | 21 kategori | bincode | P (GC) |
@@ -849,7 +849,7 @@ graph TD
     ENGINE[SimulationEngine] -->|thread_local LOGICVEC_CTOR| ARENA[SimulationArena]
     ENGINE -->|fork/join ForkGroup| PROC[concurrent process branches]
     RMAIN -->|tokio runtime (feature lsp)| LSP[LSP server]
-    RMAIN -->|egui (feature gui)| GUI[MariaApp]
+    RMAIN -->|egui (feature gui)| GUI[MivonApp]
     CS -->|rayon parallel eval| PEVAL[parallel.rs]
 ```
 
@@ -870,7 +870,7 @@ Shared mutable state:
 
 Pola: rayon `par_iter` utk parse (per-file independen), MICD restore (per-file
 independen), parallel eval (`parallel.rs`). Semua mutasi engine berjalan di satu
-thread (`maria-main`); tidak ada `Mutex` di dalam hot loop simulasi.
+thread (`mivon-main`); tidak ada `Mutex` di dalam hot loop simulasi.
 
 ---
 
@@ -896,7 +896,7 @@ graph TD
 ```
 
 Mekanisme aktual:
-- Error dikembalikan sbg `Result<_, SimError>` (`maria-core/src/error.rs`) dan
+- Error dikembalikan sbg `Result<_, SimError>` (`mivon-core/src/error.rs`) dan
   dikonversi ke `Diagnostic` via `e.to_diagnostic()` di `real_main`.
 - Warning **tidak** menghentikan pipeline (parser warning lanjut; elaborator
   warning downgrade untuk module di luar cone reachable — `Elaborator.reachable`).
@@ -989,7 +989,7 @@ erDiagram
 erDiagram
     SOURCE_FILE ||--|| MMAP_FILE : MmapFile zero-copy
     SOURCE_FILE ||--|| INLINE_BUFFER : inline_sources transpile mv
-    FILE_LIST ||--o{ SOURCE_FILE : .maria/.f
+    FILE_LIST ||--o{ SOURCE_FILE : .mivon/.f
 ```
 
 ### Lexing & Parsing Layer
@@ -1062,10 +1062,10 @@ erDiagram
 
 ```mermaid
 erDiagram
-    MARIA_APP ||--o{ OPEN_FILE : gui state
-    MARIA_APP ||--o{ DIAG_ENTRY : gui diag
-    MARIA_APP ||--o{ SIGNAL_ROW : signal browser
-    MARIA_APP ||--o| COMPILE_SESSION : reuses pipeline
+    MIVON_APP ||--o{ OPEN_FILE : gui state
+    MIVON_APP ||--o{ DIAG_ENTRY : gui diag
+    MIVON_APP ||--o{ SIGNAL_ROW : signal browser
+    MIVON_APP ||--o| COMPILE_SESSION : reuses pipeline
 ```
 
 ---
@@ -1074,41 +1074,41 @@ erDiagram
 
 ```mermaid
 graph TD
-    CLI[src/main.rs + cli.rs] --> API[maria-api]
-    API --> TOOLS[maria-tools]
-    API --> ENV[maria-env]
-    API --> SIM[maria-simulator]
-    API --> FORMAL[maria-formal]
-    API --> COMPILER[maria-compiler]
-    COMPILER --> ELAB[maria-elaboration]
-    COMPILER --> PARSER[maria-parser]
+    CLI[src/main.rs + cli.rs] --> API[mivon-api]
+    API --> TOOLS[mivon-tools]
+    API --> ENV[mivon-env]
+    API --> SIM[mivon-simulator]
+    API --> FORMAL[mivon-formal]
+    API --> COMPILER[mivon-compiler]
+    COMPILER --> ELAB[mivon-elaboration]
+    COMPILER --> PARSER[mivon-parser]
     ELAB --> PARSER
-    ELAB --> IR[maria-ir]
-    PARSER --> AST[maria-ast]
+    ELAB --> IR[mivon-ir]
+    PARSER --> AST[mivon-ast]
     IR --> AST
-    AST --> CORE[maria-core]
+    AST --> CORE[mivon-core]
     SIM --> COMPILER
     SIM --> ELAB
     SIM --> PARSER
     SIM --> IR
     ENV --> COMPILER
     ENV --> SIM
-    TOOLS --> SYNTH[maria-synth]
-    SYNTH --> SIR[maria-sir]
-    SYNTH --> NET[maria-netlist]
-    SYNTH --> TECH[maria-tech]
-    TOOLS --> TIMING[maria-timing]
+    TOOLS --> SYNTH[mivon-synth]
+    SYNTH --> SIR[mivon-sir]
+    SYNTH --> NET[mivon-netlist]
+    SYNTH --> TECH[mivon-tech]
+    TOOLS --> TIMING[mivon-timing]
     TIMING --> NET
     NET --> SIR
     TECH --> CORE
-    API --> MV[maria-mv]
-    API --> GUI[maria-gui]
+    API --> MV[mivon-mv]
+    API --> GUI[mivon-gui]
     GUI --> SIM
     GUI --> COMPILER
 ```
 
 Berdasarkan `Cargo.toml` masing-masing crate (§2). Tidak ada dependency cyclic
-antar crate (maria-ast tidak bergantung simulator; maria-core adalah fondasi
+antar crate (mivon-ast tidak bergantung simulator; mivon-core adalah fondasi
 bawah).
 
 ---
@@ -1127,13 +1127,13 @@ flowchart TD
     G --> H[IrDesign]
     H --> I[SimulationEngine]
     I --> J[VCD/FST/CSV]
-    H --> K[maria-sir lowering]
+    H --> K[mivon-sir lowering]
     K --> L[SynthPipeline optimizer]
-    L --> M[maria-netlist]
+    L --> M[mivon-netlist]
     M --> N[techmap LUT6/CARRY4/FF]
     N --> O[timing/area STA]
     M --> P[mvnet / netlist.v/json]
-    E -.->|MICD ast cache| Q[(maria database)]
+    E -.->|MICD ast cache| Q[(mivon database)]
     H -.->|MICD ir cache| Q
     I -.->|simulation/waveform cache| Q
     D -.->|parser diag| R[DiagSink]
@@ -1150,27 +1150,27 @@ Rujukan per subsystem utama (simbol + lokasi saat analisis):
 
 | Subsystem | Evidence utama |
 |-----------|---------------|
-| CLI entry | `src/main.rs:355` (`main`), `:379` (`real_main`), `:535` (`run`), `:2046` (`run_fast`), `:702-716` (MICD open), `:2235` (restore IR); `src/cli.rs:9` (`MariaCmd`) |
-| Public API | `crates/maria-api/src/lib.rs` — `compile_str`, `simulate_str`, `simulate_signals`, `compile_files`, `run_simulation`, `compare_asts`, `read_project_file` |
-| Intern | `crates/maria-core/src/intern/string_intern.rs:19` (`Symbol`), `:88` (`StringTable`), `:112` (`table`) |
-| Logic | `crates/maria-core/src/logic.rs:25` (`LogicVec`), `:112` (`LogicVal`), `:15` (`LOGICVEC_CTOR`) |
-| Config | `crates/maria-core/src/config.rs:19` (`MariaConfig`) + sub-config 44-151 |
-| Diagnostics | `crates/maria-core/src/diagnostics/diagnostic.rs:1070` (`Diagnostic`), `:1260` (`DiagSink`), `:118` (`DiagCode`); `emitter.rs:50` (`TerminalEmitter`); `global.rs:42` |
-| AST | `crates/maria-ast/src/types.rs:11` (`Design`), `:100` (`Module`), `:131` (`Port`), `:438` (`DataType`), `:573` (`ModuleItem`), `:776` (`ModuleInstance`), `:661` (`PackageDecl`), `:121` (`Interface`), `:52` (`ClassDecl`); `expr.rs:4` (`Expr`); `stmt.rs:44` (`Stmt`); `const_eval.rs:50`; `inline.rs:25` |
-| IR | `crates/maria-ir/src/ir.rs:11` (`IrDesign`), `:161` (`IrModule`), `:224` (`SignalInfo`), `:288` (`IrInstance`), `:311` (`Process`), `:406` (`IrStmt`), `:570` (`IrExpr`), `:87` (`IrClassDef`), `:97` (`ObjectData`) |
-| Parser | `crates/maria-parser/src/preprocessor.rs:24`; `lexer.rs:5` (`Token`), `:397` (`Lexer`); `lib.rs:21` (`Parser`), `:124` (`with_global_type_names`), `:323` (`parse_design`) |
-| Elaboration | `crates/maria-elaboration/src/elaborator/mod.rs:209` (`ElaborateMode`), `:214` (`Elaborator`); `util/opt_stats.rs:20` (`OptStats`), `:74` (`OptimizeSnapshot`); `flatten.rs` |
-| Compiler | `crates/maria-compiler/src/frontend/compile_session.rs:34` (`SessionConfig`), `:72` (`CompileSession`), `:117` (`SessionTiming`), `:1408` (`save_elaborate_cache`), `:1469` (`restore_elaborate_ir`); `discovery.rs:44`; `io.rs:18` (`MmapFile`); `module_index.rs:41`; `frontend/lexer.rs:15` (`FastLexer`) |
-| In-memory cache | `crates/maria-compiler/src/cache/cache_manager.rs:21` (`CacheKey`), `:81` (`CacheStore`), `:239` (`CacheManager`); `ast_cache.rs:13`; `hir_cache.rs:10`; `dep_cache.rs:14`; `remote.rs:198` (`FilesystemCache`) |
-| MICD | `crates/maria-compiler/src/micd/mod.rs:76-95` (konstanta DB_/DIR_), `:111` (`PreprocEntry`), `:119` (`ProjectInfo`), `:134` (`MicdStats`), `:152` (`MicdDatabase`), `:912` (`store_elaborate_ir`), `:926` (`restore_elaborate_ir`); `metadata.rs:27` (`FileMeta`); `graph.rs:16` (`FileGraph`); `verify.rs:86`; `symbol.rs:19`; `diag.rs:67/104`; `snapshot.rs:31`; `stats.rs:46`; `txn.rs:32`; `format.rs:156/305` (`MdbWriter`/`MdbReader`); `ast.rs:15/21` (serialize/deserialize Design), `:33/39` (serialize/deserialize IR) |
-| Cache pipeline | `crates/maria-compiler/src/micd/cache/mod.rs:61` (`CacheLayer`); `category.rs:18` (`CacheCategory`); `pipeline.rs` (`CachePopulator`, `LexerPayload:90`, `ElaboratePayload:287`, `GeneratePayload:298`, `LintPayload:319`, `OptimizePayload`, `ExpressionPayload`, `SimulationPayload`, `WaveformPayload`, `CoveragePayload`) |
-| Simulator | `crates/maria-simulator/src/simulator/engine/mod.rs:57` (`SimulationLimit`), `:90` (`SimulationEngine`); `state.rs:12` (`SimulationState`); `types.rs:82` (`EventKind`), `:89` (`EventRegion`), `:122` (`RegionEvent`), `:161` (`ForkGroup`); `arena.rs:84`; `waveform/vcd.rs:8`, `fst.rs:11`, `csv.rs:17`, `statistics.rs:39`; `debugger/mod.rs:9`; `scheduler/sim_dag.rs:341`; `scheduler/clock_domain.rs:54`; `scheduler/cdc.rs:150`; `vpi/` (mod) |
-| Env | `crates/maria-env/src/env/global/global_env.rs:21` (`GlobalEnv`); `config/config.rs:28`; `compiler/compiler.rs:14`; `runtime/runtime.rs:12`; `database/database.rs:9`; `cache/cache.rs:6`; `simulation/simulation.rs:8`; `workspace/workspace.rs`; `lsp/backend.rs` |
-| Tools | `crates/maria-tools/src/lib.rs:38` (`collect_targets`), `:169` (`open_project`), `:184` (`open_elaborated`); `inspect.rs`, `lint.rs`, `elab.rs`, `sim.rs`, `cov.rs`, `wave.rs`, `fmt.rs`, `prof.rs`, `check.rs`, `bench.rs`, `synth.rs` |
-| Synthesis | `crates/maria-sir/src/sir.rs:35-208`; `maria-netlist/src/net.rs:60`, `cell.rs:218`; `maria-synth/src/pass.rs:48/54`, `techmap.rs:228`, `subset.rs:38`, `report.rs:10`; `maria-timing/src/timing.rs:81`, `constraint.rs:40`, `area.rs:21`; `maria-tech/src/liberty.rs:109`, `arch.rs:21` |
-| Formal | `crates/maria-formal/src/lib.rs:19` (`FormalResult`), `:34` (`FormalConfig`), `:60` (`FormalEngine`) |
-| GUI | `crates/maria-gui/src/app.rs:25` (`MariaApp`), `state.rs:17-209` |
-| Maria HDL | `crates/maria-mv/src/ast.rs:9-277` |
+| CLI entry | `src/main.rs:355` (`main`), `:379` (`real_main`), `:535` (`run`), `:2046` (`run_fast`), `:702-716` (MICD open), `:2235` (restore IR); `src/cli.rs:9` (`MivonCmd`) |
+| Public API | `crates/mivon-api/src/lib.rs` — `compile_str`, `simulate_str`, `simulate_signals`, `compile_files`, `run_simulation`, `compare_asts`, `read_project_file` |
+| Intern | `crates/mivon-core/src/intern/string_intern.rs:19` (`Symbol`), `:88` (`StringTable`), `:112` (`table`) |
+| Logic | `crates/mivon-core/src/logic.rs:25` (`LogicVec`), `:112` (`LogicVal`), `:15` (`LOGICVEC_CTOR`) |
+| Config | `crates/mivon-core/src/config.rs:19` (`MivonConfig`) + sub-config 44-151 |
+| Diagnostics | `crates/mivon-core/src/diagnostics/diagnostic.rs:1070` (`Diagnostic`), `:1260` (`DiagSink`), `:118` (`DiagCode`); `emitter.rs:50` (`TerminalEmitter`); `global.rs:42` |
+| AST | `crates/mivon-ast/src/types.rs:11` (`Design`), `:100` (`Module`), `:131` (`Port`), `:438` (`DataType`), `:573` (`ModuleItem`), `:776` (`ModuleInstance`), `:661` (`PackageDecl`), `:121` (`Interface`), `:52` (`ClassDecl`); `expr.rs:4` (`Expr`); `stmt.rs:44` (`Stmt`); `const_eval.rs:50`; `inline.rs:25` |
+| IR | `crates/mivon-ir/src/ir.rs:11` (`IrDesign`), `:161` (`IrModule`), `:224` (`SignalInfo`), `:288` (`IrInstance`), `:311` (`Process`), `:406` (`IrStmt`), `:570` (`IrExpr`), `:87` (`IrClassDef`), `:97` (`ObjectData`) |
+| Parser | `crates/mivon-parser/src/preprocessor.rs:24`; `lexer.rs:5` (`Token`), `:397` (`Lexer`); `lib.rs:21` (`Parser`), `:124` (`with_global_type_names`), `:323` (`parse_design`) |
+| Elaboration | `crates/mivon-elaboration/src/elaborator/mod.rs:209` (`ElaborateMode`), `:214` (`Elaborator`); `util/opt_stats.rs:20` (`OptStats`), `:74` (`OptimizeSnapshot`); `flatten.rs` |
+| Compiler | `crates/mivon-compiler/src/frontend/compile_session.rs:34` (`SessionConfig`), `:72` (`CompileSession`), `:117` (`SessionTiming`), `:1408` (`save_elaborate_cache`), `:1469` (`restore_elaborate_ir`); `discovery.rs:44`; `io.rs:18` (`MmapFile`); `module_index.rs:41`; `frontend/lexer.rs:15` (`FastLexer`) |
+| In-memory cache | `crates/mivon-compiler/src/cache/cache_manager.rs:21` (`CacheKey`), `:81` (`CacheStore`), `:239` (`CacheManager`); `ast_cache.rs:13`; `hir_cache.rs:10`; `dep_cache.rs:14`; `remote.rs:198` (`FilesystemCache`) |
+| MICD | `crates/mivon-compiler/src/micd/mod.rs:76-95` (konstanta DB_/DIR_), `:111` (`PreprocEntry`), `:119` (`ProjectInfo`), `:134` (`MicdStats`), `:152` (`MicdDatabase`), `:912` (`store_elaborate_ir`), `:926` (`restore_elaborate_ir`); `metadata.rs:27` (`FileMeta`); `graph.rs:16` (`FileGraph`); `verify.rs:86`; `symbol.rs:19`; `diag.rs:67/104`; `snapshot.rs:31`; `stats.rs:46`; `txn.rs:32`; `format.rs:156/305` (`MdbWriter`/`MdbReader`); `ast.rs:15/21` (serialize/deserialize Design), `:33/39` (serialize/deserialize IR) |
+| Cache pipeline | `crates/mivon-compiler/src/micd/cache/mod.rs:61` (`CacheLayer`); `category.rs:18` (`CacheCategory`); `pipeline.rs` (`CachePopulator`, `LexerPayload:90`, `ElaboratePayload:287`, `GeneratePayload:298`, `LintPayload:319`, `OptimizePayload`, `ExpressionPayload`, `SimulationPayload`, `WaveformPayload`, `CoveragePayload`) |
+| Simulator | `crates/mivon-simulator/src/simulator/engine/mod.rs:57` (`SimulationLimit`), `:90` (`SimulationEngine`); `state.rs:12` (`SimulationState`); `types.rs:82` (`EventKind`), `:89` (`EventRegion`), `:122` (`RegionEvent`), `:161` (`ForkGroup`); `arena.rs:84`; `waveform/vcd.rs:8`, `fst.rs:11`, `csv.rs:17`, `statistics.rs:39`; `debugger/mod.rs:9`; `scheduler/sim_dag.rs:341`; `scheduler/clock_domain.rs:54`; `scheduler/cdc.rs:150`; `vpi/` (mod) |
+| Env | `crates/mivon-env/src/env/global/global_env.rs:21` (`GlobalEnv`); `config/config.rs:28`; `compiler/compiler.rs:14`; `runtime/runtime.rs:12`; `database/database.rs:9`; `cache/cache.rs:6`; `simulation/simulation.rs:8`; `workspace/workspace.rs`; `lsp/backend.rs` |
+| Tools | `crates/mivon-tools/src/lib.rs:38` (`collect_targets`), `:169` (`open_project`), `:184` (`open_elaborated`); `inspect.rs`, `lint.rs`, `elab.rs`, `sim.rs`, `cov.rs`, `wave.rs`, `fmt.rs`, `prof.rs`, `check.rs`, `bench.rs`, `synth.rs` |
+| Synthesis | `crates/mivon-sir/src/sir.rs:35-208`; `mivon-netlist/src/net.rs:60`, `cell.rs:218`; `mivon-synth/src/pass.rs:48/54`, `techmap.rs:228`, `subset.rs:38`, `report.rs:10`; `mivon-timing/src/timing.rs:81`, `constraint.rs:40`, `area.rs:21`; `mivon-tech/src/liberty.rs:109`, `arch.rs:21` |
+| Formal | `crates/mivon-formal/src/lib.rs:19` (`FormalResult`), `:34` (`FormalConfig`), `:60` (`FormalEngine`) |
+| GUI | `crates/mivon-gui/src/app.rs:25` (`MivonApp`), `state.rs:17-209` |
+| Mivon HDL | `crates/mivon-mv/src/ast.rs:9-277` |
 | Docs | `AGENTS.md`, `DESIGN.md`, `db.md`, `SYNTHESIS.md`, `tools.md`, `doc/env.md` |
 
 > Catatan: nomor baris mengikuti kondisi saat analisis; beberapa simbol di atas
@@ -1185,12 +1185,12 @@ Rujukan per subsystem utama (simbol + lokasi saat analisis):
 | `ModuleIndex` container aktual | Confidence: low | DESIGN.md menyebut DashMap; perlu verifikasi field di `module_index.rs:41` |
 | HIR/MIR jalur simulasi (`engine/mir.rs`, `hir/`) | Sebagian | `LazyElaborator` aktif (feature `--lazy`), `mir.rs` ada; jalur default memakai AST→IR langsung |
 | `LazyElaborator` scope | Aktif | `use_lazy_elab` di `SessionConfig`; elaborasi HIR on-demand |
-| VPI (`maria-simulator/src/vpi/`) | Ada modul | Integrasi penuh ke engine belum diverifikasi dalam analisis ini |
+| VPI (`mivon-simulator/src/vpi/`) | Ada modul | Integrasi penuh ke engine belum diverifikasi dalam analisis ini |
 | JIT Cranelift | Feature-gated | `jit` feature; AGENTS.md bilang "stubs", DESIGN.md bilang 18+15 test — status aktual perlu verifikasi |
 | Parallel eval (`parallel.rs`) | Ada | `ParallelConfig`; jalur pakai aktual belum diverifikasi |
-| env `VerificationContext` | Terpisah | `maria-env/src/env/verification/` ada tapi koneksi ke pipeline lint/sim belum jelas |
+| env `VerificationContext` | Terpisah | `mivon-env/src/env/verification/` ada tapi koneksi ke pipeline lint/sim belum jelas |
 | `CacheManager` remote | Opsional | `FilesystemCache` + `RemoteSyncMode`; tidak aktif default |
-| GUI state persistence | Confidence: low | `MariaApp` memakai serde/serde_json (Cargo.toml gui) — scope persist belum diverifikasi |
+| GUI state persistence | Confidence: low | `MivonApp` memakai serde/serde_json (Cargo.toml gui) — scope persist belum diverifikasi |
 | Ownership `ModuleIndex` internal | Confidence: low | lihat entri pertama |
 | Dead code warisan DESIGN.md | Ada | Banyak modul di DESIGN.md (`arena/typed.rs`, `scheduler/work_stealing.rs`, dst.) dipindah/berubah; struktur folder DESIGN.md TIDAK lagi akurat |
 
@@ -1214,7 +1214,7 @@ Rujukan per subsystem utama (simbol + lokasi saat analisis):
 | MICD IR disimpan (`store_elaborate_ir`) tapi hanya jalur `run_fast` yang restore — jalur `run` (legacy) menulis IR? | suspected | `micd/mod.rs:912`, `main.rs:1295/2235` — `run` tidak memanggil `restore_elaborate_ir` |
 | `CachePopulator.populate_elab` (optimize/expression) dipanggil setelah `save_micd` di `run_fast` — konsistensi dua lapisan (state/*.mdb vs cache/) | suspected | `main.rs:2363-2371`, `compile_session.rs:1408` |
 | `GlobalEnv` 12 context vs pipeline nyata — sebagian context belum jelas dipakai (security, telemetry, plugins) | suspected | `global_env.rs:21`; `main.rs` hanya memakai config/workspace/telemetry/shutdown |
-| `LintChecks`/`CoverageSettings` (env verification) vs `mlint`/`mcov` (tools) — dua implementasi lint/coverage | confirmed | `maria-env/src/env/verification/` vs `maria-tools/src/lint.rs`/`cov.rs` |
+| `LintChecks`/`CoverageSettings` (env verification) vs `mlint`/`mcov` (tools) — dua implementasi lint/coverage | confirmed | `mivon-env/src/env/verification/` vs `mivon-tools/src/lint.rs`/`cov.rs` |
 | `HirCache` (in-memory) vs MICD cache `hierarchy/` — dua cache HIR berbeda | suspected | `cache/hir_cache.rs:10` vs `micd/cache/pipeline.rs` |
 | `Snapshot` dibuat (`save_micd` auto-snapshot) — mekanisme restore/rollback dipakai tool mana? | unknown | `micd/snapshot.rs:31`; `--recompile` tidak memakai snapshot |
 | `StringPool` (MICD) vs `StringTable` global — dua mekanisme intern | confirmed | `micd/stringpool.rs:15` vs `string_intern.rs` |
@@ -1227,11 +1227,11 @@ Rujukan per subsystem utama (simbol + lokasi saat analisis):
 | `RemoteCacheBackend`/`FilesystemCache` | hanya dipakai bila diset via `set_remote_cache`; tidak ada CLI yang menyetelnya | `cache/remote.rs:198`, `compile_session.rs` (`set_remote_cache`) |
 | `CacheManager` per-phase cache (`AstCache`/`HirCache`/`DepCache`) | aktif dipakai `compile`/incremental, tapi jalur MICD mendominasi — duplikasi fungsi | `cache/ast_cache.rs`, `cache_manager.rs` |
 | `LazyElaborator` (HIR) | feature `--lazy`, non-default | `SessionConfig.use_lazy_elab` |
-| VPI modul | ada tapi jalur integrasi belum terlihat di pipeline utama | `maria-simulator/src/vpi/` |
-| JIT (`jit.rs`/`jit_cranelift.rs`) | feature `jit` (default ON di root features!), status "stub" vs test 15 — perlu verifikasi | `maria-simulator/src/simulator/jit.rs`; root Cargo.toml features |
-| `animasi.rs` (PipelineAnimator) | dipakai CLI `--anim`/auto | `maria-core/src/animasi.rs`, `main.rs:255-298` |
+| VPI modul | ada tapi jalur integrasi belum terlihat di pipeline utama | `mivon-simulator/src/vpi/` |
+| JIT (`jit.rs`/`jit_cranelift.rs`) | feature `jit` (default ON di root features!), status "stub" vs test 15 — perlu verifikasi | `mivon-simulator/src/simulator/jit.rs`; root Cargo.toml features |
+| `animasi.rs` (PipelineAnimator) | dipakai CLI `--anim`/auto | `mivon-core/src/animasi.rs`, `main.rs:255-298` |
 | `StringPool` (MICD) | dipakai format MDB1 string pool — aktif | `micd/stringpool.rs:15` |
-| `ParallelConfig`/`parallel.rs` | framework parallel eval — jalur pakai aktual tidak terlihat default | `maria-simulator/src/simulator/parallel.rs` |
+| `ParallelConfig`/`parallel.rs` | framework parallel eval — jalur pakai aktual tidak terlihat default | `mivon-simulator/src/simulator/parallel.rs` |
 
 ## 31. Executive Architecture Summary
 
@@ -1254,7 +1254,7 @@ Rujukan per subsystem utama (simbol + lokasi saat analisis):
 ### Persistent State
 - MICD: `objects/<pid>/` (AST/preproc), `state/<pid>/*.mdb`, `cache/<pid>/`, `snapshots/`.
 - Artifact: `.vcd/.fst/.csv`, `.mvnet/netlist.v/.json/.tech.v`, `.timing.rpt/.area.rpt`, `coverage.json/html`, `.libmdb`.
-- Config: `configs/*.toml`, file list `.maria/.f`.
+- Config: `configs/*.toml`, file list `.mivon/.f`.
 
 ### Runtime State (hanya saat proses)
 - `SimulationState` (signals/next_signals/objects/time), `RegionEvent` queue, `ForkGroup`, UVM data, `SimulationEngine` seluruh field runtime.
@@ -1304,4 +1304,4 @@ Rujukan per subsystem utama (simbol + lokasi saat analisis):
 - **Unknown relationships:** 8 terdaftar di §29.
 - **Orphan entities:** 8 terdaftar di §30.
 
-*Dokumen ini murni hasil reverse engineering — tidak ada perubahan source code Maria.*
+*Dokumen ini murni hasil reverse engineering — tidak ada perubahan source code Mivon.*

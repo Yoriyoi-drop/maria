@@ -1,5 +1,5 @@
-Maria Incremental Compilation Database (MICD)
-                Maria Compiler
+Mivon Incremental Compilation Database (MICD)
+                Mivon Compiler
                       │
           ┌───────────┼────────────┐
           │           │            │
@@ -23,9 +23,9 @@ Melainkan object database.
 Struktur Folder
 project/
 
-    .maria/
+    .mivon/
 
-        database/                       # database root (override: MARIA_MICD_DIR)
+        database/                       # database root (override: MIVON_MICD_DIR)
 
             VERSION                     # versi skema (SCHEMA_VERSION)
 
@@ -116,7 +116,7 @@ Timestamp :
 2026-08-01
 
 Compiler Version :
-Maria 0.9
+Mivon 0.9
 
 Flags :
 -DTOP
@@ -642,9 +642,9 @@ ast.mdb	AST terserialisasi	Arena Allocation
 diag.mdb	Diagnostics	Append-only Log
 cache.mdb	Lexer/Parser/Semantic cache	Content-addressable storage (Blake3)
 verify.mdb	Hasil verifikasi	Key-Value Binary Store
-Fitur yang Akan Membedakan Maria
+Fitur yang Akan Membedakan Mivon
 
-Dengan arsitektur ini, Maria dapat memiliki kemampuan yang biasanya hanya ditemukan pada compiler komersial:
+Dengan arsitektur ini, Mivon dapat memiliki kemampuan yang biasanya hanya ditemukan pada compiler komersial:
 
 File-level incremental compilation berbasis hash konten, bukan timestamp.
 Structural incremental compilation, sehingga perubahan lokal pada satu modul tidak memaksa seluruh AST dibangun ulang.
@@ -778,11 +778,11 @@ Belum ada Versioned Schema.
 
 Misalnya
 
-Maria 0.9
+Mivon 0.9
 
 ↓
 
-Maria 1.0
+Mivon 1.0
 
 
 AST berubah.
@@ -1138,7 +1138,7 @@ Saat ini: 8.8/10.
 Arsitektur dasarnya sudah berada di jalur yang benar dan jauh lebih dekat ke desain compiler modern daripada sekadar "database cache". Namun masih ada beberapa komponen yang di industri dianggap wajib, terutama transaksi, pemulihan dari crash, konkurensi, evolusi skema, dan dependency graph yang lebih halus. Tanpa itu, MICD akan bekerja sangat baik untuk proyek besar, tetapi mulai menunjukkan batasnya ketika dipakai oleh banyak engineer secara bersamaan atau ketika ukuran proyek dan frekuensi perubahan terus meningkat.
 Saya akan mendesain cache/ seperti ini.
 
-.maria/
+.mivon/
 └── database/
     └── cache/
         ├── lexer/
@@ -1264,7 +1264,7 @@ langsung reuse.
 
 5. elaborate/
 
-Ini sangat penting untuk Maria.
+Ini sangat penting untuk Mivon.
 
 Berisi
 
@@ -1579,7 +1579,7 @@ Rebuild Count
 
 Dirty Node Count
 
-Dari sini Maria bisa mengetahui sendiri bottleneck dan bahkan memberikan rekomendasi optimasi.
+Dari sini Mivon bisa mengetahui sendiri bottleneck dan bahkan memberikan rekomendasi optimasi.
 
 Saran arsitektur cache
 

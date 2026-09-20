@@ -1,6 +1,6 @@
-# Maria — Redesain Arsitektur Compiler Skala Industri
+# Mivon — Redesain Arsitektur Compiler Skala Industri
 
-> **Dokumen ini berisi redesign total compiler/interpreter Maria agar mampu menangani proyek SystemVerilog dengan >10.000 RTL modules, >80.000 verification modules, dan jutaan LOC dengan performa mendekati/melampaui Verilator.**
+> **Dokumen ini berisi redesign total compiler/interpreter Mivon agar mampu menangani proyek SystemVerilog dengan >10.000 RTL modules, >80.000 verification modules, dan jutaan LOC dengan performa mendekati/melampaui Verilator.**
 
 ## Status Implementasi (2026-07-23)
 
@@ -57,7 +57,7 @@
 | **LazyElaborator → CompileSession** | `LazyElaborator` now wired into `CompileSession`. New `--lazy` CLI flag. `elaborate_lazy_module()`, `elaborated_count()`, `is_lazy_elaborated()` methods. Pre-registers module ports on compile. |
 | **JIT Compiler enhanced** | `CompiledExpr`, `JITCache` with hit-rate tracking, `compile_binary/unary/const` methods, 7 intrinsics (add/sub/and/or/xor/eq/lt). 7 unit tests verify compilation and caching. |
 | **`--lazy` CLI wired** | `--lazy` flag now has observable behavior: `--lazy --compile-only` skips full elaboration (compile-only HIR mode). `--lazy` without compile-only pre-populates LazyElaborator + does full elaboration for simulation. `compile_and_elaborate()` and `compile_lazy_only()` methods added to `CompileSession`. |
-| **backend/ module align** | re-exports backend/simulator/waveform kini di maria-api + maria-simulator (src/backend shim DIHAPUS pada migrasi final 2026-08-10). |
+| **backend/ module align** | re-exports backend/simulator/waveform kini di mivon-api + mivon-simulator (src/backend shim DIHAPUS pada migrasi final 2026-08-10). |
 | **Bug fix: lazy pre-registration** | Fixed bug where each module was assigned ALL ports from ALL modules instead of only its own ports. Now correctly uses per-module port iteration. |
 | **elaborate_lazy_module() fallback** | Now falls back to `merged_design` for on-demand AST→HIR conversion on cache miss. Extracts port/signal data and populates LazyElaborator dynamically. |
 
@@ -171,7 +171,7 @@
 ## 2. Struktur Folder
 
 ```
-maria/
+mivon/
 ├── Cargo.toml
 ├── DESIGN.md                    ← dokumen ini
 ├── BENCHMARK.md                 ← benchmark plan
@@ -1581,7 +1581,7 @@ enum BenchCategory {
 
 ### Comparison Metrics
 
-| Metric | Verilator | Maria (target) | Maria (current) |
+| Metric | Verilator | Mivon (target) | Mivon (current) |
 |--------|-----------|----------------|-----------------|
 | Parse time (1000 modules) | ~0.5s | <0.3s | **~185ms** (999+1 top) |
 | Parse time (100 modules) | ~0.05s | <0.03s | **~25ms** (99+1 top) |
@@ -1905,7 +1905,7 @@ RAYON_NUM_THREADS=64 cargo test --test large_project
 
 > **Dokumen ini adalah living document — akan diperbarui seiring implementasi dan temuan dari benchmark nyata.**
 >
-> Target akhir: Maria mampu menangani proyek dengan >10.000 RTL modules, >80.000 verification modules, >10 juta LOC, dengan incremental compile <5 detik dan CPU utilization >95%.
+> Target akhir: Mivon mampu menangani proyek dengan >10.000 RTL modules, >80.000 verification modules, >10 juta LOC, dengan incremental compile <5 detik dan CPU utilization >95%.
 
 ---
 

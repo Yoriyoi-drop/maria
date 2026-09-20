@@ -1,7 +1,7 @@
-# IEEE 1800-2012/2017 Compliance Matrix — Maria RTL Simulator
+# IEEE 1800-2012/2017 Compliance Matrix — Mivon RTL Simulator
 
 **Tanggal:** 21 Juli 2026 (diperbarui — UDP sequential, compilation unit)
-**Versi Maria:** 0.2.11
+**Versi Mivon:** 0.2.11
 **Standar:** IEEE Standard for SystemVerilog (IEEE 1800-2012, revised 2017)
 **Coverage:** ~98% dari fitur relevan RTL simulation (dari ~238 fitur, ~233 ✅ didukung)
 
@@ -20,7 +20,7 @@
 
 ## 1. Source Text (Clauses 3-4)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 3.1 | Source text structure | ✅ | compilation unit → module declarations |
 | 3.2 | Lexical conventions | ✅ | Keywords, identifiers, numbers, strings, operators |
@@ -42,7 +42,7 @@
 
 ## 2. Data Types (Clauses 5-6)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 5.2 | logic type | ✅ | 4-state (X, Z, 0, 1), width apa saja |
 | 5.3 | reg type | ✅ | Identik dengan logic di engine |
@@ -74,7 +74,7 @@
 
 ## 3. Expressions (Clauses 7-11)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 7.1 | Primary expressions | ✅ | Ident, number, string, concat, paren |
 | 7.2 | Unary operators | ✅ | &, |, ~, !, ~&, ~|, ^, ~^ |
@@ -102,7 +102,7 @@
 
 ## 4. Operators (Clause 11)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 11.4.1 | Unary operators | ✅ | `+`, `-`, `!`, `~`, `&`, `~&`, `|`, `~|`, `^`, `~^` |
 | 11.4.2 | Binary arithmetic | ✅ | `+`, `-`, `*`, `/`, `%`, `**` |
@@ -121,7 +121,7 @@
 
 ## 5. Scheduling Semantics (Clause 4.5)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 4.5.1 | Active region | ✅ | Blocking assigns, initial/always processes |
 | 4.5.2 | Inactive region | ✅ | `#0` delay schedules to Inactive |
@@ -138,7 +138,7 @@
 
 ## 6. Process Statements (Clauses 9.2, 12.4)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 9.2 | always_ff | ✅ | posedge/negedge trigger; async + sync reset detection |
 | 9.2 | always_comb | ✅ | Sensitivity auto-inference; reactive region re-eval |
@@ -156,7 +156,7 @@
 
 ## 7. Timing Control (Clauses 9.3, 12.4)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 9.3.1 | #delay | ✅ | Integer delay |
 | 9.3.2 | @(event) | ✅ | Old-vs-new snapshot comparison |
@@ -170,7 +170,7 @@
 
 ## 8. Subroutine (Clauses 13)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 13.1 | function declaration | ✅ | Module-scope inline + class method AST-based |
 | 13.2 | task declaration | ✅ | Module-scope inline + class method with delay |
@@ -186,7 +186,7 @@
 
 ## 9. Modules (Clauses 23-25)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 23.1 | Module declaration | ✅ | ANSI + non-ANSI port list |
 | 23.2 | Module instantiation | ✅ | Named + positional; parameter override |
@@ -203,7 +203,7 @@
 
 ## 10. Primitives (Clause 28)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 28.1 | Gate primitives | ✅ | 8 types: and, or, nand, nor, xor, xnor, buf, not |
 | 28.2 | Gate instantiation | ✅ | Combinational process; strength/delay di-parse (diperlukan untuk sintesis kompatibilitas) |
@@ -215,7 +215,7 @@
 
 ## 11. Interfaces (Clause 22)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 22.1 | Interface declaration | ✅ | Parse + modport |
 | 22.2 | Interface instantiation | ✅ | Instantiasi di module |
@@ -227,7 +227,7 @@
 
 ## 12. Packages (Clause 26)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 26.1 | Package declaration | ✅ | `package`/`endpackage` |
 | 26.2 | Package import | ✅ | `import pkg::*` / `import pkg::item` |
@@ -239,7 +239,7 @@
 
 ## 13. Classes (Clauses 8.10, 15-21)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 15.1 | Class declaration | ✅ | `extends`, `virtual`, `this`, `super` |
 | 15.2 | Class inheritance | ✅ | Recursive merge field + virtual dispatch |
@@ -261,7 +261,7 @@
 
 ## 14. Assertions (Clauses 16.12-16.16)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 16.12 | Immediate assert | ✅ | `assert (expr) [pass] [else fail]` |
 | 16.12 | Immediate assume | ✅ | `assume (expr) [pass] [else fail]` |
@@ -275,7 +275,7 @@
 
 ## 15. Coverage (Clauses 19.7)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 19.7.1 | Covergroup | ✅ | Parse + engine sample + coverage report |
 | 19.7.2 | Coverpoint | ✅ | Parse + bins; engine hit tracking |
@@ -290,7 +290,7 @@
 
 ## 16. Randomization (Clauses 19.7.2)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 19.7.2 | $urandom | ✅ | 32-bit unsigned |
 | 19.7.2 | $random | ✅ | 32-bit signed |
@@ -303,7 +303,7 @@
 
 ## 17. System Tasks/Functions (Clause 20)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 20.1 | $display/$write | ✅ | `%d`, `%b`, `%h`, `%s`, `%f`; `%0d` zero-fill didukung penuh |
 | 20.2 | $strobe | ✅ | Postponed region display |
@@ -333,7 +333,7 @@
 
 ## 18. I/O System Tasks (Clause 20.7)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 20.7.1 | $fgets | ✅ | Read line from file into string |
 | 20.7.2 | $fgetc | ✅ | Read char from file |
@@ -350,7 +350,7 @@
 
 ## 19. Interprocess Communication (Clause 17)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 17.1 | mailbox | ✅ | `new()`, `put()`, `get()`, `try_get()`, `try_put()`, `num()` |
 | 17.2 | semaphore | ✅ | `new()`, `get()`, `put()`, `try_get()` |
@@ -362,7 +362,7 @@
 
 ## 20. UVM Compatibility (Tidak ada di IEEE 1800, tapi krusial)
 
-| Fitur | Maria | Catatan |
+| Fitur | Mivon | Catatan |
 |-------|-------|---------|
 | uvm_object | ✅ | Base class: `get_name()`, `set_name()`, `get_type_name()`, `print()` |
 | uvm_component | ✅ | `get_full_name()`, `get_parent()`, `get_num_children()`, child/parent tracking |
@@ -381,7 +381,7 @@
 
 ## 21. Analog/Mixed-Signal (Clauses 30-33)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 30 | wreal (real-valued net) | ❌ | Tidak ada analog modeling |
 | 31 | analog process | ❌ | Tidak ada `analog`/`final step` |
@@ -392,7 +392,7 @@
 
 ## 22. Timing Checks + SDF Annotation (Clauses 14-15)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 14.1 | $setup (specify) | ✅ | Runtime check via `check_timing_constraints()` + `signal_last_change` tracking |
 | 14.2 | $hold (specify) | ✅ | Runtime check di specify block; data change + limit comparison |
@@ -411,7 +411,7 @@
 
 ## 23. Assertion Built-in Functions (Clause 20.11)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 20.11.1 | $assertoff | ✅ | Disable all assertions; optional scope argument |
 | 20.11.2 | $assertkill | ✅ | Disable and kill all assertions (stops pending evaluations) |
@@ -424,7 +424,7 @@
 
 ## 24. Coverage Built-in Functions (Clause 20.12)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 20.12.1 | $coverage_control | ✅ | Control coverage collection via bitmask; on/off toggle di `coverage_enabled` |
 | 20.12.2 | $coverage_get | ✅ | Get current coverage percentage; writes to destination signal |
@@ -436,7 +436,7 @@
 
 ## 25. Miscellaneous (Various)
 
-| Subclaus | Fitur | Maria | Catatan |
+| Subclaus | Fitur | Mivon | Catatan |
 |----------|-------|-------|---------|
 | 4.8 | Compilation unit scope | ✅ | `import pkg::*` + top-level typedef/function/task/param declarations; semua di-proses ke tiap module via elaborator |
 | 6.16 | Type parameter | ✅ | `class #(type T)` |
@@ -490,7 +490,7 @@
 
 ## Catatan Penting
 
-1. **Analog/Mixed-Signal (20%)** — Tidak relevan untuk Maria (RTL digital simulator)
+1. **Analog/Mixed-Signal (20%)** — Tidak relevan untuk Mivon (RTL digital simulator)
 2. **Timing Checks (SDF ✅ + specify ✅)** — SDF annotation sudah didukung (`SdfData` parser + `annotate_sdf()`); `$setup`/`$hold`/`$setuphold` specify timing checks via `specify ... endspecify` parse + storage; runtime eval via `signal_last_change` tracking
 3. **I/O System Tasks (✅ $fgets/$fgetc/$fflush/$fseek/$ftell/$feof/$swrite/$sformat/$sscanf/$ferror)** — Lengkap; termasuk `$swrite`/`$sformat` string formatting, `$sscanf` string scanning, `$ferror` file error status
 4. **Assertion Builtins (0%)** — Assertion immediate sudah ada, tapi control functions (`$assertoff`) belum
@@ -501,5 +501,5 @@
 
 ---
 
-*Matriks ini dibuat berdasarkan dokumentasi AUDIT.md Maria v0.2.9 (15 Juli 2026)*
+*Matriks ini dibuat berdasarkan dokumentasi AUDIT.md Mivon v0.2.9 (15 Juli 2026)*
 *Standar: IEEE Standard for SystemVerilog (IEEE 1800-2012, revised 2017)*

@@ -1,4 +1,4 @@
-# Pipeline Rilis & Auto-Update Maria
+# Pipeline Rilis & Auto-Update Mivon
 
 Desain GitHub Actions final: **CI otomatis untuk semua perubahan; publikasi
 stabil lebih ketat daripada CI dan hanya dipicu oleh tag versi yang dibuat
@@ -10,7 +10,7 @@ user secara eksplisit.**
 |-------|------|-------------|
 | **CI hijau** | Perubahan lolos pemeriksaan yang ditentukan (fmt/clippy/build/test) | Automatis — tiap push/PR (`ci.yml`) |
 | **Patch diterima untuk rilis** | Lolos seluruh gerbang wajib + persetujuan sesuai aturan branch | Rulesets main (`ci.yml` + CODEOWNERS + required checks) |
-| **Update diterbitkan** | Artefak dibangun, diverifikasi, dipublikasikan; baru sekarang landing page, `install.sh`, dan `maria update` boleh melihatnya sebagai update stabil | **Tag versi `vX.Y.Z` yang di-push user secara eksplisit** (`release.yml`) |
+| **Update diterbitkan** | Artefak dibangun, diverifikasi, dipublikasikan; baru sekarang landing page, `install.sh`, dan `mivon update` boleh melihatnya sebagai update stabil | **Tag versi `vX.Y.Z` yang di-push user secara eksplisit** (`release.yml`) |
 
 Prinsip desain: *CI boleh berjalan otomatis untuk semua perubahan. Publikasi
 stabil harus lebih ketat daripada CI.*
@@ -50,7 +50,7 @@ stabil harus lebih ketat daripada CI.*
  │   Satu sumber versi resmi utk SEMUA konsumen               │
  └───────────┬───────────────────────────────┬────────────────┘
              ▼                               ▼
-   Landing page (manifest)        Maria CLI (maria update)
+   Landing page (manifest)        Mivon CLI (mivon update)
    versi terbaru + install.sh     deteksi → verifikasi → pasang
                                   → rollback (backup)
 ```
@@ -60,7 +60,7 @@ stabil harus lebih ketat daripada CI.*
 ### `ci.yml` — Gerbang teknis (AUTO, read-only)
 - Jalan otomatis di tiap push/PR (`pull_request` + `push` ke main + dispatch).
 - Job: `patch-check` (fmt strict + clippy non-blocking — lint lama tidak menggagalkan, error kompilasi tetap gagal), `tests` (workspace), `area-detection` (dorny/paths-filter), regresi per-area (`parser-regression`, `simulator-regression`, `dependency-validation`, `installer-validation`, `documentation-check`), `release-build` (build + verifikasi binary + upload artifact).
-- Filter area memakai nama crate aktual (`maria-parser`, `maria-core`, `maria-ast`; `maria-simulator`, `maria-elaboration`, `maria-ir`).
+- Filter area memakai nama crate aktual (`mivon-parser`, `mivon-core`, `mivon-ast`; `mivon-simulator`, `mivon-elaboration`, `mivon-ir`).
 - Tidak menulis apa pun. Semua hijau = prasyarat rilis.
 
 ### `release.yml` — Publikasi stabil (TAG = PERINTAH USER)
@@ -79,13 +79,13 @@ git tag v0.4.0 && git push origin v0.4.0
 Alur job:
 1. `validate` (environment `release`) — gerbang rilis:
    - tag `vX` harus sama dengan `version` di `Cargo.toml` (bump versi wajib);
-   - CI hijau pada commit yang di-tag (check-runs `Maria CI` sukses, tidak ada check gagal);
+   - CI hijau pada commit yang di-tag (check-runs `Mivon CI` sukses, tidak ada check gagal);
    - pelaku punya permission `admin|write|maintain`;
    - (opsional) environment protection `release` di Settings → Environments → required reviewers → persetujuan manusia kedua.
-2. `build` — `cargo build --release --bin maria --locked` pada SHA yang di-tag, `strip`, `sha256sum`, verify binary. Artefak: `maria` + `maria.sha256`.
+2. `build` — `cargo build --release --bin mivon --locked` pada SHA yang di-tag, `strip`, `sha256sum`, verify binary. Artefak: `mivon` + `mivon.sha256`.
 3. `publish` — `gh release create vX` (idempoten: hapus release lama bertag sama dulu), `--generate-notes`, `--latest`, asset binary + checksum.
 4. `sync-distribution` (environment `release`, token bot) — satu commit "release: sinkronkan distribusi vX":
-   - blok `MARIA-LATEST-BEGIN/END` di `landing_page/src/content/docs/installation.mdx` (idempoten);
+   - blok `MIVON-LATEST-BEGIN/END` di `landing_page/src/content/docs/installation.mdx` (idempoten);
    - header `# Version:` + fallback versi di `install.sh`;
    - manifest `dist/latest.json` (root) → disalin ke `landing_page/public/version.json` (disajikan statis landing page).
 5. `report` — ringkasan.
@@ -98,7 +98,7 @@ Commit sinkronisasi hanya menyentuh path distribusi; tidak memicu rilis ulang
 | Perubahan | Gerbang tambahan |
 |-----------|------------------|
 | Dokumentasi saja | Markdown lint + link check |
-| Lexer/parser | Parser regression + fuzz corpus (`maria-fuzz`) |
+| Lexer/parser | Parser regression + fuzz corpus (`mivon-fuzz`) |
 | Semantic analysis/type checking | Unit test + integration test |
 | Elaboration/simulator | Regression RTL + differential test |
 | Parallel evaluation | Stress test, determinisme, race/crash regression |
@@ -130,7 +130,7 @@ banyak crate. Karena itu **semua patch tetap menjalani baseline CI penuh**
   "published_at": "2026-09-20T12:00:00Z",
   "platforms": {
     "x86_64-unknown-linux-gnu": {
-      "url": "https://github.com/Yoriyoi-drop/maria/releases/download/v0.4.0/maria",
+      "url": "https://github.com/Yoriyoi-drop/mivon/releases/download/v0.4.0/mivon",
       "sha256": "a1b2c3... (64 hex)"
     }
   }
@@ -140,21 +140,21 @@ banyak crate. Karena itu **semua patch tetap menjalani baseline CI penuh**
 - Dihasilkan **hanya** oleh `release.yml` setelah release resmi diterbitkan →
   konsumen tidak pernah melihat versi yang belum dirilis.
 - Dibaca oleh: landing page (`/version.json` → badge versi di navbar),
-  `install.sh` (via GitHub API releases/latest), `maria update` (manifest).
+  `install.sh` (via GitHub API releases/latest), `mivon update` (manifest).
 - Landing page TIDAK mengambil binary dari branch main — selalu dari release.
 
-## 7. Auto-update di dalam Maria (implementasi: `crates/maria-tools/src/update.rs`)
+## 7. Auto-update di dalam Mivon (implementasi: `crates/mivon-tools/src/update.rs`)
 
-Subcommand: `maria update` (alias `mupdate`).
+Subcommand: `mivon update` (alias `mupdate`).
 
 | Perintah | Fungsi |
 |----------|--------|
-| `maria update check` | Baca manifest, bandingkan semver, lapor update tersedia (tanpa mengubah apa pun) |
-| `maria update` | Pasang update terbaru (manifest) |
-| `maria update --channel beta` | Pilih manifest `dist/latest-beta.json` |
-| `maria update --version 0.4.0` | Pasang versi spesifik dari release v0.4.0 (fetch checksum asset langsung) |
-| `maria update --rollback` | Kembalikan binary sebelumnya (backup `maria.bak`) |
-| `maria update -y` | Lewati konfirmasi (untuk scripting/CI) |
+| `mivon update check` | Baca manifest, bandingkan semver, lapor update tersedia (tanpa mengubah apa pun) |
+| `mivon update` | Pasang update terbaru (manifest) |
+| `mivon update --channel beta` | Pilih manifest `dist/latest-beta.json` |
+| `mivon update --version 0.4.0` | Pasang versi spesifik dari release v0.4.0 (fetch checksum asset langsung) |
+| `mivon update --rollback` | Kembalikan binary sebelumnya (backup `mivon.bak`) |
+| `mivon update -y` | Lewati konfirmasi (untuk scripting/CI) |
 
 Alur updater (fail-closed):
 1. Baca versi lokal (`CARGO_PKG_VERSION`).
@@ -162,12 +162,12 @@ Alur updater (fail-closed):
 3. Bandingkan semver (implementasi mandiri di `parse_version` — tanpa dep baru).
 4. Unduh artefak sesuai platform (deteksi `arch-os` ala install.sh).
 5. Verifikasi SHA-256 (`sha2`) — tidak cocok → batalkan, jangan timpa.
-6. Backup exe → `maria.bak` (buang backup lama), pasang atomik via `rename`.
+6. Backup exe → `mivon.bak` (buang backup lama), pasang atomik via `rename`.
 7. Smoke test `--version` pada binary baru; gagal → rollback otomatis.
 8. Sukses → lapor; `--rollback` kapan saja mengembalikan backup.
 
 Keamanan: manifest hanya metadata (url + sha256) — **tidak pernah dieksekusi**.
-Default eksplisit: tanpa `maria update`, tidak ada yang berubah.
+Default eksplisit: tanpa `mivon update`, tidak ada yang berubah.
 
 Test: 8 unit test inline (`semver_compare_membandingkan_patch`,
 `parse_version_beragam_format`, `sha256_dikenal`, `manifest_parse_valid_dan_invalid`,
@@ -176,14 +176,14 @@ Test: 8 unit test inline (`semver_compare_membandingkan_patch`,
 
 ## 8. install.sh — verifikasi checksum
 
-`install_binary()` sekarang mengunduh `maria.sha256` dari release yang sama,
+`install_binary()` sekarang mengunduh `mivon.sha256` dari release yang sama,
 membandingkan dengan `sha256sum` binary hasil unduh; mismatch → hapus file,
 `exit 1` (fail-closed). Installer tetap memakai GitHub API `releases/latest`
 untuk deteksi versi (satu sumber versi resmi).
 
-## 9. Detector lokal (`scripts/maria-detector.py`)
+## 9. Detector lokal (`scripts/mivon-detector.py`)
 
-- Hash file source + state di `.maria/auto-update/`; mendeteksi perubahan.
+- Hash file source + state di `.mivon/auto-update/`; mendeteksi perubahan.
 - Hanya menulis `update-payload.json` + mencetak langkah rilis (tag vX).
 - **Tidak pernah** men-dispatch publish otomatis — menunggu perintah user.
 
@@ -207,12 +207,12 @@ untuk deteksi versi (satu sumber versi resmi).
 - [x] Manifest `dist/latest.json` setelah release valid
 - [x] Landing page terhubung manifest (`VersionBadge` membaca `/version.json`)
 - [x] `install.sh` terhubung release resmi + verifikasi checksum
-- [x] Implementasi `maria update check` / `maria update` (+ `--channel`, `--version`, `--rollback`, `-y`)
-- [x] Checksum + rollback (sha2 verify, backup `maria.bak`, smoke test)
+- [x] Implementasi `mivon update check` / `mivon update` (+ `--channel`, `--version`, `--rollback`, `-y`)
+- [x] Checksum + rollback (sha2 verify, backup `mivon.bak`, smoke test)
 
 ## 12. Catatan
 
 - Platform rilis saat ini: `x86_64-unknown-linux-gnu`. aarch64/macOS menyusul
   (perlu `cross`/runner macOS + entri platform di manifest).
-- Implementasi `maria update` menyentuh binary (area CRITICAL): dilakukan
+- Implementasi `mivon update` menyentuh binary (area CRITICAL): dilakukan
   manual, satu logical change, dengan test khusus (8 unit test lulus).

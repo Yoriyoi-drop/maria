@@ -1,7 +1,7 @@
-# Buglog maria-mv — hasil eksplorasi (pencari bug maria utama)
+# Buglog mivon-mv — hasil eksplorasi (pencari bug mivon utama)
 
 Pipeline `.mv` → transpile → SV → sim dipakai sebagai oracle untuk menemukan
-bug di maria utama (parser/elaborator/simulator). Status: ✅ fixed / ⏳ open.
+bug di mivon utama (parser/elaborator/simulator). Status: ✅ fixed / ⏳ open.
 
 ## ✅ Fixed
 
@@ -37,12 +37,12 @@ bug di maria utama (parser/elaborator/simulator). Status: ✅ fixed / ⏳ open.
    majemuk `(a*2) >>> 2` = -4 — diverifikasi ulang probe `t_p2`:
    `B=-3 C=253` benar. Buglog usang.
 
-4. **Unpacked array MULTI-dimensi (F39)** — parser SV (`maria-parser`) hanya
+4. **Unpacked array MULTI-dimensi (F39)** — parser SV (`mivon-parser`) hanya
    menyimpan SATU dimensi unpacked; `logic [7:0] mat [0:1][0:1]` menjadi
    width 16 / 2 elemen (harus 32 / 4), init `'{'{1,2},'{3,4}}` tak
    ter-decompose → semua elemen 0; index 2-d `mat[i][j]` = bit-select lebar 1.
    Fix lengkap:
-   - **AST** (`maria-ast/src/types.rs`): `DeclVar.extra_unpacked_dims` +
+   - **AST** (`mivon-ast/src/types.rs`): `DeclVar.extra_unpacked_dims` +
      `Port.extra_unpacked_dims` — `Vec<(Option<Range>, Option<Expr>)>` utk
      dim lanjutan (range ter-resolve / size-expr utk param).
    - **Parser** (`decl.rs`, `lib.rs` user-type branch, `instance.rs` port):

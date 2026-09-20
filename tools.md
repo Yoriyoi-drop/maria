@@ -1,7 +1,7 @@
-11 CLI Tools Maria
+11 CLI Tools Mivon
 1. minspect
 
-Maria Inspect
+Mivon Inspect
 
 Tool untuk menginspeksi isi project tanpa melakukan compile penuh.
 
@@ -18,7 +18,7 @@ Menampilkan statistik project.
 
 Contoh:
 
-maria minspect opentitan.f
+mivon minspect opentitan.f
 
 Output:
 
@@ -48,15 +48,15 @@ Average LOC/module
 
 Subcommand:
 
-maria minspect stats
-maria minspect modules
-maria minspect hierarchy
-maria minspect packages
-maria minspect classes
-maria minspect interfaces
-maria minspect parameters
-maria minspect deps
-maria minspect cache
+mivon minspect stats
+mivon minspect modules
+mivon minspect hierarchy
+mivon minspect packages
+mivon minspect classes
+mivon minspect interfaces
+mivon minspect parameters
+mivon minspect deps
+mivon minspect cache
 
 Subcommand `cache` membaca lapisan `cache/<pid>/` (db.md) tanpa compile —
 menampilkan statistik per kategori (entries, bytes, hits, misses, hit-rate,
@@ -72,14 +72,14 @@ IR) dan generate/ (blok if/for/case + instance hasil ekspansi) ikut terisi
 
 Cache yang sudah terisi dapat DIBACA ulang tanpa compile ulang:
 
-- `maria melab file.sv --from-cache` — hierarki/instance/port binding/
+- `mivon melab file.sv --from-cache` — hierarki/instance/port binding/
   parameter override/proses/net dari cache elaborate/ + generate/, tanpa
   menjalankan elaborator (db.md "1000 instance generate tidak perlu
   dielaborasi ulang").
-- `maria mprof file.sv --cached` — profil + bottleneck + rekomendasi dari
-  build terakhir (db.md "20. profile/" — Maria mengetahui bottleneck sendiri),
+- `mivon mprof file.sv --cached` — profil + bottleneck + rekomendasi dari
+  build terakhir (db.md "20. profile/" — Mivon mengetahui bottleneck sendiri),
   tanpa menjalankan pipeline.
-- `maria minspect file.sv cache` — selain statistik per kategori, menampilkan
+- `mivon minspect file.sv cache` — selain statistik per kategori, menampilkan
   isi lint/ (temuan `mlint`), coverage/ (hasil `mcov`/`msim --coverage`),
   simulation/ (initial state + scheduler + sensitivity list), waveform/
   (signal index top: nama, lebar, kind, net), optimize/ (const fold + loop
@@ -97,10 +97,10 @@ statistik elaborator: jumlah constant folding, loop for yang di-unroll +
 statement hasilnya, jumlah evaluasi ekspresi (`elaborate_expr`), dan sampel
 hasil fold (`WIDTH*8 → 256`) — db.md "6. optimize/", "10. expression/".
 
-Contoh output `maria minspect cache test/counter.sv`:
+Contoh output `mivon minspect cache test/counter.sv`:
 
 ── Pipeline Cache ──
-  root                       .maria/database
+  root                       .mivon/database
   project id                 029877faa3cede04
   files                      1
 
@@ -117,7 +117,7 @@ Contoh output `maria minspect cache test/counter.sv`:
 
 Kenapa lebih berguna?
 
-Saat menghadapi proyek besar seperti OpenTitan, sering kali Anda hanya ingin mengetahui struktur proyek atau memastikan modul tertentu memang terdeteksi, tanpa membuang waktu menjalankan elaboration atau simulation. minspect memberikan "X-ray" terhadap proyek dengan cepat, memanfaatkan indeks internal Maria yang sudah ada.
+Saat menghadapi proyek besar seperti OpenTitan, sering kali Anda hanya ingin mengetahui struktur proyek atau memastikan modul tertentu memang terdeteksi, tanpa membuang waktu menjalankan elaboration atau simulation. minspect memberikan "X-ray" terhadap proyek dengan cepat, memanfaatkan indeks internal Mivon yang sudah ada.
 2. mlint
 
 Static RTL Linter.
@@ -130,7 +130,7 @@ Combinational loop
 Latch detection
 Width mismatch
 Unused signal
-maria mlint rtl/
+mivon mlint rtl/
 3. melab
 
 Standalone Elaborator.
@@ -140,15 +140,15 @@ Hanya melakukan
 parameter resolve
 generate
 hierarchy
-maria melab top.sv
-maria melab top.sv --reset-domain   # SIM-22: analisis reset-domain crossing
+mivon melab top.sv
+mivon melab top.sv --reset-domain   # SIM-22: analisis reset-domain crossing
                                     # (domain reset + crossing sinyal antar
                                     # domain, severity OK/MEDIUM/HIGH/CRITICAL)
 4. msim
 
 Simulator.
 
-maria msim
+mivon msim
 
 Support
 
@@ -204,7 +204,7 @@ Tetapi untuk
 
 Verilog
 SystemVerilog
-Maria HDL
+Mivon HDL
 8. mprof
 
 Performance Profiler.
@@ -262,27 +262,27 @@ Synthesis Tool (SYNTHESIS.md — flow ala Vivado). Nama lama: `msynth` (alias).
 Fungsi
 
 Synthesizability check (SYN-1..9)
-Lowering RTL → SIR (node-based, `maria-sir`)
+Lowering RTL → SIR (node-based, `mivon-sir`)
 Pass manager optimizer (const fold, arith, mux, CSE, DCE)
-SIR → generic netlist (`maria-netlist` — 1-driver/N-load DAG)
+SIR → generic netlist (`mivon-netlist` — 1-driver/N-load DAG)
 Tech mapping → LUT6/CARRY4/FF (`--tech-map`, phase 4)
 STA + area (`--timing` + `--constraint .mcs`, phase 5)
-Liberty `.lib` parser → `.libmdb` (maria-tech, phase 6 — fondasi ASIC mapping)
+Liberty `.lib` parser → `.libmdb` (mivon-tech, phase 6 — fondasi ASIC mapping)
 Netlist `.mvnet` / `netlist.v` / `netlist.json` / `tech.v`
 Timing report (`timing.rpt`) & area report (`area.rpt`)
 Utilization report
 
 Contoh
 
-maria synth rtl/counter.sv --top counter --emit-mvnet
-maria synth rtl/ --check-only
-maria synth rtl/counter.sv --dump-sir
-maria synth rtl/alu.sv --dump-sir-opt --preset generic
-maria synth rtl/counter.sv --top counter --dump-netlist
-maria synth rtl/counter.sv --top counter --emit-netlist
-maria synth rtl/alu.sv --top alu --tech-map
-maria synth rtl/counter.sv --top counter --tech-map --preset fpga
-maria synth rtl/alu.sv --top alu --tech-map --timing --constraint chip.mcs
+mivon synth rtl/counter.sv --top counter --emit-mvnet
+mivon synth rtl/ --check-only
+mivon synth rtl/counter.sv --dump-sir
+mivon synth rtl/alu.sv --dump-sir-opt --preset generic
+mivon synth rtl/counter.sv --top counter --dump-netlist
+mivon synth rtl/counter.sv --top counter --emit-netlist
+mivon synth rtl/alu.sv --top alu --tech-map
+mivon synth rtl/counter.sv --top counter --tech-map --preset fpga
+mivon synth rtl/alu.sv --top alu --tech-map --timing --constraint chip.mcs
 
 Output
 
@@ -295,8 +295,8 @@ STA → `alu.timing.rpt`: WNS/TNS/critical path (--timing --constraint .mcs)
 Area → `alu.area.rpt`: LUT/CARRY4/FF + unit area
 Pass manager: const fold, arith, mux, CSE, DCE (--preset generic|fpga|asic|custom)
 FF / LUT / CARRY4 / BRAM / DSP
-Netlist gate-level — bisa disimulasikan engine Maria (hasil = sim RTL)
-10 GUI Tools Maria
+Netlist gate-level — bisa disimulasikan engine Mivon (hasil = sim RTL)
+10 GUI Tools Mivon
 1. Project Explorer
 
 Panel kiri.
@@ -419,7 +419,7 @@ Memudahkan memahami proyek OpenTitan yang memiliki ribuan modul, tanpa harus mem
 
 9. Memory & Cache Monitor
 
-Khusus Maria.
+Khusus Mivon.
 
 Menampilkan
 
@@ -479,7 +479,7 @@ Arsitektur yang disarankan
 
 Seluruh tool CLI dan GUI sebaiknya memakai backend yang sama agar tidak ada duplikasi logika:
 
-                 Maria Core
+                 Mivon Core
                       │
       ┌───────────────┼───────────────┐
       │               │               │

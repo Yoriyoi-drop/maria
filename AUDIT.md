@@ -1,4 +1,4 @@
-# Audit Komprehensif — Maria RTL Simulator
+# Audit Komprehensif — Mivon RTL Simulator
 
 **Tanggal:** 20 Juli 2026 (diperbarui)
 **Versi:** 0.2.9
@@ -15,7 +15,7 @@
 
 **Production Readiness Score: 100/100** (+2 final block + force/release/deassign proper semantics, +1 struct member access full pipeline, +1 hierarchical ref fix, +1 program block, +1 localparam, +1 pkg::item expression via ScopedIdent, +1 signed literal `'sb` full pipeline, +1 `$bits` expression width, +1 `(* *)` attribute skip, +10 always_comb/generate/arrayed/$strobe, +6 mailbox + semaphore + error recovery, +4 const folding + DCE, +2 12-region scheduler, +3 SVA assert/assume/cover, +5 covergroup/coverpoint/bins engine + coverage report, +2 DPI-C import, +3 multi-driver resolution, +1 inout port bidirectional, +1 parameter type, +4 RISC-V CPU compilation + simulation completion via elaboration fixes + parser unary/postfix precedence + preprocessor unknown directives, +2 AXI + Wishbone wrapper simulation completed, +2 CLI flags -I/-D/-f + shared Preprocessor, +1 repeat runtime via IrStmt::Repeat, +1 typedef range + func return type + always_latch, +1 user-defined type error + pkg import typedef, +1 sync reset detection, +1 task output/inout port write-back, +1 time type full pipeline, +1 wire Z init + multi-driver detection fix + comb eval order, +3 $fstrobe/$fmonitor/$fread, +3 signed relational + is_signed on SignalInfo + try_fold_const fix, +1 uvm_object base class, +1 uvm_component, +5 uvm_sequence/sequence_item/sequencer/driver, +5 array/queue methods + new[size] + void type + queue fixes, +2 class task delay simulation, +2 $signed/$unsigned system function, +2 $random(seed) reproducible, +2 bind construct (parser + elaborator + 4 tests), +2 clocking block (lexer + AST + parser + 4 tests), +5 verification regression (FSM, RAM, priority encoder, pipeline, arithmetic unit, modulo counter, handshake), +2 config/libmap/use (parser + AST + 3 tests), +2 Verilator-compatible linting guide (VERILATOR_COMPAT.md), +3 FST waveform (wavefst crate + FstWaveWriter + engine integration), +2 Coverage database UCIS (export_coverage_ucis + --coverage-ucis CLI + 1 test), +3 SDF annotation (SdfData parser + annotate_sdf + 2 tests))
 
-Maria adalah prototipe fungsional yang mampu mensimulasikan desain RTL sederhana
+Mivon adalah prototipe fungsional yang mampu mensimulasikan desain RTL sederhana
 (counter 4-bit, adder 16-bit, hierarki 3-level). **Picorv32 RISC-V CPU core (3049 LOC,
 8 module, 225 signals) berhasil dikompilasi, dielaborasi, dan disimulasikan hingga
 time 1001 tanpa error.** Namun masih memiliki keterbatasan untuk GPU, SoC,
@@ -427,7 +427,7 @@ Semua fitur Fase Alpha + Beta + RC + Production selesai. 20 dari 20 bug kritis t
 
 ## 6. Perbandingan dengan Simulator Lain
 
-| Dimensi | **Maria** | **Verilator** | **Icarus Verilog** | **Questa** |
+| Dimensi | **Mivon** | **Verilator** | **Icarus Verilog** | **Questa** |
 |---------|-----------|---------------|-------------------|------------|
 | Model | Interpreted AST | Cycle-accurate C++/SystemC | Compiled vvp | Compiled + optimized |
 | IEEE 1800 compliance | ~20% | ~70% (synthesis subset) | ~65% | ~95% |
@@ -453,15 +453,15 @@ Semua fitur Fase Alpha + Beta + RC + Production selesai. 20 dari 20 bug kritis t
 ### Peringkat Kesamaan Filosofi
 
 ```
-Maria lebih mirip Icarus Verilog (interpreted, 4-state, AST-based)
+Mivon lebih mirip Icarus Verilog (interpreted, 4-state, AST-based)
 daripada Verilator (compiled, 2-state, cycle-accurate).
 
-Keunggulan Maria vs Icarus:
+Keunggulan Mivon vs Icarus:
   - Rust (memory safety, no GC)
   - OOP/class support lebih baik
   - Pipeline cleaner (parser/elaborator/engine terpisah)
 
-Kekurangan Maria vs Icarus:
+Kekurangan Mivon vs Icarus:
   - Icarus sudah mature (>20 tahun)
   - Lebih banyak format support (.vcd, .fst, .lxt)
   - SDF + timing check
@@ -539,7 +539,7 @@ Top new features:
 ### Fase Production (target: skor 95+) — 18-24 bulan
 
 ```
-  ✅ Verilator-compatible subset (linting guide) — `VERILATOR_COMPAT.md` — 8 sections: kompatibilitas (~90% RTL), pola umum, tips transisi Maria↔Verilator, perbandingan fitur, daftar directive
+  ✅ Verilator-compatible subset (linting guide) — `VERILATOR_COMPAT.md` — 8 sections: kompatibilitas (~90% RTL), pola umum, tips transisi Mivon↔Verilator, perbandingan fitur, daftar directive
   ✅ SDF annotation (minimal: setuphold) — `SdfData` parser (tokenize + parse DELAYCELL/DELAYNET/TIMINGCHECK) + `annotate_sdf()` method + `SignalInfo.delay_rise/delay_fall` fields; 2 tests
   ✅ FST waveform — `wavefst` crate v0.1 (pure Rust, zlib compression) + `FstWaveWriter` (hierarchy + variable creation + value change emission) + engine integration (`dump_fst_time`/`dump_fst_state`); auto-dump saat simulasi; output: `{design}.fst`
   ✅ CLI: -I (incdir), -D (define), -f (filelist) — shared Preprocessor dengan defines/search_paths untuk semua file source; -D RISCV_FORMAL=1 mengaktifkan RVFI formal ports (257 signals vs 225)
@@ -578,7 +578,7 @@ Top new features:
 
 ## 9. Kesimpulan
 
-### Kekuatan Maria
+### Kekuatan Mivon
 
 1. **Arsitektur bersih** — pipeline tersegmentasi rapi (preprocessor→lexer→parser→elaborator→IR→engine→VCD)
 2. **4-state logic** — X/Z propagation benar untuk semua operator
@@ -598,11 +598,11 @@ Top new features:
 
 ### Verdict
 
-> **Maria adalah prototipe yang menjanjikan dengan arsitektur yang benar,**
+> **Mivon adalah prototipe yang menjanjikan dengan arsitektur yang benar,**
 > **kini mampu menjalankan RISC-V CPU core (picorv32, 3049 LOC) dari**
 > **kompilasi hingga simulasi completed tanpa error.**
 >
-> Untuk saat ini, Maria cocok untuk:
+> Untuk saat ini, Mivon cocok untuk:
 > - Eksperimen pembelajaran SystemVerilog
 > - Simulasi desain edukasional (counter, adder, FSM sederhana)
 > - Prototipe fitur simulator baru
@@ -683,13 +683,13 @@ Top new features:
 
 **Update 15 Jul 2026 — Verilator-Compatible Linting Guide**
 - `VERILATOR_COMPAT.md` — 8 sections:
-  1. Ringkasan (Maria ~70% Verilator-compatible)
+  1. Ringkasan (Mivon ~70% Verilator-compatible)
   2. Fitur kompatibel (module, port, data types, operators, process, generate, function, system functions, assertions, DPI-C, package, interface)
-  3. Fitur tidak kompatibel (Maria-only: #delay, fork/join, $display, classes, UVM; Verilator-only: export DPI-C, SystemC)
+  3. Fitur tidak kompatibel (Mivon-only: #delay, fork/join, $display, classes, UVM; Verilator-only: export DPI-C, SystemC)
   4. Pola umum (always_ff, always_comb, generate, function, package)
   5. Fitur yang perlu hati-hati (blocking/non-blocking, latch, sensitivity, mixed-width)
-  6. Perbandingan Maria vs Verilator (tabel)
-  7. Tips transisi (Maria→Verilator, Verilator→Maria)
+  6. Perbandingan Mivon vs Verilator (tabel)
+  7. Tips transisi (Mivon→Verilator, Verilator→Mivon)
    8. Daftar Verilator directives
 - **565 test passing, 0 failure**
 
@@ -834,7 +834,7 @@ Top new features:
 **Update 19 Jul 2026 — Preprocessor Fix + OpenTitan Compilation**
 - Preprocessor: `ifdef`/`ifndef` unterminated → auto-closed at EOF (prevents cond_stack corruption across files)
 - Preprocessor: warning includes file name hint for unterminated blocks
-- OpenTitan (3970 files) compile dengan `-f .maria -D SYNTHESIS` — **0 Error** (hanya 2 preprocessor warnings)
+- OpenTitan (3970 files) compile dengan `-f .mivon -D SYNTHESIS` — **0 Error** (hanya 2 preprocessor warnings)
 
 **Update 20 Jul 2026 — Compiler Warnings Cleanup + I/O System Tasks + Const-folding**
 - Fix 4 unreachable pattern warnings di engine.rs, elaboration/util.rs, parser/parser.rs

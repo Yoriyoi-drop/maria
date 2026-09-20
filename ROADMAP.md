@@ -1,6 +1,6 @@
-# Maria Redesign — Roadmap Implementasi
+# Mivon Redesign — Roadmap Implementasi
 
-> Roadmap ini berisi langkah-langkah konkret implementasi redesign Maria, termasuk dependencies, target waktu, dan milestone.
+> Roadmap ini berisi langkah-langkah konkret implementasi redesign Mivon, termasuk dependencies, target waktu, dan milestone.
 
 ---
 
@@ -349,7 +349,7 @@ heaptrack cargo test --release
 
 # Flamegraph for CPU profiling
 cargo install flamegraph
-cargo flamegraph --bin maria -- test/counter.sv
+cargo flamegraph --bin mivon -- test/counter.sv
 
 # Benchmark
 cargo bench

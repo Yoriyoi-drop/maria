@@ -1,4 +1,4 @@
-# maria — RTL Simulator untuk SystemVerilog
+# mivon — RTL Simulator untuk SystemVerilog
 
 **Versi 0.2.9** | Rust | 609 tests | MIT
 
@@ -13,10 +13,10 @@ A Rust-based RTL simulator for SystemVerilog. Compiles `.sv` files through a pip
 ## Quick start
 
 ```shell
-maria run -- test/counter.sv              # simulate counter
-maria run -- test/tb_counter.sv -T 200    # with max time
-maria run -- file.sv --ast                # print AST
-maria run -- file.sv --tokens             # print tokens
+mivon run -- test/counter.sv              # simulate counter
+mivon run -- test/tb_counter.sv -T 200    # with max time
+mivon run -- file.sv --ast                # print AST
+mivon run -- file.sv --tokens             # print tokens
 ```
 
 ## Project file
@@ -44,7 +44,7 @@ tb_counter.sv
 -f <FILE>      file list (like -f in VCS)
 --coverage     print coverage report
 --coverage-ucis [PATH]  export UCIS XML
--f <FILE>      file list / project file (`.f` / `.maria`)
+-f <FILE>      file list / project file (`.f` / `.mivon`)
 ```
 
 ## Fitur utama
@@ -87,7 +87,7 @@ No CI, no lint, no typecheck shortcuts. Just `cargo test`. 1634 tests pass.
 ### Automated Release Updates
 The project uses a sophisticated GitHub Actions workflow (`.github/workflows/release-update.yml`) that:
 - **Validates changes** before proceeding (only allows updates on main branch or explicit manual triggers)
-- **Builds Maria binaries** automatically on each push to main
+- **Builds Mivon binaries** automatically on each push to main
 - **Updates installation documentation** in the landing page
 - **Detects internal updates** and verifies binary functionality
 - **Creates GitHub Releases** with changelog and binaries
@@ -109,29 +109,29 @@ gh workflow run release-update.yml
 
 ```bash
 # Install latest stable release automatically
-curl -fsSL https://raw.githubusercontent.com/Yoriyoi-drop/maria/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Yoriyoi-drop/mivon/main/install.sh -o install.sh
 sudo bash install.sh
 ```
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/Yoriyoi-drop/maria.git
-cd maria
+git clone https://github.com/Yoriyoi-drop/mivon.git
+cd mivon
 cargo build --release
 ```
 
-The binary will be at `target/release/maria`. Add it to your PATH:
+The binary will be at `target/release/mivon`. Add it to your PATH:
 
 ```bash
 # Add to ~/.bashrc or ~/.zshrc
-export PATH="$HOME/maria/target/release:$PATH"
+export PATH="$HOME/mivon/target/release:$PATH"
 ```
 
 Then run:
 
 ```bash
-maria --help
+mivon --help
 ```
 
-## CLI Tools (`crates/maria-tools/`, subcommand `maria <tool>`)
+## CLI Tools (`crates/mivon-tools/`, subcommand `mivon <tool>`)

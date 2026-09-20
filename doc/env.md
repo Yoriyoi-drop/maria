@@ -97,7 +97,7 @@ GlobalEnv
 ├── PluginContext
 └── SecurityContext
 Kelebihan desain 5
-Tidak ada MariaEnv berukuran raksasa dengan ratusan field.
+Tidak ada MivonEnv berukuran raksasa dengan ratusan field.
 Setiap tahap pipeline memiliki context yang jelas.
 Mendukung incremental compilation melalui MICD.
 Mudah diparalelkan karena context dapat dipisahkan per pekerjaan.
@@ -109,7 +109,7 @@ Filosofi Arsitektur
 
 Alih-alih seperti ini:
 
-pub struct MariaEnv {
+pub struct MivonEnv {
     pub config: Config,
     pub cache: Cache,
     pub parser: Parser,
@@ -129,7 +129,7 @@ pub struct MariaEnv {
 
 diganti menjadi
 
-Maria
+Mivon
  │
  └── GlobalEnv
       │
@@ -250,7 +250,7 @@ membaca ENV
 
 misalnya
 
-Maria.toml
+Mivon.toml
 
 ↓
 
@@ -738,9 +738,9 @@ Write Metrics
    │
    ▼
 Shutdown
-Mengapa cocok untuk Maria?
+Mengapa cocok untuk Mivon?
 
-Berdasarkan diskusi kita sebelumnya tentang Maria, Anda memiliki target seperti:
+Berdasarkan diskusi kita sebelumnya tentang Mivon, Anda memiliki target seperti:
 
 menangani ribuan hingga puluhan ribu modul RTL,
 memiliki MICD sebagai database incremental,
