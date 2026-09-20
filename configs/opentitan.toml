@@ -1,12 +1,12 @@
 # ==================================================
-# Maria OpenTitan Configuration (Earlgrey — 3970 files)
+# Mivon OpenTitan Configuration (Earlgrey — 3970 files)
 # ==================================================
 # Konfigurasi khusus project OpenTitan Earlgrey:
 #   - filelist: opentitan_rtl.f (RTL + TB + DPI, 3970 file)
 #   - jobs tinggi untuk parallel parse
 #   - MICD penuh (incremental compile lintas run)
 #   - StrictSimulation: wajib top ter-resolve, tanpa skip module
-# Pakai: maria --config configs/opentitan.toml -f opentitan_rtl.f --top top_earlgrey
+# Pakai: mivon --config configs/opentitan.toml -f opentitan_rtl.f --top top_earlgrey
 
 [compiler]
 edition = "2012"

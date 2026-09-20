@@ -1,5 +1,5 @@
 #!/bin/bash
-# Maria RTL Simulator Installation Script
+# Mivon RTL Simulator Installation Script
 # Version: 0.3.0
 # Auto-updates from GitHub releases when new patches are available
 
@@ -18,10 +18,10 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
 # Configuration
-REPO="Yoriyoi-drop/maria"
-BINARY_NAME="maria"
-INSTALL_DIR="${MARIA_INSTALL_DIR:-/usr/local/bin}"
-VERSION_FILE="${MARIA_VERSION_FILE:-/tmp/maria-version.txt}"
+REPO="Yoriyoi-drop/mivon"
+BINARY_NAME="mivon"
+INSTALL_DIR="${MIVON_INSTALL_DIR:-/usr/local/bin}"
+VERSION_FILE="${MIVON_VERSION_FILE:-/tmp/mivon-version.txt}"
 RELEASES_URL="https://api.github.com/repos/${REPO}/releases/latest"
 RAW_URL="https://github.com/${REPO}/releases/download"
 
@@ -68,7 +68,7 @@ check_for_updates() {
         print_info "New version available: $latest_version (current: $current_version)"
         return 0
     else
-        print_info "Maria is up to date (v$current_version)"
+        print_info "Mivon is up to date (v$current_version)"
         return 1
     fi
 }
@@ -77,19 +77,19 @@ check_for_updates() {
 install_binary() {
     local version=$1
     local platform=$2
-    local tmpfile="/tmp/maria-${version}-${platform}"
+    local tmpfile="/tmp/mivon-${version}-${platform}"
     
-    print_step "Downloading Maria v${version} for ${platform}..."
+    print_step "Downloading Mivon v${version} for ${platform}..."
     
-    if ! curl -fsSL "${RAW_URL}/${version}/maria" -o "${tmpfile}"; then
+    if ! curl -fsSL "${RAW_URL}/${version}/mivon" -o "${tmpfile}"; then
         print_error "Failed to download binary"
         exit 1
     fi
 
     # Verifikasi SHA-256 terhadap release resmi: jangan pasang binary yang
     # checksum-nya tidak cocok (fail-closed).
-    if ! curl -fsSL "${RAW_URL}/${version}/maria.sha256" -o "${tmpfile}.sha256"; then
-        print_error "Failed to download checksum (${version}/maria.sha256)"
+    if ! curl -fsSL "${RAW_URL}/${version}/mivon.sha256" -o "${tmpfile}.sha256"; then
+        print_error "Failed to download checksum (${version}/mivon.sha256)"
         rm -f "${tmpfile}"
         exit 1
     fi
@@ -113,16 +113,16 @@ install_binary() {
         sudo mv "${tmpfile}" "${INSTALL_DIR}/${BINARY_NAME}"
     fi
     
-    print_info "Maria v${version} installed successfully!"
+    print_info "Mivon v${version} installed successfully!"
 }
 
 # Verify installation
 verify_installation() {
-    if command -v maria &> /dev/null; then
-        print_info "Maria binary verified:"
-        maria --version 2>/dev/null || maria --help | head -1
+    if command -v mivon &> /dev/null; then
+        print_info "Mivon binary verified:"
+        mivon --version 2>/dev/null || mivon --help | head -1
     else
-        print_error "Maria binary not found in PATH"
+        print_error "Mivon binary not found in PATH"
         print_info "Add ${INSTALL_DIR} to your PATH:"
         print_info "  export PATH=\"${INSTALL_DIR}:\$PATH\""
         exit 1
@@ -153,7 +153,7 @@ self_update() {
 # Main installation
 main() {
     echo "=========================================="
-    echo "  Maria RTL Simulator Installation"
+    echo "  Mivon RTL Simulator Installation"
     echo "=========================================="
     echo ""
     
@@ -164,10 +164,10 @@ main() {
         exit 0
     fi
     
-    # Check if Maria is already installed
-    if command -v maria &> /dev/null; then
-        print_info "Maria is already installed"
-        maria --version 2>/dev/null || true
+    # Check if Mivon is already installed
+    if command -v mivon &> /dev/null; then
+        print_info "Mivon is already installed"
+        mivon --version 2>/dev/null || true
         
         read -rp "Would you like to check for updates? (y/N): " -n 1 -r
         echo
@@ -175,7 +175,7 @@ main() {
             self_update
         fi
     else
-        print_step "Installing Maria..."
+        print_step "Installing Mivon..."
         local platform
         platform=$(detect_platform)
         
@@ -189,7 +189,7 @@ main() {
     verify_installation
     echo ""
     print_info "Installation complete!"
-    print_info "Run 'maria --help' to get started"
+    print_info "Run 'mivon --help' to get started"
 }
 
 main "$@"

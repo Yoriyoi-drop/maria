@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Maria Auto-Patch Detector
-Detects new patches and updates within the Maria project itself.
+Mivon Auto-Patch Detector
+Detects new patches and updates within the Mivon project itself.
 Runs automatically to check for updates and trigger GitHub Actions.
 """
 
@@ -15,11 +15,11 @@ from typing import Optional, Dict, List, Tuple
 
 # Configuration
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-STATE_DIR = PROJECT_ROOT / ".maria" / "auto-update"
+STATE_DIR = PROJECT_ROOT / ".mivon" / "auto-update"
 STATE_FILE = STATE_DIR / "patch-state.json"
 VERSION_FILE = PROJECT_ROOT / "Cargo.toml"
 LOG_FILE = STATE_DIR / "detector.log"
-REPO_URL = "https://api.github.com/repos/Yoriyoi-drop/maria"
+REPO_URL = "https://api.github.com/repos/Yoriyoi-drop/mivon"
 
 
 def log(message: str, level: str = "INFO") -> None:
@@ -55,7 +55,7 @@ def get_file_hash(filepath: Path) -> Optional[str]:
 
 
 def get_source_files() -> List[Path]:
-    """Get all source files that affect Maria behavior"""
+    """Get all source files that affect Mivon behavior"""
     patterns = [
         "src/**/*.rs",
         "crates/**/*.rs",
@@ -146,12 +146,12 @@ def trigger_github_action(changes: List[str]) -> bool:
     try:
         # Create payload
         payload = {
-            "event_type": "maria-auto-update",
+            "event_type": "mivon-auto-update",
             "client_payload": {
                 "version": get_current_version(),
                 "changes": changes,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "source": "maria-detector"
+                "source": "mivon-detector"
             }
         }
 
@@ -161,10 +161,10 @@ def trigger_github_action(changes: List[str]) -> bool:
 
         log(f"Update payload written to {payload_file}")
 
-        # Desain final MARIA: RILIS HANYA VIA TAG VERSI (gerbang ketat).
+        # Desain final MIVON: RILIS HANYA VIA TAG VERSI (gerbang ketat).
         # Detector TIDAK PERNAH men-dispatch publish otomatis — hanya
         # menyiapkan payload + mencetak langkah yang harus dilakukan user.
-        log("Rilis Maria wajib lewat TAG versi:")
+        log("Rilis Mivon wajib lewat TAG versi:")
         log(f"  1. bump versi di Cargo.toml (saat ini v{get_current_version()}), commit, push")
         log("  2. git tag v<versi> && git push origin v<versi>")
         log("  3. workflow release.yml otomatis berjalan — CI hijau wajib,")
@@ -198,7 +198,7 @@ def should_auto_update(changes: List[str]) -> bool:
 
 def main() -> int:
     """Main detector function"""
-    log("Maria Auto-Patch Detector starting...")
+    log("Mivon Auto-Patch Detector starting...")
     
     current_version = get_current_version()
     log(f"Current version: {current_version}")

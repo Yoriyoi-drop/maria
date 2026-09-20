@@ -1,10 +1,10 @@
 # ==================================================
-# Maria Coverage Configuration (mcov — gate CI)
+# Mivon Coverage Configuration (mcov — gate CI)
 # ==================================================
 # Mode coverage: simulasi + ukur branch/line/expression coverage,
 # tulis coverage.json + coverage.html, exit error bila di bawah
 # ambang batas (gate untuk CI).
-# Pakai: maria --config configs/coverage.toml -f proyek.f
+# Pakai: mivon --config configs/coverage.toml -f proyek.f
 
 [compiler]
 edition = "2012"
@@ -39,7 +39,7 @@ line_threshold = 85.0
 # Tulis laporan.
 # NOTE: `json`/`vcd`/`fst` belum di-wire di jalur run() utama (hanya `html`
 # dan `ucis` yang aktif lewat mapping config→CLI). Gunakan subcommand
-# `maria cov ... --json` untuk output coverage.json bila diperlukan.
+# `mivon cov ... --json` untuk output coverage.json bila diperlukan.
 html = true
 # Format UCIS export (opsional)
 ucis = false

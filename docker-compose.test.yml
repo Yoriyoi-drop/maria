@@ -1,4 +1,4 @@
-# LINUX-14: Containerized CI test environment for Maria HDL Simulator
+# LINUX-14: Containerized CI test environment for Mivon HDL Simulator
 # Usage: docker-compose -f docker-compose.test.yml up --build
 # Or: make test-docker
 
@@ -53,7 +53,7 @@ services:
       context: .
       dockerfile: Dockerfile.test
     command: >
-      cargo test -p maria-tests --release
+      cargo test -p mivon-tests --release
       bench_release_sim_throughput_counter
       bench_release_compile_counter
       bench_release_string_intern

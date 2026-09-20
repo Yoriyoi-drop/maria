@@ -1,9 +1,9 @@
 # ==================================================
-# Maria Debug Configuration (deep-debug + reverse)
+# Mivon Debug Configuration (deep-debug + reverse)
 # ==================================================
 # Mode debugging: breakpoint/watchpoint aktif, snapshot untuk
 # reverse debug, timeline, dan hierarchy tree.
-# Pakai: maria --config configs/debug.toml -f proyek.f
+# Pakai: mivon --config configs/debug.toml -f proyek.f
 
 [compiler]
 edition = "2012"

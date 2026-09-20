@@ -1,9 +1,9 @@
 # ==================================================
-# Maria Benchmark Configuration (mbench — throughput)
+# Mivon Benchmark Configuration (mbench — throughput)
 # ==================================================
 # Mode benchmark: ukur compile speed, throughput simulasi,
 # peak RSS, dan cache hit. Output terukur + repeatable.
-# Pakai: maria --config configs/benchmark.toml -f proyek.f
+# Pakai: mivon --config configs/benchmark.toml -f proyek.f
 
 [compiler]
 edition = "2012"

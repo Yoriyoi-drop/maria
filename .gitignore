@@ -17,10 +17,10 @@
 /Cores-VeeR-EH1
 
 # MICD — incremental compilation database (build artifact, semua level crate)
-**/.maria/database/
+**/.mivon/database/
 **/.mdme_corpus
 **/.codegraph
-**/.maria-fuzz-bugs
+**/.mivon-fuzz-bugs
 /obj_dir
 # Waveform artifacts (FST dari simulasi/test)
 *.fst

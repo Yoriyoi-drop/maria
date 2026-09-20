@@ -1,4 +1,4 @@
-# LINUX-14: Test Dockerfile for Maria HDL Simulator
+# LINUX-14: Test Dockerfile for Mivon HDL Simulator
 FROM rust:1.78-slim
 
 RUN apt-get update && apt-get install -y \

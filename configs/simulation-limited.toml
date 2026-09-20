@@ -1,8 +1,8 @@
 # ==================================================
-# Maria Simulation Configuration (Limited — timeout)
+# Mivon Simulation Configuration (Limited — timeout)
 # ==================================================
 # Mode simulasi dengan batas waktu eksplisit (untuk smoke test / CI).
-# Pakai: maria --config configs/simulation-limited.toml -f proyek.f
+# Pakai: mivon --config configs/simulation-limited.toml -f proyek.f
 
 [compiler]
 edition = "2012"

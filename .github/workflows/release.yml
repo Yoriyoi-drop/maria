@@ -13,7 +13,7 @@
 #   2. Patch diterima  : lolos semua gerbang wajib + persetujuan (ruleset).
 #   3. Update diterbitkan: artefak dibangun, diverifikasi, dipublikasikan ke
 #      GitHub Release + manifest. HANYA di sini landing page / install.sh /
-#      `maria update` boleh melihat versi baru sebagai update stabil.
+#      `mivon update` boleh melihat versi baru sebagai update stabil.
 # =============================================================================
 name: Release
 
@@ -33,7 +33,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: maria-release-${{ github.ref || github.run_id }}
+  group: mivon-release-${{ github.ref || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -97,7 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           CI_OK=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
-                   -q '[.check_runs[] | select(.name == "Maria CI" and .status == "completed" and .conclusion == "success")] | length')
+                   -q '[.check_runs[] | select(.name == "Mivon CI" and .status == "completed" and .conclusion == "success")] | length')
           CI_BAD=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" \
                     -q '[.check_runs[] | select(.status == "completed" and .conclusion != "success")] | length')
           [ "${CI_OK}" -ge 1 ]  || { echo "::error::CI belum hijau untuk ${SHA}"; exit 1; }
@@ -143,27 +143,27 @@ jobs:
           cache-on-failure: true
 
       - name: Build release
-        run: cargo build --release --bin maria --locked
+        run: cargo build --release --bin mivon --locked
 
       - name: Bundle + SHA256
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp target/release/maria dist/maria
-          strip dist/maria || true
-          (cd dist && sha256sum maria > maria.sha256)
-          cat dist/maria.sha256
+          cp target/release/mivon dist/mivon
+          strip dist/mivon || true
+          (cd dist && sha256sum mivon > mivon.sha256)
+          cat dist/mivon.sha256
 
       - name: Verify binary
         run: |
           set -euo pipefail
-          ./dist/maria --version
-          ./dist/maria --help > /dev/null
+          ./dist/mivon --version
+          ./dist/mivon --help > /dev/null
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: maria-release-artifacts
+          name: mivon-release-artifacts
           path: dist/
           retention-days: 30
 
@@ -181,7 +181,7 @@ jobs:
       - name: Download artefak
         uses: actions/download-artifact@v4
         with:
-          name: maria-release-artifacts
+          name: mivon-release-artifacts
           path: dist/
 
       - name: Buat/refresh release untuk tag vX
@@ -196,13 +196,13 @@ jobs:
             gh release delete "$TAG" --yes
           fi
           gh release create "$TAG" \
-            dist/maria \
-            dist/maria.sha256 \
+            dist/mivon \
+            dist/mivon.sha256 \
             --target "$SHA" \
-            --title "Maria v${VERSION}" \
+            --title "Mivon v${VERSION}" \
             --latest \
             --generate-notes \
-            --notes "Rilis dari tag ${TAG} (diterbitkan manual). Artefak: maria + maria.sha256"
+            --notes "Rilis dari tag ${TAG} (diterbitkan manual). Artefak: mivon + mivon.sha256"
           echo "::notice::Release v${VERSION}: https://github.com/${{ github.repository }}/releases/tag/$TAG"
 
   # ---------------------------------------------------------------------------
@@ -229,15 +229,15 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "url=https://github.com/${{ github.repository }}/releases/download/v${VERSION}/maria" >> "$GITHUB_OUTPUT"
-          echo "checksum_url=https://github.com/${{ github.repository }}/releases/download/v${VERSION}/maria.sha256" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/${{ github.repository }}/releases/download/v${VERSION}/mivon" >> "$GITHUB_OUTPUT"
+          echo "checksum_url=https://github.com/${{ github.repository }}/releases/download/v${VERSION}/mivon.sha256" >> "$GITHUB_OUTPUT"
 
       - name: Ambil SHA256 dari release
         id: checksum
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          SHA=$(gh release view "v${VERSION}" --json assets -q '.assets[] | select(.name == "maria.sha256") | .url')
+          SHA=$(gh release view "v${VERSION}" --json assets -q '.assets[] | select(.name == "mivon.sha256") | .url')
           echo "sha256=$(curl -sL "$SHA" | grep -oE '^[0-9a-f]{64}' | head -1)" >> "$GITHUB_OUTPUT"
 
       - name: Update blok versi landing page (idempoten)
@@ -249,7 +249,7 @@ jobs:
           F=landing_page/src/content/docs/installation.mdx
           mkdir -p "$(dirname "$F")"
           BLOCK=$(cat <<EOF
-          <!-- MARIA-LATEST-BEGIN -->
+          <!-- MIVON-LATEST-BEGIN -->
           ## Versi terbaru: ${TAG}
 
           Installation resmi:
@@ -259,12 +259,12 @@ jobs:
           sudo bash install.sh
           \`\`\`
 
-          Binary: [${TAG}/maria](${URL}) · Checksum: [maria.sha256](https://github.com/${{ github.repository }}/releases/download/${TAG}/maria.sha256)
-          <!-- MARIA-LATEST-END -->
+          Binary: [${TAG}/mivon](${URL}) · Checksum: [mivon.sha256](https://github.com/${{ github.repository }}/releases/download/${TAG}/mivon.sha256)
+          <!-- MIVON-LATEST-END -->
           EOF
           )
-          if [ -f "$F" ] && grep -q MARIA-LATEST-BEGIN "$F"; then
-            awk -v b="$BLOCK" -v s="MARIA-LATEST-BEGIN" -v e="MARIA-LATEST-END" '
+          if [ -f "$F" ] && grep -q MIVON-LATEST-BEGIN "$F"; then
+            awk -v b="$BLOCK" -v s="MIVON-LATEST-BEGIN" -v e="MIVON-LATEST-END" '
               index($0, s) { print; print b; inb=1; next }
               index($0, e) { inb=0; print; next }
               !inb { print }
@@ -332,4 +332,4 @@ jobs:
           echo "seleksi   : ${{ needs.validate.outputs.can_release }}"
           echo "publish   : ${{ needs.publish.result }}"
           echo "sinkron   : ${{ needs.sync-distribution.result }}"
-          echo "Jalankan  : maria update check && maria update"
+          echo "Jalankan  : mivon update check && mivon update"

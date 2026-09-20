@@ -1,9 +1,9 @@
 # ==================================================
-# Maria Compile-Fast Configuration (OpenTitan — build besar)
+# Mivon Compile-Fast Configuration (OpenTitan — build besar)
 # ==================================================
 # Mode kompilasi tercepat untuk proyek besar (OpenTitan 3970 file).
 # Prioritas: throughput, bukan diagnostik lengkap.
-# Pakai: maria --config configs/compile-fast.toml -f opentitan_rtl.f
+# Pakai: mivon --config configs/compile-fast.toml -f opentitan_rtl.f
 
 [compiler]
 edition = "2012"

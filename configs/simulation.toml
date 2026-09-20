@@ -1,9 +1,9 @@
 # ==================================================
-# Maria Simulation Configuration (Unlimited — industri)
+# Mivon Simulation Configuration (Unlimited — industri)
 # ==================================================
 # Mode simulasi standar: berjalan sampai $finish / $fatal / Ctrl+C.
 # Tidak ada batas waktu arbitrer — testbench yang menentukan kapan selesai.
-# Pakai: maria --config configs/simulation.toml -f proyek.f
+# Pakai: mivon --config configs/simulation.toml -f proyek.f
 
 [compiler]
 edition = "2012"

@@ -1,4 +1,4 @@
-name: Maria CI
+name: Mivon CI
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: maria-ci-${{ github.ref }}
+  group: mivon-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -91,19 +91,19 @@ jobs:
         with:
           filters: |
             parser:
-              - 'crates/maria-parser/**'
-              - 'crates/maria-core/**'
-              - 'crates/maria-ast/**'
+              - 'crates/mivon-parser/**'
+              - 'crates/mivon-core/**'
+              - 'crates/mivon-ast/**'
             simulator:
-              - 'crates/maria-simulator/**'
-              - 'crates/maria-elaboration/**'
-              - 'crates/maria-ir/**'
+              - 'crates/mivon-simulator/**'
+              - 'crates/mivon-elaboration/**'
+              - 'crates/mivon-ir/**'
             dependencies:
               - 'Cargo.toml'
               - 'Cargo.lock'
             installer:
               - 'install.sh'
-              - 'crates/maria-tools/**'
+              - 'crates/mivon-tools/**'
               - '.github/workflows/**'
             documentation:
               - '**/*.md'
@@ -141,8 +141,8 @@ jobs:
       - name: Run parser regression tests
         run: |
           echo "Running parser-specific tests due to code changes in parser/lexer"
-          cargo test -p maria-lexer -p maria-parser --test regression
-          cargo test -p maria-core --test debug_lexer
+          cargo test -p mivon-lexer -p mivon-parser --test regression
+          cargo test -p mivon-core --test debug_lexer
 
   simulator-regression:
     name: Simulator regression tests
@@ -166,9 +166,9 @@ jobs:
       - name: Run simulator regression tests
         run: |
           echo "Running simulator-specific tests due to code changes in simulator/elaboration"
-          cargo test -p maria-simulator --test regression
-          cargo test -p maria-tests --test tb_counter
-          cargo test -p maria-tests --test rtl_regression
+          cargo test -p mivon-simulator --test regression
+          cargo test -p mivon-tests --test tb_counter
+          cargo test -p mivon-tests --test rtl_regression
 
   dependency-validation:
     name: Dependency validation
@@ -194,7 +194,7 @@ jobs:
           echo "Validating dependency changes due to Cargo.toml/Cargo.lock updates"
           cargo update
           cargo check --workspace --all-targets
-          cargo test -p maria-tests -- --test-threads=1
+          cargo test -p mivon-tests -- --test-threads=1
 
   installer-validation:
     name: Installer validation
@@ -225,7 +225,7 @@ jobs:
       - name: Run installer tests
         run: |
           echo "Running installer integration tests"
-          cargo test -p maria-tools --test integration
+          cargo test -p mivon-tools --test integration
 
   documentation-check:
     name: Documentation validation
@@ -295,12 +295,12 @@ jobs:
           echo "Building release binary"
           cargo build --workspace --release
           mkdir -p artifacts
-          cp target/release/maria artifacts/
+          cp target/release/mivon artifacts/
 
       - name: Verify binary
         run: |
           echo "Verifying release binary functionality"
-          ./artifacts/maria --help > verification.log 2>&1
+          ./artifacts/mivon --help > verification.log 2>&1
           if [ $? -eq 0 ]; then
             echo "✓ Release binary verified successfully"
             cat verification.log | head -20
@@ -313,6 +313,6 @@ jobs:
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: maria-release
+          name: mivon-release
           path: artifacts/
           retention-days: 90

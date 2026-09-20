@@ -1,10 +1,10 @@
 # ==================================================
-# Maria Lint Configuration (mlint — semua check)
+# Mivon Lint Configuration (mlint — semua check)
 # ==================================================
 # Mode static lint lengkap: semua check diaktifkan.
 # Cocok untuk gate sebelum simulasi / code review.
-# Pakai: maria --config configs/lint.toml -f proyek.f
-# Atau:  maria lint $(cat configs/lint.toml)
+# Pakai: mivon --config configs/lint.toml -f proyek.f
+# Atau:  mivon lint $(cat configs/lint.toml)
 
 [compiler]
 edition = "2012"

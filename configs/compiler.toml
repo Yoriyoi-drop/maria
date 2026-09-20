@@ -1,12 +1,12 @@
 # ==================================================
-# Maria Compiler Configuration (Default — Dev)
+# Mivon Compiler Configuration (Default — Dev)
 # ==================================================
-# Pengaturan compiler utama Maria RTL Simulator.
+# Pengaturan compiler utama Mivon RTL Simulator.
 # Dipakai oleh pipeline: preprocessor → lexer → parser →
 # AST → elaborator → IR → simulation engine → VCD/FST.
 
 [compiler]
-# Standard bahasa yang dipakai (SystemVerilog 2012 = baseline Maria)
+# Standard bahasa yang dipakai (SystemVerilog 2012 = baseline Mivon)
 edition = "2012"
 # Target kompilasi: native (interpreted), jit, atau mir
 target = "native"
