@@ -1,0 +1,39 @@
+[package]
+name = "mivon-simulator"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon simulation engine: simulator, waveform, scheduler (sim cluster), debugger, VPI"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ast = { path = "../mivon-ast" }
+mivon-ir = { path = "../mivon-ir" }
+mivon-parser = { path = "../mivon-parser" }
+mivon-elaboration = { path = "../mivon-elaboration" }
+mivon-compiler = { path = "../mivon-compiler" }
+
+# Parallel eval (rayon), FST waveform (wavefst), RNG ($urandom dkk)
+rand = "0.8"
+rayon = "1"
+wavefst = { version = "0.1", default-features = false, features = ["gzip"] }
+
+# Arena thread-safety (pool Mutex utk alokasi lintas thread evaluator)
+parking_lot = "0.12"
+
+# WAV-04: Compressed waveform database (gzip VCD output)
+flate2 = "1"
+
+# Optional: Cranelift JIT (simulator/jit.rs + jit_cranelift.rs) — feature "jit"
+cranelift = { version = "0.110", optional = true }
+cranelift-jit = { version = "0.110", optional = true }
+cranelift-frontend = { version = "0.110", optional = true }
+cranelift-module = { version = "0.110", optional = true }
+
+# Optional: DPI-C FFI (simulator/dpi.rs) — feature "dpi"
+libloading = { version = "0.8", optional = true }
+
+
+
+[features]
+jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module"]
+dpi = ["libloading"]

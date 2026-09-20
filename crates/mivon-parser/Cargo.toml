@@ -1,0 +1,9 @@
+[package]
+name = "mivon-parser"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon parser: lexer, preprocessor, Parser — SystemVerilog sintaks → AST"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ast = { path = "../mivon-ast" }

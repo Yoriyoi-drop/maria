@@ -1,0 +1,28 @@
+[package]
+name = "mivon-gui"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon GUI — RTL Engineering Control Center (egui native, pengganti Tauri)"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ast = { path = "../mivon-ast" }
+mivon-ir = { path = "../mivon-ir" }
+mivon-parser = { path = "../mivon-parser" }
+mivon-elaboration = { path = "../mivon-elaboration" }
+mivon-compiler = { path = "../mivon-compiler" }
+mivon-simulator = { path = "../mivon-simulator" }
+mivon-mv = { path = "../mivon-mv" }
+
+# Native GUI: egui via eframe (wgpu utama + glow fallback)
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"] }
+egui = { version = "0.35", default-features = false }
+# Dialog file native (buka folder / simpan coverage)
+rfd = "0.17"
+# Serialisasi workspace state + coverage
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "mivon-gui"
+path = "src/bin/mivon_gui.rs"

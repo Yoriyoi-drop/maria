@@ -1,0 +1,10 @@
+[package]
+name = "mivon-elaboration"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon elaboration: AST → IR, signal resolution, parameter override, generate unrolling"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ast = { path = "../mivon-ast" }
+mivon-ir = { path = "../mivon-ir" }

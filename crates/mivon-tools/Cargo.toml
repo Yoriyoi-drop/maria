@@ -1,0 +1,32 @@
+[package]
+name = "mivon-tools"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon CLI tools — minspect, mlint, melab, msim, mcov, mwave, mfmt, mprof, mcheck, mbench"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ast = { path = "../mivon-ast" }
+mivon-ir = { path = "../mivon-ir" }
+mivon-parser = { path = "../mivon-parser" }
+mivon-elaboration = { path = "../mivon-elaboration" }
+mivon-compiler = { path = "../mivon-compiler" }
+mivon-simulator = { path = "../mivon-simulator" }
+mivon-mv = { path = "../mivon-mv" }
+mivon-sir = { path = "../mivon-sir" }
+mivon-netlist = { path = "../mivon-netlist" }
+mivon-timing = { path = "../mivon-timing" }
+mivon-synth = { path = "../mivon-synth" }
+mivon-tech = { path = "../mivon-tech" }
+
+# mcov/bench: export coverage/benchmark report sebagai JSON
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+# mprof --cached / melab --from-cache: baca payload bincode dari cache pipeline
+bincode = "1"
+# mupdate: verifikasi SHA-256 artefak rilis sebelum pemasangan
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

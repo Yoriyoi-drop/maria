@@ -1,0 +1,33 @@
+[package]
+name = "mivon-emu"
+version = "0.1.0"
+edition = "2021"
+description = "Mivon emulator — Hardware-Software Emulator (EMULATOR.md). R0: MHIR (Mivon Hardware IR) extraction dari IrDesign + memory map dump."
+
+[features]
+# Jendela grafis untuk display emulator (framebuffer, VGA text mode)
+window = ["minifb"]
+# Cranelift JIT backend untuk CPU emulator (R3)
+jit = ["mivon-simulator/jit"]
+default = []
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ir = { path = "../mivon-ir" }
+# RTL-linked CPU (EMULATOR.md §7.2 mode 3): kompilasi RTL CPU user
+# (.sv/.v) via parser+elaborator dan jalankan via SimulationEngine.
+mivon-parser = { path = "../mivon-parser" }
+mivon-elaboration = { path = "../mivon-elaboration" }
+mivon-simulator = { path = "../mivon-simulator" }
+# Backend RAM host (R1): anonymous mmap, hugepages-ready.
+memmap2 = "0.9"
+# Konfigurasi emulator: file TOML terpisah (`.meu`), bukan section di `.mivon`.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+# Window display (opsional): framebuffer VGA text mode.
+minifb = { version = "0.25", optional = true }
+
+[dev-dependencies]
+# Test ekstraksi memakai pipeline parse+elaborasi penuh (compile → IrDesign).
+mivon-parser = { path = "../mivon-parser" }
+mivon-elaboration = { path = "../mivon-elaboration" }

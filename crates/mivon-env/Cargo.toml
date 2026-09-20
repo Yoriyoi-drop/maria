@@ -1,0 +1,38 @@
+[package]
+name = "mivon-env"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon Enterprise Context Architecture (GlobalEnv) + LSP server + plugin system"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ast = { path = "../mivon-ast" }
+mivon-ir = { path = "../mivon-ir" }
+mivon-parser = { path = "../mivon-parser" }
+mivon-elaboration = { path = "../mivon-elaboration" }
+mivon-compiler = { path = "../mivon-compiler" }
+mivon-simulator = { path = "../mivon-simulator" }
+
+# Eksternal (shared dengan root/mivon-compiler)
+num_cpus = "1"
+toml = "0.8"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+rayon = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+# LINUX-13: thread affinity (hanya Linux)
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+# ── Opsional: LSP Server ──
+tower-lsp = { version = "0.20", optional = true }
+lsp-types = { version = "0.94", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+
+[features]
+lsp = ["tower-lsp", "lsp-types", "tokio"]
+# dpi: info ketersediaan DPI-C (simulation/dpi.rs cfg) — di-wire dari root
+dpi = []

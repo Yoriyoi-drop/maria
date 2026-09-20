@@ -1,0 +1,11 @@
+[package]
+name = "mivon-netlist"
+version = "0.1.0"
+edition = "2021"
+description = "Netlist gate-level generic Mivon — hasil mapping SIR (1 driver / N loads, DAG, traceable)"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-sir = { path = "../mivon-sir" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

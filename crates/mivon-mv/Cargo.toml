@@ -1,0 +1,8 @@
+[package]
+name = "mivon-mv"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon HDL (.mv) transpiler — bahasa RTL Mivon → SystemVerilog"
+
+[dependencies]
+# mivon-mv murni std — tanpa dependensi eksternal.

@@ -1,0 +1,10 @@
+[package]
+name = "mivon-ir"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon IR: IrDesign, IrStmt, IrExpr, LogicVec — intermediate representation hasil elaborasi"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ast = { path = "../mivon-ast" }
+serde = { version = "1", features = ["derive", "rc"] }

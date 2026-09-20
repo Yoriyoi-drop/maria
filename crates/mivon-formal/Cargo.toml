@@ -1,0 +1,15 @@
+[package]
+name = "mivon-formal"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon formal verification engine — Z3 SMT + BMC"
+
+[dependencies]
+mivon-ir = { path = "../mivon-ir" }
+mivon-core = { path = "../mivon-core" }
+
+# Z3 SMT solver (thread-local context) — feature "formal"
+z3 = { version = "0.20", optional = true }
+
+[features]
+formal = ["z3"]

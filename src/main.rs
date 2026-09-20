@@ -7,24 +7,24 @@ use cli::Cli;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use maria_api::debugger::Debugger;
-use maria_api::read_project_file;
-use maria_api::simulator::Breakpoint;
-use maria_api::simulator::DebugMode;
-use maria_api::simulator::SimulationEngine;
-use maria_api::simulator::Watchpoint;
-use maria_api::waveform::VcdWriter;
-use maria_api::SessionConfig;
-use maria_compiler::frontend::CompileSession;
-use maria_core::animasi::{Phase, PipelineAnimator};
-use maria_core::diagnostics::DiagCode;
-use maria_core::diagnostics::DiagLevel;
-use maria_core::error::SimError;
-use maria_elaboration::elaborator::{ElaborateMode, Elaborator};
-use maria_ir::LogicVec;
-use maria_parser::lexer::Lexer;
-use maria_parser::preprocessor::Preprocessor;
-use maria_parser::Parser;
+use mivon_api::debugger::Debugger;
+use mivon_api::read_project_file;
+use mivon_api::simulator::Breakpoint;
+use mivon_api::simulator::DebugMode;
+use mivon_api::simulator::SimulationEngine;
+use mivon_api::simulator::Watchpoint;
+use mivon_api::waveform::VcdWriter;
+use mivon_api::SessionConfig;
+use mivon_compiler::frontend::CompileSession;
+use mivon_core::animasi::{Phase, PipelineAnimator};
+use mivon_core::diagnostics::DiagCode;
+use mivon_core::diagnostics::DiagLevel;
+use mivon_core::error::SimError;
+use mivon_elaboration::elaborator::{ElaborateMode, Elaborator};
+use mivon_ir::LogicVec;
+use mivon_parser::lexer::Lexer;
+use mivon_parser::preprocessor::Preprocessor;
+use mivon_parser::Parser;
 use rayon::prelude::*;
 
 /// Default simulasi maksimum (ns) saat tidak ada `-T` / `simulation.max_time`.
@@ -51,7 +51,7 @@ fn init_warn_filter(cli: &Cli) {
     let _ = WARN_FILTER_MAX.set(cli.max_warnings.unwrap_or(usize::MAX));
 }
 
-fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
+fn emit_diags(diags: &[mivon_core::diagnostics::diagnostic::Diagnostic]) {
     let no_warn = WARN_FILTER_NO_WARN.load(std::sync::atomic::Ordering::Relaxed);
     let allow_codes = WARN_FILTER_ALLOW.get().cloned().unwrap_or_default();
     let max_warn = WARN_FILTER_MAX.get().copied();
@@ -60,20 +60,20 @@ fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
     }
     use std::collections::HashSet;
     let mut seen: HashSet<(String, String, usize)> = HashSet::new(); // (code, file, line)
-    let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
+    let mut emitter = mivon_core::diagnostics::TerminalEmitter::new();
     static WARN_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     for diag in diags {
-        if no_warn && diag.level == maria_core::diagnostics::DiagLevel::Warning {
+        if no_warn && diag.level == mivon_core::diagnostics::DiagLevel::Warning {
             continue;
         }
-        if !allow_codes.is_empty() && diag.level == maria_core::diagnostics::DiagLevel::Warning {
+        if !allow_codes.is_empty() && diag.level == mivon_core::diagnostics::DiagLevel::Warning {
             let code_str = format!("{}", diag.code);
             if allow_codes.iter().any(|c| c == &code_str) {
                 continue;
             }
         }
         // Deduplicate warnings by (code, file, line)
-        if diag.level == maria_core::diagnostics::DiagLevel::Warning {
+        if diag.level == mivon_core::diagnostics::DiagLevel::Warning {
             let file = diag
                 .source_snippet
                 .as_ref()
@@ -86,7 +86,7 @@ fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
             }
         }
         if let Some(max) = max_warn {
-            if diag.level == maria_core::diagnostics::DiagLevel::Warning {
+            if diag.level == mivon_core::diagnostics::DiagLevel::Warning {
                 let count = WARN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if count > max {
                     if count == max + 1 {
@@ -105,10 +105,10 @@ fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
 /// Prioritas: source_snippet (punya line:col) → span (byte offset) → tanpa lokasi.
 fn elab_abort_diag(
     _elab_errs: usize,
-    diags: &[maria_core::diagnostics::diagnostic::Diagnostic],
+    diags: &[mivon_core::diagnostics::diagnostic::Diagnostic],
     message: impl Into<String>,
-) -> maria_core::diagnostics::diagnostic::Diagnostic {
-    use maria_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
+) -> mivon_core::diagnostics::diagnostic::Diagnostic {
+    use mivon_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
     let first_err = diags.iter().find(|d| d.is_error());
     let loc = first_err.and_then(|d| {
         d.source_snippet
@@ -138,7 +138,7 @@ fn elab_abort_diag(
 /// menyetelnya (CLI menang). Field yang tidak punya padanan CLI (opt_level,
 /// lto, max_parse_steps, lint check, dsb.) dibiarkan sebagai dokumentasi.
 /// jobs diterapkan langsung ke rayon pool di main() (bukan lewat cli).
-fn apply_config_to_cli(cli: &mut Cli, cfg: &maria_core::config::MariaConfig) {
+fn apply_config_to_cli(cli: &mut Cli, cfg: &mivon_core::config::MivonConfig) {
     // compiler.cache=false / incremental=false → lewati MICD (setara --recompile).
     if cfg.compiler.cache == Some(false) || cfg.compiler.incremental == Some(false) {
         cli.recompile = true;
@@ -220,7 +220,7 @@ fn apply_config_to_cli(cli: &mut Cli, cfg: &maria_core::config::MariaConfig) {
 /// benar-benar berlaku (sebelumnya hanya dicek saat menyimpan UCDB, sehingga
 /// gate CI dari config tidak pernah aktif).
 fn check_coverage_threshold(
-    engine: &maria_api::simulator::SimulationEngine,
+    engine: &mivon_api::simulator::SimulationEngine,
     threshold: f64,
     quiet: bool,
 ) -> Result<(), SimError> {
@@ -268,9 +268,9 @@ fn pick_elab_mode(cli: &Cli) -> ElaborateMode {
 }
 
 /// Path root database MICD, dengan support `--target-dir`.
-/// `--target-dir <path>` override path default (`.maria/database`).
+/// `--target-dir <path>` override path default (`.mivon/database`).
 fn micd_root_for(cli: &Cli) -> std::path::PathBuf {
-    use maria_compiler::micd::MicdDatabase;
+    use mivon_compiler::micd::MicdDatabase;
     if let Some(ref dir) = cli.target_dir {
         std::path::PathBuf::from(dir).join("database")
     } else {
@@ -278,10 +278,10 @@ fn micd_root_for(cli: &Cli) -> std::path::PathBuf {
     }
 }
 
-/// Bersihkan database MICD (`.maria/database`). Menghapus isi
-/// `<root>/.maria/database` (atau `MARIA_MICD_DIR` bila di-set).
+/// Bersihkan database MICD (`.mivon/database`). Menghapus isi
+/// `<root>/.mivon/database` (atau `MIVON_MICD_DIR` bila di-set).
 fn run_clean() -> ! {
-    use maria_compiler::micd::MicdDatabase;
+    use mivon_compiler::micd::MicdDatabase;
     let root = MicdDatabase::default_root();
     if root.exists() {
         match std::fs::remove_dir_all(&root) {
@@ -341,10 +341,10 @@ fn anim_active(anim: &Option<PipelineAnimator>) -> bool {
 
 /// Kapan animasi pipeline diizinkan: bukan quiet, bukan mode debug/step,
 /// bukan compile-only/lazy (output verbose akan merusak area animasi).
-/// `MARIA_NO_ANIM` menonaktifkan animasi paksa (dipakai saat profiling/debug
+/// `MIVON_NO_ANIM` menonaktifkan animasi paksa (dipakai saat profiling/debug
 /// dengan gdb/scripting — area animasi bisa mengganggu output dan thread render).
 fn anim_enabled(cli: &Cli) -> bool {
-    if std::env::var("MARIA_NO_ANIM").is_ok() {
+    if std::env::var("MIVON_NO_ANIM").is_ok() {
         return false;
     }
     !cli.quiet
@@ -399,13 +399,13 @@ fn anim_abort(anim: &mut Option<PipelineAnimator>, errors: usize, warnings: usiz
 /// Returns Err if any assertion fails (counterexample found — for CI/CD integration).
 #[cfg(feature = "formal")]
 fn run_formal(
-    ir_design: &maria_ir::IrDesign,
+    ir_design: &mivon_ir::IrDesign,
     bound: u64,
     quiet: bool,
     induction: bool,
     connect_pairs: &[String],
 ) -> Result<(), SimError> {
-    use maria_api::formal::*;
+    use mivon_api::formal::*;
     let formal_cfg = FormalConfig {
         bound,
         induction,
@@ -423,7 +423,7 @@ fn run_formal(
                 Some((a.trim().to_string(), b.trim().to_string()))
             })
             .collect();
-        Some(maria_api::formal::connectivity::check_connectivity(
+        Some(mivon_api::formal::connectivity::check_connectivity(
             ir_design, &pairs,
         ))
     } else {
@@ -533,23 +533,23 @@ fn run_formal(
 /// (stack overflow "thread 'main' has overflowed its stack" saat elaborasi).
 /// Fix rayon stack_size hanya menyentuh worker threads, bukan main thread.
 fn main() {
-    let stack_size = std::env::var("MARIA_STACK_SIZE")
+    let stack_size = std::env::var("MIVON_STACK_SIZE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(256 * 1024 * 1024); // 256MB default, override via env
     match std::thread::Builder::new()
         .stack_size(stack_size)
-        .name("maria-main".into())
+        .name("mivon-main".into())
         .spawn(real_main)
     {
         Ok(handle) => {
             if let Err(panic) = handle.join() {
-                eprintln!("fatal: maria-main thread panicked: {:?}", panic);
+                eprintln!("fatal: mivon-main thread panicked: {:?}", panic);
                 std::process::exit(1);
             }
         }
         Err(e) => {
-            eprintln!("fatal: cannot spawn maria-main worker thread: {}", e);
+            eprintln!("fatal: cannot spawn mivon-main worker thread: {}", e);
             std::process::exit(1);
         }
     }
@@ -563,11 +563,11 @@ fn real_main() {
     // `--config <path>` eksplisit; tanpa itu, auto-load `configs/compiler.toml`
     // bila ada. Field config diterapkan HANYA bila CLI tidak menyetelnya
     // (CLI menang). Jobs di-terapkan ke rayon pool di bawah.
-    let cfg = match maria_core::config::MariaConfig::load_auto(cli.config.as_deref()) {
+    let cfg = match mivon_core::config::MivonConfig::load_auto(cli.config.as_deref()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("warning: {}", e);
-            maria_core::config::MariaConfig::default()
+            mivon_core::config::MivonConfig::default()
         }
     };
     apply_config_to_cli(&mut cli, &cfg);
@@ -588,41 +588,41 @@ fn real_main() {
     // ── Subcommand: bersihkan database MICD (seperti `cargo clean`) ──
     if let Some(cmd) = &cli.cmd {
         match cmd {
-            crate::cli::MariaCmd::Clean => run_clean(),
-            crate::cli::MariaCmd::Inspect(a) => dispatch_inspect(a),
-            crate::cli::MariaCmd::Lint(a) => dispatch_lint(a),
-            crate::cli::MariaCmd::Elab(a) => dispatch_elab(a),
-            crate::cli::MariaCmd::Sim(a) => dispatch_sim(a),
-            crate::cli::MariaCmd::Cov(a) => dispatch_cov(a),
-            crate::cli::MariaCmd::Wave(a) => dispatch_wave(a),
-            crate::cli::MariaCmd::Fmt(a) => dispatch_fmt(a),
-            crate::cli::MariaCmd::Gen(a) => dispatch_gen(a),
-            crate::cli::MariaCmd::Prof(a) => dispatch_prof(a),
-            crate::cli::MariaCmd::Check(a) => dispatch_check(a),
-            crate::cli::MariaCmd::Bench(a) => dispatch_bench(a),
-            crate::cli::MariaCmd::Synth(a) => dispatch_synth(a),
-            crate::cli::MariaCmd::Update(a) => dispatch_update(a),
-            crate::cli::MariaCmd::Emu(a) => dispatch_emu(a),
-            crate::cli::MariaCmd::Batch(a) => dispatch_batch(a),
-            crate::cli::MariaCmd::Memcheck(a) => dispatch_memcheck(a),
-            crate::cli::MariaCmd::Tbgen(a) => dispatch_tbgen(a),
-            crate::cli::MariaCmd::Waiver(a) => dispatch_waiver(a),
-            crate::cli::MariaCmd::Vault(a) => dispatch_vault(a),
-            crate::cli::MariaCmd::Ipxact(a) => dispatch_ipxact(a),
-            crate::cli::MariaCmd::DesignRepo(a) => dispatch_design_repo(a),
-            crate::cli::MariaCmd::Project(a) => dispatch_project(a),
-            crate::cli::MariaCmd::Sdc(a) => dispatch_sdc(a),
-            crate::cli::MariaCmd::EquivCheck(a) => dispatch_equiv_check(a),
-            crate::cli::MariaCmd::Regression(a) => dispatch_regression(a),
-            crate::cli::MariaCmd::Eco(a) => dispatch_eco(a),
-            crate::cli::MariaCmd::CovClosure(a) => dispatch_cov_closure(a),
+            crate::cli::MivonCmd::Clean => run_clean(),
+            crate::cli::MivonCmd::Inspect(a) => dispatch_inspect(a),
+            crate::cli::MivonCmd::Lint(a) => dispatch_lint(a),
+            crate::cli::MivonCmd::Elab(a) => dispatch_elab(a),
+            crate::cli::MivonCmd::Sim(a) => dispatch_sim(a),
+            crate::cli::MivonCmd::Cov(a) => dispatch_cov(a),
+            crate::cli::MivonCmd::Wave(a) => dispatch_wave(a),
+            crate::cli::MivonCmd::Fmt(a) => dispatch_fmt(a),
+            crate::cli::MivonCmd::Gen(a) => dispatch_gen(a),
+            crate::cli::MivonCmd::Prof(a) => dispatch_prof(a),
+            crate::cli::MivonCmd::Check(a) => dispatch_check(a),
+            crate::cli::MivonCmd::Bench(a) => dispatch_bench(a),
+            crate::cli::MivonCmd::Synth(a) => dispatch_synth(a),
+            crate::cli::MivonCmd::Update(a) => dispatch_update(a),
+            crate::cli::MivonCmd::Emu(a) => dispatch_emu(a),
+            crate::cli::MivonCmd::Batch(a) => dispatch_batch(a),
+            crate::cli::MivonCmd::Memcheck(a) => dispatch_memcheck(a),
+            crate::cli::MivonCmd::Tbgen(a) => dispatch_tbgen(a),
+            crate::cli::MivonCmd::Waiver(a) => dispatch_waiver(a),
+            crate::cli::MivonCmd::Vault(a) => dispatch_vault(a),
+            crate::cli::MivonCmd::Ipxact(a) => dispatch_ipxact(a),
+            crate::cli::MivonCmd::DesignRepo(a) => dispatch_design_repo(a),
+            crate::cli::MivonCmd::Project(a) => dispatch_project(a),
+            crate::cli::MivonCmd::Sdc(a) => dispatch_sdc(a),
+            crate::cli::MivonCmd::EquivCheck(a) => dispatch_equiv_check(a),
+            crate::cli::MivonCmd::Regression(a) => dispatch_regression(a),
+            crate::cli::MivonCmd::Eco(a) => dispatch_eco(a),
+            crate::cli::MivonCmd::CovClosure(a) => dispatch_cov_closure(a),
         }
     }
 
     // ── GUI mode: launch the native egui application ──
     #[cfg(feature = "gui")]
     if cli.gui {
-        if let Err(e) = maria_api::gui::run() {
+        if let Err(e) = mivon_api::gui::run() {
             eprintln!("GUI error: {}", e);
             process::exit(1);
         }
@@ -638,7 +638,7 @@ fn real_main() {
     #[cfg(feature = "lsp")]
     if cli.lsp {
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime for LSP");
-        rt.block_on(maria_api::lsp::run_lsp_server());
+        rt.block_on(mivon_api::lsp::run_lsp_server());
         return;
     }
     #[cfg(not(feature = "lsp"))]
@@ -650,8 +650,8 @@ fn real_main() {
     // ── Bangun GlobalEnv (enterprise context architecture, doc/env.md) ──
     // ConfigContext memakai config yang sudah di-load (tanpa baca ulang);
     // CLI override diterapkan ke config (CLI menang atas file/env).
-    let mut cfgctx = maria_api::env::ConfigContext::from_loaded(cfg, cli.config.as_deref());
-    let cli_overrides = maria_api::env::EnvCliOptions {
+    let mut cfgctx = mivon_api::env::ConfigContext::from_loaded(cfg, cli.config.as_deref());
+    let cli_overrides = mivon_api::env::EnvCliOptions {
         max_time: cli.max_time,
         force_sim: Some(cli.force_sim),
         recompile: cli.recompile,
@@ -676,7 +676,7 @@ fn real_main() {
         // sini (workspace setup hanya seed sources; menghindari load ganda).
     }
     let mut ws =
-        maria_api::env::WorkspaceContext::open_in(&std::env::current_dir().unwrap_or_default());
+        mivon_api::env::WorkspaceContext::open_in(&std::env::current_dir().unwrap_or_default());
     ws.set_explicit_sources(cli_sources);
     for d in &cli.incdirs {
         ws.add_incdir(d);
@@ -695,11 +695,11 @@ fn real_main() {
         ws.add_libfile(f);
     }
 
-    let mut env = match maria_api::env::for_cli(cfgctx, ws) {
+    let mut env = match mivon_api::env::for_cli(cfgctx, ws) {
         Ok(env) => env,
         Err(e) => {
             eprintln!("warning: startup env: {} — memakai env minimal", e);
-            maria_api::env::GlobalEnv::minimal()
+            mivon_api::env::GlobalEnv::minimal()
         }
     };
 
@@ -707,7 +707,7 @@ fn real_main() {
     if cli.gdiag {
         eprintln!(
             "{}",
-            maria_core::diagnostics::diag_global().coverage_report()
+            mivon_core::diagnostics::diag_global().coverage_report()
         );
     }
 
@@ -716,11 +716,11 @@ fn real_main() {
         eprintln!("[env] {}", env.telemetry().summary());
         eprintln!("[env] uptime={:?}", env.uptime());
     }
-    maria_api::env::shutdown(&mut env);
+    mivon_api::env::shutdown(&mut env);
 
     if let Err(e) = result {
         // Use TerminalEmitter for pretty diagnostic output
-        let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
+        let mut emitter = mivon_core::diagnostics::TerminalEmitter::new();
         let diag = e.to_diagnostic();
         let _ = emitter.emit(&diag);
         process::exit(e.exit_code());
@@ -729,12 +729,12 @@ fn real_main() {
 
 /// Baca byte sumber sebuah file. Untuk file `.mv` (F8) byte berasal dari
 /// buffer hasil transpile on-the-fly; untuk file lain langsung dari disk.
-/// Load library foreign dari bagian `[foreign]` file project .maria
+/// Load library foreign dari bagian `[foreign]` file project .mivon
 /// (arsitektur poin 9). Load VHPI/PLI/DPI; error → warning (bukan gagal
 /// compile) agar project tetap bisa jalan tanpa library opsional.
-fn load_project_foreign_libs(proj: &maria_api::ProjectFile, cli: &Cli) {
+fn load_project_foreign_libs(proj: &mivon_api::ProjectFile, cli: &Cli) {
     for lib_path in &proj.vhpi_libs {
-        match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
+        match mivon_api::vhpi::loader::load_vhpi_library(lib_path) {
             Ok(vhpi) => {
                 if !cli.quiet {
                     println!(
@@ -743,7 +743,7 @@ fn load_project_foreign_libs(proj: &maria_api::ProjectFile, cli: &Cli) {
                         vhpi.abi
                     );
                 }
-                if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
+                if let Err(e) = mivon_api::vhpi::loader::call_vhpi_startup(&vhpi) {
                     eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
                 }
             }
@@ -754,7 +754,7 @@ fn load_project_foreign_libs(proj: &maria_api::ProjectFile, cli: &Cli) {
         }
     }
     for lib_path in &proj.pli_libs {
-        match maria_api::pli::loader::load_pli_library(lib_path) {
+        match mivon_api::pli::loader::load_pli_library(lib_path) {
             Ok(pli) => {
                 if !cli.quiet {
                     println!(
@@ -763,7 +763,7 @@ fn load_project_foreign_libs(proj: &maria_api::ProjectFile, cli: &Cli) {
                         pli.abi
                     );
                 }
-                if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
+                if let Err(e) = mivon_api::pli::loader::call_pli_startup(&pli) {
                     eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
                 }
             }
@@ -775,7 +775,7 @@ fn load_project_foreign_libs(proj: &maria_api::ProjectFile, cli: &Cli) {
     }
     #[cfg(feature = "dpi")]
     for lib_path in &proj.dpi_libs {
-        use maria_api::simulator::dpi::DpiEngine;
+        use mivon_api::simulator::dpi::DpiEngine;
         let mut eng = DpiEngine::new();
         match eng.load_library(lib_path) {
             Ok(_) => {
@@ -801,7 +801,7 @@ fn read_source_bytes(
     std::fs::read(path)
 }
 
-fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
+fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
     env.telemetry().metrics.inc_build();
     env.telemetry().trace("run", "pipeline legacy dimulai");
     let mut sources: Vec<String> = cli.files.clone();
@@ -841,10 +841,10 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", p, e)))?;
             items.push((src, base));
         }
-        let results = maria_api::mv::transpile_many(&items).map_err(|(i, e)| {
+        let results = mivon_api::mv::transpile_many(&items).map_err(|(i, e)| {
             SimError::with_diag(
                 DiagCode::InvalidSyntax,
-                maria_api::mv::format_error(&mv_files[i], &items[i].0, &e),
+                mivon_api::mv::format_error(&mv_files[i], &items[i].0, &e),
             )
         })?;
         // Defensif: hasil batch harus sejajar dengan input (jangan zip-truncate).
@@ -881,8 +881,8 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     if sources.is_empty() && !cli.gui {
         return Err(SimError::with_diag(
-            maria_core::diagnostics::DiagCode::InvalidSyntax,
-            "no input files: berikan file .sv atau gunakan `--filelist <file>` (bantuan: `maria --help`)",
+            mivon_core::diagnostics::DiagCode::InvalidSyntax,
+            "no input files: berikan file .sv atau gunakan `--filelist <file>` (bantuan: `mivon --help`)",
         ));
     }
     env.telemetry().metrics.add_files(sources.len() as u64);
@@ -981,7 +981,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         // Cap ascend utk project non-git (mis. /home/<user>/proj tanpa .git):
         // tanpa batas, crawl naik sampai root dan meng-scan seluruh HOME
         // depth-4 → run terlihat hang. Projek pribadi (AetherX dst.) memakai
-        // .git/.maria/symlink — batas 10 aman untuk include tree normal.
+        // .git/.mivon/symlink — batas 10 aman untuk include tree normal.
         let mut ascend = 0usize;
         while let Some(ref d) = anc {
             if ascend >= 10 {
@@ -1008,9 +1008,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             // depth 0..4 utk include headers), naik lebih jauh = crawl keluar
             // proyek (single-file run dari dalam repo sempat naik sampai
             // `/home/<user>` dan meng-scan seluruh HOME depth 4 — jutaan file,
-            // run terlihat hang). Marker root: `.git` (repo) ATAU `.maria`
-            // (project maria tanpa git — mis. AetherX milik user).
-            if d.join(".git").exists() || d.join(".maria").exists() {
+            // run terlihat hang). Marker root: `.git` (repo) ATAU `.mivon`
+            // (project mivon tanpa git — mis. AetherX milik user).
+            if d.join(".git").exists() || d.join(".mivon").exists() {
                 break;
             }
             let parent = d.parent().map(|p| p.to_path_buf());
@@ -1025,7 +1025,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     let micd_root = micd_root_for(&cli);
     let proot = std::env::current_dir().unwrap_or_default();
     let src_paths: Vec<std::path::PathBuf> = sources.iter().map(std::path::PathBuf::from).collect();
-    let pid = maria_compiler::micd::MicdDatabase::project_id(
+    let pid = mivon_compiler::micd::MicdDatabase::project_id(
         &proot,
         &src_paths,
         &cli.incdirs.iter().map(PathBuf::from).collect::<Vec<_>>(),
@@ -1035,7 +1035,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect::<Vec<_>>(),
     );
-    let mut micd = maria_compiler::micd::MicdDatabase::open_project_with_context(
+    let mut micd = mivon_compiler::micd::MicdDatabase::open_project_with_context(
         &micd_root, &pid, &proot, &src_paths,
     );
     // `--cache-clear` atau `--recompile`: hapus MICD SEBELUM reuse, agar run
@@ -1056,7 +1056,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     let mut need_preprocess: Vec<(usize, &String)> = Vec::new();
     for (idx, path) in sources.iter().enumerate() {
         if let Ok(content) = read_source_bytes(Path::new(path), &inline_src) {
-            let h = maria_compiler::cache::compute_checksum(&content);
+            let h = mivon_compiler::cache::compute_checksum(&content);
             // Koreksi correctness: jangan reuse bila header include berubah.
             let deps_ok = micd
                 .deps_unchanged(std::path::Path::new(path), h)
@@ -1158,11 +1158,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     for r in &fresh_results {
         if let Ok((idx, combined_str, ts, includes)) = r {
             if let Ok(content) = read_source_bytes(Path::new(&sources[*idx]), &inline_src) {
-                let h = maria_compiler::cache::compute_checksum(&content);
+                let h = mivon_compiler::cache::compute_checksum(&content);
                 let path = std::path::PathBuf::from(&sources[*idx]);
                 micd.cache_preprocessed(
                     path.clone(),
-                    maria_compiler::micd::PreprocEntry {
+                    mivon_compiler::micd::PreprocEntry {
                         content_hash: h,
                         combined: combined_str.clone(),
                         timescale: ts.clone(),
@@ -1173,7 +1173,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                     .iter()
                     .map(|inc| {
                         let hh = std::fs::read(inc)
-                            .map(|b| maria_compiler::cache::compute_checksum(&b))
+                            .map(|b| mivon_compiler::cache::compute_checksum(&b))
                             .unwrap_or(0);
                         (inc.clone(), hh)
                     })
@@ -1187,18 +1187,18 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                     path,
                     h,
                     vec![],
-                    maria_compiler::micd::FileStatus::Unchanged,
+                    mivon_compiler::micd::FileStatus::Unchanged,
                     0,
                     size,
                     include_hashes,
                 );
                 // verify.mdb: jalur legacy juga menandai file terverifikasi
                 // (parse) agar store lengkap walau tanpa `--fast`.
-                let mut v = maria_compiler::micd::VerifyResult::fresh(h);
+                let mut v = mivon_compiler::micd::VerifyResult::fresh(h);
                 v.parse_ok = true;
                 v.set_check(
-                    maria_compiler::micd::VerifyCheckKind::Parse,
-                    maria_compiler::micd::CheckResult::pass(0),
+                    mivon_compiler::micd::VerifyCheckKind::Parse,
+                    mivon_compiler::micd::CheckResult::pass(0),
                 );
                 micd.set_verify(v);
             }
@@ -1222,7 +1222,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         if cli.print_tokens {
             println!("  {:4}:{:4} {}", line, col, tok);
         }
-        if tok == maria_parser::lexer::Token::Eof {
+        if tok == mivon_parser::lexer::Token::Eof {
             break;
         }
         tokens.push((tok, line, col));
@@ -1230,7 +1230,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // ── MICD: cache lexer payload (tokens summary + stream) ──
     // Legacy path sebelumnya tidak menyimpan token data → lexer/ selalu 0.
     {
-        use maria_compiler::micd::cache::pipeline::{
+        use mivon_compiler::micd::cache::pipeline::{
             token_family, LexerPayload, LexerSummary, TokenRecord,
         };
         let mut summary = LexerSummary {
@@ -1257,7 +1257,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 summary,
                 tokens: records,
             }) {
-                let _ = layer.put(maria_compiler::micd::CacheCategory::Lexer, &key, &b);
+                let _ = layer.put(mivon_compiler::micd::CacheCategory::Lexer, &key, &b);
             }
         }
     }
@@ -1277,7 +1277,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         // File header/macro-only (`` `define ``/komentar, tanpa module) —
         // desain kosong VALID (SV legal). Bukan error: lanjut jalur normal,
         // elaborator melaporkan "no modules found" sebagai NOTE.
-        eprintln!("[maria] no module declarations in design (header/macro-only file)");
+        eprintln!("[mivon] no module declarations in design (header/macro-only file)");
         return Ok(());
     }
 
@@ -1307,7 +1307,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             // Emit hanya WARNING di sini; error dicetak SATU kali oleh
             // top-level handler (hindari duplikasi diagnostic line:col).
             if parser.errors.iter().any(|d| !d.is_error()) {
-                let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
+                let mut emitter = mivon_core::diagnostics::TerminalEmitter::new();
                 for diag in &parser.errors {
                     if !diag.is_error() {
                         let _ = emitter.emit(diag);
@@ -1320,7 +1320,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // Emit parser diagnostics (warnings) — errors ditangani top-level sekali.
     // In compile-only mode, individual construct errors are non-fatal.
     if parser.errors.iter().any(|d| !d.is_error()) {
-        let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
+        let mut emitter = mivon_core::diagnostics::TerminalEmitter::new();
         for diag in &parser.errors {
             if !diag.is_error() {
                 let _ = emitter.emit(diag);
@@ -1328,7 +1328,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         }
     }
     if parser.errors.iter().any(|d| d.is_error()) && !cli.compile_only {
-        return Err(maria_core::error::SimError::from_parse_diagnostic(
+        return Err(mivon_core::error::SimError::from_parse_diagnostic(
             parser.errors[0].clone(),
         ));
     }
@@ -1354,7 +1354,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                                 let mut lib_tokens = Vec::new();
                                 loop {
                                     let (tok, line, col) = lexer.next_token();
-                                    if tok == maria_parser::lexer::Token::Eof {
+                                    if tok == mivon_parser::lexer::Token::Eof {
                                         break;
                                     }
                                     lib_tokens.push((tok, line, col));
@@ -1403,7 +1403,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 let mut lib_tokens = Vec::new();
                 loop {
                     let (tok, line, col) = lexer.next_token();
-                    if tok == maria_parser::lexer::Token::Eof {
+                    if tok == mivon_parser::lexer::Token::Eof {
                         break;
                     }
                     lib_tokens.push((tok, line, col));
@@ -1435,7 +1435,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // (menggantikan 3 save terpisah sebelumnya — Gap #8) + prune_stale
     // (Gap #10) + auto-snapshot (Gap #4).
     {
-        use maria_ast::ModuleItem;
+        use mivon_ast::ModuleItem;
         let mut syms: Vec<(String, String)> = Vec::new();
         for m in &design.modules {
             syms.push((m.name.to_string(), "module".to_string()));
@@ -1476,20 +1476,20 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             let mut sig = 0u64;
             sig = sig
                 .wrapping_mul(31)
-                .wrapping_add(maria_compiler::cache::compute_checksum(
+                .wrapping_add(mivon_compiler::cache::compute_checksum(
                     m.name.as_str().as_bytes(),
                 ));
             for p in &m.ports {
                 sig = sig
                     .wrapping_mul(31)
-                    .wrapping_add(maria_compiler::cache::compute_checksum(
+                    .wrapping_add(mivon_compiler::cache::compute_checksum(
                         p.name.as_str().as_bytes(),
                     ));
             }
             for pr in &m.params {
                 sig = sig
                     .wrapping_mul(31)
-                    .wrapping_add(maria_compiler::cache::compute_checksum(
+                    .wrapping_add(mivon_compiler::cache::compute_checksum(
                         pr.name.as_str().as_bytes(),
                     ));
             }
@@ -1552,7 +1552,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         // legacy (tanpa --fast). Isi kategori dari design merged + state MICD
         // hanya saat ada file fresh (changed); store disimpan di save terpadu. ──
         if micd.cache_layer.is_some() && !fresh_results.is_empty() {
-            use maria_compiler::micd::cache::pipeline::{CachePopulateInput, CachePopulator};
+            use mivon_compiler::micd::cache::pipeline::{CachePopulateInput, CachePopulator};
             let cli_defines: Vec<(String, String)> = cli
                 .defines
                 .iter()
@@ -1596,7 +1596,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect();
-            let verify: Vec<maria_compiler::micd::VerifyResult> =
+            let verify: Vec<mivon_compiler::micd::VerifyResult> =
                 micd.verify.values().cloned().collect();
             let input = CachePopulateInput {
                 designs: vec![(&fallback, &design)],
@@ -1630,7 +1630,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             .chain(cli.libfiles.iter().map(PathBuf::from))
             .collect();
         let pruned = micd.prune_stale(&active);
-        if pruned > 0 && std::env::var("MARIA_DBG_MICD").is_ok() {
+        if pruned > 0 && std::env::var("MIVON_DBG_MICD").is_ok() {
             eprintln!("[MICD-DBG] prune_stale removed {} file(s)", pruned);
         }
 
@@ -1649,7 +1649,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         prof.restored_designs = micd_reused;
         prof.cache_hits = micd_reused;
         prof.cache_misses = micd.files.len().saturating_sub(micd_reused);
-        prof.peak_mem_kb = maria_compiler::micd::peak_rss_kb();
+        prof.peak_mem_kb = mivon_compiler::micd::peak_rss_kb();
         micd.set_stats(prof);
         if let Err(e) = micd.save() {
             eprintln!("[MICD] stats save warning: {}", e);
@@ -1701,7 +1701,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // ── Reuse IR cache (db.md "5. elaborate/"): seluruh source di-reuse dari
     // MICD preprocess cache (konten tidak berubah) → coba restore IR hasil
     // elaborasi sebelumnya, skip elaborator.─
-    let mut restored_legacy_ir: Option<maria_ir::IrDesign> = None;
+    let mut restored_legacy_ir: Option<mivon_ir::IrDesign> = None;
     if !cli.recompile && micd_reused == sources.len() && !sources.is_empty() {
         let top = top_name.or_else(|| design.modules.first().map(|m| m.name.as_str()));
         if let Some(top) = top {
@@ -1709,7 +1709,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         }
     }
     let mut _from_legacy_cache = false;
-    let mut elab_diags: Vec<maria_core::diagnostics::Diagnostic> = Vec::new();
+    let mut elab_diags: Vec<mivon_core::diagnostics::Diagnostic> = Vec::new();
     let mut recovered = false;
     let mut elaborator_opt: Option<Elaborator> = None;
     let mut ir_design = match restored_legacy_ir {
@@ -1835,7 +1835,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         println!("✓ Parse");
 
         // Helper function (duplikat dari Block 2 — bisa di-refactor nanti)
-        fn bl_diag_loc(d: &maria_core::diagnostics::diagnostic::Diagnostic) -> Option<String> {
+        fn bl_diag_loc(d: &mivon_core::diagnostics::diagnostic::Diagnostic) -> Option<String> {
             if let Some(ss) = &d.source_snippet {
                 return Some(format!("{}:{}:{}", ss.file, ss.line, ss.col));
             }
@@ -1847,7 +1847,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         fn bl_print_cat(
             label: &str,
             count: usize,
-            diags: &[&maria_core::diagnostics::diagnostic::Diagnostic],
+            diags: &[&mivon_core::diagnostics::diagnostic::Diagnostic],
             max: usize,
         ) {
             if count == 0 {
@@ -2009,7 +2009,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // IR. Design diambil dari elaborator (design asli sudah dipindah saat
     // konstruksi). Best-effort; store disimpan via layer.save(). ──
     if micd.cache_layer.is_some() {
-        use maria_compiler::micd::cache::pipeline::{CachePopulateInput, CachePopulator};
+        use mivon_compiler::micd::cache::pipeline::{CachePopulateInput, CachePopulator};
         let empty_combined: std::collections::HashMap<PathBuf, String> =
             std::collections::HashMap::new();
         let empty_deps: std::collections::HashMap<PathBuf, Vec<PathBuf>> =
@@ -2111,8 +2111,8 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     };
 
     // Set X-propagation mode from CLI
-    if let Some(mode) = maria_api::simulator::types::XPropagationMode::from_str(&cli.xprop) {
-        maria_api::simulator::value::set_xprop_mode(mode);
+    if let Some(mode) = mivon_api::simulator::types::XPropagationMode::from_str(&cli.xprop) {
+        mivon_api::simulator::value::set_xprop_mode(mode);
         if !cli.quiet {
             println!("X-propagation mode: {}", mode.as_str());
         }
@@ -2128,13 +2128,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── Distributed simulation mode ──
     if cli.dist_master {
-        let config = maria_api::simulator::distributed::MasterConfig {
+        let config = mivon_api::simulator::distributed::MasterConfig {
             port: cli.dist_port,
             num_partitions: cli.num_partitions,
             verbose: !cli.quiet,
             ..Default::default()
         };
-        let mut master = maria_api::simulator::distributed::DistributedMaster::new(config);
+        let mut master = mivon_api::simulator::distributed::DistributedMaster::new(config);
         master.run(&ir_design, cli.max_time.unwrap_or(DEFAULT_MAX_TIME_NS))?;
         if !cli.quiet {
             println!("Distributed simulation (master) complete");
@@ -2143,13 +2143,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     }
 
     if cli.dist_slave {
-        let config = maria_api::simulator::distributed::SlaveConfig {
+        let config = mivon_api::simulator::distributed::SlaveConfig {
             master_host: cli.master_host.clone(),
             master_port: cli.dist_port,
             max_time: cli.max_time.unwrap_or(DEFAULT_MAX_TIME_NS),
             verbose: !cli.quiet,
         };
-        let mut slave = maria_api::simulator::distributed::DistributedSlave::new(config);
+        let mut slave = mivon_api::simulator::distributed::DistributedSlave::new(config);
         slave.run(&ir_design)?;
         if !cli.quiet {
             println!("Distributed simulation (slave) complete");
@@ -2162,16 +2162,16 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // / `--max-time <n>` (jadi Finite) — tanpa itu memakai default finite.
     let sim_limit = cli
         .max_time
-        .map(maria_api::simulator::SimulationLimit::Finite)
-        .unwrap_or(maria_api::simulator::SimulationLimit::Finite(
+        .map(mivon_api::simulator::SimulationLimit::Finite)
+        .unwrap_or(mivon_api::simulator::SimulationLimit::Finite(
             DEFAULT_MAX_TIME_NS,
         ));
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
 
     // ── Set SDF timing mode ──
-    if let Some(mode) = maria_api::simulator::sdf::TimingMode::from_str(&cli.timing_mode) {
-        maria_api::simulator::sdf::set_timing_mode(mode);
+    if let Some(mode) = mivon_api::simulator::sdf::TimingMode::from_str(&cli.timing_mode) {
+        mivon_api::simulator::sdf::set_timing_mode(mode);
         if !cli.quiet {
             println!("SDF timing mode: {}", mode.as_str());
         }
@@ -2187,7 +2187,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
-        let sdf_data = maria_api::simulator::sdf::SdfData::parse_file(sdf_path).map_err(|e| {
+        let sdf_data = mivon_api::simulator::sdf::SdfData::parse_file(sdf_path).map_err(|e| {
             SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e))
         })?;
         engine.annotate_sdf(&sdf_data)?;
@@ -2259,7 +2259,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                     .filter_map(|(id, s)| {
                         let is_output = matches!(
                             s.kind,
-                            maria_ir::SignalKind::Output | maria_ir::SignalKind::Inout
+                            mivon_ir::SignalKind::Output | mivon_ir::SignalKind::Inout
                         );
                         Some((id, s.name.to_string(), is_output))
                     })
@@ -2274,7 +2274,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         }
 
         let n_sigs = signal_mapping.len();
-        let cosim_state = maria_api::simulator::cosim::start_cosim_server(cosim_port, n_sigs);
+        let cosim_state = mivon_api::simulator::cosim::start_cosim_server(cosim_port, n_sigs);
         engine.cosim_state = cosim_state;
         engine.cosim_signals = signal_mapping.clone();
 
@@ -2299,7 +2299,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── UPF Power Intent (power-aware simulation) ──
     if let Some(ref upf_path) = cli.upf {
-        match maria_api::simulator::upf::PowerIntent::parse_file(upf_path) {
+        match mivon_api::simulator::upf::PowerIntent::parse_file(upf_path) {
             Ok(mut power_intent) => {
                 power_intent.build_signal_mapping(&engine.design.top.signals);
                 if !cli.quiet {
@@ -2321,7 +2321,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // Load DPI shared libraries
     #[cfg(feature = "dpi")]
     if !cli.dpi_libs.is_empty() {
-        use maria_api::simulator::dpi::DpiEngine;
+        use mivon_api::simulator::dpi::DpiEngine;
         #[allow(unused_imports)]
         use std::sync::Mutex;
         fn get_dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
@@ -2352,7 +2352,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // jelas dari loader, bukan panic.
     if !cli.vhpi_libs.is_empty() {
         for lib_path in &cli.vhpi_libs {
-            match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
+            match mivon_api::vhpi::loader::load_vhpi_library(lib_path) {
                 Ok(vhpi) => {
                     if !cli.quiet {
                         println!(
@@ -2361,7 +2361,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                             vhpi.abi
                         );
                     }
-                    if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
+                    if let Err(e) = mivon_api::vhpi::loader::call_vhpi_startup(&vhpi) {
                         eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
                     }
                 }
@@ -2375,7 +2375,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // Load PLI shared libraries (IEEE 1364 ABI-compatible adapter).
     if !cli.pli_libs.is_empty() {
         for lib_path in &cli.pli_libs {
-            match maria_api::pli::loader::load_pli_library(lib_path) {
+            match mivon_api::pli::loader::load_pli_library(lib_path) {
                 Ok(pli) => {
                     if !cli.quiet {
                         println!(
@@ -2384,7 +2384,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                             pli.abi
                         );
                     }
-                    if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
+                    if let Err(e) = mivon_api::pli::loader::call_pli_startup(&pli) {
                         eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
                     }
                 }
@@ -2489,7 +2489,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     // CSV waveform setup
     if let Some(ref csv_path) = cli.waveform_csv {
         let csv =
-            maria_api::waveform::CsvWaveWriter::new(csv_path, &engine.design).map_err(|e| {
+            mivon_api::waveform::CsvWaveWriter::new(csv_path, &engine.design).map_err(|e| {
                 SimError::with_diag(
                     DiagCode::WaveformError,
                     format!("CSV creation failed: {}", e),
@@ -2503,7 +2503,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // Signal statistics setup
     if cli.signal_stats.is_some() {
-        let stats = maria_api::waveform::SignalStats::new(&engine.design);
+        let stats = mivon_api::waveform::SignalStats::new(&engine.design);
         engine.set_signal_stats(stats);
     }
 
@@ -2630,7 +2630,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         } else {
             gtkw_path.clone()
         };
-        match maria_api::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
+        match mivon_api::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
             Ok(()) => {
                 if !cli.quiet {
                     println!("GTKWave save file written to '{}'", path);
@@ -2648,7 +2648,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         } else {
             html_path.clone()
         };
-        match maria_api::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
+        match mivon_api::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
             Ok(()) => {
                 if !cli.quiet {
                     println!("HTML waveform viewer written to '{}'", path);
@@ -2686,7 +2686,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // Save coverage database if requested
     if let Some(ref covdb_path) = cli.coverage_ucdb {
-        let mut covdb = maria_api::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
+        let mut covdb = mivon_api::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
         covdb.merge_from_engine(&debugger.engine);
         if let Err(e) = covdb.save() {
             eprintln!("warning: coverage DB save failed: {}", e);
@@ -2709,7 +2709,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         } else {
             html_path.clone()
         };
-        let mut covdb = maria_api::simulator::coverage_db::CoverageDatabase::new();
+        let mut covdb = mivon_api::simulator::coverage_db::CoverageDatabase::new();
         covdb.merge_from_engine(&debugger.engine);
         if let Err(e) = covdb.export_html(&path) {
             eprintln!("warning: HTML coverage report failed: {}", e);
@@ -2735,7 +2735,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         if !cli.quiet {
             println!("Running CDC analysis...");
         }
-        let cdc_analysis = maria_api::scheduler::cdc::CdcAnalysis::analyze(&debugger.engine.design);
+        let cdc_analysis = mivon_api::scheduler::cdc::CdcAnalysis::analyze(&debugger.engine.design);
 
         // Print summary to console
         if !cli.quiet {
@@ -2791,7 +2791,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 fn run_fast(
     cli: Cli,
     _timescale: Option<(String, String)>,
-    env: &mut maria_api::env::GlobalEnv,
+    env: &mut mivon_api::env::GlobalEnv,
 ) -> Result<(), SimError> {
     env.telemetry()
         .trace("run_fast", "pipeline paralel dimulai");
@@ -2800,7 +2800,7 @@ fn run_fast(
         let flist = read_project_file(fpath)?;
         sources.extend(flist.into_iter().map(PathBuf::from));
         // [foreign] dari file project (VHPI/PLI/DPI).
-        match maria_api::read_project_with_foreign(fpath) {
+        match mivon_api::read_project_with_foreign(fpath) {
             Ok(proj) => load_project_foreign_libs(&proj, &cli),
             Err(e) => eprintln!("warning: [foreign] '{}': {}", fpath, e),
         }
@@ -2840,13 +2840,13 @@ fn run_fast(
     {
         let micd_root = micd_root_for(&cli);
         let proot = std::env::current_dir().unwrap_or_default();
-        let pid = maria_compiler::micd::MicdDatabase::project_id(
+        let pid = mivon_compiler::micd::MicdDatabase::project_id(
             &proot,
             &session.config.sources,
             &session.config.incdirs,
             &session.config.defines,
         );
-        let mut db = maria_compiler::micd::MicdDatabase::open_project_with_context(
+        let mut db = mivon_compiler::micd::MicdDatabase::open_project_with_context(
             &micd_root,
             &pid,
             &proot,
@@ -2958,7 +2958,7 @@ fn run_fast(
 
     let mut pmark = std::time::Instant::now();
     let mut mark = |label: &str| {
-        if std::env::var("MARIA_PHASE_TIMING").is_ok() {
+        if std::env::var("MIVON_PHASE_TIMING").is_ok() {
             eprintln!("[PHASE] {} = {:?}", label, pmark.elapsed());
         }
         pmark = std::time::Instant::now();
@@ -3022,7 +3022,7 @@ fn run_fast(
     // tersimpan di cache, langsung pakai IR — elaborator di-skip penuh.
     // Hanya aman bila run sebelumnya elaborasi BERSIH (cache elaborate hanya
     // disimpan setelah gate error/recovery lolos di run itu).
-    let mut restored_ir: Option<maria_ir::IrDesign> = None;
+    let mut restored_ir: Option<mivon_ir::IrDesign> = None;
     // `micd_restored_count()` di-reset `save_micd()`; set path tidak → pakai
     // `micd_restored_paths_count()` untuk deteksi warm run setelah save parse.
     if !cli.recompile
@@ -3063,7 +3063,7 @@ fn run_fast(
         // "Simulasi: TIDAK SIAP" + exit error) tanpa membayar biaya
         // elaborate pada desain yang sudah rusak.
         if session.parse_errors.iter().any(|d| d.is_error()) {
-            ir_design = maria_ir::IrDesign::default();
+            ir_design = mivon_ir::IrDesign::default();
             elab_diags = Vec::new();
             recovered = false;
             from_cache = false;
@@ -3189,12 +3189,12 @@ fn run_fast(
         })
         .count();
 
-    use maria_core::diagnostics::diagnostic::{
+    use mivon_core::diagnostics::diagnostic::{
         DiagCode as DCode, DiagLevel as DLevel, Diagnostic as DDiag,
     };
 
     /// Ekstrak lokasi error dari Diagnostic: source_snippet → spans → message parsing.
-    fn diag_loc(d: &maria_core::diagnostics::diagnostic::Diagnostic) -> Option<String> {
+    fn diag_loc(d: &mivon_core::diagnostics::diagnostic::Diagnostic) -> Option<String> {
         if let Some(ss) = &d.source_snippet {
             return Some(format!("{}:{}:{}", ss.file, ss.line, ss.col));
         }
@@ -3217,7 +3217,7 @@ fn run_fast(
     fn print_err_category(
         label: &str,
         count: usize,
-        errors: &[&maria_core::diagnostics::diagnostic::Diagnostic],
+        errors: &[&mivon_core::diagnostics::diagnostic::Diagnostic],
         max_show: usize,
     ) {
         if count == 0 {
@@ -3367,7 +3367,7 @@ fn run_fast(
     }
 
     // ── Gate: jangan simulasikan bila masih ada error ──
-    use maria_core::diagnostics::diagnostic::Diagnostic;
+    use mivon_core::diagnostics::diagnostic::Diagnostic;
     if (has_elab_errors || has_parse_errors) && !cli.force_sim {
         if !cli.quiet {
             if has_parse_errors {
@@ -3457,10 +3457,10 @@ fn run_fast(
     // Configure remote cache backend
     if let Some(ref remote_dir) = cli.cache_remote_dir {
         let sync_mode =
-            maria_compiler::cache::cache_manager::RemoteSyncMode::from_str(&cli.cache_remote_sync);
-        match maria_compiler::cache::FilesystemCache::new(remote_dir) {
+            mivon_compiler::cache::cache_manager::RemoteSyncMode::from_str(&cli.cache_remote_sync);
+        match mivon_compiler::cache::FilesystemCache::new(remote_dir) {
             Ok(backend) => {
-                let remote: std::sync::Arc<dyn maria_compiler::cache::RemoteCacheBackend> =
+                let remote: std::sync::Arc<dyn mivon_compiler::cache::RemoteCacheBackend> =
                     std::sync::Arc::new(backend);
                 session.set_remote_cache(remote, sync_mode);
                 if !cli.quiet {
@@ -3564,8 +3564,8 @@ fn run_fast(
     };
 
     // Set X-propagation mode from CLI
-    if let Some(mode) = maria_api::simulator::types::XPropagationMode::from_str(&cli.xprop) {
-        maria_api::simulator::value::set_xprop_mode(mode);
+    if let Some(mode) = mivon_api::simulator::types::XPropagationMode::from_str(&cli.xprop) {
+        mivon_api::simulator::value::set_xprop_mode(mode);
         if !cli.quiet {
             println!("X-propagation mode: {}", mode.as_str());
         }
@@ -3583,8 +3583,8 @@ fn run_fast(
     // `-T` / `--max-time <n>`; tanpa itu memakai default finite.
     let sim_limit = cli
         .max_time
-        .map(maria_api::simulator::SimulationLimit::Finite)
-        .unwrap_or(maria_api::simulator::SimulationLimit::Finite(
+        .map(mivon_api::simulator::SimulationLimit::Finite)
+        .unwrap_or(mivon_api::simulator::SimulationLimit::Finite(
             DEFAULT_MAX_TIME_NS,
         ));
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
@@ -3592,7 +3592,7 @@ fn run_fast(
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
-        let sdf_data = maria_api::simulator::sdf::SdfData::parse_file(sdf_path).map_err(|e| {
+        let sdf_data = mivon_api::simulator::sdf::SdfData::parse_file(sdf_path).map_err(|e| {
             SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e))
         })?;
         engine.annotate_sdf(&sdf_data)?;
@@ -3639,7 +3639,7 @@ fn run_fast(
 
     // ── UPF Power Intent (power-aware simulation) ──
     if let Some(ref upf_path) = cli.upf {
-        match maria_api::simulator::upf::PowerIntent::parse_file(upf_path) {
+        match mivon_api::simulator::upf::PowerIntent::parse_file(upf_path) {
             Ok(mut power_intent) => {
                 power_intent.build_signal_mapping(&engine.design.top.signals);
                 if !cli.quiet {
@@ -3661,7 +3661,7 @@ fn run_fast(
     // Load DPI shared libraries
     #[cfg(feature = "dpi")]
     if !cli.dpi_libs.is_empty() {
-        use maria_api::simulator::dpi::DpiEngine;
+        use mivon_api::simulator::dpi::DpiEngine;
         #[allow(unused_imports)]
         use std::sync::Mutex;
         fn get_dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
@@ -3690,7 +3690,7 @@ fn run_fast(
     // Load VHPI shared libraries (IEEE 1076-2008) — jalur run_fast.
     if !cli.vhpi_libs.is_empty() {
         for lib_path in &cli.vhpi_libs {
-            match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
+            match mivon_api::vhpi::loader::load_vhpi_library(lib_path) {
                 Ok(vhpi) => {
                     if !cli.quiet {
                         println!(
@@ -3699,7 +3699,7 @@ fn run_fast(
                             vhpi.abi
                         );
                     }
-                    if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
+                    if let Err(e) = mivon_api::vhpi::loader::call_vhpi_startup(&vhpi) {
                         eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
                     }
                 }
@@ -3713,7 +3713,7 @@ fn run_fast(
     // Load PLI shared libraries (IEEE 1364) — jalur run_fast.
     if !cli.pli_libs.is_empty() {
         for lib_path in &cli.pli_libs {
-            match maria_api::pli::loader::load_pli_library(lib_path) {
+            match mivon_api::pli::loader::load_pli_library(lib_path) {
                 Ok(pli) => {
                     if !cli.quiet {
                         println!(
@@ -3722,7 +3722,7 @@ fn run_fast(
                             pli.abi
                         );
                     }
-                    if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
+                    if let Err(e) = mivon_api::pli::loader::call_pli_startup(&pli) {
                         eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
                     }
                 }
@@ -3823,7 +3823,7 @@ fn run_fast(
     // CSV waveform setup (fast path)
     if let Some(ref csv_path) = cli.waveform_csv {
         let csv =
-            maria_api::waveform::CsvWaveWriter::new(csv_path, &engine.design).map_err(|e| {
+            mivon_api::waveform::CsvWaveWriter::new(csv_path, &engine.design).map_err(|e| {
                 SimError::with_diag(
                     DiagCode::WaveformError,
                     format!("CSV creation failed: {}", e),
@@ -3837,7 +3837,7 @@ fn run_fast(
 
     // Signal statistics setup
     if cli.signal_stats.is_some() {
-        let stats = maria_api::waveform::SignalStats::new(&engine.design);
+        let stats = mivon_api::waveform::SignalStats::new(&engine.design);
         engine.set_signal_stats(stats);
     }
 
@@ -3949,7 +3949,7 @@ fn run_fast(
         } else {
             gtkw_path.clone()
         };
-        match maria_api::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
+        match mivon_api::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
             Ok(()) => {
                 if !cli.quiet {
                     println!("GTKWave save file written to '{}'", path);
@@ -3967,7 +3967,7 @@ fn run_fast(
         } else {
             html_path.clone()
         };
-        match maria_api::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
+        match mivon_api::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
             Ok(()) => {
                 if !cli.quiet {
                     println!("HTML waveform viewer written to '{}'", path);
@@ -3988,7 +3988,7 @@ fn run_fast(
 
     // Save coverage database if requested
     if let Some(ref covdb_path) = cli.coverage_ucdb {
-        let mut covdb = maria_api::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
+        let mut covdb = mivon_api::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
         covdb.merge_from_engine(&debugger.engine);
         if let Err(e) = covdb.save() {
             eprintln!("warning: coverage DB save failed: {}", e);
@@ -4011,7 +4011,7 @@ fn run_fast(
         } else {
             html_path.clone()
         };
-        let mut covdb = maria_api::simulator::coverage_db::CoverageDatabase::new();
+        let mut covdb = mivon_api::simulator::coverage_db::CoverageDatabase::new();
         covdb.merge_from_engine(&debugger.engine);
         if let Err(e) = covdb.export_html(&path) {
             eprintln!("warning: HTML coverage report failed: {}", e);
@@ -4079,7 +4079,7 @@ fn dispatch_inspect(a: &crate::cli::MinspectArgs) -> ! {
         }
         _ => (None, a.targets.clone()),
     };
-    let args = maria_api::tools::inspect::InspectArgs {
+    let args = mivon_api::tools::inspect::InspectArgs {
         targets: &targets,
         command,
         incdirs: &a.incdirs,
@@ -4087,11 +4087,11 @@ fn dispatch_inspect(a: &crate::cli::MinspectArgs) -> ! {
         top: a.top.as_deref(),
         json: a.json,
     };
-    exit_tool(maria_api::tools::inspect::run(&args));
+    exit_tool(mivon_api::tools::inspect::run(&args));
 }
 
 fn dispatch_lint(a: &crate::cli::MlintArgs) -> ! {
-    let args = maria_api::tools::lint::LintArgs {
+    let args = mivon_api::tools::lint::LintArgs {
         targets: &a.targets,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -4108,11 +4108,11 @@ fn dispatch_lint(a: &crate::cli::MlintArgs) -> ! {
         gate_opt: a.gate_opt,
         quiet: a.quiet,
     };
-    exit_tool(maria_api::tools::lint::run(&args));
+    exit_tool(mivon_api::tools::lint::run(&args));
 }
 
 fn dispatch_elab(a: &crate::cli::MelabArgs) -> ! {
-    let args = maria_api::tools::elab::ElabArgs {
+    let args = mivon_api::tools::elab::ElabArgs {
         files: &a.files,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -4123,11 +4123,11 @@ fn dispatch_elab(a: &crate::cli::MelabArgs) -> ! {
         reset_domain: a.reset_domain,
         from_cache: a.from_cache,
     };
-    exit_tool(maria_api::tools::elab::run(&args));
+    exit_tool(mivon_api::tools::elab::run(&args));
 }
 
 fn dispatch_sim(a: &crate::cli::MsimArgs) -> ! {
-    let args = maria_api::tools::sim::SimArgs {
+    let args = mivon_api::tools::sim::SimArgs {
         files: &a.files,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -4138,11 +4138,11 @@ fn dispatch_sim(a: &crate::cli::MsimArgs) -> ! {
         assertions: a.assertions,
         coverage: a.coverage,
     };
-    exit_tool(maria_api::tools::sim::run(&args));
+    exit_tool(mivon_api::tools::sim::run(&args));
 }
 
 fn dispatch_cov(a: &crate::cli::McovArgs) -> ! {
-    let args = maria_api::tools::cov::CovArgs {
+    let args = mivon_api::tools::cov::CovArgs {
         files: &a.files,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -4153,12 +4153,12 @@ fn dispatch_cov(a: &crate::cli::McovArgs) -> ! {
         html: a.html,
         threshold: a.threshold,
     };
-    exit_tool(maria_api::tools::cov::run(&args));
+    exit_tool(mivon_api::tools::cov::run(&args));
 }
 
 fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
     let args = match &a.cmd {
-        crate::cli::MwaveCmd::Merge { inputs, output } => maria_api::tools::wave::WaveArgs::Merge {
+        crate::cli::MwaveCmd::Merge { inputs, output } => mivon_api::tools::wave::WaveArgs::Merge {
             inputs: inputs.clone(),
             output: output.clone(),
         },
@@ -4166,7 +4166,7 @@ fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
             input,
             format,
             output,
-        } => maria_api::tools::wave::WaveArgs::Export {
+        } => mivon_api::tools::wave::WaveArgs::Export {
             input: input.clone(),
             format: format.clone(),
             output: output.clone(),
@@ -4175,25 +4175,25 @@ fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
             input,
             signals,
             output,
-        } => maria_api::tools::wave::WaveArgs::Filter {
+        } => mivon_api::tools::wave::WaveArgs::Filter {
             input: input.clone(),
             signals: signals.clone(),
             output: output.clone(),
         },
-        crate::cli::MwaveCmd::Compare { a, b } => maria_api::tools::wave::WaveArgs::Compare {
+        crate::cli::MwaveCmd::Compare { a, b } => mivon_api::tools::wave::WaveArgs::Compare {
             a: a.clone(),
             b: b.clone(),
         },
         crate::cli::MwaveCmd::Search { input, patterns } => {
-            maria_api::tools::wave::WaveArgs::Search {
+            mivon_api::tools::wave::WaveArgs::Search {
                 input: input.clone(),
                 patterns: patterns.clone(),
             }
         }
-        crate::cli::MwaveCmd::Tree { input } => maria_api::tools::wave::WaveArgs::Tree {
+        crate::cli::MwaveCmd::Tree { input } => mivon_api::tools::wave::WaveArgs::Tree {
             input: input.clone(),
         },
-        crate::cli::MwaveCmd::Stats { input } => maria_api::tools::wave::WaveArgs::Stats {
+        crate::cli::MwaveCmd::Stats { input } => mivon_api::tools::wave::WaveArgs::Stats {
             input: input.clone(),
         },
         crate::cli::MwaveCmd::Get {
@@ -4201,32 +4201,32 @@ fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
             signals,
             at,
             range,
-        } => maria_api::tools::wave::WaveArgs::Get {
+        } => mivon_api::tools::wave::WaveArgs::Get {
             input: input.clone(),
             signals: signals.clone(),
             at: *at,
             range: *range,
         },
-        crate::cli::MwaveCmd::Decode { input, proto } => maria_api::tools::wave::WaveArgs::Decode {
+        crate::cli::MwaveCmd::Decode { input, proto } => mivon_api::tools::wave::WaveArgs::Decode {
             input: input.clone(),
             proto: proto.clone(),
         },
     };
-    exit_tool(maria_api::tools::wave::run(&args));
+    exit_tool(mivon_api::tools::wave::run(&args));
 }
 
 fn dispatch_fmt(a: &crate::cli::MfmtArgs) -> ! {
-    let args = maria_api::tools::fmt::FmtArgs {
+    let args = mivon_api::tools::fmt::FmtArgs {
         files: &a.files,
         inplace: a.inplace,
         check: a.check,
         indent: a.indent,
     };
-    exit_tool(maria_api::tools::fmt::run(&args));
+    exit_tool(mivon_api::tools::fmt::run(&args));
 }
 
 fn dispatch_gen(a: &crate::cli::MgenArgs) -> ! {
-    let args = maria_api::tools::gen::GenArgs {
+    let args = mivon_api::tools::gen::GenArgs {
         targets: &a.targets,
         output: a.output.clone(),
         stdout: a.stdout,
@@ -4236,11 +4236,11 @@ fn dispatch_gen(a: &crate::cli::MgenArgs) -> ! {
         no_check: a.no_check,
         verbose: a.verbose,
     };
-    exit_tool(maria_api::tools::gen::run(&args));
+    exit_tool(mivon_api::tools::gen::run(&args));
 }
 
 fn dispatch_prof(a: &crate::cli::MprofArgs) -> ! {
-    let args = maria_api::tools::prof::ProfArgs {
+    let args = mivon_api::tools::prof::ProfArgs {
         targets: &a.targets,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -4248,11 +4248,11 @@ fn dispatch_prof(a: &crate::cli::MprofArgs) -> ! {
         max_time: a.max_time.unwrap_or(DEFAULT_MAX_TIME_NS),
         cached: a.cached,
     };
-    exit_tool(maria_api::tools::prof::run(&args));
+    exit_tool(mivon_api::tools::prof::run(&args));
 }
 
 fn dispatch_check(a: &crate::cli::McheckArgs) -> ! {
-    let args = maria_api::tools::check::CheckArgs {
+    let args = mivon_api::tools::check::CheckArgs {
         targets: &a.targets,
         all: a.all,
         missing: a.missing,
@@ -4263,21 +4263,21 @@ fn dispatch_check(a: &crate::cli::McheckArgs) -> ! {
         ast_diff: a.ast_diff.as_deref(),
         sv_version: a.sv_version,
     };
-    exit_tool(maria_api::tools::check::run(&args));
+    exit_tool(mivon_api::tools::check::run(&args));
 }
 
 fn dispatch_bench(a: &crate::cli::MbenchArgs) -> ! {
-    let args = maria_api::tools::bench::BenchArgs {
+    let args = mivon_api::tools::bench::BenchArgs {
         targets: &a.targets,
         incdirs: &a.incdirs,
         defines: &a.defines,
         runs: a.runs,
     };
-    exit_tool(maria_api::tools::bench::run(&args));
+    exit_tool(mivon_api::tools::bench::run(&args));
 }
 
 fn dispatch_synth(a: &crate::cli::SynthArgs) -> ! {
-    let args = maria_api::tools::synth::SynthArgs {
+    let args = mivon_api::tools::synth::SynthArgs {
         targets: &a.targets,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -4298,12 +4298,12 @@ fn dispatch_synth(a: &crate::cli::SynthArgs) -> ! {
         fsm_report: a.fsm_report,
         quiet: a.quiet,
     };
-    exit_tool(maria_api::tools::synth::run(&args));
+    exit_tool(mivon_api::tools::synth::run(&args));
 }
 
 fn dispatch_update(a: &crate::cli::UpdateArgs) -> ! {
     let check_only = matches!(a.cmd, Some(crate::cli::UpdateCmd::Check));
-    let args = maria_api::tools::update::UpdateArgs {
+    let args = mivon_api::tools::update::UpdateArgs {
         check_only,
         channel: Some(a.channel.as_str()),
         version: a.version.as_deref(),
@@ -4312,21 +4312,21 @@ fn dispatch_update(a: &crate::cli::UpdateArgs) -> ! {
         manifest_url: a.manifest_url.as_deref(),
         exe_path: None,
     };
-    exit_tool(maria_api::tools::update::run(&args));
+    exit_tool(mivon_api::tools::update::run(&args));
 }
 
 fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
-    use maria_api::emu::config::EmuConfig;
-    use maria_api::emu::cpu::{CpuCore, RtlLinkedCpu};
-    use maria_api::emu::machine::Machine;
-    use maria_api::emu::mem::{MemoryMap, MemoryPort, RamRegion, RegionKind};
-    use maria_api::emu::mhir::types::AddressRegion;
-    use maria_core::intern::Symbol;
-    use maria_elaboration::elaborator::ElaborateMode;
+    use mivon_api::emu::config::EmuConfig;
+    use mivon_api::emu::cpu::{CpuCore, RtlLinkedCpu};
+    use mivon_api::emu::machine::Machine;
+    use mivon_api::emu::mem::{MemoryMap, MemoryPort, RamRegion, RegionKind};
+    use mivon_api::emu::mhir::types::AddressRegion;
+    use mivon_core::intern::Symbol;
+    use mivon_elaboration::elaborator::ElaborateMode;
 
     let result: Result<(), SimError> = (|| {
         // ── Konfigurasi emulator dari file TOML terpisah (`--config`, .meu) ──
-        // BUKAN section di project .maria — ekstensi .maria dipakai MICD
+        // BUKAN section di project .mivon — ekstensi .mivon dipakai MICD
         // dan file list; konfigurasi emulator hidup di file sendiri.
         let cfg: EmuConfig = match &a.config {
             Some(path) => EmuConfig::load_file(std::path::Path::new(path))
@@ -4363,7 +4363,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 // Jalur boot CD yang benar: El Torito boot catalog → boot image
                 // (cdboot/GRUB) — BUKAN MBR. Booting MBR hybrid = jalur USB/HDD
                 // yang berujung salah unit LBA saat GRUB baca filesystem CD.
-                let eltorito = maria_api::emu::iso::parse_eltorito(&mut f)
+                let eltorito = mivon_api::emu::iso::parse_eltorito(&mut f)
                     .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
                 if eltorito.entry.media_type != 0 {
                     return Err(SimError::with_diag(
@@ -4375,7 +4375,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                     ));
                 }
                 // no-emul: BIOS muat boot image (cdboot, ~512-2048 byte).
-                maria_api::emu::iso::read_boot_image(&mut f, &eltorito.entry, 0x10000)
+                mivon_api::emu::iso::read_boot_image(&mut f, &eltorito.entry, 0x10000)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
             };
             if bytes.len() < 512 {
@@ -4385,9 +4385,9 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 ));
             }
             // Boot image CD (El Torito no-emul) ke 0x7c00, DL = 0xE0
-            let mut cpu = maria_api::emu::cpu::x86::X86Cpu::new();
+            let mut cpu = mivon_api::emu::cpu::x86::X86Cpu::new();
             cpu.disk = Some(Box::new(
-                maria_api::emu::cpu::x86::FileDisk::open(iso_path)
+                mivon_api::emu::cpu::x86::FileDisk::open(iso_path)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?,
             ));
             cpu.load_boot_image(&mut memmap, &bytes, 0xE0)
@@ -4412,9 +4412,9 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             };
             // ── Window display (opsional) ──
             if let Some(ref win_arg) = a.window {
-                let cfg = maria_api::emu::display::DisplayConfig::from_wh(win_arg)
+                let cfg = mivon_api::emu::display::DisplayConfig::from_wh(win_arg)
                     .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
-                let mut disp = maria_api::emu::display::VgaDisplay::new(cfg);
+                let mut disp = mivon_api::emu::display::VgaDisplay::new(cfg);
                 disp.open_window()
                     .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
                 // Render console output ke VGA display
@@ -4443,7 +4443,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 }
                 disp.update();
                 // Tunggu user tekan key atau tutup jendela
-                eprintln!("[Maria] Window aktif. Tekan ESC atau tutup jendela untuk keluar.");
+                eprintln!("[Mivon] Window aktif. Tekan ESC atau tutup jendela untuk keluar.");
                 loop {
                     if let Some(ch) = disp.poll_input() {
                         if ch == '\x1b' {
@@ -4465,14 +4465,14 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             .as_deref()
             .or(cfg.top.as_deref())
             .or(a.rtl_cpu_top.as_deref());
-        let (_session, _design, ir) = maria_api::tools::open_elaborated(
+        let (_session, _design, ir) = mivon_api::tools::open_elaborated(
             &a.targets,
             &a.incdirs,
             &a.defines,
             top,
             ElaborateMode::StrictSimulation,
         )?;
-        let mut mhir = maria_api::emu::mhir::extract(&ir);
+        let mut mhir = mivon_api::emu::mhir::extract(&ir);
 
         // ── Address map: --addr + [emu] devices (Direct RTL Device) ──
         let mut entries: Vec<(Symbol, AddressRegion)> = Vec::new();
@@ -4499,11 +4499,11 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 entries.push((Symbol::intern(name), AddressRegion { base, size }));
             }
         }
-        maria_api::emu::mhir::extract::apply_address_map(&mut mhir, &entries);
+        mivon_api::emu::mhir::extract::apply_address_map(&mut mhir, &entries);
 
         let mut out = String::new();
         if a.dump_memory_map {
-            out.push_str(&maria_api::emu::dump::dump_memory_map(&mhir));
+            out.push_str(&mivon_api::emu::dump::dump_memory_map(&mhir));
             if !memmap.regions.is_empty() {
                 out.push_str("\nMemory regions (host):\n");
                 for r in &memmap.regions {
@@ -4524,7 +4524,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
         }
         // Tanpa flag → default MHIR; `--dump-memory-map` saja → map saja.
         if a.dump_mhir || !a.dump_memory_map {
-            out.push_str(&maria_api::emu::dump::dump_mhir(&mhir));
+            out.push_str(&mivon_api::emu::dump::dump_mhir(&mhir));
         }
 
         // ── ELF loader (R1): muat kernel/bare-metal ke memory map ──
@@ -4532,12 +4532,12 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             if memmap.regions.is_empty() {
                 return Err(SimError::with_diag(
                     DiagCode::InvalidSyntax,
-                    "--load-elf butuh region RAM — definisikan [emu] ram = { base, size } di project file .maria",
+                    "--load-elf butuh region RAM — definisikan [emu] ram = { base, size } di project file .mivon",
                 ));
             }
             let bytes = std::fs::read(path)
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", path, e)))?;
-            let entry = maria_api::emu::elf::load_elf(&bytes, &mut memmap).map_err(|e| {
+            let entry = mivon_api::emu::elf::load_elf(&bytes, &mut memmap).map_err(|e| {
                 SimError::with_diag(DiagCode::InvalidSyntax, format!("ELF '{}': {}", path, e))
             })?;
             out.push_str(&format!(
@@ -4551,7 +4551,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
         // ── Direct RTL CPU (EMULATOR.md §7.2 mode 3): jalankan mesin dari
         // RTL .sv/.v user, BUKAN model software Rust. Rust hanya menyediakan
         // memori + orkestrasi bus; register file/ALU/control dieksekusi engine
-        // RTL maria (picorv32-style kontrak bus). ──
+        // RTL mivon (picorv32-style kontrak bus). ──
         let mem_final: MemoryMap;
         if a.run || !a.rtl_cpu.is_empty() {
             if a.rtl_cpu.is_empty() {
@@ -4576,9 +4576,9 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 Ok(result) => {
                     // ── Window display (opsional) ──
                     if let Some(ref win_arg) = a.window {
-                        let cfg = maria_api::emu::display::DisplayConfig::from_wh(win_arg)
+                        let cfg = mivon_api::emu::display::DisplayConfig::from_wh(win_arg)
                             .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
-                        let mut disp = maria_api::emu::display::VgaDisplay::new(cfg);
+                        let mut disp = mivon_api::emu::display::VgaDisplay::new(cfg);
                         disp.open_window()
                             .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
                         // Render summary + console ke VGA display
@@ -4609,7 +4609,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                         }
                         disp.update();
                         eprintln!(
-                            "[Maria] Window aktif. Tekan ESC atau tutup jendela untuk keluar."
+                            "[Mivon] Window aktif. Tekan ESC atau tutup jendela untuk keluar."
                         );
                         loop {
                             if let Some(ch) = disp.poll_input() {
@@ -4696,7 +4696,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
 /// Jalankan tool, cetak error via TerminalEmitter, exit dengan kode.
 fn exit_tool(result: Result<(), SimError>) -> ! {
     if let Err(e) = result {
-        let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
+        let mut emitter = mivon_core::diagnostics::TerminalEmitter::new();
         let diag = e.to_diagnostic();
         let _ = emitter.emit(&diag);
         process::exit(e.exit_code());
@@ -4712,7 +4712,7 @@ fn dispatch_batch(a: &crate::cli::MbatchArgs) -> ! {
     let result: Result<(), SimError> = (|| {
         match &a.cmd {
             crate::cli::MbatchCmd::Run { config } => {
-                use maria_api::tools::batch::BatchConfig;
+                use mivon_api::tools::batch::BatchConfig;
                 let cfg = BatchConfig::from_file(std::path::Path::new(config))
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
                 let mut runner = cfg.to_runner();
@@ -4721,9 +4721,9 @@ fn dispatch_batch(a: &crate::cli::MbatchArgs) -> ! {
                 println!("{}", summary);
                 for r in &results {
                     let status = match &r.status {
-                        maria_api::tools::batch::JobStatus::Completed => "✓ OK".to_string(),
-                        maria_api::tools::batch::JobStatus::Failed(e) => format!("✗ FAILED: {}", e),
-                        maria_api::tools::batch::JobStatus::Skipped => "⊘ SKIPPED".to_string(),
+                        mivon_api::tools::batch::JobStatus::Completed => "✓ OK".to_string(),
+                        mivon_api::tools::batch::JobStatus::Failed(e) => format!("✗ FAILED: {}", e),
+                        mivon_api::tools::batch::JobStatus::Skipped => "⊘ SKIPPED".to_string(),
                         _ => "? PENDING".to_string(),
                     };
                     println!(
@@ -4751,9 +4751,9 @@ fn dispatch_memcheck(a: &crate::cli::MmemcheckArgs) -> ! {
         let binary = a.binary.clone();
         let args: Vec<String> = a.args.clone();
         let tool_result = match a.tool.as_str() {
-            "valgrind" => maria_api::tools::memcheck::run_valgrind(&binary, &args, &[])
+            "valgrind" => mivon_api::tools::memcheck::run_valgrind(&binary, &args, &[])
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?,
-            "heaptrack" => maria_api::tools::memcheck::run_heaptrack(&binary, &args)
+            "heaptrack" => mivon_api::tools::memcheck::run_heaptrack(&binary, &args)
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?,
             _ => {
                 return Err(SimError::with_diag(
@@ -4781,7 +4781,7 @@ fn dispatch_memcheck(a: &crate::cli::MmemcheckArgs) -> ! {
 
 fn dispatch_tbgen(a: &crate::cli::MtbgenArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::tbgen;
+        use mivon_api::tools::tbgen;
         let mut inputs: Vec<(&str, u32)> = Vec::new();
         let mut outputs: Vec<(&str, u32)> = Vec::new();
         if let Some(ref input_str) = a.inputs {
@@ -4815,9 +4815,9 @@ fn dispatch_tbgen(a: &crate::cli::MtbgenArgs) -> ! {
 
 fn dispatch_waiver(a: &crate::cli::MwaiverArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::waiver::WaiverStore;
+        use mivon_api::tools::waiver::WaiverStore;
         let mut store = WaiverStore::new();
-        let db_path = std::path::Path::new(".maria/waivers.json");
+        let db_path = std::path::Path::new(".mivon/waivers.json");
         if db_path.exists() {
             store = WaiverStore::load(db_path)
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
@@ -4887,7 +4887,7 @@ fn dispatch_waiver(a: &crate::cli::MwaiverArgs) -> ! {
 
 fn dispatch_vault(a: &crate::cli::MvaultArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::vault::SecureVault;
+        use mivon_api::tools::vault::SecureVault;
         let vault = SecureVault::new();
         match &a.cmd {
             crate::cli::MvaultCmd::Register { file, user } => {
@@ -4943,7 +4943,7 @@ fn dispatch_vault(a: &crate::cli::MvaultArgs) -> ! {
 
 fn dispatch_ipxact(a: &crate::cli::MipxactArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::ipxact::IpxactComponent;
+        use mivon_api::tools::ipxact::IpxactComponent;
         match &a.cmd {
             crate::cli::MipxactCmd::Generate {
                 module,
@@ -5001,7 +5001,7 @@ fn dispatch_ipxact(a: &crate::cli::MipxactArgs) -> ! {
 
 fn dispatch_design_repo(a: &crate::cli::MdesignRepoArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::design_repo::{DesignFileInfo, DesignRepository};
+        use mivon_api::tools::design_repo::{DesignFileInfo, DesignRepository};
         match &a.cmd {
             crate::cli::MdesignRepoCmd::Init { root } => {
                 let _repo = DesignRepository::open(std::path::PathBuf::from(root));
@@ -5064,8 +5064,8 @@ fn dispatch_design_repo(a: &crate::cli::MdesignRepoArgs) -> ! {
 
 fn dispatch_project(a: &crate::cli::MprojectArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::project::{ProjectEntry, WorkspaceConfig};
-        let config_path = std::path::Path::new(".maria/workspace.toml");
+        use mivon_api::tools::project::{ProjectEntry, WorkspaceConfig};
+        let config_path = std::path::Path::new(".mivon/workspace.toml");
         let mut config = if config_path.exists() {
             WorkspaceConfig::load(config_path)
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
@@ -5074,7 +5074,7 @@ fn dispatch_project(a: &crate::cli::MprojectArgs) -> ! {
         };
         match &a.cmd {
             crate::cli::MprojectCmd::Init { root } => {
-                let _ = std::fs::create_dir_all(format!("{}/.maria", root));
+                let _ = std::fs::create_dir_all(format!("{}/.mivon", root));
                 config
                     .save(config_path)
                     .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
@@ -5145,7 +5145,7 @@ fn dispatch_project(a: &crate::cli::MprojectArgs) -> ! {
 
 fn dispatch_sdc(a: &crate::cli::MsdcArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::sdc::SdcDocument;
+        use mivon_api::tools::sdc::SdcDocument;
         let doc = SdcDocument::load(std::path::Path::new(&a.file))
             .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
         if a.clocks_only {
@@ -5169,7 +5169,7 @@ fn dispatch_sdc(a: &crate::cli::MsdcArgs) -> ! {
 
 fn dispatch_equiv_check(a: &crate::cli::MequivCheckArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::equiv_check::EquivChecker;
+        use mivon_api::tools::equiv_check::EquivChecker;
         let checker = EquivChecker::new(&a.method);
         // Load golden and impl from JSON files
         let golden_content = std::fs::read_to_string(&a.golden)
@@ -5204,9 +5204,9 @@ fn dispatch_equiv_check(a: &crate::cli::MequivCheckArgs) -> ! {
 
 fn dispatch_regression(a: &crate::cli::MregressionArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::regression::{RegressionDb, RegressionRun, TestResult};
+        use mivon_api::tools::regression::{RegressionDb, RegressionRun, TestResult};
         use std::time::{SystemTime, UNIX_EPOCH};
-        let db_path = std::path::Path::new(".maria/regression.json");
+        let db_path = std::path::Path::new(".mivon/regression.json");
         let mut db = if db_path.exists() {
             RegressionDb::load(db_path).map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
         } else {
@@ -5265,8 +5265,8 @@ fn dispatch_regression(a: &crate::cli::MregressionArgs) -> ! {
 
 fn dispatch_eco(a: &crate::cli::MecoArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::eco::{EcoDb, EcoSeverity, EcoStatus};
-        let db_path = std::path::Path::new(".maria/eco.json");
+        use mivon_api::tools::eco::{EcoDb, EcoSeverity, EcoStatus};
+        let db_path = std::path::Path::new(".mivon/eco.json");
         let mut db = if db_path.exists() {
             EcoDb::load(db_path).map_err(|e| SimError::with_diag(DiagCode::IoError, e))?
         } else {
@@ -5355,7 +5355,7 @@ fn dispatch_eco(a: &crate::cli::MecoArgs) -> ! {
 
 fn dispatch_cov_closure(a: &crate::cli::McovClosureArgs) -> ! {
     let result: Result<(), SimError> = (|| {
-        use maria_api::tools::cov_closure::CoverageClosure;
+        use mivon_api::tools::cov_closure::CoverageClosure;
         match &a.cmd {
             crate::cli::McovClosureCmd::Analyze { input } => {
                 let cc = CoverageClosure::load(std::path::Path::new(input))

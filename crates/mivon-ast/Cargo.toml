@@ -1,0 +1,9 @@
+[package]
+name = "mivon-ast"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon AST: expr, stmt, types, const_eval, inline — struktur sintaks SystemVerilog"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+serde = { version = "1", features = ["derive"] }

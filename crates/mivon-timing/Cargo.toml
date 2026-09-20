@@ -1,0 +1,9 @@
+[package]
+name = "mivon-timing"
+version = "0.1.0"
+edition = "2021"
+description = "Mivon static timing analysis + area — constraint .mcs, WNS/TNS/critical path (SYNTHESIS.md phase 5)"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-netlist = { path = "../mivon-netlist" }

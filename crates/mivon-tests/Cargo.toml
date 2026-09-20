@@ -1,0 +1,37 @@
+[package]
+name = "mivon-tests"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon — test suite terpadu (pindahan src/tests, src/edge_tests, src/debug_lexer)"
+
+[dependencies]
+mivon-api = { path = "../mivon-api" }
+mivon-ir = { path = "../mivon-ir" }
+mivon-core = { path = "../mivon-core" }
+mivon-compiler = { path = "../mivon-compiler" }
+mivon-parser = { path = "../mivon-parser" }
+mivon-elaboration = { path = "../mivon-elaboration" }
+# Dep langsung utk feature wiring jit/dpi (test memakai simulator::jit + simulator::dpi)
+mivon-simulator = { path = "../mivon-simulator" }
+mivon-env = { path = "../mivon-env" }
+mivon-mv = { path = "../mivon-mv" }
+fastrand = "2"
+thiserror = "2"
+serde_json = "1"
+regex = "1"
+# Temporary directories for differential executor
+tempfile = "3"
+
+[dev-dependencies]
+# Phase 4/5 e2e: tech mapping (sim netlist = sim RTL) + timing/area STA.
+mivon-sir = { path = "../mivon-sir" }
+mivon-synth = { path = "../mivon-synth" }
+mivon-netlist = { path = "../mivon-netlist" }
+mivon-tech = { path = "../mivon-tech" }
+mivon-timing = { path = "../mivon-timing" }
+
+[features]
+default = ["jit", "dpi"]
+# Test suite memakai simulator::jit (JIT intrinsics) dan simulator::dpi
+jit = ["mivon-simulator/jit"]
+dpi = ["mivon-simulator/dpi", "mivon-env/dpi"]

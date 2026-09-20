@@ -1,0 +1,7 @@
+[package]
+name = "mivon-tech"
+version = "0.1.0"
+edition = "2021"
+description = "Mivon Technology Library — abstraksi device (generic/fpga/asic) untuk synthesis"
+
+[dependencies]

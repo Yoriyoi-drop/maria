@@ -1,13 +1,13 @@
-//! CLI argument definitions for Maria RTL Simulator.
+//! CLI argument definitions for Mivon RTL Simulator.
 //! Separated from main.rs for clarity.
 
 use clap::Parser as ClapParser;
 use clap::Subcommand;
 
-/// Subcommands `maria`.
+/// Subcommands `mivon`.
 #[derive(Subcommand, Clone)]
-pub enum MariaCmd {
-    /// Bersihkan database MICD (.maria/database)
+pub enum MivonCmd {
+    /// Bersihkan database MICD (.mivon/database)
     Clean,
 
     // ── Tools terminal (tools.md) ──
@@ -32,7 +32,7 @@ pub enum MariaCmd {
     /// mfmt — formatter Verilog/SystemVerilog
     #[command(alias = "mfmt")]
     Fmt(MfmtArgs),
-    /// mgen — generate SystemVerilog (.sv/.svh) dari Maria HDL (.mv)
+    /// mgen — generate SystemVerilog (.sv/.svh) dari Mivon HDL (.mv)
     #[command(alias = "mgen")]
     Gen(MgenArgs),
     /// mprof — performance profiler pipeline (lexer→parser→elab→sim)
@@ -44,18 +44,18 @@ pub enum MariaCmd {
     /// mbench — benchmark tool (compile speed, memori, CPU, throughput)
     #[command(alias = "mbench")]
     Bench(MbenchArgs),
-    /// synth — Maria synthesis (RTL → SIR → netlist gate-level, SYNTHESIS.md)
+    /// synth — Mivon synthesis (RTL → SIR → netlist gate-level, SYNTHESIS.md)
     /// Nama lama: `msynth` (alias)
     #[command(name = "synth", alias = "msynth")]
     Synth(SynthArgs),
-    /// mupdate — auto-update Maria dari release resmi (manifest + checksum +
-    /// rollback). `maria update check` untuk deteksi, `maria update` untuk
+    /// mupdate — auto-update Mivon dari release resmi (manifest + checksum +
+    /// rollback). `mivon update check` untuk deteksi, `mivon update` untuk
     /// memasang.
     #[command(alias = "mupdate")]
     Update(UpdateArgs),
 
     // ── Emulator (EMULATOR.md) — Hardware-Software Emulator ──
-    /// emu — Maria emulator; R0: MHIR extraction (device/register/clock/
+    /// emu — Mivon emulator; R0: MHIR extraction (device/register/clock/
     /// reset/memory + back-pointer) dan memory map dump
     #[command(name = "emu")]
     Emu(EmuArgs),
@@ -102,7 +102,7 @@ pub enum MariaCmd {
     CovClosure(McovClosureArgs),
 }
 
-/// minspect — Maria Inspect.
+/// minspect — Mivon Inspect.
 #[derive(clap::Args, Clone)]
 pub struct MinspectArgs {
     /// Target input: file .sv, direktori, atau file list .f
@@ -246,7 +246,7 @@ pub struct MsimArgs {
     pub max_time: Option<u64>,
 
     /// Force simulation + VCD even when elaboration errors/skipped modules exist
-    /// (default: Maria refuses to simulate until the design elaborates cleanly)
+    /// (default: Mivon refuses to simulate until the design elaborates cleanly)
     #[arg(long = "force-sim")]
     pub force_sim: bool,
 
@@ -291,7 +291,7 @@ pub struct McovArgs {
     pub max_time: Option<u64>,
 
     /// Force simulation + VCD even when elaboration errors/skipped modules exist
-    /// (default: Maria refuses to simulate until the design elaborates cleanly)
+    /// (default: Mivon refuses to simulate until the design elaborates cleanly)
     #[arg(long = "force-sim")]
     pub force_sim: bool,
 
@@ -464,7 +464,7 @@ pub struct MfmtArgs {
     pub check: bool,
 }
 
-/// mgen — Generator SystemVerilog dari Maria HDL (.mv).
+/// mgen — Generator SystemVerilog dari Mivon HDL (.mv).
 #[derive(clap::Args, Clone)]
 pub struct MgenArgs {
     /// Input: file .mv atau direktori (recursive scan *.mv)
@@ -513,7 +513,7 @@ pub struct MprofArgs {
     pub max_time: Option<u64>,
 
     /// Force simulation + VCD even when elaboration errors/skipped modules exist
-    /// (default: Maria refuses to simulate until the design elaborates cleanly)
+    /// (default: Mivon refuses to simulate until the design elaborates cleanly)
     #[arg(long = "force-sim")]
     pub force_sim: bool,
 
@@ -572,7 +572,7 @@ pub struct McheckArgs {
     pub ast_diff: Option<String>,
 
     /// ENT-22: Check version compatibility — detect SV features used
-    /// vs supported by Maria. Reports feature usage and support status.
+    /// vs supported by Mivon. Reports feature usage and support status.
     #[arg(long = "sv-version")]
     pub sv_version: bool,
 }
@@ -597,10 +597,10 @@ pub struct MbenchArgs {
     pub defines: Vec<String>,
 }
 
-/// synth — Maria Synthesis.
+/// synth — Mivon Synthesis.
 #[derive(clap::Args, Clone)]
 pub struct SynthArgs {
-    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    /// Target input: file .sv, direktori, atau file list (.f/.mivon)
     #[arg(required = true)]
     pub targets: Vec<String>,
 
@@ -685,7 +685,7 @@ pub struct SynthArgs {
     pub quiet: bool,
 }
 
-/// mupdate — Maria auto-update.
+/// mupdate — Mivon auto-update.
 #[derive(clap::Args, Clone)]
 pub struct UpdateArgs {
     /// Subcommand opsional: `check` (lapor saja) | `update` (pasang)
@@ -723,10 +723,10 @@ pub enum UpdateCmd {
     Update,
 }
 
-/// emu — Maria emulator (EMULATOR.md). R0: MHIR extraction + memory map dump.
+/// emu — Mivon emulator (EMULATOR.md). R0: MHIR extraction + memory map dump.
 #[derive(clap::Args, Clone)]
 pub struct EmuArgs {
-    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    /// Target input: file .sv, direktori, atau file list (.f/.mivon)
     /// (opsional bila `--boot-iso` dipakai — boot ISO tidak butuh RTL)
     pub targets: Vec<String>,
 
@@ -743,8 +743,8 @@ pub struct EmuArgs {
     pub top: Option<String>,
 
     /// File konfigurasi emulator TOML (`.meu`) — top/mode/accuracy/cpu/ram/
-    /// devices/seed. File TERPISAH dari project `.maria` (MICD memakai
-    /// ekstensi/direktori .maria — tidak boleh bentrok).
+    /// devices/seed. File TERPISAH dari project `.mivon` (MICD memakai
+    /// ekstensi/direktori .mivon — tidak boleh bentrok).
     #[arg(long = "config")]
     pub config: Option<String>,
 
@@ -762,7 +762,7 @@ pub struct EmuArgs {
     #[arg(long = "addr", value_name = "NAME=BASE:SIZE")]
     pub addr: Vec<String>,
 
-    /// Muat kernel ELF ke memory map (butuh `[emu] ram` di project file .maria).
+    /// Muat kernel ELF ke memory map (butuh `[emu] ram` di project file .mivon).
     /// Cetak entry point + isi region.
     #[arg(long = "load-elf", value_name = "PATH")]
     pub load_elf: Option<String>,
@@ -806,11 +806,11 @@ pub struct EmuArgs {
 }
 
 #[derive(ClapParser, Clone)]
-#[command(name = "maria", about = "RTL Simulator untuk SystemVerilog")]
+#[command(name = "mivon", about = "RTL Simulator untuk SystemVerilog")]
 pub struct Cli {
     /// Subcommand (opsional)
     #[command(subcommand)]
-    pub cmd: Option<MariaCmd>,
+    pub cmd: Option<MivonCmd>,
 
     /// Input SystemVerilog file(s) — last is top module
     pub files: Vec<String>,
@@ -824,7 +824,7 @@ pub struct Cli {
     pub max_time: Option<u64>,
 
     /// Force simulation + VCD even when elaboration errors/skipped modules exist
-    /// (default: Maria refuses to simulate until the design elaborates cleanly)
+    /// (default: Mivon refuses to simulate until the design elaborates cleanly)
     #[arg(long = "force-sim")]
     pub force_sim: bool,
 
@@ -1134,7 +1134,7 @@ pub struct Cli {
 
     /// Target directory for build artifacts (precompiled analysis, cache).
     /// Similar to Rust's `target/` — all build output goes here.
-    /// Default: `.maria/database/`. Override for cross-project sharing.
+    /// Default: `.mivon/database/`. Override for cross-project sharing.
     #[arg(long = "target-dir")]
     pub target_dir: Option<String>,
 
@@ -1417,7 +1417,7 @@ pub enum MipxactCmd {
         #[arg(short = 'm', long = "module")]
         module: String,
         /// Vendor name
-        #[arg(long = "vendor", default_value = "maria")]
+        #[arg(long = "vendor", default_value = "mivon")]
         vendor: String,
         /// Library name
         #[arg(long = "library", default_value = "rtl")]

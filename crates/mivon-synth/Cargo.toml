@@ -1,0 +1,12 @@
+[package]
+name = "mivon-synth"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon synthesis — RTL → netlist gate-level (fase S1: SYN check, netlist, inferensi FF, emit .mvnet, report utilisasi)"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ir = { path = "../mivon-ir" }
+mivon-sir = { path = "../mivon-sir" }
+mivon-netlist = { path = "../mivon-netlist" }
+mivon-tech = { path = "../mivon-tech" }

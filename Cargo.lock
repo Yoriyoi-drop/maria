@@ -1974,342 +1974,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "maria"
-version = "0.3.0"
-dependencies = [
- "bincode",
- "clap",
- "cranelift",
- "cranelift-frontend",
- "cranelift-jit",
- "cranelift-module",
- "crossbeam",
- "dashmap 6.2.1",
- "fxhash",
- "libloading",
- "lz4_flex",
- "maria-api",
- "maria-ast",
- "maria-compiler",
- "maria-core",
- "maria-elaboration",
- "maria-emu",
- "maria-env",
- "maria-ir",
- "maria-mv",
- "maria-parser",
- "maria-simulator",
- "maria-sir",
- "maria-synth",
- "maria-tech",
- "maria-timing",
- "maria-tools",
- "memmap2",
- "num_cpus",
- "parking_lot",
- "rand",
- "rayon",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "walkdir",
- "wavefst",
- "xxhash-rust",
-]
-
-[[package]]
-name = "maria-api"
-version = "0.3.0"
-dependencies = [
- "maria-compiler",
- "maria-core",
- "maria-elaboration",
- "maria-emu",
- "maria-env",
- "maria-formal",
- "maria-gui",
- "maria-ir",
- "maria-mv",
- "maria-parser",
- "maria-simulator",
- "maria-tools",
-]
-
-[[package]]
-name = "maria-ast"
-version = "0.3.0"
-dependencies = [
- "maria-core",
- "serde",
-]
-
-[[package]]
-name = "maria-compiler"
-version = "0.3.0"
-dependencies = [
- "bincode",
- "cranelift",
- "cranelift-frontend",
- "cranelift-jit",
- "cranelift-module",
- "crossbeam",
- "dashmap 6.2.1",
- "lz4_flex",
- "maria-ast",
- "maria-core",
- "maria-elaboration",
- "maria-ir",
- "maria-parser",
- "memmap2",
- "num_cpus",
- "parking_lot",
- "rayon",
- "serde",
- "serde_json",
- "tempfile",
- "walkdir",
- "xxhash-rust",
-]
-
-[[package]]
-name = "maria-core"
-version = "0.3.0"
-dependencies = [
- "crossbeam",
- "dashmap 6.2.1",
- "fxhash",
- "num_cpus",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "toml",
- "xxhash-rust",
-]
-
-[[package]]
-name = "maria-elaboration"
-version = "0.3.0"
-dependencies = [
- "maria-ast",
- "maria-core",
- "maria-ir",
-]
-
-[[package]]
-name = "maria-emu"
-version = "0.1.0"
-dependencies = [
- "maria-core",
- "maria-elaboration",
- "maria-ir",
- "maria-parser",
- "maria-simulator",
- "memmap2",
- "minifb",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "maria-env"
-version = "0.3.0"
-dependencies = [
- "libc",
- "lsp-types",
- "maria-ast",
- "maria-compiler",
- "maria-core",
- "maria-elaboration",
- "maria-ir",
- "maria-parser",
- "maria-simulator",
- "num_cpus",
- "rayon",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml",
- "tower-lsp",
-]
-
-[[package]]
-name = "maria-formal"
-version = "0.3.0"
-dependencies = [
- "maria-core",
- "maria-ir",
- "z3",
-]
-
-[[package]]
-name = "maria-fuzz"
-version = "0.1.0"
-dependencies = [
- "maria-api",
- "maria-ir",
- "maria-parser",
- "rand",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "maria-gui"
-version = "0.3.0"
-dependencies = [
- "eframe",
- "egui",
- "maria-ast",
- "maria-compiler",
- "maria-core",
- "maria-elaboration",
- "maria-ir",
- "maria-mv",
- "maria-parser",
- "maria-simulator",
- "rfd",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "maria-ir"
-version = "0.3.0"
-dependencies = [
- "maria-ast",
- "maria-core",
- "serde",
-]
-
-[[package]]
-name = "maria-mv"
-version = "0.3.0"
-
-[[package]]
-name = "maria-netlist"
-version = "0.1.0"
-dependencies = [
- "maria-core",
- "maria-sir",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "maria-parser"
-version = "0.3.0"
-dependencies = [
- "maria-ast",
- "maria-core",
-]
-
-[[package]]
-name = "maria-simulator"
-version = "0.3.0"
-dependencies = [
- "cranelift",
- "cranelift-frontend",
- "cranelift-jit",
- "cranelift-module",
- "flate2",
- "libloading",
- "maria-ast",
- "maria-compiler",
- "maria-core",
- "maria-elaboration",
- "maria-ir",
- "maria-parser",
- "parking_lot",
- "rand",
- "rayon",
- "wavefst",
-]
-
-[[package]]
-name = "maria-sir"
-version = "0.3.0"
-dependencies = [
- "maria-core",
- "maria-ir",
-]
-
-[[package]]
-name = "maria-synth"
-version = "0.3.0"
-dependencies = [
- "maria-core",
- "maria-ir",
- "maria-netlist",
- "maria-sir",
- "maria-tech",
-]
-
-[[package]]
-name = "maria-tech"
-version = "0.1.0"
-
-[[package]]
-name = "maria-tests"
-version = "0.3.0"
-dependencies = [
- "fastrand",
- "maria-api",
- "maria-compiler",
- "maria-core",
- "maria-elaboration",
- "maria-env",
- "maria-ir",
- "maria-mv",
- "maria-netlist",
- "maria-parser",
- "maria-simulator",
- "maria-sir",
- "maria-synth",
- "maria-tech",
- "maria-timing",
- "regex",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "maria-timing"
-version = "0.1.0"
-dependencies = [
- "maria-core",
- "maria-netlist",
-]
-
-[[package]]
-name = "maria-tools"
-version = "0.3.0"
-dependencies = [
- "bincode",
- "maria-ast",
- "maria-compiler",
- "maria-core",
- "maria-elaboration",
- "maria-ir",
- "maria-mv",
- "maria-netlist",
- "maria-parser",
- "maria-simulator",
- "maria-sir",
- "maria-synth",
- "maria-tech",
- "maria-timing",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "toml",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2387,6 +2051,342 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mivon"
+version = "0.3.0"
+dependencies = [
+ "bincode",
+ "clap",
+ "cranelift",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "crossbeam",
+ "dashmap 6.2.1",
+ "fxhash",
+ "libloading",
+ "lz4_flex",
+ "memmap2",
+ "mivon-api",
+ "mivon-ast",
+ "mivon-compiler",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-emu",
+ "mivon-env",
+ "mivon-ir",
+ "mivon-mv",
+ "mivon-parser",
+ "mivon-simulator",
+ "mivon-sir",
+ "mivon-synth",
+ "mivon-tech",
+ "mivon-timing",
+ "mivon-tools",
+ "num_cpus",
+ "parking_lot",
+ "rand",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "walkdir",
+ "wavefst",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "mivon-api"
+version = "0.3.0"
+dependencies = [
+ "mivon-compiler",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-emu",
+ "mivon-env",
+ "mivon-formal",
+ "mivon-gui",
+ "mivon-ir",
+ "mivon-mv",
+ "mivon-parser",
+ "mivon-simulator",
+ "mivon-tools",
+]
+
+[[package]]
+name = "mivon-ast"
+version = "0.3.0"
+dependencies = [
+ "mivon-core",
+ "serde",
+]
+
+[[package]]
+name = "mivon-compiler"
+version = "0.3.0"
+dependencies = [
+ "bincode",
+ "cranelift",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "crossbeam",
+ "dashmap 6.2.1",
+ "lz4_flex",
+ "memmap2",
+ "mivon-ast",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-ir",
+ "mivon-parser",
+ "num_cpus",
+ "parking_lot",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "walkdir",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "mivon-core"
+version = "0.3.0"
+dependencies = [
+ "crossbeam",
+ "dashmap 6.2.1",
+ "fxhash",
+ "num_cpus",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "mivon-elaboration"
+version = "0.3.0"
+dependencies = [
+ "mivon-ast",
+ "mivon-core",
+ "mivon-ir",
+]
+
+[[package]]
+name = "mivon-emu"
+version = "0.1.0"
+dependencies = [
+ "memmap2",
+ "minifb",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-ir",
+ "mivon-parser",
+ "mivon-simulator",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "mivon-env"
+version = "0.3.0"
+dependencies = [
+ "libc",
+ "lsp-types",
+ "mivon-ast",
+ "mivon-compiler",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-ir",
+ "mivon-parser",
+ "mivon-simulator",
+ "num_cpus",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tower-lsp",
+]
+
+[[package]]
+name = "mivon-formal"
+version = "0.3.0"
+dependencies = [
+ "mivon-core",
+ "mivon-ir",
+ "z3",
+]
+
+[[package]]
+name = "mivon-fuzz"
+version = "0.1.0"
+dependencies = [
+ "mivon-api",
+ "mivon-ir",
+ "mivon-parser",
+ "rand",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mivon-gui"
+version = "0.3.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "mivon-ast",
+ "mivon-compiler",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-ir",
+ "mivon-mv",
+ "mivon-parser",
+ "mivon-simulator",
+ "rfd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mivon-ir"
+version = "0.3.0"
+dependencies = [
+ "mivon-ast",
+ "mivon-core",
+ "serde",
+]
+
+[[package]]
+name = "mivon-mv"
+version = "0.3.0"
+
+[[package]]
+name = "mivon-netlist"
+version = "0.1.0"
+dependencies = [
+ "mivon-core",
+ "mivon-sir",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mivon-parser"
+version = "0.3.0"
+dependencies = [
+ "mivon-ast",
+ "mivon-core",
+]
+
+[[package]]
+name = "mivon-simulator"
+version = "0.3.0"
+dependencies = [
+ "cranelift",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "flate2",
+ "libloading",
+ "mivon-ast",
+ "mivon-compiler",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-ir",
+ "mivon-parser",
+ "parking_lot",
+ "rand",
+ "rayon",
+ "wavefst",
+]
+
+[[package]]
+name = "mivon-sir"
+version = "0.3.0"
+dependencies = [
+ "mivon-core",
+ "mivon-ir",
+]
+
+[[package]]
+name = "mivon-synth"
+version = "0.3.0"
+dependencies = [
+ "mivon-core",
+ "mivon-ir",
+ "mivon-netlist",
+ "mivon-sir",
+ "mivon-tech",
+]
+
+[[package]]
+name = "mivon-tech"
+version = "0.1.0"
+
+[[package]]
+name = "mivon-tests"
+version = "0.3.0"
+dependencies = [
+ "fastrand",
+ "mivon-api",
+ "mivon-compiler",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-env",
+ "mivon-ir",
+ "mivon-mv",
+ "mivon-netlist",
+ "mivon-parser",
+ "mivon-simulator",
+ "mivon-sir",
+ "mivon-synth",
+ "mivon-tech",
+ "mivon-timing",
+ "regex",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "mivon-timing"
+version = "0.1.0"
+dependencies = [
+ "mivon-core",
+ "mivon-netlist",
+]
+
+[[package]]
+name = "mivon-tools"
+version = "0.3.0"
+dependencies = [
+ "bincode",
+ "mivon-ast",
+ "mivon-compiler",
+ "mivon-core",
+ "mivon-elaboration",
+ "mivon-ir",
+ "mivon-mv",
+ "mivon-netlist",
+ "mivon-parser",
+ "mivon-simulator",
+ "mivon-sir",
+ "mivon-synth",
+ "mivon-tech",
+ "mivon-timing",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

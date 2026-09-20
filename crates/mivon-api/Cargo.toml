@@ -1,0 +1,29 @@
+[package]
+name = "mivon-api"
+version = "0.3.0"
+edition = "2021"
+description = "Mivon API — lapisan public API RTL Simulator (pindahan src/lib.rs)"
+
+[dependencies]
+mivon-core = { path = "../mivon-core" }
+mivon-ir = { path = "../mivon-ir" }
+mivon-parser = { path = "../mivon-parser" }
+mivon-elaboration = { path = "../mivon-elaboration" }
+mivon-compiler = { path = "../mivon-compiler" }
+mivon-simulator = { path = "../mivon-simulator" }
+mivon-mv = { path = "../mivon-mv" }
+mivon-env = { path = "../mivon-env" }
+mivon-tools = { path = "../mivon-tools" }
+mivon-emu = { path = "../mivon-emu" }
+mivon-formal = { path = "../mivon-formal", optional = true }
+mivon-gui = { path = "../mivon-gui", optional = true }
+
+[features]
+# LSP server — tower-lsp/lsp-types di mivon-env
+lsp = ["mivon-env/lsp"]
+# Formal verification (Z3 SMT solver + BMC engine)
+formal = ["dep:mivon-formal", "mivon-formal/formal"]
+# Native GUI (egui)
+gui = ["dep:mivon-gui"]
+# Window display emulator (minifb framebuffer) — mivon emu --window
+window = ["mivon-emu/window"]

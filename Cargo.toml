@@ -3,35 +3,35 @@
 # Migrasi monorepo: logika dipindah bertahap dari src/ ke crates/.
 resolver = "2"
 members = [
-    "crates/maria-core",
-    "crates/maria-ast",
-    "crates/maria-ir",
-    "crates/maria-parser",
-    "crates/maria-elaboration",
-    "crates/maria-compiler",
-    "crates/maria-simulator",
-    "crates/maria-mv",
-    "crates/maria-formal",
-    "crates/maria-sir",
-    "crates/maria-netlist",
-    "crates/maria-timing",
-    "crates/maria-tech",
-    "crates/maria-synth",
-    "crates/maria-env",
-    "crates/maria-emu",
-    "crates/maria-tools",
-    "crates/maria-gui",
-    "crates/maria-api",
-    "crates/maria-fuzz",
-    "crates/maria-tests",
+    "crates/mivon-core",
+    "crates/mivon-ast",
+    "crates/mivon-ir",
+    "crates/mivon-parser",
+    "crates/mivon-elaboration",
+    "crates/mivon-compiler",
+    "crates/mivon-simulator",
+    "crates/mivon-mv",
+    "crates/mivon-formal",
+    "crates/mivon-sir",
+    "crates/mivon-netlist",
+    "crates/mivon-timing",
+    "crates/mivon-tech",
+    "crates/mivon-synth",
+    "crates/mivon-env",
+    "crates/mivon-emu",
+    "crates/mivon-tools",
+    "crates/mivon-gui",
+    "crates/mivon-api",
+    "crates/mivon-fuzz",
+    "crates/mivon-tests",
 ]
 
 [package]
-name = "maria"
+name = "mivon"
 version = "0.3.0"
 edition = "2021"
 description = "RTL Simulator untuk SystemVerilog - dibangun dengan Rust"
-default-run = "maria"
+default-run = "mivon"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -60,22 +60,22 @@ serde_json = "1"
 toml = "0.8"
 
 # ── Workspace crates (migrasi monorepo: src/ → crates/) ──
-maria-core = { path = "crates/maria-core" }
-maria-ast = { path = "crates/maria-ast" }
-maria-ir = { path = "crates/maria-ir" }
-maria-parser = { path = "crates/maria-parser" }
-maria-elaboration = { path = "crates/maria-elaboration" }
-maria-compiler = { path = "crates/maria-compiler" }
-maria-simulator = { path = "crates/maria-simulator" }
-maria-mv = { path = "crates/maria-mv" }
-maria-sir = { path = "crates/maria-sir" }
-maria-timing = { path = "crates/maria-timing" }
-maria-tech = { path = "crates/maria-tech" }
-maria-synth = { path = "crates/maria-synth" }
-maria-env = { path = "crates/maria-env" }
-maria-emu = { path = "crates/maria-emu" }
-maria-tools = { path = "crates/maria-tools" }
-maria-api = { path = "crates/maria-api" }
+mivon-core = { path = "crates/mivon-core" }
+mivon-ast = { path = "crates/mivon-ast" }
+mivon-ir = { path = "crates/mivon-ir" }
+mivon-parser = { path = "crates/mivon-parser" }
+mivon-elaboration = { path = "crates/mivon-elaboration" }
+mivon-compiler = { path = "crates/mivon-compiler" }
+mivon-simulator = { path = "crates/mivon-simulator" }
+mivon-mv = { path = "crates/mivon-mv" }
+mivon-sir = { path = "crates/mivon-sir" }
+mivon-timing = { path = "crates/mivon-timing" }
+mivon-tech = { path = "crates/mivon-tech" }
+mivon-synth = { path = "crates/mivon-synth" }
+mivon-env = { path = "crates/mivon-env" }
+mivon-emu = { path = "crates/mivon-emu" }
+mivon-tools = { path = "crates/mivon-tools" }
+mivon-api = { path = "crates/mivon-api" }
 
 # ── Opsional: JIT Compilation (cranelift) ──
 cranelift = { version = "0.110", optional = true }
@@ -86,38 +86,38 @@ cranelift-module = { version = "0.110", optional = true }
 # ── Opsional: DPI-C FFI ──
 libloading = { version = "0.8", optional = true }
 
-# ── Opsional: LSP Server — tower-lsp/lsp-types kini di maria-env ──
+# ── Opsional: LSP Server — tower-lsp/lsp-types kini di mivon-env ──
 # tokio tetap di root: main.rs membuat Runtime untuk LSP (cfg feature lsp).
 tokio = { version = "1", features = ["full"], optional = true }
 
-# ── Opsional: Formal Verification (Z3 SMT) — z3 kini di maria-formal ──
+# ── Opsional: Formal Verification (Z3 SMT) — z3 kini di mivon-formal ──
 
-# ── Opsional: GUI native (egui) — eframe/egui/rfd kini di maria-gui ──
+# ── Opsional: GUI native (egui) — eframe/egui/rfd kini di mivon-gui ──
 # Backend rendering: wgpu (GPU/Vulkan) utama + glow (OpenGL) fallback.
-# Crate maria-gui mengelola deps GUI; root hanya wiring feature gui.
+# Crate mivon-gui mengelola deps GUI; root hanya wiring feature gui.
 
 [features]
 # Semua fitur diaktifkan secara default
 # Untuk build minimal: cargo build --no-default-features
 default = ["lsp", "jit", "formal", "dpi"]
 
-# LSP server — re-export di maria-api; tokio untuk Runtime di main.rs
-lsp = ["maria-api/lsp", "tokio"]
+# LSP server — re-export di mivon-api; tokio untuk Runtime di main.rs
+lsp = ["mivon-api/lsp", "tokio"]
 
 # Cranelift JIT — compiled-code simulation (expression + body level)
-jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module", "maria-simulator/jit"]
+jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module", "mivon-simulator/jit"]
 
-# Formal verification (Z3 SMT solver + BMC engine) — di maria-api
-formal = ["maria-api/formal"]
+# Formal verification (Z3 SMT solver + BMC engine) — di mivon-api
+formal = ["mivon-api/formal"]
 
 # DPI-C foreign language interface
-dpi = ["libloading", "maria-simulator/dpi", "maria-env/dpi"]
+dpi = ["libloading", "mivon-simulator/dpi", "mivon-env/dpi"]
 
-# Native GUI (egui) — re-export di maria-api; binary `maria-gui` di crate maria-gui
-gui = ["maria-api/gui"]
+# Native GUI (egui) — re-export di mivon-api; binary `mivon-gui` di crate mivon-gui
+gui = ["mivon-api/gui"]
 
-# Window display emulator (minifb framebuffer) — maria emu --window
-window = ["maria-api/window"]
+# Window display emulator (minifb framebuffer) — mivon emu --window
+window = ["mivon-api/window"]
 
 [profile.release]
 opt-level = 3
@@ -134,7 +134,7 @@ codegen-units = 16
 
 # Profil debug-gdb: kecepatan release + info Dwarf penuh (variabel lokal) agar
 # `gdb` bisa membaca state guest (X86Cpu.ip/cs/gpr dll). Dipakai saat menyelidik
-# fase boot: `cargo build --profile prof` lalu jalankan `./target/prof/maria`.
+# fase boot: `cargo build --profile prof` lalu jalankan `./target/prof/mivon`.
 [profile.prof]
 inherits = "release"
 debug = 2
