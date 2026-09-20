@@ -1469,8 +1469,7 @@ impl Elaborator {
                         &ctx,
                         Some(&pkg_full),
                     ) {
-                        let signed_for_gen2 =
-                            self.module_param_signed_set(&self.design.modules[i]);
+                        let signed_for_gen2 = self.module_param_signed_set(&self.design.modules[i]);
                         let module = &mut self.design.modules[i];
                         let _ = expand_all_generates(
                             module,
@@ -2831,7 +2830,7 @@ impl Elaborator {
         }
         self.unit_import_ctx = delta;
 
-// ── Plain param per package — sekali, untuk import milik module ──
+        // ── Plain param per package — sekali, untuk import milik module ──
         // Base: context global yang sudah lengkap (qualified + unit imports).
         let base: HashMap<Symbol, i64> = self.unit_import_ctx.clone();
         let mut plain_map: HashMap<Symbol, HashMap<Symbol, i64>> = HashMap::new();
@@ -3952,15 +3951,9 @@ impl Elaborator {
                     }
                 }
             }
-            let (array_depth, total_width, port_msb, port_lsb) = if !port_all_dims.is_empty()
-            {
+            let (array_depth, total_width, port_msb, port_lsb) = if !port_all_dims.is_empty() {
                 let total_depth: usize = port_all_dims.iter().product();
-                (
-                    total_depth,
-                    width * total_depth,
-                    width * total_depth - 1,
-                    0,
-                )
+                (total_depth, width * total_depth, width * total_depth - 1, 0)
             } else {
                 (1, width, p_msb, p_lsb)
             };
@@ -6085,8 +6078,7 @@ impl Elaborator {
                     // dengan statement assign (stmt.rs:805): decompose ke per-elemen
                     // assign `rom[i] = ei;` di level IR.
                     let mut per_elem_stmts: Vec<IrStmt> = Vec::new();
-                    if let (Some(sid), Expr::Concat(elems)) = (lvalue_signal_id(&lhs), init_expr)
-                    {
+                    if let (Some(sid), Expr::Concat(elems)) = (lvalue_signal_id(&lhs), init_expr) {
                         if let Some(sig) = signals.get(sid) {
                             if sig.array_depth > 1 {
                                 // F39: multi-dimensi — nested concat
@@ -6102,9 +6094,9 @@ impl Elaborator {
                                         per_elem_stmts.push(IrStmt::BlockingAssign {
                                             lhs: IrLValue::ArrayIndex {
                                                 sig_id: sid,
-                                                index: Box::new(IrExpr::Const(
-                                                    LogicVec::from_u64(i as u64, 32),
-                                                )),
+                                                index: Box::new(IrExpr::Const(LogicVec::from_u64(
+                                                    i as u64, 32,
+                                                ))),
                                                 elem_width: sig.elem_width.max(1),
                                             },
                                             rhs: ir_elem,
@@ -6119,9 +6111,9 @@ impl Elaborator {
                                         per_elem_stmts.push(IrStmt::BlockingAssign {
                                             lhs: IrLValue::ArrayIndex {
                                                 sig_id: sid,
-                                                index: Box::new(IrExpr::Const(
-                                                    LogicVec::from_u64(i as u64, 32),
-                                                )),
+                                                index: Box::new(IrExpr::Const(LogicVec::from_u64(
+                                                    i as u64, 32,
+                                                ))),
                                                 elem_width: sig.elem_width.max(1),
                                             },
                                             rhs: ir_elem,

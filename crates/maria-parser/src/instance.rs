@@ -925,10 +925,8 @@ impl Parser {
                                 //   data_i [msb:lsb]    — rentang eksplisit
                                 // (multi-dimensi diperbolehkan, dimensi ekstra di-skip)
                                 let mut array_range = None;
-                                let mut extra_unpacked_dims: Vec<(
-                                    Option<Range>,
-                                    Option<Expr>,
-                                )> = Vec::new();
+                                let mut extra_unpacked_dims: Vec<(Option<Range>, Option<Expr>)> =
+                                    Vec::new();
                                 if self.peek() == &Token::LBrack {
                                     self.advance(); // [
                                     if self.peek() != &Token::RBrack {

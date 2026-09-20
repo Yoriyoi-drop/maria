@@ -118,7 +118,10 @@ fn evaluate_compile(target: Target, source: &str, timeout_ms: u64) -> CaseResult
             target,
             Oracle::O1NoCrash,
             Category::Hang,
-            &format!("compile hang/slow > {} ms (worker dilanjutkan di background)", timeout_ms),
+            &format!(
+                "compile hang/slow > {} ms (worker dilanjutkan di background)",
+                timeout_ms
+            ),
             source,
         ),
         Err(_) => mk(
@@ -1339,7 +1342,10 @@ fn evaluate_sdf(source: &str, timeout_ms: u64) -> CaseResult {
         crate::runner::Kind::CleanError => mk_s(
             Category::CleanError,
             Oracle::O1NoCrash,
-            &format!("sdf clean error: {}", outcome.stderr.lines().next().unwrap_or("")),
+            &format!(
+                "sdf clean error: {}",
+                outcome.stderr.lines().next().unwrap_or("")
+            ),
         ),
         crate::runner::Kind::Panic => mk_s(
             Category::Panic,
@@ -1411,8 +1417,8 @@ fn evaluate_micd(source: &str, timeout_ms: u64) -> CaseResult {
     // Isolasi MICD per-case via helper (temp unik + cleanup otomatis).
     let (r1, r2, r3) = with_micd_isolated(|| {
         (
-            crate::runner::run_args(&base, timeout_ms),      // cold cache — seed
-            crate::runner::run_args(&base, timeout_ms),      // incremental
+            crate::runner::run_args(&base, timeout_ms), // cold cache — seed
+            crate::runner::run_args(&base, timeout_ms), // incremental
             crate::runner::run_args(&recompile, timeout_ms), // fresh
         )
     });
@@ -1423,7 +1429,10 @@ fn evaluate_micd(source: &str, timeout_ms: u64) -> CaseResult {
         return mk_m(
             Category::CleanError,
             Oracle::O1NoCrash,
-            &format!("run pertama gagal: {}", r1.stderr.lines().next().unwrap_or("")),
+            &format!(
+                "run pertama gagal: {}",
+                r1.stderr.lines().next().unwrap_or("")
+            ),
         );
     }
 
@@ -1476,9 +1485,7 @@ fn evaluate_micd(source: &str, timeout_ms: u64) -> CaseResult {
     // dipakai — stdout saja; baris metrik waktu di-strip).
     let strip = |s: &str| -> Vec<String> {
         s.lines()
-            .filter(|l| {
-                !l.contains("time") && !l.contains("µs") && !l.contains("ms)")
-            })
+            .filter(|l| !l.contains("time") && !l.contains("µs") && !l.contains("ms)"))
             .map(|l| l.trim().to_string())
             .collect()
     };
@@ -1549,9 +1556,7 @@ fn evaluate_synth(source: &str, timeout_ms: u64) -> CaseResult {
         if second.kind == crate::runner::Kind::Ok {
             let strip = |s: &str| -> Vec<String> {
                 s.lines()
-                    .filter(|l| {
-                        !l.contains("time") && !l.contains("µs") && !l.contains("ms)")
-                    })
+                    .filter(|l| !l.contains("time") && !l.contains("µs") && !l.contains("ms)"))
                     .map(|l| l.trim().to_string())
                     .collect()
             };
@@ -1624,8 +1629,7 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
     // timeout palsu); synth pakai --check-only (cepat, 0.03s).
     if rng.chance(50) {
         let tools = [
-            "mcheck", "melab", "msim", "mfmt", "mlint", "minspect", "mprof",
-            "synth",
+            "mcheck", "melab", "msim", "mfmt", "mlint", "minspect", "mprof", "synth",
         ];
         let t = tools[rng.below(tools.len())];
         args.push(t.to_string());

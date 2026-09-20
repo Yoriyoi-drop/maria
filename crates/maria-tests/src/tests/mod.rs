@@ -5492,8 +5492,7 @@ endmodule
         .map(|(_, v)| logicvec_to_string(v))
         .unwrap_or_default();
     assert_eq!(
-        s,
-        "0x000000ff",
+        s, "0x000000ff",
         "sformatf \"0x%h\" = literal '0x' + full-width hex (IEEE 1800 §21.2.1.3)"
     );
 }
@@ -5517,7 +5516,10 @@ endmodule
         .find(|(n, _)| n == "s")
         .map(|(_, v)| logicvec_to_string(v))
         .unwrap_or_default();
-    assert_eq!(s, "00000000000000000000000000001010", "sformatf with %b (plain = full width, IEEE 1800 §21.2.1.3)");
+    assert_eq!(
+        s, "00000000000000000000000000001010",
+        "sformatf with %b (plain = full width, IEEE 1800 §21.2.1.3)"
+    );
 }
 
 #[test]
@@ -6618,7 +6620,11 @@ endmodule
     let sigs = simulate_signals(source, 5).unwrap();
     let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
     assert_eq!(get("w"), 6, "m3d[1][0][1] = 6");
-    assert_eq!(get("row"), 0x0403_0201, "row select m3d[0] (32-bit sub-array)");
+    assert_eq!(
+        get("row"),
+        0x0403_0201,
+        "row select m3d[0] (32-bit sub-array)"
+    );
 }
 
 #[test]

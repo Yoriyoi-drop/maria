@@ -270,46 +270,43 @@ fn eval_generate_cond(
             let v = eval_generate_cond(inner, params, signed_params)?;
             return Ok(if v == 0 { 1 } else { 0 });
         }
-        Expr::BinaryOp { op, lhs, rhs } => {
-            match op {
-                BinaryOp::LogicalAnd => {
-                    if eval_generate_cond(lhs, params, signed_params)? == 0 {
-                        return Ok(0);
-                    }
-                    return Ok(if eval_generate_cond(rhs, params, signed_params)? != 0 {
-                        1
-                    } else {
-                        0
-                    });
+        Expr::BinaryOp { op, lhs, rhs } => match op {
+            BinaryOp::LogicalAnd => {
+                if eval_generate_cond(lhs, params, signed_params)? == 0 {
+                    return Ok(0);
                 }
-                BinaryOp::LogicalOr => {
-                    if eval_generate_cond(lhs, params, signed_params)? != 0 {
-                        return Ok(1);
-                    }
-                    return Ok(if eval_generate_cond(rhs, params, signed_params)? != 0 {
-                        1
-                    } else {
-                        0
-                    });
-                }
-                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                    if gen_expr_is_signed(lhs, signed_params)
-                        && gen_expr_is_signed(rhs, signed_params)
-                    {
-                        let l = const_eval_with_params(lhs, params)?;
-                        let r = const_eval_with_params(rhs, params)?;
-                        let b = match op {
-                            BinaryOp::Lt => l < r,
-                            BinaryOp::Le => l <= r,
-                            BinaryOp::Gt => l > r,
-                            _ => l >= r,
-                        };
-                        return Ok(if b { 1 } else { 0 });
-                    }
-                }
-                _ => {}
+                return Ok(if eval_generate_cond(rhs, params, signed_params)? != 0 {
+                    1
+                } else {
+                    0
+                });
             }
-        }
+            BinaryOp::LogicalOr => {
+                if eval_generate_cond(lhs, params, signed_params)? != 0 {
+                    return Ok(1);
+                }
+                return Ok(if eval_generate_cond(rhs, params, signed_params)? != 0 {
+                    1
+                } else {
+                    0
+                });
+            }
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                if gen_expr_is_signed(lhs, signed_params) && gen_expr_is_signed(rhs, signed_params)
+                {
+                    let l = const_eval_with_params(lhs, params)?;
+                    let r = const_eval_with_params(rhs, params)?;
+                    let b = match op {
+                        BinaryOp::Lt => l < r,
+                        BinaryOp::Le => l <= r,
+                        BinaryOp::Gt => l > r,
+                        _ => l >= r,
+                    };
+                    return Ok(if b { 1 } else { 0 });
+                }
+            }
+            _ => {}
+        },
         _ => {}
     }
     const_eval_with_params(cond, params)
@@ -352,10 +349,7 @@ fn gen_expr_is_signed(e: &Expr, signed_params: &std::collections::HashSet<Symbol
             | BinaryOp::Ge
             | BinaryOp::LogicalAnd
             | BinaryOp::LogicalOr => false,
-            _ => {
-                gen_expr_is_signed(lhs, signed_params)
-                    && gen_expr_is_signed(rhs, signed_params)
-            }
+            _ => gen_expr_is_signed(lhs, signed_params) && gen_expr_is_signed(rhs, signed_params),
         },
         _ => false,
     }

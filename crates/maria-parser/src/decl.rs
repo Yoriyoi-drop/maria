@@ -773,14 +773,14 @@ impl Parser {
                         // `advance()` `[` lebih dulu (bug: semua dim lanjutan
                         // jatuh ke Err → blind-skip). Deteksi range lewat
                         // `peek_bracket_has_range_colon` (peek masih `[`).
-                        if self.peek_bracket_has_range_colon() || self.peek_ahead(1) == &Token::Colon
+                        if self.peek_bracket_has_range_colon()
+                            || self.peek_ahead(1) == &Token::Colon
                         {
                             match self.parse_range() {
                                 Ok(Some(er)) => {
-                                    if let (Ok(m), Ok(l)) = (
-                                        const_eval_simple(&er.msb),
-                                        const_eval_simple(&er.lsb),
-                                    ) {
+                                    if let (Ok(m), Ok(l)) =
+                                        (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                                    {
                                         extra_unpacked_dims.push((
                                             Some(Range {
                                                 msb: m as usize,

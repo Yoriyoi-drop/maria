@@ -1407,9 +1407,7 @@ impl SimulationEngine {
                 // /proc/self/status (~37k instr + alokasi) SETIAP delta tiap
                 // step (probe perf2: 14.8% instruction di check_rss).
                 let cum_delta = self.sim_perf.counters.delta_cycles;
-                if self.resource_guard.is_enabled()
-                    && (cum_delta < 1024 || cum_delta % 256 == 0)
-                {
+                if self.resource_guard.is_enabled() && (cum_delta < 1024 || cum_delta % 256 == 0) {
                     self.resource_guard.check_limit(self.state.time)?;
                 }
 

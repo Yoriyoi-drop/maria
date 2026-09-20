@@ -246,7 +246,10 @@ mod tests {
             issues: issues_b,
             per_module: per_b,
         });
-        assert_eq!(a, b, "render SYN report harus identik walau order input beda");
+        assert_eq!(
+            a, b,
+            "render SYN report harus identik walau order input beda"
+        );
         // Urutan: module asc → code asc → severity → message.
         let pos3 = a.find("sig#3").unwrap();
         let pos6 = a.find("sig#6").unwrap();

@@ -1612,7 +1612,10 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert!(out.contains("module a"), "branch pertama harus ter-emisi: {out}");
+        assert!(
+            out.contains("module a"),
+            "branch pertama harus ter-emisi: {out}"
+        );
         assert!(
             !out.contains("module b"),
             "branch elsif setelah ifdef diambil harus di-skip: {out}"

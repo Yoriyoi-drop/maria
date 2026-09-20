@@ -85,19 +85,20 @@ pub fn run(args: &UpdateArgs) -> Result<(), SimError> {
     } else {
         let manifest = fetch_manifest(args.manifest_url, args.channel)?;
         let platform = platform_key()?;
-        let entry = manifest
-            .platforms
-            .get(&platform)
-            .ok_or_else(|| {
-                SimError::with_diag(
-                    maria_core::diagnostics::DiagCode::InternalError,
-                    format!(
-                        "manifest tidak memuat platform '{}' (diperbarui otomatis oleh release.yml)",
-                        platform
-                    ),
-                )
-            })?;
-        (manifest.version.clone(), entry.url.clone(), entry.sha256.clone())
+        let entry = manifest.platforms.get(&platform).ok_or_else(|| {
+            SimError::with_diag(
+                maria_core::diagnostics::DiagCode::InternalError,
+                format!(
+                    "manifest tidak memuat platform '{}' (diperbarui otomatis oleh release.yml)",
+                    platform
+                ),
+            )
+        })?;
+        (
+            manifest.version.clone(),
+            entry.url.clone(),
+            entry.sha256.clone(),
+        )
     };
 
     if !newer(&target.0, &local) {
@@ -113,7 +114,13 @@ pub fn run(args: &UpdateArgs) -> Result<(), SimError> {
         return Ok(());
     }
 
-    apply_update(&target.0, &target.1, &target.2, exe_path(args.exe_path), args.yes)
+    apply_update(
+        &target.0,
+        &target.1,
+        &target.2,
+        exe_path(args.exe_path),
+        args.yes,
+    )
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -201,9 +208,7 @@ fn manifest_url_for(channel: Option<&str>) -> String {
 
 /// Ambil teks dari URL. `file://` atau path lokal dipakai sebagai hook uji.
 fn fetch_text(url: &str) -> Result<String, SimError> {
-    let err = |msg: String| {
-        SimError::with_diag(maria_core::diagnostics::DiagCode::IoError, msg)
-    };
+    let err = |msg: String| SimError::with_diag(maria_core::diagnostics::DiagCode::IoError, msg);
 
     if let Some(rest) = url.strip_prefix("file://") {
         let p = PathBuf::from(rest);
@@ -224,8 +229,7 @@ fn fetch_text(url: &str) -> Result<String, SimError> {
     if !out.status.success() {
         return Err(err(format!(
             "gagal mengambil '{}' (curl exit {})",
-            url,
-            out.status
+            url, out.status
         )));
     }
     String::from_utf8(out.stdout).map_err(|e| err(format!("respons bukan UTF-8: {}", e)))
@@ -384,7 +388,9 @@ pub fn restore_backup(exe: &Path) -> Result<bool, SimError> {
 #[cfg(unix)]
 fn set_executable(exe: &Path) -> Result<(), SimError> {
     use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(exe).map_err(|e| io_err(exe, e))?.permissions();
+    let mut perms = std::fs::metadata(exe)
+        .map_err(|e| io_err(exe, e))?
+        .permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(exe, perms).map_err(|e| io_err(exe, e))
 }
@@ -426,7 +432,10 @@ fn apply_update(
     exe: PathBuf,
     yes: bool,
 ) -> Result<(), SimError> {
-    if !confirm(&format!("Pasang Maria v{}? (binary saat ini di-backup)", version), yes)? {
+    if !confirm(
+        &format!("Pasang Maria v{}? (binary saat ini di-backup)", version),
+        yes,
+    )? {
         println!("Dibatalkan — tidak ada perubahan.");
         return Ok(());
     }
@@ -476,7 +485,11 @@ fn apply_update(
         ));
     }
 
-    println!("Maria v{} terpasang ✓ (backup: {} )", version, abbreviate(sha));
+    println!(
+        "Maria v{} terpasang ✓ (backup: {} )",
+        version,
+        abbreviate(sha)
+    );
     println!("Gunakan `maria update --rollback` untuk kembali.");
     Ok(())
 }

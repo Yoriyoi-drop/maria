@@ -1969,9 +1969,9 @@ impl Parser {
                                                             lhs: Box::new(er.msb.clone()),
                                                             rhs: Box::new(er.lsb.clone()),
                                                         }),
-                                                        rhs: Box::new(Expr::Value(
-                                                            Value::Decimal(1),
-                                                        )),
+                                                        rhs: Box::new(Expr::Value(Value::Decimal(
+                                                            1,
+                                                        ))),
                                                     }),
                                                     false_expr: Box::new(Expr::BinaryOp {
                                                         op: BinaryOp::Add,
@@ -1980,13 +1980,12 @@ impl Parser {
                                                             lhs: Box::new(er.lsb.clone()),
                                                             rhs: Box::new(er.msb.clone()),
                                                         }),
-                                                        rhs: Box::new(Expr::Value(
-                                                            Value::Decimal(1),
-                                                        )),
+                                                        rhs: Box::new(Expr::Value(Value::Decimal(
+                                                            1,
+                                                        ))),
                                                     }),
                                                 };
-                                                extra_unpacked_dims
-                                                    .push((None, Some(sz_expr)));
+                                                extra_unpacked_dims.push((None, Some(sz_expr)));
                                             }
                                         }
                                         Ok(None) | Err(_) => {
@@ -2011,8 +2010,7 @@ impl Parser {
                                                     ));
                                                 }
                                                 _ => {
-                                                    extra_unpacked_dims
-                                                        .push((None, Some(sz)));
+                                                    extra_unpacked_dims.push((None, Some(sz)));
                                                 }
                                             }
                                         }

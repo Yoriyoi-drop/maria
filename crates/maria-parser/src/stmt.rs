@@ -2887,10 +2887,18 @@ impl Parser {
                         self.advance();
                         let op = if is_inc { BinaryOp::Add } else { BinaryOp::Sub };
                         extra_steps.push(Stmt::BlockingAssign {
-                            lhs: Expr::Ident { name: var, line: 0, col: 0 },
+                            lhs: Expr::Ident {
+                                name: var,
+                                line: 0,
+                                col: 0,
+                            },
                             rhs: Expr::BinaryOp {
                                 op,
-                                lhs: Box::new(Expr::Ident { name: var, line: 0, col: 0 }),
+                                lhs: Box::new(Expr::Ident {
+                                    name: var,
+                                    line: 0,
+                                    col: 0,
+                                }),
                                 rhs: Box::new(Expr::Value(Value::Decimal(1))),
                             },
                             delay: None,
@@ -2900,7 +2908,11 @@ impl Parser {
                         self.advance();
                         let rhs = self.parse_expr(0)?;
                         extra_steps.push(Stmt::BlockingAssign {
-                            lhs: Expr::Ident { name: var, line: 0, col: 0 },
+                            lhs: Expr::Ident {
+                                name: var,
+                                line: 0,
+                                col: 0,
+                            },
                             rhs,
                             delay: None,
                         });
@@ -2914,10 +2926,18 @@ impl Parser {
                         self.advance();
                         let rhs = self.parse_expr(0)?;
                         extra_steps.push(Stmt::BlockingAssign {
-                            lhs: Expr::Ident { name: var, line: 0, col: 0 },
+                            lhs: Expr::Ident {
+                                name: var,
+                                line: 0,
+                                col: 0,
+                            },
                             rhs: Expr::BinaryOp {
                                 op,
-                                lhs: Box::new(Expr::Ident { name: var, line: 0, col: 0 }),
+                                lhs: Box::new(Expr::Ident {
+                                    name: var,
+                                    line: 0,
+                                    col: 0,
+                                }),
                                 rhs: Box::new(rhs),
                             },
                             delay: None,

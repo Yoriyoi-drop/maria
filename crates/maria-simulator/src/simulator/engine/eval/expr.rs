@@ -2620,7 +2620,8 @@ impl SimulationEngine {
                     break;
                 }
             }
-            self.static_locals.insert((*name, var_name), init_val.clone());
+            self.static_locals
+                .insert((*name, var_name), init_val.clone());
             self.set_local(var_name.as_str(), init_val);
         }
 

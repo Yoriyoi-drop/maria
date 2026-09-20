@@ -366,15 +366,11 @@ impl Elaborator {
                                 let msb = lsb + elem_w - 1;
                                 Ok(IrExpr::RangeSelect(*sid, msb, lsb))
                             } else {
-                                let index_expr =
-                                    self.elaborate_expr(index, signal_map, signals)?;
+                                let index_expr = self.elaborate_expr(index, signal_map, signals)?;
                                 let base_expr = IrExpr::BinaryOp(
                                     BinaryIrOp::Mul,
                                     Box::new(index_expr),
-                                    Box::new(IrExpr::Const(LogicVec::from_u64(
-                                        elem_w as u64,
-                                        32,
-                                    ))),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(elem_w as u64, 32))),
                                 );
                                 Ok(IrExpr::ExprPartSelect(
                                     Box::new(IrExpr::Signal(*sid, sig.width)),
@@ -461,10 +457,10 @@ impl Elaborator {
                         ))
                     }
                 } else if let IrExpr::ArrayIndex {
-                        sig_id,
-                        index: inner_idx,
-                        elem_width: inner_ew,
-                    } = &inner_expr
+                    sig_id,
+                    index: inner_idx,
+                    elem_width: inner_ew,
+                } = &inner_expr
                 {
                     // F39: index berantai pada array unpacked multi-dimensi
                     // `mat[i][j]` — fold ke SATU ArrayIndex dengan index
@@ -492,8 +488,7 @@ impl Elaborator {
                             }
                             if prod == remaining && c < dims.len() {
                                 let new_ew = *inner_ew / dims[c];
-                                let idx_expr =
-                                    self.elaborate_expr(index, signal_map, signals)?;
+                                let idx_expr = self.elaborate_expr(index, signal_map, signals)?;
                                 let combined = IrExpr::BinaryOp(
                                     BinaryIrOp::Add,
                                     Box::new(IrExpr::BinaryOp(
@@ -525,8 +520,7 @@ impl Elaborator {
                                     idx as usize,
                                 ))
                             } else {
-                                let index_expr =
-                                    self.elaborate_expr(index, signal_map, signals)?;
+                                let index_expr = self.elaborate_expr(index, signal_map, signals)?;
                                 Ok(IrExpr::ExprPartSelect(
                                     Box::new(inner_expr.clone()),
                                     Box::new(index_expr),
@@ -833,9 +827,7 @@ impl Elaborator {
                             // ident_width mengabaikan td.range (logic [7:0] → 1)
                             // → $bits(byte_t)=4 / $bits(pkt_t)=4 (probe q13/q14).
                             match arg {
-                                Expr::Ident { name, .. } => {
-                                    self.typedef_map.get(name).copied()
-                                }
+                                Expr::Ident { name, .. } => self.typedef_map.get(name).copied(),
                                 _ => None,
                             }
                         })

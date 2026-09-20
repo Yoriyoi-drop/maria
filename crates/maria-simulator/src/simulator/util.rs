@@ -414,7 +414,7 @@ impl SimulationEngine {
                                     s.push('z');
                                 } else {
                                     let tri_u32: u32 = tri as u32;
-                                s.push(char::from_digit(tri_u32, 8).unwrap_or('0'));
+                                    s.push(char::from_digit(tri_u32, 8).unwrap_or('0'));
                                 }
                             }
                             if !started {
@@ -537,7 +537,8 @@ impl SimulationEngine {
                                     } else if has_z {
                                         chars_out.push('z');
                                     } else {
-                                        chars_out.push(char::from_digit(grp as u32, 8).unwrap_or('0'));
+                                        chars_out
+                                            .push(char::from_digit(grp as u32, 8).unwrap_or('0'));
                                     }
                                 }
                                 if !started {
@@ -567,7 +568,8 @@ impl SimulationEngine {
                                     } else if has_z {
                                         chars_out.push('z');
                                     } else {
-                                        chars_out.push(char::from_digit(grp as u32, 8).unwrap_or('0'));
+                                        chars_out
+                                            .push(char::from_digit(grp as u32, 8).unwrap_or('0'));
                                     }
                                 }
                             }
@@ -580,7 +582,8 @@ impl SimulationEngine {
                             }
                             result.extend(chars_out);
                         }
-                    }Some('h') => {
+                    }
+                    Some('h') => {
                         if let Some((val, _)) = value_args.next() {
                             // Format per-nibble dari pola bit — X/Z-aware.
                             // (Bug render: to_u64() memetakan X/Z → 0 sehingga
@@ -640,13 +643,23 @@ impl SimulationEngine {
                             // `%f` default precision 6 (IEEE 1800 §21.2.1.4);
                             // `%.Nf`/`%0.Nf` → N digit presisi.
                             let prec = precision.unwrap_or(6);
-                            let _ = write!(result, "{:.data$}", f64::from_bits(val.to_u64()), data = prec.min(20));
+                            let _ = write!(
+                                result,
+                                "{:.data$}",
+                                f64::from_bits(val.to_u64()),
+                                data = prec.min(20)
+                            );
                         }
                     }
                     Some('e') | Some('E') => {
                         if let Some((val, _)) = value_args.next() {
                             let prec = precision.unwrap_or(6);
-                            let _ = write!(result, "{:.data$e}", f64::from_bits(val.to_u64()), data = prec.min(20));
+                            let _ = write!(
+                                result,
+                                "{:.data$e}",
+                                f64::from_bits(val.to_u64()),
+                                data = prec.min(20)
+                            );
                         }
                     }
                     Some('t') => {
