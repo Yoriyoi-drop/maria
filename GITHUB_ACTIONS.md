@@ -18,7 +18,7 @@ memerintahkan lewat `git tag vX.Y.Z && git push origin vX.Y.Z`.
 ## Arsitektur
 
 ```
-push/PR ─▶ ci.yml (AUTO: fmt, clippy -D warnings, test workspace, regresi per-area, release build)
+push/PR ─▶ ci.yml (AUTO: fmt strict, clippy non-blocking, test workspace, regresi per-area, release build)
    └─ hijau ─▶ user push tag vX ─▶ release.yml
         ├─ seleksi: tag == version Cargo.toml · CI hijau · izin pelaku · (env release)
         ├─ build + checksum + smoke test

@@ -42,8 +42,12 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Clippy lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy lint (non-blocking — debt lint lama)
+        # Gate dilonggarkan (keputusan user): warning clippy lama tidak
+        # menggagalkan CI, tapi tetap tampil sebagai anotasi di run summary.
+        # Error kompilasi tetap menggagalkan job. Perbaikan lint lama dapat
+        # dilakukan bertahap tanpa memblokir rilis.
+        run: cargo clippy --workspace --all-targets
 
   tests:
     name: Workspace tests

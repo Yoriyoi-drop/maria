@@ -30,9 +30,9 @@ stabil harus lebih ketat daripada CI.*
         ▼
  ┌────────────────────────────────────────────────────────────┐
  │ Gerbang 2 — validasi teknis (otomatis, ci.yml)             │
- │   Format · Clippy -D warnings · build · unit test ·        │
- │   regression per-area · integration · release build        │
- │   SEMUA job wajib lulus                                    │
+ │   Format (strict) · Clippy (non-blocking) · build ·        │
+ │   unit test · regression per-area · integration ·          │
+ │   release build · SEMUA job wajib lulus                    │
  └────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -59,7 +59,7 @@ stabil harus lebih ketat daripada CI.*
 
 ### `ci.yml` — Gerbang teknis (AUTO, read-only)
 - Jalan otomatis di tiap push/PR (`pull_request` + `push` ke main + dispatch).
-- Job: `patch-check` (fmt/clippy `-D warnings`), `tests` (workspace), `area-detection` (dorny/paths-filter), regresi per-area (`parser-regression`, `simulator-regression`, `dependency-validation`, `installer-validation`, `documentation-check`), `release-build` (build + verifikasi binary + upload artifact).
+- Job: `patch-check` (fmt strict + clippy non-blocking — lint lama tidak menggagalkan, error kompilasi tetap gagal), `tests` (workspace), `area-detection` (dorny/paths-filter), regresi per-area (`parser-regression`, `simulator-regression`, `dependency-validation`, `installer-validation`, `documentation-check`), `release-build` (build + verifikasi binary + upload artifact).
 - Filter area memakai nama crate aktual (`maria-parser`, `maria-core`, `maria-ast`; `maria-simulator`, `maria-elaboration`, `maria-ir`).
 - Tidak menulis apa pun. Semua hijau = prasyarat rilis.
 
