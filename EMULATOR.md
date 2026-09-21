@@ -1091,6 +1091,34 @@ handler call/ret):
   relokasi image. Console BIOS masih kosong (GRUB pakai VGA text, belum
   teletype) → tahap berikut: JIT / block-translation (R3) utk relokasi.
 
+**Sesi lanjutan (2026-09-21) — crash BUKAN macet: epilogue biosdisk 2**:
+
+- 8 sampel `MIVON_X86_PROGRESS` (tiap 25M, register membeku identik)
+  semula tampak "GRUB lambat relokasi" — ternyata **crash epilogue
+  BIOS (jalur kedua)**: ret @0x9163 pop **0x313b44** (data file GRUB,
+  bukan alamat) → eksekusi region kosong (`00 00` = add [eax],al),
+  pc walk 2 B/step selamanya. Pola IDENTIK dgn crash 2026-09-08, hanya
+  bergeser ke step **8,623,675** (sempat lewat 8.5M berkat `ff /3`+int).
+- Peta trampolin GRUB nyata (dump `probe_tramp`): variabel handler di
+  `[0x9041]=0x82d2` (real→prot; dipanggil real handler @0x9123
+  `66 ff d0` call eax) dan `[0x9045]=0x8327` (prot→real; dipanggil
+  pmode @0x90e6). Fungsi trampolin pertama (INT 13h stub) **sukses**
+  (ret → 0xbc16); jalur kedua (INT 13h AH=42 read berikutnya) **crash**.
+- `ff d0` terverifikasi benar = `ff /2` CALL NEAR eax (modrm d0: mod=11
+  reg=2 rm=0) — bukan inc (`ff c0`). Decoder akurat.
+- Dump stack epilogue jalur-2: retaddr benar `0x9126` ditulis
+  real_to_prot (`89 04 24` @0x8313) ke `[0x7f740]`; epilogue pop 6+ret
+  mulai `[0x7f748]` → **frame bergeser 8 byte**; slot register abret
+  berisi nilai state saat itu (`0x087ed815`, `0x101f061a`, `0x1000001`,
+  `"CBL\n"`, `"S.MO"`) bukan simpanan; ret @`[0x7f760]` = 0x313b44.
+- Tool baru: `MIVON_X86_PROGRESS=1` (state tiap 25M step, release boot
+  panjang), `MIVON_X86_DBG_WIN="from:to"` (window trace env-driven),
+  contoh `probe_tramp` (dump trampolin + stack + variabel).
+- Langkah berikut: diff intruksi-vs-QEMU pada window (a) real_to_prot
+  0x8313-0x8326 (frame/`mov [esp],eax` restore) dan (b) real handler
+  kedua 0x9113-0x9163 — cari satu instruksi yang menggeser sp epilogue
+  8 byte (frame 16-bit vs 32-bit / ret `66 c3` di 0x8389).
+
 **Tidak teratasi / langkah berikut**:
 - Akar 4-byte drift stack di jalur prot_to_real↔real_to_prot belum
   terisolasi instruksi-demi-instruksi — kini TIDAK memblock boot (crash

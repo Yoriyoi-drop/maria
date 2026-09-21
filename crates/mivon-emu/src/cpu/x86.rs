@@ -3330,9 +3330,40 @@ impl CpuCore for X86Cpu {
             });
         }
         self.steps += 1;
-        let dbg_step =
-            (8_623_590..=8_623_680).contains(&self.steps) && std::env::var("MIVON_X86_DBG").is_ok();
-        if dbg_step {
+        // Progress sampling utk boot panjang (MIVON_X86_PROGRESS=1): print
+        // state tiap 25M step — deteksi loop copy/relokasi (walk kecil per
+        // instruksi) & tahapan boot tanpa gdb.
+        if self.steps % 25_000_000 == 0 && std::env::var("MIVON_X86_PROGRESS").is_ok() {
+            eprintln!(
+                "PROG step={} pc=0x{:08x} cs=0x{:x} ip=0x{:08x} pmode={} cr0={:#x} sp=0x{:08x} eax={:#x} ebx={:#x} ecx={:#x} edx={:#x} esi={:#x} edi={:#x} ebp={:#x}",
+                self.steps,
+                self.pc(),
+                self.cs,
+                self.ip,
+                self.pmode,
+                self.cr[0],
+                self.gpr[4],
+                self.gpr[0],
+                self.gpr[3],
+                self.gpr[1],
+                self.gpr[2],
+                self.gpr[6],
+                self.gpr[7],
+                self.gpr[5],
+            );
+        }
+        let dbg_step = if let Ok(range) = std::env::var("MIVON_X86_DBG_WIN") {
+            let mut it = range.split(':');
+            let f = it.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let t = it
+                .next()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(u64::MAX);
+            f <= self.steps && self.steps <= t
+        } else {
+            (8_623_590..=8_623_680).contains(&self.steps)
+        };
+        if dbg_step && std::env::var("MIVON_X86_DBG").is_ok() {
             // State sebelum instruksi (dipecahkan per-byte, tanpa akses memori
             // tambahan yang bisa salah saat mode campuran).
             let pc = self.pc();
