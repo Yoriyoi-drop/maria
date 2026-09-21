@@ -59,5 +59,6 @@
 # checkout / CI kehilangan sumber → test gagal (path-relative ke repo).
 !examples/rtl/*.sv
 !examples/rtl/*.v
+!examples/synth/*.sv
 !crates/mivon-fuzz/fuzz/corpus/seeds/*.sv
 !crates/mivon-fuzz/fuzz/corpus/mv/*.mv

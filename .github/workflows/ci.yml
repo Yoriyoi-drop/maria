@@ -79,7 +79,9 @@ jobs:
               echo "::warning::gagal clone OpenTitan — test terkait di-skip"
               exit 0
             }
-            (cd opentitan && git sparse-checkout set hw/top_englishbreakfast/ip/ast/rtl)
+            (cd opentitan && git sparse-checkout set \
+              hw/top_englishbreakfast/ip/ast/rtl \
+              hw/dv/sv/cip_lib/seq_lib)
           fi
           if [ -f opentitan/hw/top_englishbreakfast/ip/ast/rtl/rglts_pdm_3p3v.sv ]; then
             echo "OpenTitan RTL tersedia (sparse)"

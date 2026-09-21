@@ -20830,8 +20830,16 @@ fn test_dv_real_file_dump() {
     use std::path::PathBuf;
     // nextest berjalan dari direktori crate (crates/mivon-tests), jadi relatif ke root workspace = ../../
     let file = PathBuf::from("../../opentitan/hw/dv/sv/cip_lib/seq_lib/cip_base_vseq.sv");
+    // Butuh checkout OpenTitan (3rd-party, di-scan di CI via sparse-clone).
+    // Bila tidak tersedia → skip (non-fatal).
+    let src = match std::fs::read_to_string(&file) {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("skip: {} tidak ada (butuh OpenTitan)", file.display());
+            return;
+        }
+    };
     let dir = file.parent().unwrap().to_path_buf();
-    let src = std::fs::read_to_string(&file).unwrap();
     let mut pp = mivon_parser::preprocessor::Preprocessor::new();
     pp.add_search_path(dir.to_str().unwrap());
     let out = pp.preprocess(&src, Some(&dir)).unwrap();
