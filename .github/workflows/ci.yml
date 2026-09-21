@@ -161,8 +161,8 @@ jobs:
       - name: Run parser regression tests
         run: |
           echo "Running parser-specific tests due to code changes in parser/lexer"
-          cargo test -p mivon-lexer -p mivon-parser --test regression
-          cargo test -p mivon-core --test debug_lexer
+          cargo test -p mivon-parser -p mivon-core
+          cargo test -p mivon-tests debug_lexer
 
   simulator-regression:
     name: Simulator regression tests
@@ -186,9 +186,8 @@ jobs:
       - name: Run simulator regression tests
         run: |
           echo "Running simulator-specific tests due to code changes in simulator/elaboration"
-          cargo test -p mivon-simulator --test regression
-          cargo test -p mivon-tests --test tb_counter
-          cargo test -p mivon-tests --test rtl_regression
+          cargo test -p mivon-simulator
+          cargo test -p mivon-tests
 
   dependency-validation:
     name: Dependency validation
