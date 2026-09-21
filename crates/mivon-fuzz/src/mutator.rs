@@ -98,6 +98,29 @@ pub static KEYWORD_LIST: &[&str] = &[
     "xnor",
     "nand",
     "nor",
+    // ── System-task/function tokens (REDQUEEN inject — elaborator const-fold
+    //    + format-string parser) ──
+    "$display",
+    "$bits",
+    "$clog2",
+    "$size",
+    "$left",
+    "$right",
+    "$low",
+    "$high",
+    "$urandom",
+    "$random",
+    "$fopen",
+    // ── SV-only constructs (parsing robustness) ──
+    "foreach",
+    "inside",
+    "push",
+    "pop",
+    "dist",
+    "with",
+    "::",
+    "{<<",
+    "{>>",
 ];
 
 pub struct Mutator<'r> {
@@ -109,13 +132,13 @@ impl<'r> Mutator<'r> {
         Self { rng }
     }
 
-    /// Terapkan 1 operasi mutasi random (16 opsi — 12 lama + 4 baru area
-    /// preprocessor/delay/macro/width belum tersentuh).
+    /// Terapkan 1 operasi mutasi random (19 opsi — 13 lama + 3 baru area
+    /// sistem-task `$display`/const-fold `$bits`/streaming `{<<{`).
     pub fn mutate(&mut self, source: &str, corpus: &Corpus) -> String {
         if source.is_empty() {
             return String::new();
         }
-        match self.rng.below(16) {
+        match self.rng.below(19) {
             0 => self.splice_from_corpus(source, corpus),
             1 => self.replace_keyword(source),
             2 => self.delete_chunk(source),
@@ -124,13 +147,17 @@ impl<'r> Mutator<'r> {
             5 => self.insert_garbage(source),
             6 => self.remove_line(source),
             7 => self.flip_char(source),
-            // ── Area baru: preprocessor / delay / macro / width ──
+            // ── Area: preprocessor / delay / macro / width ──
             8 => self.insert_directive(source),
             9 => self.dup_ifdef(source),
             10 => self.inject_delay(source),
             11 => self.dup_macro_call(source),
             12 => self.extreme_width(source),
             13 => self.inject_include(source),
+            // ── Area baru: sistem-task / const-fold / streaming ──
+            14 => self.inject_sysfunc_assign(source),
+            15 => self.inject_display_format(source),
+            16 => self.inject_stream_assign(source),
             _ => source.to_string(), // no-op
         }
     }
@@ -480,5 +507,97 @@ impl<'r> Mutator<'r> {
         out.push(*new_char);
         out.extend(&chars[at + 1..]);
         out
+    }
+
+    /// Bungkus RHS assegna dgn `$bits(...)`/`$clog2(...)` — elaborator
+    /// const-fold `$bits`/`$clog2`/`$size`/`$left`/`$right`/`$low`/`$high`.
+    fn inject_sysfunc_assign(&mut self, source: &str) -> String {
+        let sysfuncs = [
+            "$bits(", "$clog2(", "$size(", "$left(", "$right(", "$low(", "$high(",
+        ];
+        let mut out = String::new();
+        let mut done = false;
+        for line in source.lines() {
+            let t = line.trim_start();
+            let indent: String = line
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            if !done && t.starts_with("assign") {
+                if let Some(e) = t.find('=') {
+                    let lhs = t["assign".len()..e].trim();
+                    let rhs = t[e + 1..].trim_end_matches(';').trim();
+                    let f = self.rng.pick(&sysfuncs);
+                    out.push_str(&format!("{}assign {} = {}({});\n", indent, lhs, f, rhs));
+                    done = true;
+                }
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        if done {
+            out
+        } else {
+            source.to_string()
+        }
+    }
+
+    /// Sisipkan `$display` dgn format campuran `%0d/%0b/%0h/%s/%%` — stress
+    /// format-string parser (proyek mendukung `%0d` zero-pad secara eksplisit).
+    fn inject_display_format(&mut self, source: &str) -> String {
+        let mut out = String::new();
+        let mut done = false;
+        for line in source.lines() {
+            let t = line.trim_start();
+            let indent: String = line
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            if !done && t.starts_with("assign") {
+                out.push_str(&format!(
+                    "{}initial $display(\"fz %0d %0b %0h %0s %%x\", 1, 2'b01, 8'hf, \"q\");\n",
+                    indent
+                ));
+                done = true;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        if done {
+            out
+        } else {
+            source.to_string()
+        }
+    }
+
+    /// Sisipkan ekspresi streaming `{<<{a}}`/`{>>{a}}` (SV-only) sebagai assegna —
+    /// parser streaming operator. iverilog ref biasanya N/A; mivon tidak boleh
+    /// crash (parser harus recover).
+    fn inject_stream_assign(&mut self, source: &str) -> String {
+        let ops = ["{<<{8'hA5}}", "{>>{8'hA5}}", "{<<{ {4{1'b1}} }}"];
+        let mut out = String::new();
+        let mut done = false;
+        for line in source.lines() {
+            let t = line.trim_start();
+            let indent: String = line
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            if !done && t.starts_with("assign") {
+                if let Some(e) = t.find('=') {
+                    let lhs = t["assign".len()..e].trim();
+                    let pat = self.rng.pick(&ops);
+                    out.push_str(&format!("{}assign {} = {};\n", indent, lhs, pat));
+                    done = true;
+                }
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        if done {
+            out
+        } else {
+            source.to_string()
+        }
     }
 }

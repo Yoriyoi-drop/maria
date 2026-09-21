@@ -228,6 +228,10 @@ pub enum DiagCode {
     ExcludedByFilelist,
     /// Module/interface/package defined more than once (E3011)
     DuplicateDeclaration,
+    /// Packed vector width exceeds implementation limit (E3012) — input
+    /// mendeklarasikan sinyal/vektor lebih lebar dari batas aman; menolak
+    /// dengan diag bersih daripada hang/OOM/silent-clamp.
+    PackedWidthTooLarge,
 
     // ── Runtime Memory: RT0xxx ──
     /// Null handle access (RT0001)
@@ -391,6 +395,7 @@ impl DiagCode {
             DiagCode::CircularHierarchy => "E3009",
             DiagCode::ExcludedByFilelist => "E3010",
             DiagCode::DuplicateDeclaration => "E3011",
+            DiagCode::PackedWidthTooLarge => "E3012",
             // Runtime Memory
             DiagCode::NullHandle => "RT0001",
             DiagCode::InvalidReference => "RT0002",
@@ -486,6 +491,7 @@ impl DiagCode {
             DiagCode::CircularHierarchy => "circular hierarchy",
             DiagCode::ExcludedByFilelist => "excluded by filelist",
             DiagCode::DuplicateDeclaration => "duplicate definition",
+            DiagCode::PackedWidthTooLarge => "packed width too large",
             // Runtime Memory
             DiagCode::NullHandle => "null handle access",
             DiagCode::InvalidReference => "invalid object reference",
@@ -598,6 +604,8 @@ impl DiagCode {
                 "A required module was excluded by the filelist, so the design hierarchy is incomplete.",
             DiagCode::DuplicateDeclaration =>
                 "A module, interface, or package is defined more than once across the source files — the LAST definition from the file list is used (Verilator semantics).",
+            DiagCode::PackedWidthTooLarge =>
+                "A packed vector or unpacked-array element width exceeds the implementation limit, which would make the design impractical to elaborate or simulate (hang/OOM/incorrect truncation).",
             DiagCode::NullHandle =>
                 "An object handle was used (method call or member access) but the handle is null.",
             DiagCode::InvalidReference =>
@@ -748,6 +756,8 @@ impl DiagCode {
                 "Add the missing source file to the filelist, or remove the exclusion directive that dropped the module.",
             DiagCode::DuplicateDeclaration =>
                 "Remove the duplicate definition, or reorder the file list so the intended definition comes last.",
+            DiagCode::PackedWidthTooLarge =>
+                "Reduce the vector width (e.g. parameterized width expression) below the limit, or restructure the design into smaller packed vectors.",
             DiagCode::NullHandle =>
                 "Initialize the object handle with 'new()' before accessing its members.",
             DiagCode::InvalidReference =>
@@ -877,7 +887,8 @@ impl DiagCode {
             | DiagCode::UnresolvedInstantiation
             | DiagCode::CircularHierarchy
             | DiagCode::ExcludedByFilelist
-            | DiagCode::DuplicateDeclaration => "Elaboration",
+            | DiagCode::DuplicateDeclaration
+            | DiagCode::PackedWidthTooLarge => "Elaboration",
             DiagCode::NullHandle
             | DiagCode::InvalidReference
             | DiagCode::NullInterface

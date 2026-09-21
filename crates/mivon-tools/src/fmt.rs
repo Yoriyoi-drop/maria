@@ -286,6 +286,14 @@ fn space_between(prev: Option<&Token>, cur: &Token, next: Option<&Token>, _cur_t
     {
         return true;
     }
+    // Bare `'` (Quote) diikuti identifier: tanpa spasi, re-lex menyatu jadi
+    // literal ber-base (`'` + `bvalid` → `'b` + `valid`) → tokenisasi berubah
+    // → round-trip rusak (temuan fuzzer O3: fmt merusak source).
+    // Valid SV tidak punya adjacency Quote→Ident (cast selalu `ident'(x)`),
+    // jadi spasi ekstra aman utk semua input valid.
+    if matches!(prev, Quote) && matches!(cur, Ident(_)) {
+        return true;
+    }
     // Tidak ada spasi di sekitar delimiter buka/tutup
     if matches!(
         cur,
@@ -799,5 +807,28 @@ fn token_text(tok: &Token) -> String {
         Token::BiDirArrow => "<->".into(),
         Token::StarArrow => "*>".into(),
         _ => format!("{}", tok),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regresi temuan fuzzer (O3 round-trip): input `'''  bvalid <= ...`
+    /// (garbage `'''` + spasi sebelum ident) HARUS diformat tetap ber-spasi —
+    /// tanpa spasi, re-lex berubah (`'`+`bvalid` → `'b`+`valid`) → output
+    /// tidak parseable → fmt merusak source.
+    #[test]
+    fn quote_ident_space_preserved() {
+        let src = "module top;\n  logic bvalid;\n  initial begin\n    '''  bvalid <= 1;\n  end\nendmodule\n";
+        let once = format_source(src, 4);
+        // Spasi antara `'''` dan bvalid harus ada di output.
+        assert!(
+            once.contains("'''  bvalid") || once.contains("''' bvalid"),
+            "output harus mempertahankan spasi setelah kutip: {once}"
+        );
+        // Round-trip: fmt(fmt(s)) == fmt(s).
+        let twice = format_source(&once, 4);
+        assert_eq!(once, twice, "round-trip harus idempoten");
     }
 }

@@ -336,6 +336,14 @@ fn score_auto_top(name: Symbol, cone: usize) -> i64 {
     s
 }
 
+/// Batas lebar packed vector (bit) yang masih di-elaborate. Di atas batas ini
+/// input ditolak dengan diag bersih (E3012) — bukan clamp senyap / hang /
+/// OOM. Nilai jauh di atas packed terbesar realistis (OpenTitan SRAM elem 76
+/// bit; datapath kripto 4096 bit) tapi di bawah ambang alokasi absurd.
+/// Temuan fuzzer: `parameter W = 2**31` lalu `logic [W-1:0]` → elab hang
+/// (loop init 256 × 2^31 iterasi) di inisialisasi array.
+const MAX_PACKED_WIDTH: usize = 1 << 24;
+
 const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_object",
     "uvm_transaction",
@@ -3094,6 +3102,22 @@ impl Elaborator {
         self.elab_diag_at(code, message, 0, 0)
     }
 
+    /// Tolak packed width di atas `MAX_PACKED_WIDTH` dgn diag bersih (E3012).
+    /// Mencegah hang/OOM/silent-clamp pada width absurd (mis. `2**31`).
+    fn check_packed_width(&self, width: usize, what: &str) -> Result<(), SimError> {
+        if width > MAX_PACKED_WIDTH {
+            return Err(self.elab_diag(
+                DiagCode::PackedWidthTooLarge,
+                format!(
+                    "{what}: packed width {width} bit exceeds the implementation limit \
+                     ({MAX_PACKED_WIDTH} bits) — refusing to elaborate an impractical \
+                     vector (hang/OOM/incorrect truncation)"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Extract source file name from `line directives in source_lines for a given line.
     /// The source_lines contain `` `line 1 "filename.sv" `` directives from preprocessing.
     /// Resolve nama file + baris relatif-file untuk posisi di merged source.
@@ -3904,6 +3928,10 @@ impl Elaborator {
             } else {
                 pwa(port, &effective_params, &signal_map, &signals)?
             };
+            self.check_packed_width(
+                width,
+                &format!("port '{}'", port.name.as_str()),
+            )?;
             let kind = match port.direction {
                 PortDirection::Input => SignalKind::Input,
                 PortDirection::Output => SignalKind::Output,
@@ -4649,6 +4677,10 @@ impl Elaborator {
                         .map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))?,
                     )
                     .max(decl.kind.default_width());
+                self.check_packed_width(
+                    elem_width,
+                    &format!("signal '{}'", var.name.as_str()),
+                )?;
                 let (kind, net_type) = match decl.kind {
                     DeclKind::Wire => (SignalKind::Wire, NetType::Wire),
                     DeclKind::Wand => (SignalKind::Wire, NetType::Wand),
@@ -4745,10 +4777,21 @@ impl Elaborator {
                         LogicVec::fill(LogicVal::X, total_width)
                     };
                     let init_n = full_init.bits.len();
-                    for i in 0..total_depth {
-                        for j in 0..elem_width {
+                    // Loop bound STORAGE-consistent: `elem_width`/`total_depth`
+                    // (telah di-reject bila absurd oleh guard E3012, tapi jalur
+                    // lain bisa lolos) TIDAK boleh memandu iterasi — storage
+                    // `full_init` di-clamp oleh LogicVec (≤2^27). Sebelumnya
+                    // loop 256 × 2^31 = 5.5e11 iterasi → hang (temuan fuzzer).
+                    let elems_covered = if elem_width == 0 {
+                        0
+                    } else {
+                        init_n.div_ceil(elem_width).min(total_depth)
+                    };
+                    for i in 0..elems_covered {
+                        let j_span = elem_width.min(elem_init.bits.len());
+                        for j in 0..j_span {
                             let idx = i * elem_width + j;
-                            if idx < init_n && j < elem_init.bits.len() {
+                            if idx < init_n {
                                 full_init.bits[idx] = elem_init.bits[j].clone();
                             }
                         }
@@ -5049,7 +5092,12 @@ impl Elaborator {
                         if let Ok(v) = const_eval_params(e, &effective_params) {
                             let ev = LogicVec::from_u64(v as u64, elem_width);
                             let base = i * elem_width;
-                            for j in 0..elem_width {
+                            // Bounds storage-consistent (init/ev di-clamp LogicVec):
+                            // hindari hang/panic index-OOB utk elem_width absurd.
+                            let j_span = elem_width
+                                .min(init.bits.len().saturating_sub(base))
+                                .min(ev.bits.len());
+                            for j in 0..j_span {
                                 if base + j < total_width {
                                     init.bits[base + j] = ev.bits[j].clone();
                                 }

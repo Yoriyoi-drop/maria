@@ -3032,3 +3032,50 @@ endmodule"#,
     );
     assert!(result.is_ok(), "all X: {:?}", result.err());
 }
+
+// === 91. Packed width absurd (2**31) ditolak dgn diag bersih (E3012) ===
+// Regresi temuan fuzzer: `parameter W = 2**31` + `logic [W-1:0]` → elab hang
+// (loop init 256 × 2^31 = 5.5e11 iterasi) — sekarang reject clean sebelum
+// alokasi, bukan clamp senyap jadi 1 bit (silent miscompile) / hang / OOM.
+
+#[test]
+fn test_edge_huge_packed_width_rejected_clean() {
+    let result = compile_str(
+        r#"
+module top #(parameter W = 2**31) (
+  input  logic [W-1:0] a,
+  output logic [W-1:0] y
+);
+  logic [W-1:0] mem [256];
+  assign y = a;
+endmodule
+"#,
+    );
+    assert!(
+        result.is_err(),
+        "width 2^31 harus ditolak dgn error bersih — {:?}",
+        result
+    );
+    // Pesan bisa dibungkus top-resolution (EL3001 skip module) — yang penting
+    // error bersih cepat muncul, bukan hang 5s+ (regresi fuzzer).
+}
+
+#[test]
+fn test_edge_sane_packed_width_still_ok() {
+    // Boundary bawah: lebar wajar (4096 < MAX_PACKED_WIDTH) tetap compile —
+    // guard tidak over-reject design legal.
+    let result = compile_str(
+        r#"
+module top;
+  localparam W = 4096;
+  logic [W-1:0] a, y;
+  assign y = a;
+endmodule
+"#,
+    );
+    assert!(
+        result.is_ok(),
+        "lebar wajar 4096 harus tetap diterima: {:?}",
+        result.err()
+    );
+}
