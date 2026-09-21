@@ -2725,6 +2725,48 @@ impl X86Cpu {
         seg_ov: Option<u16>,
     ) -> Result<(), CpuFault> {
         let src_seg = seg_ov.unwrap_or(self.ds);
+        // Fast path bulk (rep + n>1 + count besar + tidak menyentuh VGA):
+        // salin seluruh rentang sekali per chunk 4KB via read/write_exact
+        // (MemoryMap: slice-copy) — hemat per-iterasi perbyte.
+        if rep && n > 1 {
+            let cnt = self.rep_cnt();
+            if cnt == 0 {
+                // RE (count 0): tidak ada operasi — si/di/counter tetap.
+                return Ok(());
+            }
+            if cnt >= 32 {
+                let dir = self.dir_step(n) as i64;
+                let total = cnt as u64 * n as u64;
+                let (si, di) = (self.si32(), self.di32());
+                let src_lin = self.lin(src_seg, si);
+                let dst_lin = self.lin(self.es, di);
+                // Skip bila overlap sumber-dest (aman fallback per item).
+                let no_overlap = src_lin + total <= dst_lin || dst_lin + total <= src_lin;
+                if no_overlap && !self.vga_hits(dst_lin, total as usize) {
+                    let mut buf = [0u8; 4096];
+                    let mut off = 0i64;
+                    let mut left = total as i64;
+                    while left > 0 {
+                        let chunk = left.min(4096) as usize;
+                        mem.read_exact(src_lin.wrapping_add(off as u64), &mut buf[..chunk])
+                            .map_err(|e| self.fault(format!("movs read: {}", e)))?;
+                        mem.write_exact(dst_lin.wrapping_add(off as u64), &buf[..chunk])
+                            .map_err(|e| self.fault(format!("movs write: {}", e)))?;
+                        let chunk_signed = if dir < 0 { -(chunk as i64) } else { chunk as i64 };
+                        mem.read_exact(src_lin.wrapping_add(off as u64), &mut buf[..chunk])
+                            .map_err(|e| self.fault(format!("movs read: {}", e)))?;
+                        mem.write_exact(dst_lin.wrapping_add(off as u64), &buf[..chunk])
+                            .map_err(|e| self.fault(format!("movs write: {}", e)))?;
+                        off += chunk_signed;
+                        left -= chunk as i64;
+                    }
+                    self.si32_set((si as i64 + off) as u32);
+                    self.di32_set((di as i64 + off) as u32);
+                    self.rep_cnt_set(0);
+                    return Ok(());
+                }
+            }
+        }
         loop {
             let (si, di) = (self.si32(), self.di32());
             if std::env::var("MIVON_X86_TRACE").is_ok() && !rep {
@@ -2822,6 +2864,41 @@ impl X86Cpu {
             } else {
                 (self.r32(0) >> (8 * i)) as u8
             };
+        }
+        // Fast path bulk (rep + n>1 + count besar): isi rentang per chunk
+        // 4KB pola berulang via write_exact — hemat per-iterasi perbyte.
+        if rep && n > 1 {
+            let cnt = self.rep_cnt();
+            if cnt == 0 {
+                // RE (count 0): tidak ada operasi — di/counter tetap.
+                return Ok(());
+            }
+            if cnt >= 32 {
+                let dir = self.dir_step(n) as i64;
+                let total = cnt as u64 * n as u64;
+                let di = self.di32();
+                let dst_lin = self.lin(self.es, di);
+                if !self.vga_hits(dst_lin, total as usize) {
+                    let mut buf = [0u8; 4096];
+                    let mut off = 0i64;
+                    let mut left = total as i64;
+                    while left > 0 {
+                        let chunk = left.min(4096) as usize;
+                        for (i, b) in buf[..chunk].iter_mut().enumerate() {
+                            *b = pat[i % n as usize];
+                        }
+                        mem.write_exact(dst_lin.wrapping_add(off as u64), &buf[..chunk])
+                            .map_err(|e| self.fault(format!("stos write: {}", e)))?;
+                        let chunk_signed =
+                            if dir < 0 { -(chunk as i64) } else { chunk as i64 };
+                        off += chunk_signed;
+                        left -= chunk as i64;
+                    }
+                    self.di32_set((di as i64 + off) as u32);
+                    self.rep_cnt_set(0);
+                    return Ok(());
+                }
+            }
         }
         loop {
             let di = self.di32();
@@ -3912,6 +3989,75 @@ mod tests {
             0x0000,
             "ret CS (32-bit slot) = 0"
         );
+    }
+
+    #[test]
+    fn test_rep_movs_bulk_fast_path() {
+        // Fast path bulk: rep movsw (f3 a5) — copy 100 byte per chunk,
+        // si/di maju, cx = 0, isi dst = source.
+        let mut m = mem();
+        for (i, b) in (0u8..100).enumerate() {
+            m.write(0x8000 + i as u64, 1, b as u64).unwrap();
+        }
+        let code = [
+            0xbe, 0x00, 0x80, // mov si, 0x8000
+            0xbf, 0x00, 0x90, // mov di, 0x9000
+            0xb9, 0x32, 0x00, // mov cx, 50 (word → 100 byte)
+            0xf3, 0xa5, // rep movsw
+            0x90,
+        ];
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        assert_eq!(cpu.cx(), 0, "cx habis setelah rep");
+        assert_eq!(cpu.si(), 0x8064 as u16, "si maju 100");
+        assert_eq!(cpu.di(), 0x9064 as u16, "di maju 100");
+        for i in 0..100u64 {
+            assert_eq!(m.read(0x9000 + i, 1).unwrap(), i as u64, "copy byte {i}");
+        }
+    }
+
+    #[test]
+    fn test_rep_stos_bulk_fast_path() {
+        // Fast path bulk: rep stosw (f3 ab) — isi 100 byte pola 0x3432
+        // (ax = 0x3234: n=2 → byte 0 = 0x34, byte 1 = 0x32).
+        let mut m = mem();
+        let code = [
+            0xb8, 0x34, 0x32, // mov ax, 0x3234
+            0xbf, 0x00, 0x90, // mov di, 0x9000
+            0xb9, 0x32, 0x00, // mov cx, 50
+            0xf3, 0xab, // rep stosw
+            0x90,
+        ];
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        assert_eq!(cpu.cx(), 0, "cx habis setelah rep");
+        assert_eq!(cpu.di(), 0x9064 as u16, "di maju 100");
+        for i in 0..50u64 {
+            assert_eq!(
+                m.read(0x9000 + i * 2, 2).unwrap(),
+                0x3234,
+                "pola dword {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rep_movs_zero_count_noop() {
+        // RE dengan cx=0: tidak ada operasi (semantik x86) — si/di tetap.
+        let mut m = mem();
+        m.write(0x8000, 2, 0xaaaa).unwrap();
+        let code = [
+            0xbe, 0x00, 0x80, // mov si, 0x8000
+            0xbf, 0x00, 0x90, // mov di, 0x9000
+            0xb9, 0x00, 0x00, // mov cx, 0
+            0xf3, 0xa5, // rep movsw
+            0x90,
+        ];
+        let mut cpu = load(&mut m, &code);
+        run(&mut cpu, &mut m, 4);
+        assert_eq!(cpu.si(), 0x8000, "si tetap saat count 0");
+        assert_eq!(cpu.di(), 0x9000, "di tetap saat count 0");
+        assert_eq!(m.read(0x9000, 2).unwrap(), 0, "tidak ada copy");
     }
 
     #[test]

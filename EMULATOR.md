@@ -1114,6 +1114,12 @@ handler call/ret):
 - Tool baru: `MIVON_X86_PROGRESS=1` (state tiap 25M step, release boot
   panjang), `MIVON_X86_DBG_WIN="from:to"` (window trace env-driven),
   contoh `probe_tramp` (dump trampolin + stack + variabel).
+- Fast path bulk `rep movs`/`rep stos` (n>1, count ≥ 32, tanpa VGA):
+  salin/isi utuh via chunk 4KB `read/write_exact` (MemoryMap slice-copy),
+  hemat per-iterasi perbyte (infra R3 relokasi). Fix semantik: `rep`
+  dengan count 0 = no-op (si/di tetap). 3 unit test (movs/stos bulk +
+  count-0). Boot 10M step deterministik identik (pc=0x005b3bd0) — tidak
+  regress.
 - Langkah berikut: diff intruksi-vs-QEMU pada window (a) real_to_prot
   0x8313-0x8326 (frame/`mov [esp],eax` restore) dan (b) real handler
   kedua 0x9113-0x9163 — cari satu instruksi yang menggeser sp epilogue
