@@ -157,7 +157,7 @@ pub fn expand_all_generates(
                 Ok(expanded) => {
                     total_items += expanded.len();
                     expand_count += 1;
-                    if std::env::var("DBG_GEN").is_ok() && expand_count % 100 == 0 {
+                    if std::env::var("DBG_GEN").is_ok() && expand_count.is_multiple_of(100) {
                         eprintln!(
                             "DBG-GEN: '{}' expands={} total={} items={}",
                             module.name.as_str(),
@@ -291,9 +291,9 @@ fn eval_generate_cond(
                     0
                 });
             }
-            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
                 if gen_expr_is_signed(lhs, signed_params) && gen_expr_is_signed(rhs, signed_params)
-                {
+                => {
                     let l = const_eval_with_params(lhs, params)?;
                     let r = const_eval_with_params(rhs, params)?;
                     let b = match op {
@@ -304,7 +304,6 @@ fn eval_generate_cond(
                     };
                     return Ok(if b { 1 } else { 0 });
                 }
-            }
             _ => {}
         },
         _ => {}

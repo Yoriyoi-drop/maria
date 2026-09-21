@@ -48,10 +48,7 @@ impl SimulationEngine {
             }
         }
         self.disable_pending = self.disable_pending.take().or(old);
-        if !completed {
-            return Ok(false);
-        }
-        Ok(true)
+        Ok(completed)
     }
 
     /// Evaluate a NamedBlock without delay/fork (stmt context).

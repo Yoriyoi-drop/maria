@@ -274,7 +274,7 @@ impl PipelineAnimator {
         }
         render_summary(&self.state);
         let mut out = io::stdout();
-        let _ = write!(out, "{}{}", SHOW_CURSOR, "\n");
+        let _ = write!(out, "{}\n", SHOW_CURSOR);
         let _ = out.flush();
         self.active = false;
     }

@@ -58,7 +58,7 @@ impl StaReport {
                 clk.name, clk.period, clk.source_port,
             ));
         }
-        out.push_str("\n");
+        out.push('\n');
 
         out.push_str(&format!(
             "Summary: {} paths, {} violations, worst slack: {:.2}ns\n\n",

@@ -129,7 +129,7 @@ pub fn transpile_many(
 ) -> Result<Vec<TranspileResult>, (usize, MvError)> {
     let files = parse_all(items)?;
     let refs: Vec<&ast::MvFile> = files.iter().collect();
-    check::check_many(&refs).map_err(|(i, e)| (i, e))?;
+    check::check_many(&refs)?;
     generate_all(items, &files)
 }
 

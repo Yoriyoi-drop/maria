@@ -1587,7 +1587,7 @@ impl CompileSession {
                 .into_inner()
                 .unwrap_or_default();
             let input = crate::micd::cache::pipeline::CachePopulateInput {
-                designs: self.prev_designs.iter().map(|(p, d)| (p, d)).collect(),
+                designs: self.prev_designs.iter().collect(),
                 combined: &self.prev_combined_sources,
                 defines: &self.config.defines,
                 include_deps: &self.micd_include_deps,
@@ -1776,7 +1776,7 @@ impl CompileSession {
             .map(|(name, _kind, meta)| (name.to_string(), meta.file.clone()))
             .collect();
         let input = crate::micd::cache::pipeline::CachePopulateInput {
-            designs: self.prev_designs.iter().map(|(p, d)| (p, d)).collect(),
+            designs: self.prev_designs.iter().collect(),
             combined: &self.prev_combined_sources,
             defines: &self.config.defines,
             include_deps: &self.micd_include_deps,
@@ -2961,15 +2961,14 @@ fn discover_names_in_source(
                     last_ident = Some(n);
                 }
             }
-            Token::Semi => {
-                if in_typedef && brace_depth == 0 {
+            Token::Semi
+                if in_typedef && brace_depth == 0 => {
                     if let Some(n) = last_ident {
                         typedefs.insert(n);
                     }
                     in_typedef = false;
                     last_ident = None;
                 }
-            }
             _ => {}
         }
     }

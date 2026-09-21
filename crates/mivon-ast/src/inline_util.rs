@@ -31,7 +31,7 @@ pub(crate) fn detect_recursive_functions(funcs: &HashMap<Symbol, FunctionDecl>) 
         calls.insert(*name, called.into_iter().collect());
     }
     // DFS dari setiap fungsi: apakah bisa kembali ke dirinya sendiri?
-    for (&start, _) in funcs.iter() {
+    for &start in funcs.keys() {
         let mut visited: HashSet<Symbol> = HashSet::new();
         if dfs_reaches_self(start, start, &calls, &mut visited) {
             recursive.insert(start);

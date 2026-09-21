@@ -124,7 +124,7 @@ pub(crate) fn evaluate_string_method(
             })
         }
         "compare" | "icompare" => {
-            if args.len() < 1 {
+            if args.is_empty() {
                 return Err(SimError::with_diag(
                     DiagCode::DpiError,
                     format!("{} expects 1 argument", method),

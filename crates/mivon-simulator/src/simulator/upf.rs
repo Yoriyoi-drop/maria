@@ -817,12 +817,12 @@ impl Default for PowerIntent {
 fn tokenize_upf(content: &str) -> Vec<Vec<String>> {
     let mut lines = Vec::new();
     let mut current_line = Vec::new();
-    let mut chars = content.chars().peekable();
+    let chars = content.chars().peekable();
     let mut token = String::new();
     let mut in_brace: i32 = 0;
     let mut in_comment = false;
 
-    while let Some(c) = chars.next() {
+    for c in chars {
         if in_comment {
             if c == '\n' {
                 in_comment = false;

@@ -77,7 +77,7 @@ impl Parser {
                 }
                 items.push(ModuleItem::Import {
                     package: pkg,
-                    item: item,
+                    item,
                 });
                 if self.peek() == &Token::Comma {
                     self.advance();

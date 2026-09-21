@@ -429,10 +429,9 @@ fn export_csv(data: &VcdData, out_path: &str) -> Result<(), SimError> {
 
     std::fs::write(out_path, out).map_err(|e| err(format!("{}: {}", out_path, e)))?;
     println!(
-        "  exported {} → {} ({}, {} baris)",
+        "  exported {} → {} (csv, {} baris)",
         input_name(data),
         out_path,
-        "csv",
         times.len()
     );
     Ok(())
@@ -505,7 +504,7 @@ fn filter(input: &str, keep: &[String], output: Option<&str>) -> Result<(), SimE
             "tidak ada sinyal yang cocok — sinyal yang ada: {}",
             data.signals
                 .iter()
-                .map(|s| full_name(s))
+                .map(full_name)
                 .collect::<Vec<_>>()
                 .join(", ")
         )));
@@ -946,8 +945,8 @@ fn stats(input: &str) -> Result<(), SimError> {
         data.timescale
     );
     println!(
-        "  {:<22} {:<5} {:<7} {:<7} {:<10} {:<7} {}",
-        "signal", "width", "toggle", "change", "first", "last", "activity%"
+        "  {:<22} {:<5} {:<7} {:<7} {:<10} {:<7} activity%",
+        "signal", "width", "toggle", "change", "first", "last"
     );
     let mut total_toggle = 0usize;
     let mut stuck = 0usize;

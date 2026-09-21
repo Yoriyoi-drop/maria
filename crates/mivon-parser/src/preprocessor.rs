@@ -1357,6 +1357,12 @@ impl Preprocessor {
     }
 }
 
+impl Default for Preprocessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// String-aware top-level comma splitter, dipakai untuk memisahkan:
 /// - argumen invokasi macro (`` `MACRO(a, b, c) ``) — koma di dalam string
 ///   literal (`"x, y"`), di dalam paren bersarang, ATAU di dalam komentar

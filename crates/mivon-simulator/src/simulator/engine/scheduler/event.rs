@@ -116,13 +116,12 @@ impl SimulationEngine {
                             self.evaluate_stmt_block(body)?;
                         }
                     }
-                    Process::Sequential { body, .. } => {
+                    Process::Sequential { body, .. }
                         // Try MIR JIT for always_ff blocks (edge-triggered)
                         // JIT handles the combinational body; scheduler handles edge wakeup
-                        if !self.use_mir_jit || !self.try_evaluate_mir_jit(pid, body)? {
+                        if (!self.use_mir_jit || !self.try_evaluate_mir_jit(pid, body)?) => {
                             self.evaluate_stmt_block(body)?;
                         }
-                    }
                     _ => {}
                 }
             }

@@ -127,7 +127,7 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
             print!("{}", mivon_sir::render_sir(&sir_opt));
             println!();
         }
-        section(&format!("Optimization (preset: {})", &args.preset));
+        section(&format!("Optimization (preset: {})", args.preset));
         for r in &results {
             kv(
                 r.name,
@@ -310,7 +310,7 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
     let prefix = args
         .output
         .clone()
-        .unwrap_or_else(|| format!("{}", top_name));
+        .unwrap_or_else(|| top_name.to_string());
     if args.emit_mvnet {
         let mvnet = emit_mvnet(nl, mivon_synth::VERSION);
         let path = PathBuf::from(format!("{}.mvnet", prefix));

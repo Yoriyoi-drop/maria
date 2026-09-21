@@ -171,7 +171,7 @@ impl DesignPartitioner {
                 .get(&inst.instance_name)
                 .copied()
                 .unwrap_or(0);
-            for (_port_name, sig_id) in inst.port_map.iter() {
+            for sig_id in inst.port_map.values() {
                 let dst_opt = signal_to_partition.get(sig_id).copied();
                 if let Some(dst_part) = dst_opt {
                     if src_part != dst_part {

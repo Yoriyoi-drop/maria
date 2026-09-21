@@ -115,7 +115,7 @@ pub fn binary_fingerprint() -> u64 {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos() as u128)
+            .map(|d| d.as_nanos())
             .unwrap_or(0);
         h.extend_from_slice(&mtime.to_le_bytes());
         h.extend_from_slice(exe.to_string_lossy().as_bytes());
@@ -1157,7 +1157,7 @@ impl MicdDatabase {
         // verify.mdb
         if self.dirty_verify {
             let mut w = MdbWriter::new();
-            for (_, v) in self.verify.iter() {
+            for v in self.verify.values() {
                 w.put(
                     v.content_hash,
                     format::KIND_VERIFY,
@@ -1292,7 +1292,7 @@ impl MicdDatabase {
         let objs = self.objects_dir();
         std::fs::create_dir_all(&objs)?;
         let mut live: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        for (_path, (hash, bytes)) in self.ast_cache.iter() {
+        for (hash, bytes) in self.ast_cache.values() {
             live.insert(*hash);
             let obj = self.object_path(*hash, OBJ_AST);
             if obj.exists() {
@@ -1311,7 +1311,7 @@ impl MicdDatabase {
         let objs = self.objects_dir();
         std::fs::create_dir_all(&objs)?;
         let mut live: std::collections::HashSet<u64> = std::collections::HashSet::new();
-        for (_path, entry) in self.preproc_cache.iter() {
+        for entry in self.preproc_cache.values() {
             live.insert(entry.content_hash);
             let obj = self.object_path(entry.content_hash, OBJ_PREPROC);
             if obj.exists() {

@@ -70,17 +70,15 @@ impl FileDiscovery {
         for entry in walk.into_iter().filter_entry(|e| {
             let name = e.file_name().to_str().unwrap_or("");
             !skip_dirs.contains(&name)
-        }) {
-            if let Ok(entry) = entry {
-                if entry.file_type().is_file() {
-                    if mivon_core::template::is_template_source(entry.path()) {
-                        continue;
-                    }
-                    if let Some(ext) = entry.path().extension() {
-                        if let Some(ext_str) = ext.to_str() {
-                            if extensions.contains(&ext_str) {
-                                file_paths.push(entry.path().to_path_buf());
-                            }
+        }).flatten() {
+            if entry.file_type().is_file() {
+                if mivon_core::template::is_template_source(entry.path()) {
+                    continue;
+                }
+                if let Some(ext) = entry.path().extension() {
+                    if let Some(ext_str) = ext.to_str() {
+                        if extensions.contains(&ext_str) {
+                            file_paths.push(entry.path().to_path_buf());
                         }
                     }
                 }

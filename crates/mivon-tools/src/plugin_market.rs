@@ -241,7 +241,7 @@ fn version_ge(a: &str, b: &str) -> bool {
 fn topological_sort(deps: &HashMap<&str, Vec<&str>>) -> Result<Vec<String>, String> {
     let mut in_degree: HashMap<&str, usize> = deps.keys().map(|&k| (k, 0)).collect();
 
-    for (_, dep_list) in deps {
+    for dep_list in deps.values() {
         for &dep in dep_list {
             if let Some(_d) = in_degree.get_mut(dep) {
                 // This doesn't work directly — we need reverse mapping

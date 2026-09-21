@@ -362,7 +362,7 @@ impl SimulationEngine {
                     .iter()
                     .find(|f| f.name == *name)
                     .and_then(|f| f.dtype.as_ref())
-                    .map(|d| is_signed_type(d))
+                    .map(is_signed_type)
                     .unwrap_or(false)
             }
             _ => false,
@@ -410,7 +410,7 @@ impl SimulationEngine {
         // ROUND 36: signature field (signed/width) utk narrowing domain signed.
         let mut field_sigs: HashMap<Symbol, FieldSig> = HashMap::new();
         for f in &class_def.fields {
-            let signed = f.dtype.as_ref().map(|d| is_signed_type(d)).unwrap_or(false);
+            let signed = f.dtype.as_ref().map(is_signed_type).unwrap_or(false);
             field_sigs.insert(
                 f.name,
                 FieldSig {

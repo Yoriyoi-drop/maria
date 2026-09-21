@@ -87,10 +87,10 @@ pub fn acquire_write_lock(
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 // Lock basi? Metadata mtime jauh di masa lalu → proses pemilik
                 // mati. Ambil alih.
-                if let Ok(meta) = std::fs::metadata(&path) {
+                if let Ok(meta) = std::fs::metadata(path) {
                     if let Ok(modified) = meta.modified() {
                         if modified.elapsed().unwrap_or_default() > stale_after {
-                            let _ = std::fs::remove_file(&path);
+                            let _ = std::fs::remove_file(path);
                             continue;
                         }
                     }

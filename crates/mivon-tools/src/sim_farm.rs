@@ -11,19 +11,16 @@ use serde::{Deserialize, Serialize};
 
 /// Job priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum Priority {
     Critical = 0,
     High = 1,
+    #[default]
     Normal = 2,
     Low = 3,
     Background = 4,
 }
 
-impl Default for Priority {
-    fn default() -> Self {
-        Priority::Normal
-    }
-}
 
 /// Job status.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

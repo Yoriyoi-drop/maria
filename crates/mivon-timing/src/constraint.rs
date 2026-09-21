@@ -155,8 +155,7 @@ pub fn parse_constraints(text: &str) -> Constraint {
         }
 
         // ── false_path { from = X; to = Y; } (satu baris) ──
-        if norm.starts_with("false_path") {
-            let rest = &norm["false_path".len()..];
+        if let Some(rest) = norm.strip_prefix("false_path") {
             c.false_paths.push(PathSpec {
                 from: extract_attr(rest, "from"),
                 to: extract_attr(rest, "to"),
@@ -166,13 +165,12 @@ pub fn parse_constraints(text: &str) -> Constraint {
         }
 
         // ── multicycle_path N { from = X; to = Y; } (satu baris) ──
-        if norm.starts_with("multicycle_path") {
+        if let Some(rest) = norm.strip_prefix("multicycle_path") {
             let n = norm
                 .split_whitespace()
                 .nth(1)
                 .and_then(|t| t.parse::<u32>().ok())
                 .unwrap_or(1);
-            let rest = &norm["multicycle_path".len()..];
             c.multicycle_paths.push(PathSpec {
                 from: extract_attr(rest, "from"),
                 to: extract_attr(rest, "to"),

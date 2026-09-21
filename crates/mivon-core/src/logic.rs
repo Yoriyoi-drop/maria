@@ -231,11 +231,10 @@ impl LogicVec {
                 for (i, &byte) in bytes.iter().enumerate() {
                     for bit in 0..8 {
                         let bit_idx = i * 8 + bit;
-                        if bit_idx < lv.width {
-                            if (byte >> bit) & 1 == 1 {
+                        if bit_idx < lv.width
+                            && (byte >> bit) & 1 == 1 {
                                 lv.bits[bit_idx] = LogicVal::One;
                             }
-                        }
                     }
                 }
                 return lv;

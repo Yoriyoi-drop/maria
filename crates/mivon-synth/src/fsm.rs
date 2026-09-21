@@ -126,11 +126,10 @@ fn has_nba_write_to(stmts: &[IrStmt], sig_id: usize) -> bool {
                 true_branch,
                 false_branch,
                 ..
-            } => {
-                if has_nba_write_to(true_branch, sig_id) || has_nba_write_to(false_branch, sig_id) {
+            }
+                if (has_nba_write_to(true_branch, sig_id) || has_nba_write_to(false_branch, sig_id)) => {
                     return true;
                 }
-            }
             _ => {}
         }
     }

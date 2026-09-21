@@ -304,7 +304,7 @@ pub(crate) fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(
                 format!("tipe '{n}' dideklarasikan dua kali di level file"),
             ));
         }
-        check_typedef(td, &ctx)?;
+        check_typedef(td, ctx)?;
     }
     // duplikat nama function/task level file (E2007)
     let mut fnames = HashSet::new();
@@ -362,7 +362,7 @@ pub(crate) fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(
                 ),
             ));
         }
-        check_interface(i, &ctx)?;
+        check_interface(i, ctx)?;
     }
 
     let mut pkg_seen = HashSet::new();
@@ -388,7 +388,7 @@ pub(crate) fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(
                     format!("tipe '{n}' dideklarasikan dua kali di package '{}'", p.name),
                 ));
             }
-            check_typedef(td, &ctx)?;
+            check_typedef(td, ctx)?;
         }
         for (cn, _, _) in &p.consts {
             if !c_seen.insert(cn.as_str()) {
@@ -416,7 +416,7 @@ pub(crate) fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(
                 format!("module '{}' dideklarasikan dua kali", m.name),
             ));
         }
-        check_module(m, &ctx)?;
+        check_module(m, ctx)?;
     }
     // `program` (MIVON-HDL.md §7.3) — body testbench tetap di-type-check.
     for p in &file.programs {
@@ -428,7 +428,7 @@ pub(crate) fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(
                 format!("module/program '{}' dideklarasikan dua kali", p.name),
             ));
         }
-        check_module(p, &ctx)?;
+        check_module(p, ctx)?;
     }
 
     // ── class (MIVON-HDL.md §8) ──
@@ -442,17 +442,17 @@ pub(crate) fn check_with_ctx<'a>(file: &'a MvFile, ctx: &'a Ctx<'a>) -> Result<(
                 format!("class '{}' dideklarasikan dua kali", c.name),
             ));
         }
-        check_class(c, &ctx)?;
+        check_class(c, ctx)?;
     }
 
     // ── function/task level file ──
     for f in &file.funcs {
-        let mut scope = new_scope(&ctx, &f.name);
-        check_func(f, &ctx, &mut scope)?;
+        let mut scope = new_scope(ctx, &f.name);
+        check_func(f, ctx, &mut scope)?;
     }
     for t in &file.tasks {
-        let mut scope = new_scope(&ctx, &t.name);
-        check_task(t, &ctx, &mut scope)?;
+        let mut scope = new_scope(ctx, &t.name);
+        check_task(t, ctx, &mut scope)?;
     }
     Ok(())
 }
@@ -483,7 +483,7 @@ fn collect_ctx<'a>(files: impl IntoIterator<Item = &'a MvFile>) -> Ctx<'a> {
             interfaces.insert(i.name.as_str());
             module_ports.insert(
                 i.name.as_str(),
-                i.ports.iter().map(|p| p.names.clone()).flatten().collect(),
+                i.ports.iter().flat_map(|p| p.names.clone()).collect(),
             );
         }
         // module & program berbagi namespace SV — indeks ports/params/type-params

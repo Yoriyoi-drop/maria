@@ -20,7 +20,7 @@ impl Elaborator {
         // SAMA dengan record_line_hit engine (current_process_name).
         *self.current_proc_name.borrow_mut() = Some(name);
 
-        let result = self.elaborate_always_inner(&always, signal_map, signals, name);
+        let result = self.elaborate_always_inner(always, signal_map, signals, name);
         *self.current_proc_name.borrow_mut() = None;
         result
     }

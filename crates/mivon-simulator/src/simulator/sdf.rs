@@ -360,6 +360,12 @@ impl SdfData {
     }
 }
 
+impl Default for SdfData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Thread-local timing mode for SDF annotation.
 use std::cell::RefCell;
 thread_local! {

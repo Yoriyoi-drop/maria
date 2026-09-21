@@ -186,7 +186,7 @@ fn expr_refs_signed_param(expr: &Expr, signed_params: &std::collections::HashSet
                     .any(|a| expr_refs_signed_param(a, signed_params))
                 || with_clause
                     .as_ref()
-                    .map_or(false, |w| expr_refs_signed_param(w, signed_params))
+                    .is_some_and(|w| expr_refs_signed_param(w, signed_params))
         }
         Expr::Cast { expr: inner, .. } | Expr::CastWidth { expr: inner, .. } => {
             expr_refs_signed_param(inner, signed_params)
@@ -971,7 +971,7 @@ impl Elaborator {
                 groups.entry(m.name).or_default().push(idx);
             }
             let mut keep = vec![true; self.design.modules.len()];
-            for (_name, idxs) in &groups {
+            for idxs in groups.values() {
                 if idxs.len() <= 1 {
                     continue;
                 }
@@ -1951,7 +1951,7 @@ impl Elaborator {
             }
         }
         // Add package classes to design.classes so they're available for hierarchy walk
-        for (_, items) in &self.package_symbols {
+        for items in self.package_symbols.values() {
             for item in items.values() {
                 if let PackageItem::Class(c) = item {
                     if !self
@@ -1970,7 +1970,7 @@ impl Elaborator {
 
         // Inject built-in __uvm_object and __uvm_component classes
         if !classes.contains_key(&Symbol::intern("__uvm_object")) {
-            for (_, cls) in classes.iter_mut() {
+            for cls in classes.values_mut() {
                 let extends_str = cls.extends.map(|s| s.as_str());
                 match extends_str {
                     Some("uvm_object") => cls.extends = Some(Symbol::intern("__uvm_object")),
@@ -2559,7 +2559,7 @@ impl Elaborator {
         );
         for port in &module.ports {
             h = combine_checksum(h, compute_str_checksum(port.name.as_str()));
-            h = combine_checksum(h, compute_checksum(&[(port.direction.clone() as u8)]));
+            h = combine_checksum(h, compute_checksum(&[(port.direction as u8)]));
         }
         for param in &module.params {
             h = combine_checksum(h, compute_str_checksum(param.name.as_str()));
@@ -2846,7 +2846,7 @@ impl Elaborator {
             let mut pctx = base.clone();
             for _ in 0..64 {
                 let mut changed = false;
-                for (_name, item) in items {
+                for item in items.values() {
                     let PackageItem::Param(p) = item else {
                         continue;
                     };
@@ -4266,9 +4266,7 @@ impl Elaborator {
                 match val {
                     CVal::Scalar(v) => {
                         let key = Symbol::intern(&path);
-                        if !effective_params.contains_key(&key) {
-                            effective_params.insert(key, *v);
-                        }
+                        effective_params.entry(key).or_insert(*v);
                     }
                     CVal::Array(elems) => {
                         for (i, e) in elems.iter().enumerate() {
@@ -4321,7 +4319,7 @@ impl Elaborator {
         // found" (E2001). Member access (`name.field`) tetap benar karena
         // evaluator penuh (eval_cval_full/eval_param_default_full) memakai
         // `struct_vals` yang sudah terisi fixed-point di atas.
-        for (sname, _fields) in &struct_vals {
+        for sname in struct_vals.keys() {
             if !effective_params.contains_key(sname) {
                 effective_params.insert(*sname, 0);
             }
@@ -4449,8 +4447,8 @@ impl Elaborator {
                         },
                         None => last,
                     };
-                    if !effective_params.contains_key(&member_name) {
-                        effective_params.insert(member_name, val);
+                    if let std::collections::hash_map::Entry::Vacant(e) = effective_params.entry(member_name) {
+                        e.insert(val);
                         changed = true;
                     }
                     last = val + 1;
@@ -4786,7 +4784,7 @@ impl Elaborator {
                         for j in 0..j_span {
                             let idx = i * elem_width + j;
                             if idx < init_n {
-                                full_init.bits[idx] = elem_init.bits[j].clone();
+                                full_init.bits[idx] = elem_init.bits[j];
                             }
                         }
                     }
@@ -5093,7 +5091,7 @@ impl Elaborator {
                                 .min(ev.bits.len());
                             for j in 0..j_span {
                                 if base + j < total_width {
-                                    init.bits[base + j] = ev.bits[j].clone();
+                                    init.bits[base + j] = ev.bits[j];
                                 }
                             }
                         }
@@ -5294,7 +5292,7 @@ impl Elaborator {
                         // sekali (bentuk langka; fallback aman).
                         let name = format_sym(b"initial_prop_", proc_counter);
                         proc_counter += 1;
-                        *self.current_proc_name.borrow_mut() = Some(name.clone());
+                        *self.current_proc_name.borrow_mut() = Some(name);
                         let body_res = self.elaborate_stmt_block(
                             std::slice::from_ref(stmt.as_ref()),
                             &signal_map,

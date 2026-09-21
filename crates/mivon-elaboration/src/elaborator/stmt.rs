@@ -614,7 +614,7 @@ impl Elaborator {
                     let max = (1i64 << (lhs_w - 1)) - 1;
                     v >= min && v <= max
                 } else if lhs_w < 64 {
-                    v >= 0 && (v as u64) <= (1u64 << lhs_w) - 1
+                    v >= 0 && (v as u64) < (1u64 << lhs_w)
                 } else {
                     true
                 };
@@ -2556,7 +2556,7 @@ impl Elaborator {
                             l,
                             c,
                         );
-                        return Ok(IrLValue::ObjectField { sig_id, field });
+                        Ok(IrLValue::ObjectField { sig_id, field })
                     }
                     // Bit select di atas bit select (`sig[a][b]` — packed
                     // multidimensi setelah unroll, mis. `result[0][0][0]`).
@@ -2803,11 +2803,10 @@ impl Elaborator {
                 {
                     if let Some(&base_sid) = signal_map.get(&Symbol::intern(&base_name)) {
                         let base_info = &signals[base_sid];
-                        if base_info.iface_type.is_some() && base_info.class_name.is_none() {
-                            if !hier_name.is_empty() {
+                        if base_info.iface_type.is_some() && base_info.class_name.is_none()
+                            && !hier_name.is_empty() {
                                 return Ok(IrLValue::HierRef(Symbol::intern(&hier_name)));
                             }
-                        }
                     }
                 }
                 // Nested member access lvalue (`hw2reg.val.d = x`): kumpulkan
@@ -2879,10 +2878,10 @@ impl Elaborator {
                         if !hn.is_empty() {
                             return Ok(IrLValue::HierRef(Symbol::intern(&hn)));
                         }
-                        return Ok(IrLValue::ObjectField {
+                        Ok(IrLValue::ObjectField {
                             sig_id,
                             field: *field,
-                        });
+                        })
                     }
                     // obj TIDAK ter-resolve sebagai signal: instance interface
                     // (`sif.csb`) atau path instance (`u_dut.u_padring.cio_*`).
@@ -2934,10 +2933,10 @@ impl Elaborator {
                                 });
                             }
                         }
-                        return Ok(IrLValue::ObjectField {
+                        Ok(IrLValue::ObjectField {
                             sig_id: 0,
                             field: *field,
-                        });
+                        })
                     }
                 }
             }

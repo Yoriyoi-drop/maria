@@ -256,7 +256,7 @@ pub fn eval_expr(e: &Expr, ctx: &PkgCtx, cur_pkg: Option<&str>) -> Result<CVal, 
         Expr::BitSelect { expr, index } => {
             let idx = scalar(eval_expr(index, ctx, cur_pkg)?)?;
             match eval_expr(expr, ctx, cur_pkg)? {
-                CVal::Scalar(v) => Ok(CVal::Scalar(if idx >= 0 && idx < 64 {
+                CVal::Scalar(v) => Ok(CVal::Scalar(if (0..64).contains(&idx) {
                     (v >> idx) & 1
                 } else {
                     0
@@ -304,7 +304,7 @@ pub fn eval_expr(e: &Expr, ctx: &PkgCtx, cur_pkg: Option<&str>) -> Result<CVal, 
             match eval_expr(expr, ctx, cur_pkg)? {
                 CVal::Scalar(v) => {
                     let width = w as usize;
-                    if b < 0 || b >= 64 {
+                    if !(0..64).contains(&b) {
                         return Ok(CVal::Scalar(0));
                     }
                     if width >= 64 {
@@ -334,7 +334,7 @@ pub fn eval_expr(e: &Expr, ctx: &PkgCtx, cur_pkg: Option<&str>) -> Result<CVal, 
         }
         Expr::Replicate { count, expr } => {
             let c = scalar(eval_expr(count, ctx, cur_pkg)?)?;
-            if c < 0 || c > 1_000_000 {
+            if !(0..=1_000_000).contains(&c) {
                 return Err("bad replication count".to_string());
             }
             let inner = eval_expr(expr, ctx, cur_pkg)?;
@@ -428,9 +428,7 @@ fn eval_func(
                     return Ok(CVal::Scalar(w as i64));
                 }
             }
-            Err(format!(
-                "'$bits' argument cannot be evaluated (not a constant or known type)"
-            ))
+            Err("'$bits' argument cannot be evaluated (not a constant or known type)".to_string())
         }
         "$size" | "$left" | "$right" | "$low" | "$high" => args
             .first()
@@ -475,12 +473,11 @@ fn resolve_typedef_bits(
     // Package disimpan sebagai String milik sendiri agar bebas dari lifetime
     // borrow pkg_opt / iterator.
     let (td, typedef_pkg): (&crate::types::TypedefDecl, String) = if let Some(pkg) = pkg_opt {
-        match package_symbols
-            .get(&Symbol::intern(pkg))
-            .and_then(|items| lookup_pkg_typedef(items, type_name))
         {
-            Some(td) => (td, pkg.to_string()),
-            None => return None,
+            let td = package_symbols
+            .get(&Symbol::intern(pkg))
+            .and_then(|items| lookup_pkg_typedef(items, type_name))?;
+            (td, pkg.to_string())
         }
     } else {
         match package_symbols.iter().find_map(|(pkg, items)| {
@@ -541,16 +538,12 @@ fn typedef_dtype_bits(
     match dtype {
         DataType::UserDefined(name) => {
             // Coba resolve sebagai typedef package (plain-name, semua package).
-            if let Some(w) = resolve_typedef_bits(ctx, None, name.as_str(), depth + 1) {
-                w
-            } else {
-                64
-            }
+            resolve_typedef_bits(ctx, None, name.as_str(), depth + 1).unwrap_or(64)
         }
         DataType::Signed(inner) => typedef_dtype_bits(ctx, inner, typedef_pkg, depth),
-        DataType::StructType { members } => members.iter().map(|m| member_width(m)).sum(),
+        DataType::StructType { members } => members.iter().map(&member_width).sum(),
         DataType::UnionType { members } => {
-            members.iter().map(|m| member_width(m)).max().unwrap_or(1)
+            members.iter().map(member_width).max().unwrap_or(1)
         }
         _ => dtype.width(),
     }
@@ -943,7 +936,7 @@ pub fn eval_package_constants(
             // Enum member constants package → scalar (qualified + plain-by-context).
             // Ini membuat `import pkg::*` bisa memakai nama member enum (mis.
             // `NumTotalCmdInfo`) sebagai konstanta integer dalam ekspresi parameter.
-            for (_name, item) in items {
+            for item in items.values() {
                 let PackageItem::Typedef(td) = item else {
                     continue;
                 };
@@ -968,8 +961,8 @@ pub fn eval_package_constants(
                         None => last,
                     };
                     let q = Symbol::intern(&format!("{}::{}", pkg_name.as_str(), mname.as_str()));
-                    if !scalars.contains_key(&q) {
-                        scalars.insert(q, val);
+                    if let std::collections::hash_map::Entry::Vacant(e) = scalars.entry(q) {
+                        e.insert(val);
                         changed = true;
                     }
                     last = val + 1;

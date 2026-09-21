@@ -240,7 +240,7 @@ impl Parser {
         let mut best_pos: Option<usize> = None;
         let mut best_val: usize = 0;
         for (pos, val, file) in &self.file_line_map {
-            if *pos < cumulative_line && best_pos.map_or(true, |bp| *pos > bp) {
+            if *pos < cumulative_line && best_pos.is_none_or(|bp| *pos > bp) {
                 best_pos = Some(*pos);
                 best_val = *val;
                 best_file = file.clone();
@@ -547,8 +547,8 @@ impl Parser {
 
                 // Generate fix-it for common warnings
                 let trimmed = source_line.trim_end();
-                if msg.contains("missing semicolon") || msg.contains("expected ';'") {
-                    if !trimmed.ends_with(';') {
+                if (msg.contains("missing semicolon") || msg.contains("expected ';'"))
+                    && !trimmed.ends_with(';') {
                         let fix_it = FixItHint::insert(
                             display_file.clone(),
                             display_line,
@@ -558,7 +558,6 @@ impl Parser {
                         );
                         diag = diag.with_fix_it(fix_it);
                     }
-                }
             }
         }
         self.errors.push(diag);
@@ -2240,7 +2239,7 @@ impl Parser {
             Token::Let => {
                 // LANG-40: `let name[(params)] = expr;` (IEEE 1800-2017 §11.12.2).
                 let ld = self.parse_let_decl()?;
-                return Ok(Some(ModuleItem::Let(ld)));
+                Ok(Some(ModuleItem::Let(ld)))
             }
             Token::Checker => {
                 // LANG-10: `checker name (ports); items endchecker` (IEEE
@@ -2297,16 +2296,13 @@ impl Parser {
                         self.advance();
                         break;
                     }
-                    match self.parse_module_item()? {
-                        Some(item) => items.push(item),
-                        None => {}
-                    }
+                    if let Some(item) = self.parse_module_item()? { items.push(item) }
                 }
-                return Ok(Some(ModuleItem::Checker(CheckerDecl {
+                Ok(Some(ModuleItem::Checker(CheckerDecl {
                     name,
                     ports,
                     items,
-                })));
+                })))
             }
             Token::Alias => {
                 // LANG-08: `alias a = b = c;` (IEEE 1800-2017 §10.9) — semua
@@ -2328,7 +2324,7 @@ impl Parser {
                     }
                 }
                 self.skip_semi();
-                return Ok(Some(ModuleItem::NetAlias(pairs)));
+                Ok(Some(ModuleItem::NetAlias(pairs)))
             }
             Token::Nettype => {
                 // LANG-08: `nettype <type> <name>;` (IEEE 1800-2017 §6.10).
@@ -2391,7 +2387,7 @@ impl Parser {
                 }
                 self.skip_semi();
                 self.module_type_params.insert(name);
-                return Ok(Some(ModuleItem::Nettype(NettypeDecl { name, base, range })));
+                Ok(Some(ModuleItem::Nettype(NettypeDecl { name, base, range })))
             }
             Token::Param | Token::Parameter | Token::LocalParam => {
                 let is_localparam = self.peek() == &Token::LocalParam;

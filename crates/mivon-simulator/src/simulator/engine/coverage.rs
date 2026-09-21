@@ -37,7 +37,7 @@ fn build_const_bin_map(
                 && rng
                     .high
                     .as_ref()
-                    .map_or(true, |h| matches!(h, IrExpr::Const(_)))
+                    .is_none_or(|h| matches!(h, IrExpr::Const(_)))
         });
         if all_const && !bin.ranges.is_empty() {
             for rng in &bin.ranges {
@@ -507,12 +507,12 @@ impl SimulationEngine {
     pub fn coverage_keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = Vec::new();
         // Line coverage: key = `proc.discriminant`.
-        for (k, _) in &self.cover_line {
+        for k in self.cover_line.keys() {
             keys.push(format!("cov_line:{}", k));
         }
         // Branch coverage: key = branch + label.
         for (bk, labels) in &self.cover_branches {
-            for (label, _) in labels {
+            for label in labels.keys() {
                 keys.push(format!("cov_branch:{}.{}", bk, label));
             }
         }
@@ -751,9 +751,7 @@ impl SimulationEngine {
         // Pakai coverage_snapshot (capture di awal time step) — signal_snapshot
         // di-refresh tiap delta cycle sehingga diff selalu kosong (fix SIM-30).
         let old_vals: Vec<LogicVec> = self
-            .coverage_snapshot
-            .as_ref()
-            .map(|snap| snap.clone())
+            .coverage_snapshot.clone()
             .unwrap_or_default();
         let n = old_vals.len();
         for sig_id in 0..n {
@@ -772,7 +770,7 @@ impl SimulationEngine {
         // pulih sebelum akhir run terlihat; fingerprint nilai-final buta).
         if let Some(iv) = self.trace_interval {
             let t = self.state.time;
-            if t % iv == 0 && t != self.trace_last_time {
+            if t.is_multiple_of(iv) && t != self.trace_last_time {
                 self.trace_last_time = t;
                 let mut parts: Vec<String> = self
                     .design

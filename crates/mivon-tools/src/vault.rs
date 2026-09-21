@@ -27,21 +27,13 @@ pub struct VaultEntry {
 
 /// Access permissions for a file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AccessPermissions {
     pub owner: String,
     pub read_access: Vec<String>,
     pub write_access: Vec<String>,
 }
 
-impl Default for AccessPermissions {
-    fn default() -> Self {
-        AccessPermissions {
-            owner: String::new(),
-            read_access: Vec::new(),
-            write_access: Vec::new(),
-        }
-    }
-}
 
 /// Audit log entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]

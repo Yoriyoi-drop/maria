@@ -977,7 +977,7 @@ impl Elaborator {
                     // For now, try to resolve from signal info at elaboration time
                     let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
                     if let Some(sig_id) = resolve_expr_signal(arg, signal_map) {
-                        let info = &signals[sig_id as usize];
+                        let info = &signals[sig_id];
                         // Packed dimensions + unpacked dimensions
                         let packed_dims = info.packed_dims.len();
                         let unpacked_dims = info.array_dims.len();
@@ -1197,11 +1197,10 @@ impl Elaborator {
                         // field diakses via hier path `b.clk` yang di-resolve
                         // engine via hier_signal_map setelah flatten. Bukan
                         // VirtualIfaceAccess (itu untuk vif yang di-bind runtime).
-                        if sig_info.iface_type.is_some() && sig_info.class_name.is_none() {
-                            if !hier_name.is_empty() {
+                        if sig_info.iface_type.is_some() && sig_info.class_name.is_none()
+                            && !hier_name.is_empty() {
                                 return Ok(IrExpr::HierRef(Symbol::intern(&hier_name)));
                             }
-                        }
                         // Check if this is a virtual interface variable
                         if let Some(ref iface_type) = sig_info.iface_type {
                             // Look up the interface definition to find field width
@@ -2882,7 +2881,7 @@ impl Elaborator {
         match expr {
             Expr::Ident { name, .. } => {
                 if let Some(sig_id) = signal_map.get(name) {
-                    let info = &signals[*sig_id as usize];
+                    let info = &signals[(*sig_id)];
                     let type_str = match info.kind {
                         SignalKind::Logic => "logic",
                         SignalKind::Reg => "reg",
@@ -2942,7 +2941,7 @@ fn sub_elem_width_from_packed(
     sid: mivon_ir::SignalId,
     chunk_w: usize,
 ) -> Option<usize> {
-    let sig = signals.get(sid as usize)?;
+    let sig = signals.get(sid)?;
     if sig.packed_dims.is_empty() {
         return None;
     }

@@ -343,7 +343,7 @@ pub(crate) fn check_stmt<'a>(
 pub(crate) fn base_ident(e: &Expr) -> Option<&str> {
     match e {
         Expr::Ident(s, ..) => Some(s),
-        Expr::Member(o, _, ..) => base_ident(o),
+        Expr::Member(o, ..) => base_ident(o),
         Expr::Index(o, _) => base_ident(o),
         Expr::Range(o, _, _) => base_ident(o),
         _ => None,

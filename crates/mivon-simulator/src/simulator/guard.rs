@@ -54,7 +54,7 @@ impl SimResourceGuard {
         let limit_mb = std::env::var("MIVON_SIM_MEM_LIMIT_MB")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
-            .unwrap_or_else(|| default_limit_mb());
+            .unwrap_or_else(default_limit_mb);
         SimResourceGuard {
             limit_mb,
             check_interval: 64,
@@ -94,7 +94,7 @@ impl SimResourceGuard {
             return Ok(());
         }
         // Hitung hanya pada interval tertentu agar baca /proc tidak overhead.
-        if tick % self.check_interval != 0 {
+        if !tick.is_multiple_of(self.check_interval) {
             return Ok(());
         }
         self.check_rss(time)

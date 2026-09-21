@@ -40,7 +40,7 @@ impl Debugger {
     pub fn reset(&mut self) {
         let design = self.engine.design.clone();
         let max_time = self.engine.max_time_limit();
-        let debug_mode = self.engine.debug_mode.clone();
+        let debug_mode = self.engine.debug_mode;
         let breakpoints = self.engine.breakpoints.clone();
         let watchpoints = self.engine.watchpoints.clone();
         let snapshot_interval = self.engine.snapshot_interval;

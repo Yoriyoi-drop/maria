@@ -476,6 +476,12 @@ impl UvmRegFieldData {
     }
 }
 
+impl Default for UvmRegFieldData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// UVM register data: a named register with address, width, and fields.
 #[derive(Debug, Clone)]
 pub struct UvmRegData {
@@ -509,6 +515,12 @@ impl UvmRegData {
     }
 }
 
+impl Default for UvmRegData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// UVM register block data: a block containing registers with an address map.
 #[derive(Debug, Clone)]
 pub struct UvmRegBlockData {
@@ -530,6 +542,12 @@ impl UvmRegBlockData {
     }
 }
 
+impl Default for UvmRegBlockData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// UVM register map data: address decoding for a set of registers.
 #[derive(Debug, Clone)]
 pub struct UvmRegMapData {
@@ -548,6 +566,12 @@ impl UvmRegMapData {
             base_address: 0,
             n_bits: 32,
         }
+    }
+}
+
+impl Default for UvmRegMapData {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

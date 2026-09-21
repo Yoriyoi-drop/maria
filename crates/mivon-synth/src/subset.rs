@@ -177,7 +177,7 @@ impl Ctx {
     fn check_process(&mut self, p: &Process, module: Symbol, err: &mut usize, warn: &mut usize) {
         match p {
             Process::Initial { body, .. } | Process::Final { body, .. } => {
-                let has_state = body.iter().any(|s| stmt_has_state(s));
+                let has_state = body.iter().any(stmt_has_state);
                 if has_state {
                     self.push(
                         module,
@@ -662,11 +662,10 @@ fn collect_latch_candidates(
                 let mut false_only = std::collections::HashSet::new();
                 collect_assigned_names(false_branch, &mut false_only);
                 for name in true_only {
-                    if !false_only.contains(&name) && !assigned.contains(&name) {
-                        if !out.contains(&name) {
+                    if !false_only.contains(&name) && !assigned.contains(&name)
+                        && !out.contains(&name) {
                             out.push(name);
                         }
-                    }
                 }
                 collect_latch_candidates(true_branch, &mut t_fresh(), out);
                 collect_latch_candidates(false_branch, &mut t_fresh(), out);

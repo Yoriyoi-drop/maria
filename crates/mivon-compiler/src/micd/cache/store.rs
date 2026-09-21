@@ -99,7 +99,7 @@ impl CategoryStore {
 
         // Crash recovery (Kritik 5): journal tersisa → validasi store.
         txn::recover(
-            &root.to_path_buf(),
+            root,
             &root.join(DIR_JOURNAL).join("journal.mdb"),
         );
 

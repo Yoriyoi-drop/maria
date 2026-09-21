@@ -17,7 +17,7 @@ pub fn collect_hier_refs_expr(expr: &IrExpr) -> Vec<Symbol> {
         }
         IrExpr::Concat(exprs) => exprs
             .iter()
-            .flat_map(|e| collect_hier_refs_expr(e))
+            .flat_map(collect_hier_refs_expr)
             .collect(),
         IrExpr::ExprBitSelect(inner, _) => collect_hier_refs_expr(inner),
         IrExpr::ExprRangeSelect(inner, _, _) => collect_hier_refs_expr(inner),

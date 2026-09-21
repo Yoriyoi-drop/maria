@@ -286,7 +286,7 @@ impl X86Cpu {
         self.set_flag(FLAG_OF, overflow);
         self.set_flag(FLAG_ZF, result == 0);
         self.set_flag(FLAG_SF, result & 0x8000 != 0);
-        self.set_flag(FLAG_PF, (result as u8).count_ones() % 2 == 0);
+        self.set_flag(FLAG_PF, (result as u8).count_ones().is_multiple_of(2));
     }
 
     /// Set flag hasil logika (CF/OF di-clear) 16-bit.
@@ -296,7 +296,7 @@ impl X86Cpu {
         self.set_flag(FLAG_OF, false);
         self.set_flag(FLAG_ZF, result == 0);
         self.set_flag(FLAG_SF, result & 0x8000 != 0);
-        self.set_flag(FLAG_PF, (result as u8).count_ones() % 2 == 0);
+        self.set_flag(FLAG_PF, (result as u8).count_ones().is_multiple_of(2));
     }
 
     /// Set flag aritmatika 32-bit (prefix 66).
@@ -306,7 +306,7 @@ impl X86Cpu {
         self.set_flag(FLAG_OF, overflow);
         self.set_flag(FLAG_ZF, result == 0);
         self.set_flag(FLAG_SF, result & 0x8000_0000 != 0);
-        self.set_flag(FLAG_PF, (result as u8).count_ones() % 2 == 0);
+        self.set_flag(FLAG_PF, (result as u8).count_ones().is_multiple_of(2));
     }
 
     // ── Memori real-mode ──
@@ -447,7 +447,7 @@ impl X86Cpu {
             || self.pf_cs != self.cs
             || !(self.ip >= self.pf_base && self.ip < self.pf_base + self.pf_len as u32)
         {
-            let a = self.lin(self.cs, self.ip as u32);
+            let a = self.lin(self.cs, self.ip);
             if (0xbdc0..=0xbe30).contains(&a) && std::env::var("MIVON_X86_TRACE").is_ok() {
                 eprintln!(
                     "FETCH @0x{a:x} ip={} cs=0x{:x} pmode={}",
@@ -560,6 +560,12 @@ impl X86Cpu {
     fn halt(&mut self, reason: &str) {
         self.halted = true;
         self.halt_reason = reason.to_string();
+    }
+}
+
+impl Default for X86Cpu {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -838,7 +844,7 @@ impl X86Cpu {
                 }
                 0xf0 => continue, // lock: abaikan
                 _ => {
-                    let a = self.lin(self.cs, self.ip as u32);
+                    let a = self.lin(self.cs, self.ip);
                     if (0xc7e0..=0xc7f8).contains(&a) && std::env::var("MIVON_X86_TRACE").is_ok() {
                         eprintln!(
                             "OP @0x{a:x} op=0x{op:02x} opsz={opsz} rep={rep} ip={} cs=0x{:x}",
@@ -1101,7 +1107,7 @@ impl X86Cpu {
                 // push imm8 sign-extended; lebar push mengikuti opsz
                 let v = sign8(self.fetch8(mem)?);
                 if opsz == 32 {
-                    self.push32(mem, v as i32 as u32)?;
+                    self.push32(mem, v as u32)?;
                 } else {
                     self.push16(mem, v as u16)?;
                 }
@@ -1484,7 +1490,7 @@ impl X86Cpu {
             0xc0..=0xc1 | 0xd0..=0xd3 => self.exec_shift_group(op, opsz, seg_ov, mem)?,
             // ── in/out imm (e4-e7) ──
             // ── loop/loope/loopne (e0-e2) ──
-            0xe0 | 0xe1 | 0xe2 => {
+            0xe0..=0xe2 => {
                 let disp = sign8(self.fetch8(mem)?);
                 let dec = if opsz == 32 {
                     let v = self.gpr[1].wrapping_sub(1);
@@ -1849,7 +1855,7 @@ impl X86Cpu {
         };
         self.set_flag(FLAG_ZF, (r & mask) == 0);
         self.set_flag(FLAG_SF, r & sign_bit != 0);
-        self.set_flag(FLAG_PF, (r as u8).count_ones() % 2 == 0);
+        self.set_flag(FLAG_PF, (r as u8).count_ones().is_multiple_of(2));
     }
 
     /// ALU r/m, imm grup 80-83: /0 add /1 or /4 and /5 sub /7 cmp (+/6 xor)
@@ -2189,9 +2195,9 @@ impl X86Cpu {
                     }
                 } else if opsz == 32 {
                     // EDX:EAX 64-bit signed dividend.
-                    let hi = self.r32(2) as u32;
-                    let lo = self.r32(0) as u32;
-                    let divd = (((hi as i64) << 32) | lo as i64) as i64 as i128;
+                    let hi = self.r32(2);
+                    let lo = self.r32(0);
+                    let divd = ((((hi as i64) << 32) | lo as i64)) as i128;
                     let d = a as u32 as i32 as i128;
                     let q = divd / d;
                     let rem = divd % d;
@@ -2203,8 +2209,8 @@ impl X86Cpu {
                     }
                 } else {
                     // DX:AX 32-bit signed dividend.
-                    let hi = self.r16(2) as u16;
-                    let lo = self.r16(0) as u16;
+                    let hi = self.r16(2);
+                    let lo = self.r16(0);
                     let divd = (((hi as i32) << 16) | lo as i32) as i64;
                     let d = a as u16 as i16 as i64;
                     let q = divd / d;
@@ -3573,7 +3579,7 @@ impl CpuCore for X86Cpu {
         // Progress sampling utk boot panjang (MIVON_X86_PROGRESS=1): print
         // state tiap 25M step — deteksi loop copy/relokasi (walk kecil per
         // instruksi) & tahapan boot tanpa gdb.
-        if self.steps % 25_000_000 == 0 && std::env::var("MIVON_X86_PROGRESS").is_ok() {
+        if self.steps.is_multiple_of(25_000_000) && std::env::var("MIVON_X86_PROGRESS").is_ok() {
             eprintln!(
                 "PROG step={} pc=0x{:08x} cs=0x{:x} ip=0x{:08x} pmode={} cr0={:#x} sp=0x{:08x} eax={:#x} ebx={:#x} ecx={:#x} edx={:#x} esi={:#x} edi={:#x} ebp={:#x}",
                 self.steps,

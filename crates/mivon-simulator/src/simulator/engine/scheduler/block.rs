@@ -575,7 +575,7 @@ impl SimulationEngine {
                 }
                 IrStmt::SysFinish => {
                     // Flush all pending await continuations before stopping
-                    for (_, pi) in self.process_map.iter_mut() {
+                    for pi in self.process_map.values_mut() {
                         if pi.status == ProcessStatus::Running
                             || pi.status == ProcessStatus::Waiting
                         {

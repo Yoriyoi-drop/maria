@@ -166,6 +166,12 @@ impl ExamplePlugin {
     }
 }
 
+impl Default for ExamplePlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Plugin for ExamplePlugin {
     fn name(&self) -> &str {
         &self.name

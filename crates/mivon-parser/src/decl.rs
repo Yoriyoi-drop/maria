@@ -344,11 +344,7 @@ impl Parser {
         let scoped_dtype = if matches!(self.peek(), Token::Ident(_))
             && (decl_expr_range.is_none() || self.peek_ahead(1) == &Token::Scope)
         {
-            if let Some(sdt) = self.parse_scoped_type_name() {
-                Some(sdt)
-            } else {
-                None
-            }
+            self.parse_scoped_type_name()
         } else {
             None
         };
@@ -375,7 +371,7 @@ impl Parser {
             let line = self.peek_line();
             let col = self.peek_col();
             self.push_warning_at(
-                format!("expected ';' after declaration — missing semicolon"),
+                "expected ';' after declaration — missing semicolon".to_string(),
                 line,
                 col,
             );

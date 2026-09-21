@@ -393,6 +393,12 @@ impl Rv64JitCpu {
     }
 }
 
+impl Default for Rv64JitCpu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(not(feature = "jit"))]
 impl crate::cpu::CpuCore for Rv64JitCpu {
     fn reset(&mut self) {}

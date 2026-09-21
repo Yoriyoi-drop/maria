@@ -68,7 +68,7 @@ pub fn read_journal(path: &Path) -> Option<Journal> {
     if bytes.len() < JOURNAL_MAGIC.len() + 4 {
         return None;
     }
-    if &bytes[0..4] != &JOURNAL_MAGIC {
+    if bytes[0..4] != JOURNAL_MAGIC {
         return None;
     }
     let version = u32::from_le_bytes(bytes[4..8].try_into().ok()?);

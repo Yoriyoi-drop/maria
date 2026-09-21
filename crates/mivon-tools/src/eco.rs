@@ -193,6 +193,12 @@ impl EcoDb {
     }
 }
 
+impl Default for EcoDb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

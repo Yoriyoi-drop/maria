@@ -131,7 +131,7 @@ pub fn value_label(m: &SirModule, v: ValueId) -> String {
             } else {
                 m.outputs[p - m.inputs.len()].name.as_str().to_string()
             };
-            format!("{}", name)
+            name.to_string()
         }
         Some(SirValue::Const(lv)) => format!("{}'h{:x}", lv.width, lv.to_u64()),
         Some(SirValue::Node(n)) => format!("n{}", n),

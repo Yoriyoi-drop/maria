@@ -186,6 +186,12 @@ impl WaiverStore {
     }
 }
 
+impl Default for WaiverStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Simple glob-like pattern matching (* and ?).
 fn simple_match(pattern: &str, text: &str) -> bool {
     let p: Vec<char> = pattern.chars().collect();

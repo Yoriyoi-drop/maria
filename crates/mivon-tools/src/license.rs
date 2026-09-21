@@ -18,6 +18,7 @@ use std::sync::Mutex;
 
 /// License feature flags (bitfield).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub struct LicenseFeatures(pub u64);
 
 impl LicenseFeatures {
@@ -45,11 +46,6 @@ impl LicenseFeatures {
     }
 }
 
-impl Default for LicenseFeatures {
-    fn default() -> Self {
-        Self(0)
-    }
-}
 
 /// Tipe lisensi.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -277,7 +277,7 @@ impl Elaborator {
                     0,
                     0,
                 );
-                return Ok(1);
+                Ok(1)
             }
             DataType::Signed(inner) => self.resolve_type_width(inner),
             _ => Ok(dtype.width()),

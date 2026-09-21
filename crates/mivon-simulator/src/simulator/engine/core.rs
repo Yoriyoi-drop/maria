@@ -990,11 +990,10 @@ impl SimulationEngine {
 
             // ── Layer resource guard (MIVON-SIM-34): poll RSS tiap interval
             // untuk mencegah kernel OOM-kill pada design besar (OpenTitan).
-            if self.resource_guard.is_enabled() {
-                if (t as u64) % self.resource_guard.check_interval() == 0 {
+            if self.resource_guard.is_enabled()
+                && (t as u64).is_multiple_of(self.resource_guard.check_interval()) {
                     self.resource_guard.poll(self.state.time, t as u64)?;
                 }
-            }
 
             // ── Guard: event di luar jendela alokasi → abort graceful ──
             if self.event_alloc_exceeded {
@@ -1337,7 +1336,7 @@ impl SimulationEngine {
                                     self.process_event(re.event, t)?;
                                 }
                             }
-                            let buffered: Vec<EventKind> = self.reactive_events.drain(..).collect();
+                            let buffered: Vec<EventKind> = std::mem::take(&mut self.reactive_events);
                             if !buffered.is_empty() {
                                 activity = true;
                                 for event in buffered {
@@ -1407,7 +1406,7 @@ impl SimulationEngine {
                 // /proc/self/status (~37k instr + alokasi) SETIAP delta tiap
                 // step (probe perf2: 14.8% instruction di check_rss).
                 let cum_delta = self.sim_perf.counters.delta_cycles;
-                if self.resource_guard.is_enabled() && (cum_delta < 1024 || cum_delta % 256 == 0) {
+                if self.resource_guard.is_enabled() && (cum_delta < 1024 || cum_delta.is_multiple_of(256)) {
                     self.resource_guard.check_limit(self.state.time)?;
                 }
 
@@ -1631,7 +1630,7 @@ impl SimulationEngine {
             // selalu merepresentasikan titik terakhir; resume memakai
             // --restore + --max-time lanjutan.
             if let Some((ref path, interval)) = self.auto_checkpoint.clone() {
-                if interval > 0 && self.state.time % interval == 0 {
+                if interval > 0 && self.state.time.is_multiple_of(interval) {
                     let _ = self.save_checkpoint(std::path::Path::new(&path));
                 }
             }
@@ -1744,7 +1743,7 @@ impl SimulationEngine {
                 );
                 stall_warned = true;
             }
-            if self.report_progress && self.state.time % progress_interval == 0 {
+            if self.report_progress && self.state.time.is_multiple_of(progress_interval) {
                 let elapsed = last_report_wall.elapsed().as_secs_f64().max(1e-9);
                 let speed = progress_interval as f64 / elapsed / 1e6; // M steps/s
                 eprintln!(
@@ -1763,7 +1762,7 @@ impl SimulationEngine {
             // dijadwalkan pada waktu >= sekarang, jadi slot events kosong +
             // antrian region kosong = tidak ada yang bisa mengubah state lagi.
             // Gate cosim/foreign: thread eksternal bisa memasukkan event baru.
-            if self.state.time % QUIESCENCE_CHECK_INTERVAL == 0
+            if self.state.time.is_multiple_of(QUIESCENCE_CHECK_INTERVAL)
                 && !self.use_timing_wheel
                 && self.foreign_events.is_empty()
                 && self.cosim_state.is_none()

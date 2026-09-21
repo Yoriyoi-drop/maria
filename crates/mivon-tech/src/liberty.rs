@@ -665,9 +665,7 @@ fn first_value(body: &[Item]) -> Option<f64> {
 
 /// Ambil angka pertama dari string nilai (`"0.5"`, `"0.5" "0.7"`, `(0.5)`).
 fn extract_first_number(s: &str) -> Option<f64> {
-    s.split(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+')
-        .filter(|t| !t.is_empty())
-        .next()
+    s.split(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+').find(|t| !t.is_empty())
         .and_then(|t| t.parse::<f64>().ok())
 }
 
@@ -790,11 +788,11 @@ pub fn load_mdb(path: &Path) -> std::io::Result<LibertyLibrary> {
                     let rise = parts
                         .next()
                         .and_then(|t| t.strip_prefix("rise="))
-                        .and_then(|t| parse_opt_f64(t));
+                        .and_then(parse_opt_f64);
                     let fall = parts
                         .next()
                         .and_then(|t| t.strip_prefix("fall="))
-                        .and_then(|t| parse_opt_f64(t));
+                        .and_then(parse_opt_f64);
                     p.timings.push(TimingArc {
                         related_pin: rel,
                         rise_delay_ns: rise,

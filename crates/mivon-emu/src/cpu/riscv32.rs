@@ -142,12 +142,7 @@ impl Rv32Cpu {
     /// Interrupt tertunda berprioritas tertinggi (MEI > MTI > MSI).
     fn pending_interrupt(&self) -> Option<u32> {
         let pending = self.mie & self.mip;
-        for irq in [IRQ_MEI, IRQ_MTI, IRQ_MSI] {
-            if pending & (1 << irq) != 0 {
-                return Some(irq);
-            }
-        }
-        None
+        [IRQ_MEI, IRQ_MTI, IRQ_MSI].into_iter().find(|&irq| pending & (1 << irq) != 0)
     }
 
     fn csr_read(&self, addr: u64) -> Option<u64> {
@@ -491,7 +486,7 @@ impl Rv32Cpu {
     ) -> Result<(), ExecErr> {
         match instr {
             Instr::Lui { rd, imm } => {
-                self.write_rd(rd, imm as u64);
+                self.write_rd(rd, imm);
                 self.pc = base_pc + 4;
             }
             Instr::Auipc { rd, imm } => {
@@ -597,17 +592,17 @@ impl Rv32Cpu {
                     0x6 => a | b,                              // OR
                     0x7 => a & b,                              // AND
                     // funct7=1 (bit 3 = 1): M extension
-                    0x8 => (a as u32).wrapping_mul(b as u32), // MUL (low)
+                    0x8 => a.wrapping_mul(b), // MUL (low)
                     0x9 => {
                         // MULH: signed rs1 × signed rs2, ambil high 32-bit.
                         // Wajib sign-extend `a`/`b` ke i128 (u32→i64 zero-extends
                         // → nilai negatif salah DAN overflow i64 saat kedua
                         // operand 0xFFFFFFFF). Pakai i128 untuk hindari overflow.
-                        (((a as u32 as i32 as i128) * (b as u32 as i32 as i128)) >> 32) as u32
+                        (((a as i32 as i128) * (b as i32 as i128)) >> 32) as u32
                     }
                     0xa => {
                         // MULHSU: signed rs1 × unsigned rs2, high 32-bit.
-                        (((a as u32 as i32 as i128) * (b as u32 as u128 as i128)) >> 32) as u32
+                        (((a as i32 as i128) * (b as u128 as i128)) >> 32) as u32
                     }
                     0xb => {
                         // MULHU: unsigned × unsigned, high 32-bit.

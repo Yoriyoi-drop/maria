@@ -204,9 +204,9 @@ impl VcdWriter {
         Ok(())
     }
 
-    fn elem_val<'a>(
+    fn elem_val(
         &self,
-        sig_val: &'a mivon_ir::LogicVec,
+        sig_val: &mivon_ir::LogicVec,
         elem: usize,
         elem_width: usize,
     ) -> mivon_ir::LogicVec {
@@ -419,13 +419,13 @@ impl VcdWriter {
             .iter()
             .map(|t| {
                 let sig = &design.top.signals[t.signal_idx];
-                let val = if let Some(elem) = t.elem_idx {
+                
+                if let Some(elem) = t.elem_idx {
                     let e_val = self.elem_val(&sig.init_val, elem, t.elem_width);
                     vec_to_vcd(&e_val)
                 } else {
                     vec_to_vcd(&sig.init_val)
-                };
-                val
+                }
             })
             .collect();
 

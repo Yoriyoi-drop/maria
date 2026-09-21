@@ -336,7 +336,7 @@ impl MdbReader {
         if mmap.len() < HEADER_SIZE {
             return Err(MdbError::Truncated);
         }
-        if &mmap[0..4] != &MAGIC {
+        if mmap[0..4] != MAGIC {
             return Err(MdbError::BadMagic);
         }
         let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());

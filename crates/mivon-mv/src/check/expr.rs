@@ -32,7 +32,7 @@ pub(crate) fn check_expr<'a>(
                 }
             }
         }
-        Expr::Sized(None, _, _, ..) => {}
+        Expr::Sized(None, ..) => {}
         Expr::Ident(s, l, c) => {
             // `$finish`/`$display`/`$past`/`$clog2` — system task/function.
             if s.starts_with('$') {
@@ -400,19 +400,15 @@ pub(crate) fn expr_width(e: &Expr, ctx: &Ctx, scope: &Scope, depth: usize) -> Op
     }
     match e {
         Expr::Int(v) => Some(bit_len(*v)),
-        Expr::Sized(Some(w), _, _, ..) => Some(*w),
-        Expr::Sized(None, _, _, ..) => None,
+        Expr::Sized(Some(w), ..) => Some(*w),
+        Expr::Sized(None, ..) => None,
         Expr::Real(_) | Expr::Fill(_) | Expr::Str(_) => None,
         Expr::Ident(s, ..) => {
             if let Some(ty) = scope.types.get(s.as_str()) {
                 type_width(ty, ctx, scope, depth + 1)
             } else if let Some(v) = scope.params.get(s.as_str()) {
                 Some(bit_len(*v))
-            } else if let Some(w) = scope.enum_members.get(s.as_str()) {
-                Some(*w)
-            } else {
-                None
-            }
+            } else { scope.enum_members.get(s.as_str()).map(|w| *w) }
         }
         Expr::Scoped(..) => None,
         Expr::Unary(op, inner) => match op.as_str() {

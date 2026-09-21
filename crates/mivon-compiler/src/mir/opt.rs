@@ -451,11 +451,10 @@ fn rewrite_read_register(instr: &mut MirInstr, from: usize, to: usize) {
                 *src = to;
             }
         }
-        MirInstr::Branch { cond, .. } => {
-            if *cond == from {
+        MirInstr::Branch { cond, .. }
+            if *cond == from => {
                 *cond = to;
             }
-        }
         _ => {}
     }
 }

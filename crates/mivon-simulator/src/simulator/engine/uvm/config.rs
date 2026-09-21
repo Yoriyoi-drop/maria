@@ -167,13 +167,13 @@ impl SimulationEngine {
                 }
             }
             "uvm_resource_db::set" | "uvm_resource_db::write_by_name" => {
-                let scope = arg_vals.get(0).map(logicvec_to_string).unwrap_or_default();
+                let scope = arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                 let rname = arg_vals.get(1).map(logicvec_to_string).unwrap_or_default();
                 let value = arg_vals.get(2).cloned().unwrap_or_else(|| LogicVec::new(1));
                 self.uvm_resource_db_data.insert((scope, rname), value);
             }
             "uvm_resource_db::get" | "uvm_resource_db::read_by_name" => {
-                let scope = arg_vals.get(0).map(logicvec_to_string).unwrap_or_default();
+                let scope = arg_vals.first().map(logicvec_to_string).unwrap_or_default();
                 let rname = arg_vals.get(1).map(logicvec_to_string).unwrap_or_default();
                 if let Some(v) = self.resource_db_find(&scope, &rname) {
                     if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2) {

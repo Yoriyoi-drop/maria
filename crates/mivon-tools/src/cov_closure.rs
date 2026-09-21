@@ -171,6 +171,12 @@ impl CoverageClosure {
     }
 }
 
+impl Default for CoverageClosure {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

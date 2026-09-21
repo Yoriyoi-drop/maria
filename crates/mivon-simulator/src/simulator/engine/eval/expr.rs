@@ -1701,8 +1701,8 @@ impl SimulationEngine {
                                 .sysfunc_prev
                                 .entry(Symbol::intern(&key))
                                 .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
-                            let rose = prev.to_bool().unwrap_or(false) == false
-                                && val.to_bool().unwrap_or(false) == true;
+                            let rose = !prev.to_bool().unwrap_or(false)
+                                && val.to_bool().unwrap_or(false);
                             *prev = val;
                             Ok(LogicVec::from_u64(if rose { 1 } else { 0 }, 1))
                         } else {
@@ -1717,8 +1717,8 @@ impl SimulationEngine {
                                 .sysfunc_prev
                                 .entry(Symbol::intern(&key))
                                 .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
-                            let fell = prev.to_bool().unwrap_or(false) == true
-                                && val.to_bool().unwrap_or(false) == false;
+                            let fell = prev.to_bool().unwrap_or(false)
+                                && !val.to_bool().unwrap_or(false);
                             *prev = val;
                             Ok(LogicVec::from_u64(if fell { 1 } else { 0 }, 1))
                         } else {
@@ -1846,7 +1846,7 @@ impl SimulationEngine {
                     // instance obj id diteruskan utk per-instance tracking.
                     self.sample_covergroup(class_name.as_str(), Some(obj_id))?;
                 } else if !class_name.is_empty() {
-                    if let Some(cls) = self.design.classes.get(&class_name) {
+                    if let Some(cls) = self.design.classes.get(class_name) {
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
                             for field in &cls.fields {
                                 obj.fields

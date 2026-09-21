@@ -156,7 +156,7 @@ impl ResetDomainAnalysis {
             }
         }
         let mut signal_to_domain: HashMap<SignalId, Option<usize>> = HashMap::new();
-        for ((sid, did), _) in &owner_counts {
+        for (sid, did) in owner_counts.keys() {
             let e = signal_to_domain.entry(*sid).or_insert(None);
             if e.is_none() {
                 *e = Some(*did);

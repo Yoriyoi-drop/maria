@@ -126,7 +126,7 @@ impl GlobalDiagnosticEngine {
         let st = self.state.lock().unwrap();
         let mut all = st.collected.clone();
         drop(st);
-        all.sort_by(|a, b| self.pos_key(a).cmp(&self.pos_key(b)));
+        all.sort_by_key(|a| self.pos_key(a));
         all
     }
 

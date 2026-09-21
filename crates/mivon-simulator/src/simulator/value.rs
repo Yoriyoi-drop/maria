@@ -977,7 +977,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: result_width,
                 };
             }
-            if result_width <= 64 && !has_xz(&lhs) {
+            if result_width <= 64 && !has_xz(lhs) {
                 // Fast path: u64 shift
                 let val = lhs.to_u64();
                 let shifted = if shift >= result_width {
@@ -998,7 +998,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
                     result
                         .bits
-                        .extend(std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width));
+                        .extend(std::iter::repeat_n(LogicVal::Zero, result_width - lhs.width));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1033,7 +1033,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: result_width,
                 };
             }
-            if result_width <= 64 && !has_xz(&lhs) {
+            if result_width <= 64 && !has_xz(lhs) {
                 // Fast path: u64 shift
                 let val = lhs.to_u64();
                 let shifted = if shift >= result_width {
@@ -1057,7 +1057,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
                     result
                         .bits
-                        .extend(std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width));
+                        .extend(std::iter::repeat_n(LogicVal::Zero, result_width - lhs.width));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1092,7 +1092,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: result_width,
                 };
             }
-            if result_width <= 64 && !has_xz(&lhs) {
+            if result_width <= 64 && !has_xz(lhs) {
                 // Arithmetic shift left is same as logical shift left
                 let val = lhs.to_u64();
                 let shifted = if shift >= result_width {
@@ -1116,7 +1116,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
                     result
                         .bits
-                        .extend(std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width));
+                        .extend(std::iter::repeat_n(LogicVal::Zero, result_width - lhs.width));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1145,7 +1145,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: result_width,
                 };
             }
-            if result_width <= 64 && !has_xz(&lhs) {
+            if result_width <= 64 && !has_xz(lhs) {
                 // Arithmetic shift right: extend sign bit
                 let val = lhs.to_u64();
                 let sign_bit = (val >> (result_width - 1)) & 1;
@@ -1182,7 +1182,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
                     result
                         .bits
-                        .extend(std::iter::repeat(LogicVal::Zero).take(result_width - lhs.width));
+                        .extend(std::iter::repeat_n(LogicVal::Zero, result_width - lhs.width));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {

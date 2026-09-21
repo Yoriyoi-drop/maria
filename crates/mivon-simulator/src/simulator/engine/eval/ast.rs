@@ -643,14 +643,13 @@ impl SimulationEngine {
                 // object saat ini bila method ada di hierarki class-nya.
                 if let Some(obj_id) = self.current_this {
                     if let Some(obj) = self.state.get_object(obj_id) {
-                        if !obj.class_name.is_empty() {
-                            if self
+                        if !obj.class_name.is_empty()
+                            && self
                                 .find_method_quiet(obj.class_name.as_str(), name.as_str())
                                 .is_some()
                             {
                                 return self.execute_method(obj_id, name.as_str(), &arg_vals);
                             }
-                        }
                     }
                 }
                 // F18: method builtin UVM dipanggil tanpa `this.` di body task

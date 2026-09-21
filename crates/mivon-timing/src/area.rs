@@ -41,7 +41,7 @@ pub fn estimate_area(nl: &Netlist) -> AreaReport {
             CellKind::Carry4 => {
                 // Slice-equivalent: satu sel CARRY4 bit-vector = ceil(width/4)
                 // slice (konsisten dgn `tech_map` carry4_count).
-                let slices = (c.width.max(1) + 3) / 4;
+                let slices = c.width.max(1).div_ceil(4);
                 r.carry4 += slices;
                 units += 2.0 * slices as f64;
             }
@@ -72,7 +72,7 @@ pub fn render_area_report(r: &AreaReport) -> String {
     s.push_str(&format!("  FF bits     {:>6}\n", r.ff));
     s.push_str(&format!("  Buffer      {:>6}\n", r.buf));
     s.push_str(&format!("  other       {:>6}\n", r.other));
-    s.push_str(&format!("  ──────────────────\n"));
+    s.push_str(&"  ──────────────────\n".to_string());
     s.push_str(&format!("  area        {:>8.2} units\n", r.area_units));
     s.push_str("  (model: LUT=1.0, CARRY4=2.0, FF=0.5, BUF=0.1 — teknologi\n");
     s.push_str("   nyata via Liberty .lib menyusul fase 6-7)\n");

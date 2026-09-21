@@ -230,7 +230,7 @@ fn handle_connection(
                                 file: file.clone(),
                                 line: 0,
                                 col: 0,
-                                message: format!("file not found"),
+                                message: "file not found".to_string(),
                             });
                         } else {
                             let name = path

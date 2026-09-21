@@ -57,11 +57,11 @@ impl ModuleIndex {
         let file = meta.file.clone();
         self.modules
             .entry(name)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push((kind, meta));
         self.file_map
             .entry(file)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(name);
         self.count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

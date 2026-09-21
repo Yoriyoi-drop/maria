@@ -90,7 +90,7 @@ pub fn run(args: &ProfArgs) -> Result<(), SimError> {
 
     section("Pipeline Profile");
     println!("  {:<14} {:>10} {:>8}", "Phase", "Time (ms)", "%");
-    println!("  {}────────────{}──────────{}────────", "─", "─", "─");
+    println!("  ─────────────────────────────────");
     for p in &phases {
         let bar_len = ((p.ms as f64 / total as f64) * 40.0) as usize;
         let bar = "█".repeat(bar_len);
@@ -102,7 +102,7 @@ pub fn run(args: &ProfArgs) -> Result<(), SimError> {
             bar
         );
     }
-    println!("  {}────────────{}──────────{}────────", "─", "─", "─");
+    println!("  ─────────────────────────────────");
     println!("  {:<14} {:>10}", "Total", total);
 
     // Bottleneck
@@ -207,7 +207,7 @@ pub fn run_cached(args: &ProfArgs) -> Result<(), SimError> {
     );
     println!();
     println!("  {:<14} {:>10} {:>8}", "Phase", "Time (ms)", "%");
-    println!("  {}────────────{}──────────{}────────", "─", "─", "─");
+    println!("  ─────────────────────────────────");
     for p in &phases {
         let bar_len = ((p.ms as f64 / total as f64) * 40.0) as usize;
         let bar = "█".repeat(bar_len);
@@ -219,7 +219,7 @@ pub fn run_cached(args: &ProfArgs) -> Result<(), SimError> {
             bar
         );
     }
-    println!("  {}────────────{}──────────{}────────", "─", "─", "─");
+    println!("  ─────────────────────────────────");
     println!("  {:<14} {:>10}", "Total", total);
 
     if let Some(bn) = phases.iter().max_by_key(|p| p.ms) {

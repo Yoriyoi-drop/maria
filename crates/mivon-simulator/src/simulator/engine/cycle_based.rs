@@ -288,15 +288,14 @@ fn settle(
         let mut activity = false;
 
         // Resume `@(clk)` / level waits yang cocok dengan sinyal berubah.
-        if !changed_ids.is_empty() && !engine.pending_events.is_empty() {
-            if engine.process_pending_events(changed_ids)? {
+        if !changed_ids.is_empty() && !engine.pending_events.is_empty()
+            && engine.process_pending_events(changed_ids)? {
                 activity = true;
             }
-        }
 
         // Drain reactive buffer (hasil evaluasi comb/reactive sebelumnya).
         loop {
-            let buffered: Vec<EventKind> = engine.reactive_events.drain(..).collect();
+            let buffered: Vec<EventKind> = std::mem::take(&mut engine.reactive_events);
             if buffered.is_empty() {
                 break;
             }
@@ -404,7 +403,7 @@ pub(crate) fn run_cycle_based(engine: &mut SimulationEngine) -> Result<bool, Sim
                 break;
             }
             let evs: Vec<crate::simulator::types::RegionEvent> =
-                engine.events[idx].drain(..).collect();
+                std::mem::take(&mut engine.events[idx]);
             for re in evs {
                 engine.process_event(re.event, cur)?;
             }
@@ -460,7 +459,7 @@ pub(crate) fn run_cycle_based(engine: &mut SimulationEngine) -> Result<bool, Sim
             // Evaluasi proses FF yang terpicu (inline, semantik sama dengan
             // event-driven) + jadwalkan CombReactive.
             engine.trigger_sensitive_processes(&changed, t)?;
-            let buffered: Vec<EventKind> = engine.reactive_events.drain(..).collect();
+            let buffered: Vec<EventKind> = std::mem::take(&mut engine.reactive_events);
             for ev in buffered {
                 engine.process_event(ev, t)?;
             }

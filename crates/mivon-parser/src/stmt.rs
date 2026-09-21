@@ -2974,7 +2974,7 @@ impl Parser {
         self.expect(Token::LParen)?;
         let mut array_var = String::new();
         // Leading identifier
-        array_var.push_str(&self.expect_ident()?.as_str());
+        array_var.push_str(self.expect_ident()?.as_str());
         loop {
             match self.peek() {
                 Token::Scope => {
@@ -2982,12 +2982,12 @@ impl Parser {
                     // e.g. `foreach (riscv_instr_pkg::supported_isa[i])`.
                     self.advance();
                     array_var.push_str("::");
-                    array_var.push_str(&self.expect_ident()?.as_str());
+                    array_var.push_str(self.expect_ident()?.as_str());
                 }
                 Token::Dot => {
                     self.advance();
                     array_var.push('.');
-                    array_var.push_str(&self.expect_ident()?.as_str());
+                    array_var.push_str(self.expect_ident()?.as_str());
                 }
                 Token::LBrack => {
                     // Determine if this bracket group is the LOOP-VAR group:
@@ -3063,7 +3063,7 @@ impl Parser {
                                 if depth == 0 {
                                     array_var.push(']');
                                 } else {
-                                    array_var.push_str("]");
+                                    array_var.push(']');
                                 }
                             }
                             Token::LBrack => {

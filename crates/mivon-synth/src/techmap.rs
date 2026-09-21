@@ -804,7 +804,7 @@ impl<'a> TechMapper<'a> {
             },
         ];
         self.nl.add_cell(cell);
-        self.carry_slices += (w + 3) / 4;
+        self.carry_slices += w.div_ceil(4);
         s
     }
 
@@ -856,7 +856,7 @@ impl<'a> TechMapper<'a> {
             },
         ];
         self.nl.add_cell(cell);
-        self.carry_slices += (w + 3) / 4;
+        self.carry_slices += w.div_ceil(4);
         self.value_net[node.output] = Some(s);
     }
 
@@ -1490,7 +1490,7 @@ pub fn tech_map(sir: &SirModule, arch: &dyn TechArch) -> TechMapResult {
         m.nl.cells
             .iter()
             .filter(|c| matches!(c.kind, CellKind::Carry4))
-            .map(|c| (c.width.max(1) + 3) / 4)
+            .map(|c| c.width.max(1).div_ceil(4))
             .sum();
     TechMapResult {
         netlist: m.nl,

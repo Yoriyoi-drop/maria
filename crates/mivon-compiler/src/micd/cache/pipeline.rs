@@ -913,9 +913,7 @@ fn elaborate_from_ast(m: &Module) -> ElaboratePayload {
                 instance: inst.instance_name.to_string(),
                 port_bindings: inst.port_conns.len(),
                 param_overrides: inst
-                    .param_assigns
-                    .iter()
-                    .map(|(k, _)| (k.to_string(), 0))
+                    .param_assigns.keys().map(|k| (k.to_string(), 0))
                     .collect(),
                 line: inst.line,
                 col: inst.col,

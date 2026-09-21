@@ -565,7 +565,7 @@ pub fn const_eval_with_params(
             let r = const_eval_with_params(rhs, param_vals)?;
             // Guard overflow: shift >= 64 → 0; shift negatif (SV: undefined)
             // → tanpa shift (hindari panic debug).
-            if r >= 64 || r < 0 {
+            if !(0..64).contains(&r) {
                 Ok(0)
             } else {
                 // Mask ke lebar LHS (LRM §11.8.1: hasil shift =
@@ -583,7 +583,7 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            if r >= 64 || r < 0 {
+            if !(0..64).contains(&r) {
                 Ok(0)
             } else {
                 let ow = sized_width(lhs).unwrap_or(64).min(64) as u32;
@@ -598,7 +598,7 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            if r >= 64 || r < 0 {
+            if !(0..64).contains(&r) {
                 Ok(0)
             } else {
                 let ow = sized_width(lhs).unwrap_or(64).min(64) as u32;
@@ -906,7 +906,7 @@ pub fn const_eval_with_params(
             }
             let base_val = const_eval_with_params(expr, param_vals)?;
             let idx = const_eval_with_params(index, param_vals)?;
-            if idx < 0 || idx >= 64 {
+            if !(0..64).contains(&idx) {
                 return Ok(0);
             }
             Ok((base_val >> idx) & 1)
@@ -915,7 +915,7 @@ pub fn const_eval_with_params(
             let base_val = const_eval_with_params(expr, param_vals)?;
             let m = const_eval_with_params(msb, param_vals)?;
             let l = const_eval_with_params(lsb, param_vals)?;
-            if l < 0 || l >= 64 {
+            if !(0..64).contains(&l) {
                 return Ok(0);
             }
             let width = (m - l + 1) as usize;
@@ -939,7 +939,7 @@ pub fn const_eval_with_params(
             }
             let width = w as usize;
             let lsb = b;
-            if lsb < 0 || lsb >= 64 {
+            if !(0..64).contains(&lsb) {
                 return Ok(0);
             }
             if width >= 64 {

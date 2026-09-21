@@ -484,7 +484,7 @@ pub fn try_fold_const(
     if !const_expr_is_signed(expr) {
         if let Some(val) = try_fold_const_unsigned(expr, params)? {
             let width = const_fold_width(expr, params).unwrap_or_else(|| {
-                let abs = val as u64;
+                let abs = val;
                 let min_width = if val == 0 {
                     1
                 } else {

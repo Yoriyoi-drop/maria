@@ -61,7 +61,7 @@ impl HugePageConfig {
             return 0;
         }
         // 50% overhead for metadata + alignment
-        (design_size_mb * 3 / 2 + page_size_mb - 1) / page_size_mb
+        (design_size_mb * 3 / 2).div_ceil(page_size_mb)
     }
 
     /// Check if HugePages are available for allocation.

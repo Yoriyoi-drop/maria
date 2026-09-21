@@ -67,9 +67,9 @@ impl CgroupLimits {
         // CPU quota: cpu.max (format: "quota period")
         let cpu_max = cgroup_path.join("cpu.max");
         if let Ok(content) = std::fs::read_to_string(&cpu_max) {
-            let parts: Vec<&str> = content.trim().split_whitespace().collect();
-            if parts.len() == 2 {
-                if parts[0] != "max" {
+            let parts: Vec<&str> = content.split_whitespace().collect();
+            if parts.len() == 2
+                && parts[0] != "max" {
                     if let (Ok(quota), Ok(period)) =
                         (parts[0].parse::<u64>(), parts[1].parse::<u64>())
                     {
@@ -80,7 +80,6 @@ impl CgroupLimits {
                         }
                     }
                 }
-            }
         }
 
         Some(limits)

@@ -170,7 +170,7 @@ impl CacheLayer {
             self.run_gc();
         }
         let mut first_err = None;
-        for (_, st) in self.stores.iter_mut() {
+        for st in self.stores.values_mut() {
             if let Err(e) = st.save() {
                 if first_err.is_none() {
                     first_err = Some(e);
@@ -193,7 +193,7 @@ impl CacheLayer {
     /// Bersihkan seluruh lapisan (index + objek semua kategori).
     pub fn clear(&mut self) -> io::Result<()> {
         let mut first_err = None;
-        for (_, st) in self.stores.iter_mut() {
+        for st in self.stores.values_mut() {
             if let Err(e) = st.clear() {
                 if first_err.is_none() {
                     first_err = Some(e);
@@ -236,7 +236,7 @@ impl CacheLayer {
 
     /// Bersihkan sisa `.tmp` di temp/ (crash sebelum commit).
     pub fn clean_temp(&self) {
-        for (_, st) in self.stores.iter() {
+        for st in self.stores.values() {
             let dir = st.root.join(DIR_TEMP);
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for e in entries.flatten() {

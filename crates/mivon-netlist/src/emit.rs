@@ -37,7 +37,7 @@ pub fn emit_verilog(nl: &Netlist) -> String {
         kinds.insert(c.kind.module_key());
     }
     for key in &kinds {
-        let kind = kind_from_key(&nl, key);
+        let kind = kind_from_key(nl, key);
         let _ = writeln!(s, "{}", cell_module(&kind));
         let _ = writeln!(s);
     }
@@ -282,10 +282,10 @@ fn emit_instance(s: &mut String, c: &CellInstance, nl: &Netlist) {
     for pin in &c.inputs {
         // Selalu referensi net (konstanta sudah jadi wire + assign di top).
         // Bit-select `.i0(a[3])` dipakai LUT/carry saat koneksi ke bit tertentu.
-        conns.push(format!(".{}({})", pin.pin, net_ref(&nl, pin)));
+        conns.push(format!(".{}({})", pin.pin, net_ref(nl, pin)));
     }
     for pin in &c.outputs {
-        conns.push(format!(".{}({})", pin.pin, net_ref(&nl, pin)));
+        conns.push(format!(".{}({})", pin.pin, net_ref(nl, pin)));
     }
     // Koneksi port COMma-separated `(.a(net), .b(net))` — engine Mivon hanya
     // mendukung bentuk ini (bentuk space-separated `.a(net) .b(net)` membuat

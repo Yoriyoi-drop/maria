@@ -326,7 +326,7 @@ impl SignalHistoryStore {
     fn spill_entry(&mut self, name: Symbol, time: u64, value: &LogicVec) -> io::Result<()> {
         let path = match &self.spill_path {
             Some(p) => p.clone(),
-            None => return Err(io::Error::new(io::ErrorKind::Other, "spill not configured")),
+            None => return Err(io::Error::other("spill not configured")),
         };
 
         // Initialize writer on first use (check metadata BEFORE creating BufWriter)

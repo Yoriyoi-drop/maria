@@ -378,7 +378,7 @@ impl SimulationEngine {
                 if let Some(f) = self.file_handles.get_mut(&h) {
                     // LRM: $fdisplay = $fwrite + newline (VCS/iverilog patuh;
                     // mivon sebelumnya concat tanpa '\n' — artefak differential).
-                    let _ = write!(f, "{}\n", msg);
+                    let _ = writeln!(f, "{}", msg);
                 }
             }
         } else if name == "fwrite" {
@@ -849,7 +849,7 @@ impl SimulationEngine {
                 let mut precision = 0i64;
                 let mut suffix = String::new();
                 let mut min_width = 0usize;
-                if let Some(a) = ir_args.get(0) {
+                if let Some(a) = ir_args.first() {
                     if let Ok(v) = self.evaluate_expr(a) {
                         units = v.to_u64() as i64;
                     }
@@ -1269,7 +1269,7 @@ impl SimulationEngine {
                 if let Some(f) = self.file_handles.get_mut(&h) {
                     // LRM: $fdisplay = $fwrite + newline (VCS/iverilog patuh;
                     // mivon sebelumnya concat tanpa '\n' — artefak differential).
-                    let _ = write!(f, "{}\n", msg);
+                    let _ = writeln!(f, "{}", msg);
                 }
             }
         } else if name == "fwrite" {

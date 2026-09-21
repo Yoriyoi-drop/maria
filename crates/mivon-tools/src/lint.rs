@@ -492,7 +492,7 @@ fn expr_width(e: &Expr, declared: &HashMap<Symbol, usize>) -> Option<usize> {
             }
             Some(total)
         }
-        Expr::BitSelect { expr: _, .. } => Some(1),
+        Expr::BitSelect { .. } => Some(1),
         Expr::RangeSelect { expr, msb, lsb, .. } => {
             // width = |msb - lsb| + 1 jika keduanya konstanta
             if let (
@@ -1229,9 +1229,7 @@ fn find_clock_gating(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
                             module: scope.to_string(),
                             check: "clock_gating",
                             severity: "W",
-                            message: format!(
-                                "always_ff dengan if tanpa else: potensi clock gating implisit"
-                            ),
+                            message: "always_ff dengan if tanpa else: potensi clock gating implisit".to_string(),
                         });
                     }
                 }

@@ -84,7 +84,7 @@ impl RegressionDb {
             let history = self
                 .flaky_history
                 .entry(result.name.clone())
-                .or_insert_with(Vec::new);
+                .or_default();
             history.push(matches!(
                 result.status,
                 TestStatus::Pass | TestStatus::Flaky
@@ -168,6 +168,12 @@ impl RegressionDb {
     pub fn load(path: &Path) -> Result<Self, String> {
         let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         serde_json::from_str(&json).map_err(|e| e.to_string())
+    }
+}
+
+impl Default for RegressionDb {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

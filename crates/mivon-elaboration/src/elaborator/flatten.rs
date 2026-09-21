@@ -480,10 +480,7 @@ impl Elaborator {
                     value: r.value.clone(),
                 });
                 let new_body = self.translate_stmts(body, map_sig)?;
-                let new_iff = match iff {
-                    Some(ir) => Some(self.translate_expr(ir, map_sig)),
-                    None => None,
-                };
+                let new_iff = iff.as_ref().map(|ir| self.translate_expr(ir, map_sig));
                 Ok(Process::Sequential {
                     name: *name,
                     clock: new_clock,
@@ -702,10 +699,7 @@ impl Elaborator {
                     .iter()
                     .map(|(sid, edge)| (map_sig(*sid), edge.clone()))
                     .collect();
-                let new_iff = match iff {
-                    Some(ir) => Some(self.translate_expr(ir, map_sig)),
-                    None => None,
-                };
+                let new_iff = iff.as_ref().map(|ir| self.translate_expr(ir, map_sig));
                 Ok(IrStmt::EventControl {
                     sigs: new_sigs,
                     body: new_body,

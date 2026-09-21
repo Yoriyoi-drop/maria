@@ -120,7 +120,7 @@ pub fn analyze(nl: &Netlist, c: &Constraint, opts: &TimingOptions) -> TimingRepo
     // ── Startpoint ──
     // Input port: arrival = input_delay. Konstanta: 0. FF-Q: clk_to_q.
     let port_dir: Vec<(Symbol, PortDir)> =
-        nl.ports.iter().map(|p| (p.name, p.dir.clone())).collect();
+        nl.ports.iter().map(|p| (p.name, p.dir)).collect();
     for (id, net) in nl.nets.iter().enumerate() {
         let is_input_port = port_dir
             .iter()

@@ -124,7 +124,7 @@ fn fold_node(
             } else {
                 (vals[0] >> lsb) & mask(w)
             };
-            Some(r as u64)
+            Some(r)
         }
         // Mux: inputs = [sel, t, f]. sel==0 → f; else → t.
         SirNodeKind::Mux => {

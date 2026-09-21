@@ -874,7 +874,7 @@ impl CoverageDatabase {
         println!("  Toggle sigs: {}", total_toggle);
         println!("  Branches:    {}", total_branch);
         println!("  FSM signals: {}", total_fsm);
-        println!("");
+        println!();
 
         // Covergroup details
         for (name, entry) in &self.covergroups {
