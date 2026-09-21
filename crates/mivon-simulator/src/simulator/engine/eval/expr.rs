@@ -126,6 +126,7 @@ impl SimulationEngine {
         // STEP 1: Pre-check — apakah expression JIT-compatible?
         // (Gunakan collect_signal_ids sebagai pre-check murah sebelum build signal_values)
         if self.use_jit_expression {
+            #[cfg_attr(not(feature = "jit"), allow(unused_mut))]
             let mut sig_ids = Vec::new();
             #[cfg(feature = "jit")]
             let is_compatible = crate::simulator::jit_eval::collect_signal_ids(expr, &mut sig_ids);

@@ -24,16 +24,14 @@ use std::sync::OnceLock;
 static WTRACE: OnceLock<Option<(u64, u64)>> = OnceLock::new();
 fn w_trace_window() -> Option<(u64, u64)> {
     *WTRACE.get_or_init(|| {
-        std::env::var("MIVON_X86_WTRACE")
-            .ok()
-            .and_then(|s| {
-                // Dukung bentuk hex "0x..." maupun desimal.
-                let parse = |x: &str| u64::from_str_radix(x.trim_start_matches("0x"), 16).ok();
-                let mut it = s.split(':');
-                let a = parse(it.next()?)?;
-                let l = parse(it.next()?).unwrap_or(16);
-                Some((a, l))
-            })
+        std::env::var("MIVON_X86_WTRACE").ok().and_then(|s| {
+            // Dukung bentuk hex "0x..." maupun desimal.
+            let parse = |x: &str| u64::from_str_radix(x.trim_start_matches("0x"), 16).ok();
+            let mut it = s.split(':');
+            let a = parse(it.next()?)?;
+            let l = parse(it.next()?).unwrap_or(16);
+            Some((a, l))
+        })
     })
 }
 
@@ -369,7 +367,10 @@ impl X86Cpu {
             if a >= wa && a < wa + wl {
                 eprintln!(
                     "WTRACE8 step={} pc=0x{:x} addr=0x{:x} val=0x{:02x}",
-                    self.steps, self.pc(), a, v
+                    self.steps,
+                    self.pc(),
+                    a,
+                    v
                 );
             }
         }
@@ -391,7 +392,10 @@ impl X86Cpu {
             if a >= wa && a < wa + wl {
                 eprintln!(
                     "WTRACE16 step={} pc=0x{:x} addr=0x{:x} val=0x{:04x}",
-                    self.steps, self.pc(), a, v
+                    self.steps,
+                    self.pc(),
+                    a,
+                    v
                 );
             }
         }
@@ -417,7 +421,10 @@ impl X86Cpu {
             if a >= wa && a < wa + wl {
                 eprintln!(
                     "WTRACE32 step={} pc=0x{:x} addr=0x{:x} val=0x{:08x}",
-                    self.steps, self.pc(), a, v
+                    self.steps,
+                    self.pc(),
+                    a,
+                    v
                 );
             }
         }
@@ -2847,14 +2854,21 @@ impl X86Cpu {
                             .map_err(|e| self.fault(format!("movs read: {}", e)))?;
                         mem.write_exact(dst_lin.wrapping_add(off as u64), &buf[..chunk])
                             .map_err(|e| self.fault(format!("movs write: {}", e)))?;
-                        let chunk_signed = if dir < 0 { -(chunk as i64) } else { chunk as i64 };
+                        let chunk_signed = if dir < 0 {
+                            -(chunk as i64)
+                        } else {
+                            chunk as i64
+                        };
                         let dst_a = dst_lin.wrapping_add(off as u64);
-                        if w_trace_window().is_some_and(|(wa, wl)| {
-                            dst_a < wa + wl && dst_a + chunk as u64 > wa
-                        }) {
+                        if w_trace_window()
+                            .is_some_and(|(wa, wl)| dst_a < wa + wl && dst_a + chunk as u64 > wa)
+                        {
                             eprintln!(
                                 "WTRACEM step={} pc=0x{:x} movs dst=0x{:x} n={}",
-                                self.steps, self.pc(), dst_a, chunk
+                                self.steps,
+                                self.pc(),
+                                dst_a,
+                                chunk
                             );
                         }
                         mem.read_exact(src_lin.wrapping_add(off as u64), &mut buf[..chunk])
@@ -2989,12 +3003,15 @@ impl X86Cpu {
                     while left > 0 {
                         let chunk = left.min(4096) as usize;
                         let dst_a = dst_lin.wrapping_add(off as u64);
-                        if w_trace_window().is_some_and(|(wa, wl)| {
-                            dst_a < wa + wl && dst_a + chunk as u64 > wa
-                        }) {
+                        if w_trace_window()
+                            .is_some_and(|(wa, wl)| dst_a < wa + wl && dst_a + chunk as u64 > wa)
+                        {
                             eprintln!(
                                 "WTRACES step={} pc=0x{:x} stos dst=0x{:x} n={}",
-                                self.steps, self.pc(), dst_a, chunk
+                                self.steps,
+                                self.pc(),
+                                dst_a,
+                                chunk
                             );
                         }
                         for (i, b) in buf[..chunk].iter_mut().enumerate() {
@@ -3002,8 +3019,11 @@ impl X86Cpu {
                         }
                         mem.write_exact(dst_a, &buf[..chunk])
                             .map_err(|e| self.fault(format!("stos write: {}", e)))?;
-                        let chunk_signed =
-                            if dir < 0 { -(chunk as i64) } else { chunk as i64 };
+                        let chunk_signed = if dir < 0 {
+                            -(chunk as i64)
+                        } else {
+                            chunk as i64
+                        };
                         off += chunk_signed;
                         left -= chunk as i64;
                     }
@@ -3230,7 +3250,11 @@ impl X86Cpu {
                             }) {
                                 eprintln!(
                                     "WTRACEB step={} pc=0x{:x} bulk dst=0x{:x} n={} first=0x{:02x}",
-                                    self.steps, self.pc(), dst_lin, n, data[idx]
+                                    self.steps,
+                                    self.pc(),
+                                    dst_lin,
+                                    n,
+                                    data[idx]
                                 );
                             }
                             if self.vga_hits(dst_lin, n) {
@@ -4170,7 +4194,8 @@ mod tests {
         // 0f ba /4 (bt imm8) dan /7 (btc imm8) pada register.
         let code = [
             0xb8, 0x00, 0x10, 0x00, 0x00, // mov eax, 0x1000 (bit 12)
-            0x0f, 0xba, 0xe0, 0x0c, // bt eax, 12 -> CF=1 (modrm e0: mod11 reg100=bt rm000=eax)
+            0x0f, 0xba, 0xe0,
+            0x0c, // bt eax, 12 -> CF=1 (modrm e0: mod11 reg100=bt rm000=eax)
             0x0f, 0xba, 0xf8, 0x0c, // btc eax, 12 -> CF=1, hapus bit (modrm f8: reg111=btc)
             0xb8, 0x00, 0x00, 0x00, 0x00, // mov eax, 0
             0x0f, 0xba, 0xe8, 0x01, // bt eax, 1 -> CF=0 (modrm e8: reg100)
@@ -4232,11 +4257,7 @@ mod tests {
         assert_eq!(cpu.cx(), 0, "cx habis setelah rep");
         assert_eq!(cpu.di(), 0x9064 as u16, "di maju 100");
         for i in 0..50u64 {
-            assert_eq!(
-                m.read(0x9000 + i * 2, 2).unwrap(),
-                0x3234,
-                "pola dword {i}"
-            );
+            assert_eq!(m.read(0x9000 + i * 2, 2).unwrap(), 0x3234, "pola dword {i}");
         }
     }
 
@@ -4494,7 +4515,11 @@ mod tests {
             m.read(0x68000 + 0xffff, 1).unwrap(),
             (((0xffffu64 * 7 & 0xfb) as u8) ^ 0xa5) as u64
         );
-        assert_eq!(m.read(0x78000, 1).unwrap(), 0, "0x78000 (luar segmen) tak tersentuh");
+        assert_eq!(
+            m.read(0x78000, 1).unwrap(),
+            0,
+            "0x78000 (luar segmen) tak tersentuh"
+        );
     }
 
     #[test]
