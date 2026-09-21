@@ -4,6 +4,7 @@
 
 mod permissions;
 mod sandbox;
+#[allow(clippy::module_inception)]
 mod security;
 mod validation;
 

@@ -4,6 +4,7 @@
 //! Compiler TIDAK tahu database/GUI/logger — semua lewat context.
 
 mod ast;
+#[allow(clippy::module_inception)]
 mod compiler;
 mod elaboration;
 mod hir;

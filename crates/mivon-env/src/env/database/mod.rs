@@ -3,6 +3,7 @@
 //! Compiler TIDAK pernah membuka file database secara langsung; ia meminta
 //! melalui DatabaseContext. Database tidak boleh mengetahui Parser.
 
+#[allow(clippy::module_inception)]
 mod database;
 mod diagnostics_db;
 mod graph_db;

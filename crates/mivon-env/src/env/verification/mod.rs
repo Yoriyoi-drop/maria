@@ -5,6 +5,7 @@ mod assertions;
 mod coverage;
 mod lint;
 mod semantic;
+#[allow(clippy::module_inception)]
 mod verification;
 mod xprop;
 

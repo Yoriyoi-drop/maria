@@ -6,6 +6,7 @@ pub mod affinity;
 pub mod cgroup;
 mod cpu;
 mod memory;
+#[allow(clippy::module_inception)]
 mod runtime;
 mod scheduler;
 mod threadpool;

@@ -1032,8 +1032,7 @@ impl LspBackend {
                 stack.last_mut().unwrap().children.extend(frame.children);
             }
         }
-        let roots = std::mem::take(&mut stack[0].children);
-        roots
+        std::mem::take(&mut stack[0].children)
     }
 
     /// Folding range core (murni, bisa diuji) — LSP-15 tahap 1:
@@ -1044,7 +1043,7 @@ impl LspBackend {
     ///   - begin...end dan case...endcase: `begin`/`case` membuka (begin
     ///     sebagai token terakhir baris header; case sebagai token pertama),
     ///     ditutup bila baris memuat token `end` / `endcase`.
-    /// Return (start_line, end_line) urut.
+    ///     Return (start_line, end_line) urut.
     pub(crate) fn compute_folding_ranges(source: &str) -> Vec<(u32, u32)> {
         // (keyword pembuka, keyword penutup) — pasangan scope utama.
         const PAIRS: &[(&str, &str)] = &[
@@ -1861,10 +1860,8 @@ impl LanguageServer for LspBackend {
                         break;
                     }
                 }
-                b',' => {
-                    if paren_depth == 0 {
-                        active_param += 1;
-                    }
+                b',' if paren_depth == 0 => {
+                    active_param += 1;
                 }
                 _ => {}
             }
@@ -2297,8 +2294,8 @@ fn find_enclosing_scope(lines: &[&str], target_line: usize) -> Option<Range> {
             if depth == 0 {
                 // Found the opening keyword. Now find the matching end.
                 let mut end_depth = 0i32;
-                for j in i..lines.len() {
-                    let t = lines[j].trim();
+                for (j, line) in lines.iter().enumerate().skip(i) {
+                    let t = line.trim();
                     let f = t.split_whitespace().next().unwrap_or("");
                     if OPEN_KW.contains(&f) {
                         end_depth += 1;
@@ -2307,7 +2304,7 @@ fn find_enclosing_scope(lines: &[&str], target_line: usize) -> Option<Range> {
                         if end_depth == 0 {
                             return Some(Range::new(
                                 Position::new(i as u32, 0),
-                                Position::new(j as u32, lines[j].len() as u32),
+                                Position::new(j as u32, line.len() as u32),
                             ));
                         }
                     }
@@ -2471,10 +2468,7 @@ impl LspBackend {
         while i < toks.len() {
             let t = toks[i];
             // Check if this is the variable name (no type keywords).
-            if is_type_keyword(t) {
-                type_parts.push(t);
-                i += 1;
-            } else if t.starts_with('[') {
+            if is_type_keyword(t) || t.starts_with('[') {
                 type_parts.push(t);
                 i += 1;
             } else if t == "," || t == ";" || t == ")" {
@@ -2570,6 +2564,7 @@ impl LspBackend {
         let mut lenses = Vec::new();
         let syms = Self::document_symbols(text);
 
+        #[allow(clippy::only_used_in_recursion)]
         fn walk(items: &[DocSymbol], text: &str, uri: &Url, lenses: &mut Vec<CodeLens>) {
             for sym in items {
                 match sym.kind {
@@ -2655,20 +2650,21 @@ impl LspBackend {
     fn find_function_signature(text: &str, name: &str) -> Option<(String, Vec<String>)> {
         for line in text.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("function") || trimmed.starts_with("task") {
-                if trimmed.contains(name) && trimmed.contains('(') {
-                    // Extract the full signature up to ')'.
-                    if let Some(paren_start) = trimmed.find('(') {
-                        if let Some(paren_end) = trimmed.find(')') {
-                            let label = trimmed[..=paren_end].to_string();
-                            let params_str = &trimmed[paren_start + 1..paren_end];
-                            let params: Vec<String> = params_str
-                                .split(',')
-                                .map(|p| p.trim().to_string())
-                                .filter(|p| !p.is_empty())
-                                .collect();
-                            return Some((label, params));
-                        }
+            if (trimmed.starts_with("function") || trimmed.starts_with("task"))
+                && trimmed.contains(name)
+                && trimmed.contains('(')
+            {
+                // Extract the full signature up to ')'.
+                if let Some(paren_start) = trimmed.find('(') {
+                    if let Some(paren_end) = trimmed.find(')') {
+                        let label = trimmed[..=paren_end].to_string();
+                        let params_str = &trimmed[paren_start + 1..paren_end];
+                        let params: Vec<String> = params_str
+                            .split(',')
+                            .map(|p| p.trim().to_string())
+                            .filter(|p| !p.is_empty())
+                            .collect();
+                        return Some((label, params));
                     }
                 }
             }

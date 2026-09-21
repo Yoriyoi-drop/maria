@@ -1,5 +1,5 @@
 use mivon_compiler::micd::MicdDatabase;
-use std::path::PathBuf;
+use std::path::Path;
 
 /// DatabaseContext — semua persistent storage (khusus MICD).
 ///
@@ -28,7 +28,7 @@ impl DatabaseContext {
     }
 
     /// Buka database project di `db_root` dengan `pid`.
-    pub fn open(db_root: &PathBuf, pid: &str) -> Self {
+    pub fn open(db_root: &Path, pid: &str) -> Self {
         DatabaseContext {
             db: Some(MicdDatabase::open_project(db_root, pid)),
         }

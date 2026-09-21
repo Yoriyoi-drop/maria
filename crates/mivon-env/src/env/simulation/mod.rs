@@ -7,6 +7,7 @@ mod coverage;
 mod dpi;
 mod event_queue;
 mod kernel;
+#[allow(clippy::module_inception)]
 mod simulation;
 mod waveform;
 

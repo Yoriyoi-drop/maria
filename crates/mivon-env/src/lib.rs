@@ -1,8 +1,8 @@
 //! mivon-env — Enterprise Context Architecture + LSP Server + Plugin System.
 //!
 //! - `env`   : GlobalEnv root object menampung 12 context (Config, Workspace,
-//!             Runtime, Compiler, Cache, Database, Diagnostics, Telemetry,
-//!             Verification, Simulation, Security, Plugins) — desain 5 doc/env.md.
+//!   Runtime, Compiler, Cache, Database, Diagnostics, Telemetry,
+//!   Verification, Simulation, Security, Plugins) — desain 5 doc/env.md.
 //! - `lsp`   : Language Server Protocol (tower-lsp) — diagnostics via parser.
 //! - `plugin`: Plugin architecture (stub WASM-based, ex src/plugin/).
 //!

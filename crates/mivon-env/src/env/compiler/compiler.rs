@@ -21,13 +21,16 @@ pub struct CompilerContext {
 impl CompilerContext {
     /// Bangun session dari workspace + config. Tidak langsung compile.
     pub fn new(workspace: &WorkspaceContext, config: &ConfigContext) -> Self {
-        let mut sc = SessionConfig::default();
-        sc.sources = workspace.discover_sources();
-        sc.incdirs = workspace.incdirs().dirs().to_vec();
-        sc.defines = workspace.defines().to_vec();
-        sc.top_module = None;
-        sc.use_fast_lexer = true;
-        let source_count = sc.sources.len();
+        let sources = workspace.discover_sources();
+        let source_count = sources.len();
+        let sc = SessionConfig {
+            sources,
+            incdirs: workspace.incdirs().dirs().to_vec(),
+            defines: workspace.defines().to_vec(),
+            top_module: None,
+            use_fast_lexer: true,
+            ..Default::default()
+        };
         let elab_mode = match config.elab_mode() {
             Some(m) if m.eq_ignore_ascii_case("analysisrecovery") => {
                 ElaborateMode::AnalysisRecovery

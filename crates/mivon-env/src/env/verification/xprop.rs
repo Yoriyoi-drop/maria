@@ -10,7 +10,7 @@ pub enum XPropMode {
 }
 
 impl XPropMode {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_name(s: &str) -> Option<Self> {
         match XPropagationMode::from_name(s)? {
             XPropagationMode::Optimistic => Some(XPropMode::Optimistic),
             XPropagationMode::Pessimistic => Some(XPropMode::Pessimistic),
@@ -58,10 +58,10 @@ mod tests {
     #[test]
     fn test_xprop_roundtrip() {
         assert_eq!(
-            XPropMode::from_str("pessimistic"),
+            XPropMode::from_name("pessimistic"),
             Some(XPropMode::Pessimistic)
         );
-        assert_eq!(XPropMode::from_str("nope"), None);
+        assert_eq!(XPropMode::from_name("nope"), None);
         assert_eq!(XPropMode::Pessimistic.as_str(), "pessimistic");
     }
 

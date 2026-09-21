@@ -5,6 +5,7 @@
 //! `config.sim_timeout()`.
 
 mod cli;
+#[allow(clippy::module_inception)]
 mod config;
 mod defaults;
 mod environment;

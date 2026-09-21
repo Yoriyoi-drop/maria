@@ -5,6 +5,7 @@ mod filelist;
 mod include;
 mod project;
 mod search;
+#[allow(clippy::module_inception)]
 mod workspace;
 
 pub use filelist::Filelist;

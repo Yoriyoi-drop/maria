@@ -21,7 +21,7 @@ pub fn merge_designs(mut target: Design, other: &mut Design) -> Design {
 }
 
 /// Gabungkan batch Design menjadi satu (empty = None).
-pub fn merge_all(designs: &mut Vec<Design>) -> Option<Design> {
+pub fn merge_all(designs: &mut [Design]) -> Option<Design> {
     if designs.is_empty() {
         return None;
     }

@@ -4,6 +4,7 @@
 //! boleh memanggil Compiler (dependency rule satu arah).
 
 mod artifact;
+#[allow(clippy::module_inception)]
 mod cache;
 mod fingerprint;
 mod incremental;

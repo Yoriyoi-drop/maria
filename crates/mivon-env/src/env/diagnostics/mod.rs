@@ -3,6 +3,7 @@
 //! Diagram (doc/env.md): Compiler → Diagnostic Builder → Formatter → Reporter
 //! → CLI/GUI/JSON. Diagnostics hanya menerima data, tidak menjalankan parser.
 
+#[allow(clippy::module_inception)]
 mod diagnostics;
 mod emitter;
 mod error;

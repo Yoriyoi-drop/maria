@@ -6,6 +6,7 @@
 mod metrics;
 mod performance;
 mod profiler;
+#[allow(clippy::module_inception)]
 mod telemetry;
 mod tracing;
 
