@@ -722,6 +722,7 @@ pub struct GenerateBlock {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum GenerateItem {
     If {
         cond: Expr,

@@ -69,9 +69,10 @@ impl fmt::Display for MvError {
 impl std::error::Error for MvError {}
 
 /// Format error dengan snippet source (F11): ringkasan `path: line:col: msg`
-/// + baris sumber + caret menunjuk posisi persis (gaya rustc). `line`/`col`
-/// 1-based; 0 berarti tanpa posisi (tidak tampil snippet). Dipakai `mgen`
-/// (src/tools/gen.rs) dan `run` (src/main.rs) untuk UX error yang konsisten.
+///     + baris sumber untuk konteks, caret menunjuk posisi persis (gaya rustc).
+///     `line`/`col` 1-based; 0 berarti tanpa posisi (tidak tampil snippet).
+///     Dipakai `mgen` (src/tools/gen.rs) dan `run` (src/main.rs) untuk UX error
+///     yang konsisten.
 ///
 /// Batasan (sama seperti `raw_slice` di parser): `col` lexer dihitung per
 /// CHAR sedangkan padding caret memakai spasi — baris yang memuat TAB atau

@@ -2,6 +2,7 @@ use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnip
 use crate::diagnostics::emitter::format_diagnostic;
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum SimError {
     Parse(String),
     Elaborate(String),

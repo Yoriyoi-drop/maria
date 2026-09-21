@@ -150,10 +150,8 @@ fn collect_called_funcs(stmts: &[Stmt], known: &HashSet<Symbol>, out: &mut HashS
             Stmt::Expr { expr } => {
                 collect_called_expr(expr, known, out);
             }
-            Stmt::Return(expr) => {
-                if let Some(e) = expr {
-                    collect_called_expr(e, known, out);
-                }
+            Stmt::Return(Some(e)) => {
+                collect_called_expr(e, known, out);
             }
             Stmt::Wait { cond, stmt: wstmt } => {
                 collect_called_expr(cond, known, out);

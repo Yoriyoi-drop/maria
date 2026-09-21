@@ -239,11 +239,11 @@ pub fn sized_width(e: &Expr) -> Option<u64> {
         // Harus SEBELUM arm `Expr::BinaryOp` umum — kalau sesudahnya, arm
         // umum menelan semua BinaryOp → shift jadi unreachable dan lebar
         // shift tak pernah terisi (bug latent yang di-expose clippy).
-        Expr::BinaryOp { op, lhs, .. }
-            if matches!(
-                op,
-                BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr
-            ) =>
+        Expr::BinaryOp {
+            op: BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr,
+            lhs,
+            ..
+        } =>
         {
             sized_width(lhs)
         }
@@ -1061,7 +1061,7 @@ pub fn const_eval_with_params(
         Expr::Replicate { count, expr } => {
             let n = const_eval_with_params(count, param_vals)?;
             let v = const_eval_with_params(expr, param_vals)?;
-            let n = n.max(0).min(63) as u32;
+            let n = n.clamp(0, 63) as u32;
             if v == 0 {
                 Ok(0)
             } else {

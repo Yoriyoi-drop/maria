@@ -581,10 +581,8 @@ fn find_package_func<'a>(
         return Some((pkg, func));
     }
     for (pkg, items) in package_symbols {
-        if let Some(item) = items.get(&Symbol::intern(name)) {
-            if let PackageItem::Function(f) = item {
-                return Some((pkg.as_str(), f));
-            }
+        if let Some(PackageItem::Function(f)) = items.get(&Symbol::intern(name)) {
+            return Some((pkg.as_str(), f));
         }
     }
     None

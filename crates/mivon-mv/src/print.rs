@@ -575,13 +575,9 @@ fn print_module(m: &Module, kw: &str) -> String {
 }
 
 fn print_param(p: &Param) -> String {
-    if p.type_default.is_some() {
+    if let Some(td) = &p.type_default {
         // type param `type T = logic[...]` (bentuk keyword — round-trip aman)
-        format!(
-            "type {} = {}",
-            p.name,
-            print_type(p.type_default.as_ref().unwrap())
-        )
+        format!("type {} = {}", p.name, print_type(td))
     } else if let Some(t) = &p.ty {
         let d = p
             .default

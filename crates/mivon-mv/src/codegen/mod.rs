@@ -1,9 +1,9 @@
 //! Mivon HDL (.mv) — Codegen. Emitter SystemVerilog: AST → `.sv` + `.svh`.
 //! 1 file = 1 tanggung jawab. Struktur (berkembang):
 //! - `mod.rs`   — entry generate/generate_with_ifaces, header, .svh (package/
-//!               typedef/interface), .sv skeleton, helpers dasar
+//!   typedef/interface), .sv skeleton, helpers dasar
 //! - `module.rs`— module/program/port/signal/reg/const/seq/comb/always/latch/
-//!               initial/final/inst/generate/func/task
+//!   initial/final/inst/generate/func/task
 //! - `stmt.rs`  — statement emitter + single-line compaction + @sv raw
 //! - `expr.rs`  — ekspresi SV + tipe (emit_type/emit_expr)
 //! - `defs.rs`  — emit_typedef/emit_package/emit_interface/emit_class

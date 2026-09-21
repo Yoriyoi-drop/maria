@@ -245,6 +245,7 @@ impl<'a> Builder<'a> {
     ///   (sequential: RegQ = hold; comb: kosong → 0).
     /// - `base`: nilai yang sudah di-assign oleh statement SEBELUMNYA (untuk
     ///   semantik "tidak di-assign di branch ini = nilai sebelumnya").
+    #[allow(clippy::only_used_in_recursion)]
     fn lower_stmts(
         &mut self,
         stmts: &[IrStmt],

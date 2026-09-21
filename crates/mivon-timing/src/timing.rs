@@ -364,8 +364,8 @@ pub fn render_timing_report(r: &TimingReport, constraint_name: &str) -> String {
     s.push('\n');
     for p in &r.critical_paths {
         s.push_str(&format!(
-            "  critical path ({} ns):\n    {}\n    ↓\n",
-            format!("{:.2}", p.delay_ns),
+            "  critical path ({:.2} ns):\n    {}\n    ↓\n",
+            p.delay_ns,
             p.from
         ));
         for (i, c) in p.cells.iter().rev().enumerate() {

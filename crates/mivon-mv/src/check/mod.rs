@@ -2,7 +2,7 @@
 //! Validasi SEBELUM emisi (MIVON-HDL.md §9, prinsip desain #4).
 //! 1 file = 1 tanggung jawab — struktur (berkembang):
 //! - `mod.rs`   — entry `check`/`check_many`, konteks (Ctx/Scope/Env/BlockKind),
-//!               indeks global (collect_ctx), error helper
+//!   indeks global (collect_ctx), error helper
 //! - `defs.rs`  — typedef & interface check
 //! - `module.rs`— module/param/port/item/generate/inst check
 //! - `class.rs` — function/task/class/constraint check

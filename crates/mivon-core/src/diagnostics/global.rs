@@ -16,9 +16,10 @@
 //!   - `by_code()/by_source()`                → filter per kode / per file
 //!   - `unpositioned()`       → diagnostic TANPA file:line:col (coverage posisi)
 //!   - `uncoded()`            → diagnostic dengan kode yang TIDAK terdaftar
-//!                              di registry `all_codes()` (coverage registry)
+//!     di registry `all_codes()` (coverage registry)
 //!   - `code_usage()/uncovered_codes()` → analisis coverage kode error
 //!   - `summary()/coverage_report()`     → laporan ringkas
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
