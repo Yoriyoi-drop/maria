@@ -1120,10 +1120,21 @@ handler call/ret):
   dengan count 0 = no-op (si/di tetap). 3 unit test (movs/stos bulk +
   count-0). Boot 10M step deterministik identik (pc=0x005b3bd0) — tidak
   regress.
-- Langkah berikut: diff intruksi-vs-QEMU pada window (a) real_to_prot
-  0x8313-0x8326 (frame/`mov [esp],eax` restore) dan (b) real handler
-  kedua 0x9113-0x9163 — cari satu instruksi yang menggeser sp epilogue
-  8 byte (frame 16-bit vs 32-bit / ret `66 c3` di 0x8389).
+- **Root cause epilogue 2 TERBUKTI (write-trace `MIVON_X86_WTRACE`)**:
+  INT 13h AH=42 CD read (step 8,623,612) menulis **96,256 byte
+  (0x68000..0x7F800, 47 sektor×2048)** — **menimpa frame stack pmode
+  grub_bios_interrupt (0x7f744..0x7f760)** yg baru di-push prologue
+  (8,623,542-552). Slot register frame + retaddr (0x424fdbd8, caller
+  kernel) jadi data buffer → epilogue pop data + ret 0x313b44 → region
+  kosong. Bukan bug decoder; di hardware GRUB menempatkan buffer tanpa
+  menimpa frame.
+- Tool baru (debug, env-gated, off default): `MIVON_X86_WTRACE=addr:len`
+  — trace tulis CPU (write8/16/32 + bulk INT13 + fast path movs/stos)
+  dengan step/pc/addr/val; window parse hex "0x..." maupun desimal.
+- Langkah berikut (fix epilogue 2): cek DAP aktual (seg/off @ds:si) &
+  ESP kernel saat caller 0x424fdbd8 — apakah GRUB memakai buffer yang
+  semestinya tidak menimpa frame (mis. segmen DAP/EADK salah decode,
+  atau ESP kernel emulator salah harus > 0x7F800).
 
 **Tidak teratasi / langkah berikut**:
 - Akar 4-byte drift stack di jalur prot_to_real↔real_to_prot belum

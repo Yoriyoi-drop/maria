@@ -16,6 +16,26 @@
 
 use super::{CpuCore, CpuFault, CpuStep, Isa};
 use crate::mem::MemoryPort;
+use std::sync::OnceLock;
+
+/// Window write-trace memori (debug): `MIVON_X86_WTRACE=addr:len` —
+/// print setiap tulis CPU ke rentang itu (step/pc/addr/val). Berguna utk
+/// menemukan instruksi yang merusak stack frame (mis. epilogue biosdisk).
+static WTRACE: OnceLock<Option<(u64, u64)>> = OnceLock::new();
+fn w_trace_window() -> Option<(u64, u64)> {
+    *WTRACE.get_or_init(|| {
+        std::env::var("MIVON_X86_WTRACE")
+            .ok()
+            .and_then(|s| {
+                // Dukung bentuk hex "0x..." maupun desimal.
+                let parse = |x: &str| u64::from_str_radix(x.trim_start_matches("0x"), 16).ok();
+                let mut it = s.split(':');
+                let a = parse(it.next()?)?;
+                let l = parse(it.next()?).unwrap_or(16);
+                Some((a, l))
+            })
+    })
+}
 
 /// Flag FLAGS (bit positions real mode).
 pub const FLAG_CF: u16 = 1 << 0;
@@ -345,6 +365,14 @@ impl X86Cpu {
         v: u8,
     ) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
+        if let Some((wa, wl)) = w_trace_window() {
+            if a >= wa && a < wa + wl {
+                eprintln!(
+                    "WTRACE8 step={} pc=0x{:x} addr=0x{:x} val=0x{:02x}",
+                    self.steps, self.pc(), a, v
+                );
+            }
+        }
         if (VGA_TEXT_ADDR..VGA_TEXT_ADDR + VGA_TEXT_SIZE as u64).contains(&a) {
             self.vga[(a - VGA_TEXT_ADDR) as usize] = v;
         }
@@ -359,6 +387,14 @@ impl X86Cpu {
         v: u16,
     ) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
+        if let Some((wa, wl)) = w_trace_window() {
+            if a >= wa && a < wa + wl {
+                eprintln!(
+                    "WTRACE16 step={} pc=0x{:x} addr=0x{:x} val=0x{:04x}",
+                    self.steps, self.pc(), a, v
+                );
+            }
+        }
         if (VGA_TEXT_ADDR..VGA_TEXT_ADDR + VGA_TEXT_SIZE as u64).contains(&a) {
             let o = (a - VGA_TEXT_ADDR) as usize;
             if o + 1 < VGA_TEXT_SIZE {
@@ -377,6 +413,14 @@ impl X86Cpu {
         v: u32,
     ) -> Result<(), CpuFault> {
         let a = self.lin(seg, off);
+        if let Some((wa, wl)) = w_trace_window() {
+            if a >= wa && a < wa + wl {
+                eprintln!(
+                    "WTRACE32 step={} pc=0x{:x} addr=0x{:x} val=0x{:08x}",
+                    self.steps, self.pc(), a, v
+                );
+            }
+        }
         if (VGA_TEXT_ADDR..VGA_TEXT_ADDR + VGA_TEXT_SIZE as u64).contains(&a) {
             let o = (a - VGA_TEXT_ADDR) as usize;
             for i in 0..4 {
@@ -2753,9 +2797,18 @@ impl X86Cpu {
                         mem.write_exact(dst_lin.wrapping_add(off as u64), &buf[..chunk])
                             .map_err(|e| self.fault(format!("movs write: {}", e)))?;
                         let chunk_signed = if dir < 0 { -(chunk as i64) } else { chunk as i64 };
+                        let dst_a = dst_lin.wrapping_add(off as u64);
+                        if w_trace_window().is_some_and(|(wa, wl)| {
+                            dst_a < wa + wl && dst_a + chunk as u64 > wa
+                        }) {
+                            eprintln!(
+                                "WTRACEM step={} pc=0x{:x} movs dst=0x{:x} n={}",
+                                self.steps, self.pc(), dst_a, chunk
+                            );
+                        }
                         mem.read_exact(src_lin.wrapping_add(off as u64), &mut buf[..chunk])
                             .map_err(|e| self.fault(format!("movs read: {}", e)))?;
-                        mem.write_exact(dst_lin.wrapping_add(off as u64), &buf[..chunk])
+                        mem.write_exact(dst_a, &buf[..chunk])
                             .map_err(|e| self.fault(format!("movs write: {}", e)))?;
                         off += chunk_signed;
                         left -= chunk as i64;
@@ -2884,10 +2937,19 @@ impl X86Cpu {
                     let mut left = total as i64;
                     while left > 0 {
                         let chunk = left.min(4096) as usize;
+                        let dst_a = dst_lin.wrapping_add(off as u64);
+                        if w_trace_window().is_some_and(|(wa, wl)| {
+                            dst_a < wa + wl && dst_a + chunk as u64 > wa
+                        }) {
+                            eprintln!(
+                                "WTRACES step={} pc=0x{:x} stos dst=0x{:x} n={}",
+                                self.steps, self.pc(), dst_a, chunk
+                            );
+                        }
                         for (i, b) in buf[..chunk].iter_mut().enumerate() {
                             *b = pat[i % n as usize];
                         }
-                        mem.write_exact(dst_lin.wrapping_add(off as u64), &buf[..chunk])
+                        mem.write_exact(dst_a, &buf[..chunk])
                             .map_err(|e| self.fault(format!("stos write: {}", e)))?;
                         let chunk_signed =
                             if dir < 0 { -(chunk as i64) } else { chunk as i64 };
@@ -3097,6 +3159,18 @@ impl X86Cpu {
                     Ok(()) => {
                         // Tulis bulk ke buffer seg:off (fast path).
                         let dst_lin = self.lin(seg, off as u32);
+                        if w_trace_window().is_some_and(|(wa, wl)| {
+                            dst_lin < wa + wl && dst_lin + data.len() as u64 > wa
+                        }) {
+                            eprintln!(
+                                "WTRACEB step={} pc=0x{:x} bulk dst=0x{:x} len={} first=0x{:02x}",
+                                self.steps,
+                                self.pc(),
+                                dst_lin,
+                                data.len(),
+                                data[0]
+                            );
+                        }
                         if self.vga_hits(dst_lin, data.len()) {
                             for (i, &b) in data.iter().enumerate() {
                                 self.write8(mem, seg, off as u32 + i as u32, b)?;
