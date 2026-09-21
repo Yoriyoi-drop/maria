@@ -35,7 +35,7 @@ push/PR ─▶ ci.yml (AUTO: fmt strict, clippy non-blocking, test workspace, re
 git tag v0.4.0 && git push origin v0.4.0
 
 # 3. Konsumen:
-curl -fsSL https://raw.githubusercontent.com/Yoriyoi-drop/mivon/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mivonsim/mivon/main/install.sh | bash
 mivon update check    # deteksi
 mivon update          # pasang (verifikasi SHA-256 + backup + smoke test)
 mivon update --rollback   # kembali ke binary sebelumnya

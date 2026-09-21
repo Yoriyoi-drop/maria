@@ -44,4 +44,4 @@ CMD ["mivon", "--help"]
 LABEL org.opencontainers.image.title="Mivon HDL Simulator"
 LABEL org.opencontainers.image.description="Rust-based SystemVerilog RTL simulator"
 LABEL org.opencontainers.image.version="0.3.0"
-LABEL org.opencontainers.image.source="https://github.com/Yoriyoi-drop/mivon"
+LABEL org.opencontainers.image.source="https://github.com/mivonsim/mivon"

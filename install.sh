@@ -18,7 +18,7 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 print_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
 # Configuration
-REPO="Yoriyoi-drop/mivon"
+REPO="mivonsim/mivon"
 BINARY_NAME="mivon"
 INSTALL_DIR="${MIVON_INSTALL_DIR:-/usr/local/bin}"
 VERSION_FILE="${MIVON_VERSION_FILE:-/tmp/mivon-version.txt}"

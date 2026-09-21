@@ -130,7 +130,7 @@ banyak crate. Karena itu **semua patch tetap menjalani baseline CI penuh**
   "published_at": "2026-09-20T12:00:00Z",
   "platforms": {
     "x86_64-unknown-linux-gnu": {
-      "url": "https://github.com/Yoriyoi-drop/mivon/releases/download/v0.4.0/mivon",
+      "url": "https://github.com/mivonsim/mivon/releases/download/v0.4.0/mivon",
       "sha256": "a1b2c3... (64 hex)"
     }
   }

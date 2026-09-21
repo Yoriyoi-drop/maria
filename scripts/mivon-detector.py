@@ -19,7 +19,7 @@ STATE_DIR = PROJECT_ROOT / ".mivon" / "auto-update"
 STATE_FILE = STATE_DIR / "patch-state.json"
 VERSION_FILE = PROJECT_ROOT / "Cargo.toml"
 LOG_FILE = STATE_DIR / "detector.log"
-REPO_URL = "https://api.github.com/repos/Yoriyoi-drop/mivon"
+REPO_URL = "https://api.github.com/repos/mivonsim/mivon"
 
 
 def log(message: str, level: str = "INFO") -> None:

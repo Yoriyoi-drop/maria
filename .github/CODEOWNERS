@@ -1,250 +1,250 @@
 # CODEOWNERS for Mivon Project
 
 # Default: All repository files require review by main maintainer
-* @Yoriyoi-drop
+* @mivonsim
 
 # Core compiler and simulator components (high-risk areas)
-/crates/mivon-lexer/ @Yoriyoi-drop
-/crates/mivon-parser/ @Yoriyoi-drop
-/crates/mivon-core/ @Yoriyoi-drop
-/crates/mivon-ast/ @Yoriyoi-drop
-/crates/mivon-elaboration/ @Yoriyoi-drop
-/crates/mivon-ir/ @Yoriyoi-drop
-/crates/mivon-simulator/ @Yoriyoi-drop
-/crates/mivon-simulator/src/engine/ @Yoriyoi-drop
-/crates/mivon-simulator/src/waveform/ @Yoriyoi-drop
-/crates/mivon-simulator/src/debugger/ @Yoriyoi-drop
-/crates/mivon-simulator/src/parallel.rs @Yoriyoi-drop
-/crates/mivon-simulator/src/engine.rs @Yoriyoi-drop
-/crates/mivon-simulator/src/sdf.rs @Yoriyoi-drop
-/crates/mivon-simulator/src/jit.rs @Yoriyoi-drop
-/crates/mivon-simulator/src/parallel.rs @Yoriyoi-drop
-/crates/mivon-simulator/src/engine.rs @Yoriyoi-drop
-/crates/mivon-simulator/src/sdf.rs @Yoriyoi-drop
-/crates/mivon-simulator/src/jit.rs @Yoriyoi-drop
-/crates/mivon-tools/ @Yoriyoi-drop
-/crates/mivon-env/ @Yoriyoi-drop
-/crates/mivon-api/ @Yoriyoi-drop
-/crates/mivon-tests/ @Yoriyoi-drop
+/crates/mivon-lexer/ @mivonsim
+/crates/mivon-parser/ @mivonsim
+/crates/mivon-core/ @mivonsim
+/crates/mivon-ast/ @mivonsim
+/crates/mivon-elaboration/ @mivonsim
+/crates/mivon-ir/ @mivonsim
+/crates/mivon-simulator/ @mivonsim
+/crates/mivon-simulator/src/engine/ @mivonsim
+/crates/mivon-simulator/src/waveform/ @mivonsim
+/crates/mivon-simulator/src/debugger/ @mivonsim
+/crates/mivon-simulator/src/parallel.rs @mivonsim
+/crates/mivon-simulator/src/engine.rs @mivonsim
+/crates/mivon-simulator/src/sdf.rs @mivonsim
+/crates/mivon-simulator/src/jit.rs @mivonsim
+/crates/mivon-simulator/src/parallel.rs @mivonsim
+/crates/mivon-simulator/src/engine.rs @mivonsim
+/crates/mivon-simulator/src/sdf.rs @mivonsim
+/crates/mivon-simulator/src/jit.rs @mivonsim
+/crates/mivon-tools/ @mivonsim
+/crates/mivon-env/ @mivonsim
+/crates/mivon-api/ @mivonsim
+/crates/mivon-tests/ @mivonsim
 
 # CI, release, and installation scripts (package management)
-/.github/workflows/ @Yoriyoi-drop
-/install.sh @Yoriyoi-drop
-/scripts/ @Yoriyoi-drop
-/Makefile @Yoriyoi-drop
-/Makefile.test @Yoriyoi-drop
-/Dockerfile @Yoriyoi-drop
-/Dockerfile.test @Yoriyoi-drop
-/docker-compose.test.yml @Yoriyoi-drop
+/.github/workflows/ @mivonsim
+/install.sh @mivonsim
+/scripts/ @mivonsim
+/Makefile @mivonsim
+/Makefile.test @mivonsim
+/Dockerfile @mivonsim
+/Dockerfile.test @mivonsim
+/docker-compose.test.yml @mivonsim
 
 # Core configuration and lock files
-/Cargo.toml @Yoriyoi-drop
-/Cargo.lock @Yoriyoi-drop
-/rust-toolchain.toml @Yoriyoi-drop
-/.rust-version @Yoriyoi-drop
-/.codecov.yml @Yoriyoi-drop
-/.github/labels.yml @Yoriyoi-drop
+/Cargo.toml @mivonsim
+/Cargo.lock @mivonsim
+/rust-toolchain.toml @mivonsim
+/.rust-version @mivonsim
+/.codecov.yml @mivonsim
+/.github/labels.yml @mivonsim
 
 # CI/CD pipeline configuration
-/.github/workflows/ @Yoriyoi-drop
-/.github/CODEOWNERS @Yoriyoi-drop
+/.github/workflows/ @mivonsim
+/.github/CODEOWNERS @mivonsim
 
 # Documentation (important for user-facing updates)
-/README.md @Yoriyoi-drop
-/README.md @Yoriyoi-drop
-/AGENTS.md @Yoriyoi-drop
-/tools.md @Yoriyoi-drop
-/ROADMAP.md @Yoriyoi-drop
-/DESIGN.md @Yoriyoi-drop
-/INSTALLATION.md @Yoriyoi-drop
-/SYNTHESIS.md @Yoriyoi-drop
-/VERILATOR_COMPAT.md @Yoriyoi-drop
-/IEEE_1800_MATRIX.md @Yoriyoi-drop
+/README.md @mivonsim
+/README.md @mivonsim
+/AGENTS.md @mivonsim
+/tools.md @mivonsim
+/ROADMAP.md @mivonsim
+/DESIGN.md @mivonsim
+/INSTALLATION.md @mivonsim
+/SYNTHESIS.md @mivonsim
+/VERILATOR_COMPAT.md @mivonsim
+/IEEE_1800_MATRIX.md @mivonsim
 
 # Landing page and web assets
-/landing_page/ @Yoriyoi-drop
-/landing_page/src/ @Yoriyoi-drop
-/landing_page/public/ @Yoriyoi-drop
-/landing_page/package.json @Yoriyoi-drop
-/landing_page/astro.config.mjs @Yoriyoi-drop
+/landing_page/ @mivonsim
+/landing_page/src/ @mivonsim
+/landing_page/public/ @mivonsim
+/landing_page/package.json @mivonsim
+/landing_page/astro.config.mjs @mivonsim
 
 # Testing and fuzzing
-/tests/ @Yoriyoi-drop
-/crates/mivon-fuzz/ @Yoriyoi-drop
-/crates/mivon-tests/src/ @Yoriyoi-drop
-/crates/mivon-tests/tests/ @Yoriyoi-drop
-/src/tests/ @Yoriyoi-drop
-/src/debug_lexer.rs @Yoriyoi-drop
+/tests/ @mivonsim
+/crates/mivon-fuzz/ @mivonsim
+/crates/mivon-tests/src/ @mivonsim
+/crates/mivon-tests/tests/ @mivonsim
+/src/tests/ @mivonsim
+/src/debug_lexer.rs @mivonsim
 
 # Build and distribution artifacts
-/target/ @Yoriyoi-drop
-*.vcd @Yoriyoi-drop
-*.vcd.lxt @Yoriyoi-drop
-*.fst @Yoriyoi-drop
-*.fst.gz @Yoriyoi-drop
-*.mvnet @Yoriyoi-drop
-*.mv @Yoriyoi-drop
-*.mcs @Yoriyoi-drop
-*.lib @Yoriyoi-drop
-*.iso @Yoriyoi-drop
-*.html @Yoriyoi-drop
-*.json @Yoriyoi-drop
-*.toml @Yoriyoi-drop
-*.md @Yoriyoi-drop
-*.txt @Yoriyoi-drop
-*.log @Yoriyoi-drop
+/target/ @mivonsim
+*.vcd @mivonsim
+*.vcd.lxt @mivonsim
+*.fst @mivonsim
+*.fst.gz @mivonsim
+*.mvnet @mivonsim
+*.mv @mivonsim
+*.mcs @mivonsim
+*.lib @mivonsim
+*.iso @mivonsim
+*.html @mivonsim
+*.json @mivonsim
+*.toml @mivonsim
+*.md @mivonsim
+*.txt @mivonsim
+*.log @mivonsim
 
 # External dependencies and submodules (managed)
-/opentitan/ @Yoriyoi-drop
-/cva6/ @Yoriyoi-drop
-/uvm-core/ @Yoriyoi-drop
-/openc910/ @Yoriyoi-drop
-/picotr32/ @Yoriyoi-drop
-/cores-vee-r-eh1/ @Yoriyoi-drop
+/opentitan/ @mivonsim
+/cva6/ @mivonsim
+/uvm-core/ @mivonsim
+/openc910/ @mivonsim
+/picotr32/ @mivonsim
+/cores-vee-r-eh1/ @mivonsim
 
 # Generated documentation and artifacts (should not be modified manually)
-/doc/ @Yoriyoi-drop
-/doc/ @Yoriyoi-drop
-/*.pdf @Yoriyoi-drop
-/*.rst @Yoriyoi-drop
+/doc/ @mivonsim
+/doc/ @mivonsim
+/*.pdf @mivonsim
+/*.rst @mivonsim
 
 # Configuration files that affect build/test behavior
-/.cargo/ @Yoriyoi-drop
-/.cargo/config.toml @Yoriyoi-drop
-/.cargo/registry/ @Yoriyoi-drop
-/.vscode/ @Yoriyoi-drop
-/.idea/ @Yoriyoi-drop
+/.cargo/ @mivonsim
+/.cargo/config.toml @mivonsim
+/.cargo/registry/ @mivonsim
+/.vscode/ @mivonsim
+/.idea/ @mivonsim
 
 # Scripts that affect CI/CD or installation (automation risk)
-/*.sh @Yoriyoi-drop
-/*.ps1 @Yoriyoi-drop
-/*.bat @Yoriyoi-drop
+/*.sh @mivonsim
+/*.ps1 @mivonsim
+/*.bat @mivonsim
 
 # Generated cache and state (should not be modified)
-/.mivon/ @Yoriyoi-drop
-/.mivon/database/ @Yoriyoi-drop
-/.mivon/cache/ @Yoriyoi-drop
-/.mivon/snapshots/ @Yoriyoi-drop
+/.mivon/ @mivonsim
+/.mivon/database/ @mivonsim
+/.mivon/cache/ @mivonsim
+/.mivon/snapshots/ @mivonsim
 
 # Temporary files (should be ignored)
-*~ @Yoriyoi-drop
-*.tmp @Yoriyoi-drop
-*.temp @Yoriyoi-drop
-*.bak @Yoriyoi-drop
+*~ @mivonsim
+*.tmp @mivonsim
+*.temp @mivonsim
+*.bak @mivonsim
 
 # Project-specific configuration files
-/.eslintrc.* @Yoriyoi-drop
-/.prettierrc.* @Yoriyoi-drop
-/.stylelintrc.* @Yoriyoi-drop
-/*.editorconfig @Yoriyoi-drop
+/.eslintrc.* @mivonsim
+/.prettierrc.* @mivonsim
+/.stylelintrc.* @mivonsim
+/*.editorconfig @mivonsim
 
 # System files that could accidentally be committed
-/.DS_Store @Yoriyoi-drop
-*.Thumbs.db @Yoriyoi-drop
+/.DS_Store @mivonsim
+*.Thumbs.db @mivonsim
 
 # Environment files (sensitive)
-*.env @Yoriyoi-drop
-*.env.* @Yoriyoi-drop
-*.env.* @Yoriyoi-drop
+*.env @mivonsim
+*.env.* @mivonsim
+*.env.* @mivonsim
 
 # License files (project maintenance)
-LICENSE* @Yoriyoi-drop
-COPYING* @Yoriyoi-drop
+LICENSE* @mivonsim
+COPYING* @mivonsim
 
 # Emergency contacts (maintenance)
-/mivon-contributors @Yoriyoi-drop
-/mivon-maintainer @Yoriyoi-drop
+/mivon-contributors @mivonsim
+/mivon-maintainer @mivonsim
 
 # Documentation (README and changelog)
-/*.rst @Yoriyoi-drop
-/*.md @Yoriyoi-drop
+/*.rst @mivonsim
+/*.md @mivonsim
 
 # GitHub workflow files
-/.github/ @Yoriyoi-drop
-/.github/workflows/ @Yoriyoi-drop
-/.github/dependabot.yml @Yoriyoi-drop
-/.github/FUNDING.yml @Yoriyoi-drop
+/.github/ @mivonsim
+/.github/workflows/ @mivonsim
+/.github/dependabot.yml @mivonsim
+/.github/FUNDING.yml @mivonsim
 
 # Security related files
-/.github/security/ @Yoriyoi-drop
-/.github/SECURITY.md @Yoriyoi-drop
+/.github/security/ @mivonsim
+/.github/SECURITY.md @mivonsim
 
 # Patch file modifications (binary files that could cause issues)
-*.bin @Yoriyoi-drop
-*.dat @Yoriyoi-drop
-*.data @Yoriyoi-drop
-*.serialized @Yoriyoi-drop
+*.bin @mivonsim
+*.dat @mivonsim
+*.data @mivonsim
+*.serialized @mivonsim
 
 # Test and benchmark artifacts
-/*.bench @Yoriyoi-drop
-/*.prof @Yoriyoi-drop
-/*.prof @Yoriyoi-drop
+/*.bench @mivonsim
+/*.prof @mivonsim
+/*.prof @mivonsim
 
 # IDE and development tools configuration
-/.idea/ @Yoriyoi-drop
-/.vscode/ @Yoriyoi-drop
-*.code-workspace @Yoriyoi-drop
+/.idea/ @mivonsim
+/.vscode/ @mivonsim
+*.code-workspace @mivonsim
 
 # Build output directories
-/dist/ @Yoriyoi-drop
-/*.egg-info @Yoriyoi-drop
-*.egg-info/ @Yoriyoi-drop
+/dist/ @mivonsim
+/*.egg-info @mivonsim
+*.egg-info/ @mivonsim
 
 # Node.js / TypeScript artifacts (landing page)
-/landing_page/node_modules/ @Yoriyoi-drop
-/landing_page/dist/ @Yoriyoi-drop
-/landing_page/.astro/ @Yoriyoi-drop
+/landing_page/node_modules/ @mivonsim
+/landing_page/dist/ @mivonsim
+/landing_page/.astro/ @mivonsim
 
 # Cargo target directories (build artifacts)
-/target/ @Yoriyoi-drop
-*.rlib @Yoriyoi-drop
-*.rmeta @Yoriyoi-drop
+/target/ @mivonsim
+*.rlib @mivonsim
+*.rmeta @mivonsim
 
 # Fuzzing corpus and bug databases
-/.mivon-fuzz-bugs/ @Yoriyoi-drop
-/.mivon-fuzz-bugdb.json @Yoriyoi-drop
+/.mivon-fuzz-bugs/ @mivonsim
+/.mivon-fuzz-bugdb.json @mivonsim
 
 # Metrics and performance reports
-/*.metrics @Yoriyoi-drop
-/*.perf @Yoriyoi-drop
+/*.metrics @mivonsim
+/*.perf @mivonsim
 
 # Configuration for external tools
-/.verilator.rc @Yoriyoi-drop
-/*.mk @Yoriyoi-drop
-/*.cmake @Yoriyoi-drop
+/.verilator.rc @mivonsim
+/*.mk @mivonsim
+/*.cmake @mivonsim
 
 # Generated assembly and binary artifacts
-/*.s @Yoriyoi-drop
-/*.asm @Yoriyoi-drop
-/*.o @Yoriyoi-drop
-/*.so @Yoriyoi-drop
-/*.dylib @Yoriyoi-drop
-/*.exe @Yoriyoi-drop
+/*.s @mivonsim
+/*.asm @mivonsim
+/*.o @mivonsim
+/*.so @mivonsim
+/*.dylib @mivonsim
+/*.exe @mivonsim
 
 # Local and temporary files (should never be committed)
-*.log @Yoriyoi-drop
-*.cache @Yoriyoi-drop
-*.lock @Yoriyoi-drop
+*.log @mivonsim
+*.cache @mivonsim
+*.lock @mivonsim
 
 # Third-party licenses
-/ThirdPartyLicenses @Yoriyoi-drop
+/ThirdPartyLicenses @mivonsim
 
 # Implementation files (Rust source)
-/src/ @Yoriyoi-drop
-/crates/ @Yoriyoi-drop
+/src/ @mivonsim
+/crates/ @mivonsim
 
 # Documentation that is auto-generated but tracked (example)
-/docs/api/ @Yoriyoi-drop
-/docs/architecture/ @Yoriyoi-drop
+/docs/api/ @mivonsim
+/docs/architecture/ @mivonsim
 
 # Desktop application files (if present)
-src-tauri/ @Yoriyoi-drop
+src-tauri/ @mivonsim
 
 # Quick access to most important files
 *
-/crates/mivon-parser/** @Yoriyoi-drop
-/crates/mivon-simulator/** @Yoriyoi-drop
-/Cargo.toml @Yoriyoi-drop
-/README.md @Yoriyoi-drop
-/install.sh @Yoriyoi-drop
-/.github/workflows/ci.yml @Yoriyoi-drop
+/crates/mivon-parser/** @mivonsim
+/crates/mivon-simulator/** @mivonsim
+/Cargo.toml @mivonsim
+/README.md @mivonsim
+/install.sh @mivonsim
+/.github/workflows/ci.yml @mivonsim

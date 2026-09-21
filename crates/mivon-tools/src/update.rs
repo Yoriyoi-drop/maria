@@ -18,9 +18,9 @@ use serde::Deserialize;
 /// (commit sinkronisasi) — jadi konsumen tidak pernah melihat versi yang
 /// belum diterbitkan sebagai release resmi.
 pub const DEFAULT_MANIFEST_URL: &str =
-    "https://raw.githubusercontent.com/Yoriyoi-drop/mivon/main/dist/latest.json";
+    "https://raw.githubusercontent.com/mivonsim/mivon/main/dist/latest.json";
 
-const REPO: &str = "Yoriyoi-drop/mivon";
+const REPO: &str = "mivonsim/mivon";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Tipe manifest

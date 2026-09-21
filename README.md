@@ -109,14 +109,14 @@ gh workflow run release-update.yml
 
 ```bash
 # Install latest stable release automatically
-curl -fsSL https://raw.githubusercontent.com/Yoriyoi-drop/mivon/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/mivonsim/mivon/main/install.sh -o install.sh
 sudo bash install.sh
 ```
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/Yoriyoi-drop/mivon.git
+git clone https://github.com/mivonsim/mivon.git
 cd mivon
 cargo build --release
 ```
