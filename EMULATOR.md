@@ -1140,11 +1140,22 @@ handler call/ret):
 - **BT/BTS/BTR/BTC (0f a3/ab/b3/bb) + grup 0f ba /4-7 diimplementasi**
   (CF = bit; bts/btr/btc = set/clear/toggle) — 2 unit test. GRUB kernel
   sekarang lanjut melewati titik halt BT pertama.
+- **Hasil boot setelah fix (release, deterministic)**: 15M–200M step
+  TANPA fault — melewati crash epilogue 2 (8,623,675) & BT halt
+  (8,647,411). Console kini berisi 2 byte (LF+CR) — GRUB mulai
+  mencetak. Namun INT13 hanya 7× total (terakhir 8,623,934); sejak itu
+  GRUB berputar membosankan di loop prot↔real ↔ kernel real-mode
+  0xd0xx: pc=0xd1e1 `test dl,dl; jz` dengan dl=0x20 & sp statis
+  0x7f5a4 — spin menunggu variabel/pointer yang tak berubah
+  (kemungkinan routine print string / input yang macet). Menghabiskan
+  31M+ step tanpa kemajuan selanjutnya.
 - Tool baru (debug, env-gated, off default): `MIVON_X86_WTRACE=addr:len`
   — trace tulis CPU (write8/16/32 + bulk INT13 + fast path movs/stos)
   dengan step/pc/addr/val; window parse hex "0x..." maupun desimal.
-- Langkah berikut: lanjut boot (>8.647M) — opcode baru/kendala berikutnya
-  di kernel GRUB (console BIOS/VGA text, modul load, dst).
+- Langkah berikut: trace penuh loop 0xd1e1 (& caller 0x424f...) — cari
+  instruksi yang seharusnya memajukan pointer/char (termasuk dlm print
+  string, mungkin VGA text 0xB8000), dan/atau cek menunggu input
+  (INT 16h keyboard stub) yang tidak pernah selesai.
 
 **Tidak teratasi / langkah berikut**:
 - Akar 4-byte drift stack di jalur prot_to_real↔real_to_prot belum
