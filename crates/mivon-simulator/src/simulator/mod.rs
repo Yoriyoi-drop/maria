@@ -70,6 +70,7 @@ pub struct JITEvaluator;
 
 #[cfg(not(feature = "jit"))]
 impl JITEvaluator {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self
     }

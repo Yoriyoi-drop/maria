@@ -2881,7 +2881,7 @@ impl Elaborator {
         match expr {
             Expr::Ident { name, .. } => {
                 if let Some(sig_id) = signal_map.get(name) {
-                    let info = &signals[(*sig_id)];
+                    let info = &signals[*sig_id];
                     let type_str = match info.kind {
                         SignalKind::Logic => "logic",
                         SignalKind::Reg => "reg",

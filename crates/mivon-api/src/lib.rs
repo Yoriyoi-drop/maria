@@ -6,7 +6,7 @@
 //! di crate `mivon-api` ini. `mivon::*` di main.rs kini = `mivon_api::*`.
 
 // Allow large Result Err variant for SimError (intentional — Diagnostic contains spans/files)
-#![allow(clippy::result_large_err)]
+#![allow(clippy::result_large_err, clippy::type_complexity)]
 
 // ── VPI (Verilog Procedural Interface) — pindah ke mivon-simulator (crates/) ──
 // ── LSP (Language Server Protocol) — pindah ke mivon-env (crates/) ──

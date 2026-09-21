@@ -8,6 +8,9 @@
 //! mivon-compiler::scheduler; scheduler/mod.rs di sini re-export dari
 //! mivon_compiler untuk menjaga path lama (`crate::scheduler::Task` dkk) valid.
 
+// Allow large Result Err variant for SimError (intentional — Diagnostic contains spans/files)
+#![allow(clippy::result_large_err, clippy::type_complexity)]
+
 pub mod debugger;
 pub mod foreign;
 pub mod pli;

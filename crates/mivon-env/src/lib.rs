@@ -9,6 +9,9 @@
 //! Dependency satu arah: Config → Workspace → Runtime → Compiler →
 //! Cache/Database/Diagnostics/Telemetry → Verification → Simulation.
 
+// Allow large Result Err variant for SimError (intentional — Diagnostic contains spans/files)
+#![allow(clippy::result_large_err)]
+
 pub mod env;
 
 // ── LSP Server (tower-lsp) — hanya di-compile dengan feature `lsp` ──

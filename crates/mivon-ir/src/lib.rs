@@ -1,3 +1,6 @@
+// Allow complex Result/function types (intentional API signatures)
+#![allow(clippy::type_complexity)]
+
 pub mod ir;
 
 pub use ir::*;

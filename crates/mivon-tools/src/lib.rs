@@ -4,6 +4,9 @@
 //! Semua tools memakai infrastruktur Mivon yang sama (lexer/parser/elaborator/
 //! simulator) agar tidak ada duplikasi logika antara CLI dan GUI.
 
+// Allow large Result Err variant for SimError (intentional — Diagnostic contains spans/files)
+#![allow(clippy::result_large_err, clippy::type_complexity)]
+
 pub mod batch;
 pub mod bench;
 pub mod bpf_monitor;

@@ -408,7 +408,7 @@ pub(crate) fn expr_width(e: &Expr, ctx: &Ctx, scope: &Scope, depth: usize) -> Op
                 type_width(ty, ctx, scope, depth + 1)
             } else if let Some(v) = scope.params.get(s.as_str()) {
                 Some(bit_len(*v))
-            } else { scope.enum_members.get(s.as_str()).map(|w| *w) }
+            } else { scope.enum_members.get(s.as_str()).copied() }
         }
         Expr::Scoped(..) => None,
         Expr::Unary(op, inner) => match op.as_str() {

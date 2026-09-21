@@ -8,6 +8,9 @@
 //!
 //! Pipeline lengkap `IrDesign → Netlist` diekspos via `synthesize()`.
 
+// Allow large Result Err variant for SimError (intentional — Diagnostic contains spans/files)
+#![allow(clippy::result_large_err)]
+
 pub mod emit;
 pub mod fsm;
 pub mod infer;

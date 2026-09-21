@@ -1,3 +1,6 @@
+// Allow large Result Err variant for SimError (intentional — Diagnostic contains spans/files)
+#![allow(clippy::result_large_err, clippy::type_complexity)]
+
 pub mod elaborator;
 
 // CATATAN: mod util sekarang adalah direktori (util/mod.rs) yang sedang

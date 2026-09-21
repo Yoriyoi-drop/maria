@@ -1,4 +1,5 @@
 // Module declarations: submodule files dari restrukturisasi parser/
+#![allow(clippy::result_large_err, clippy::type_complexity)]
 pub mod class;
 pub mod config;
 pub mod decl;

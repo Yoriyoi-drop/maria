@@ -1,5 +1,5 @@
 // Allow large Result Err variant for SimError (intentional)
-#![allow(clippy::result_large_err)]
+#![allow(clippy::result_large_err, clippy::type_complexity)]
 
 mod cli;
 use clap::Parser as ClapParser;

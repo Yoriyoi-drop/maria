@@ -2197,7 +2197,7 @@ impl X86Cpu {
                     // EDX:EAX 64-bit signed dividend.
                     let hi = self.r32(2);
                     let lo = self.r32(0);
-                    let divd = ((((hi as i64) << 32) | lo as i64)) as i128;
+                    let divd = (((hi as i64) << 32) | lo as i64) as i128;
                     let d = a as u32 as i32 as i128;
                     let q = divd / d;
                     let rem = divd % d;

@@ -111,7 +111,7 @@ pub fn generate_tb(config: &TbConfig, ports: &[PortInfo]) -> String {
     }
     push(&mut tb, "\n");
 
-    push(&mut tb, &"    // DUT instantiation\n".to_string());
+    push(&mut tb, "    // DUT instantiation\n");
     push(
         &mut tb,
         &format!("    {} {} (\n", config.module_name, config.instance_name),

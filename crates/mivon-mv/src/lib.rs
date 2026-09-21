@@ -10,6 +10,9 @@
 //! - `check.rs`  — type-check & semantic (E2001–E2007, MIVON-HDL.md §9)
 //! - `codegen.rs`— emitter SystemVerilog (`.sv`/`.svh`)
 
+// Allow complex Result/function types (intentional API signatures)
+#![allow(clippy::type_complexity)]
+
 pub mod ast;
 pub mod check;
 pub mod codegen;

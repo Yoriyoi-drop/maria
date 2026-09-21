@@ -83,7 +83,7 @@ fn generate_svh(file: &MvFile, base: &str, header: &str) -> String {
     }
 
     out.push('\n');
-    out.push_str(&"`endif\n".to_string());
+    out.push_str("`endif\n");
     out
 }
 
