@@ -472,9 +472,11 @@ mod tests {
 
     #[test]
     fn test_phase_line_running() {
-        let mut info = PhaseInfo::default();
-        info.status = PhaseStatus::Running;
-        info.progress = 50;
+        let info = PhaseInfo {
+            status: PhaseStatus::Running,
+            progress: 50,
+            ..Default::default()
+        };
         let line = phase_line("LEX", &info);
         assert!(line.starts_with("LEX "));
         assert!(line.contains('█'));
@@ -483,9 +485,11 @@ mod tests {
 
     #[test]
     fn test_phase_line_done() {
-        let mut info = PhaseInfo::default();
-        info.status = PhaseStatus::Done;
-        info.progress = 100;
+        let info = PhaseInfo {
+            status: PhaseStatus::Done,
+            progress: 100,
+            ..Default::default()
+        };
         let line = phase_line("PAR", &info);
         assert!(line.contains('✓'));
         assert!(!line.contains('░'));

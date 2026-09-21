@@ -310,8 +310,8 @@ mod tests {
         for (i, item) in slice.iter_mut().enumerate() {
             *item = i as u64;
         }
-        for i in 0..10 {
-            assert_eq!(slice[i], i as u64);
+        for (i, item) in slice.iter().enumerate() {
+            assert_eq!(*item, i as u64);
         }
     }
 

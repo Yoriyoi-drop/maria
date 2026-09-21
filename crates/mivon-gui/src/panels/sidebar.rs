@@ -180,11 +180,12 @@ fn file_cat_color(cat: FileCat) -> egui::Color32 {
 /// Satu baris file: [★/☆] nama — klik bintang toggle bookmark, klik baris buka.
 /// Aksi diterapkan via `to_toggle`/`to_open` (diproses setelah ScrollArea).
 /// `cat` dipakai mewarnai nama sesuai kategori file.
+#[allow(clippy::too_many_arguments)]
 fn file_row(
     ui: &mut egui::Ui,
     name: &str,
     rel: &str,
-    path: &std::path::PathBuf,
+    path: &std::path::Path,
     is_bookmarked: bool,
     cat: FileCat,
     to_open: &mut Option<std::path::PathBuf>,
@@ -204,7 +205,7 @@ fn file_row(
                 .small(),
         );
         if s.on_hover_text("Bookmark file").clicked() {
-            *to_toggle = Some(path.clone());
+            *to_toggle = Some(path.to_path_buf());
         }
         // Nama file — klik buka; diwarnai sesuai kategori.
         let text = egui::RichText::new(name)
@@ -216,11 +217,12 @@ fn file_row(
             .on_hover_text(rel)
             .clicked()
         {
-            *to_open = Some(path.clone());
+            *to_open = Some(path.to_path_buf());
         }
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tree_nodes(
     ui: &mut egui::Ui,
     nodes: &[super::super::state::FileNode],

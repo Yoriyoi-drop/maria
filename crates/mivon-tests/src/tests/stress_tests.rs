@@ -44,6 +44,7 @@ endmodule
 }
 
 /// Generate N modules with inter-dependencies (leaf → mid → top).
+#[allow(dead_code)]
 fn generate_dep_modules(count: usize) -> String {
     let mut source = String::with_capacity(count * 300);
     // Create hierarchical tree: each module instantiates 2 sub-modules

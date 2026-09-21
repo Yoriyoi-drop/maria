@@ -216,7 +216,7 @@ fn history_chart(
     title: &str,
 ) {
     ui.label(egui::RichText::new(title).weak().size(10.0));
-    let width = ui.available_width().min(560.0).max(200.0);
+    let width = ui.available_width().clamp(200.0, 560.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     ui.painter().rect_filled(
         rect,

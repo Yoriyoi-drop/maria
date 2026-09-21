@@ -408,15 +408,16 @@ fn build_layout(deps: &[DepRow]) -> DepGraphLayout {
         }
     }
     // Sisa (siklus tak terjangkau root) → layer terakhir
-    for i in 0..n {
-        if layer[i] == usize::MAX {
-            layer[i] = max_layer + 1;
-            max_layer = max_layer.max(layer[i]);
+    for v in layer.iter_mut().take(n) {
+        if *v == usize::MAX {
+            *v = max_layer + 1;
+            max_layer = max_layer.max(*v);
         }
     }
 
     // Kelompok per layer, urut nama (layout stabil)
     let mut by_layer: HashMap<usize, Vec<usize>> = HashMap::new();
+    #[allow(clippy::needless_range_loop)]
     for i in 0..n {
         by_layer.entry(layer[i]).or_default().push(i);
     }

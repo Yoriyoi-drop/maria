@@ -83,7 +83,7 @@ fn main() {
         println!("VGA text:\n{}", txt);
     }
     let mut v: Vec<(u64, u64)> = hist.into_iter().collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.sort_by_key(|a| std::cmp::Reverse(a.1));
     println!("== top 12 hot PCs ==");
     for (pc, c) in v.iter().take(12) {
         let bs: Vec<u8> = (0..4)

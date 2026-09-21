@@ -1104,7 +1104,7 @@ mod tests {
         let mut m = map();
         let mut cpu = Rv32Cpu::new();
         // coba tulis x0: lui x0, 0x12345 → x0 tetap 0
-        let code = [((0x12345u32 << 12)) | LUI];
+        let code = [(0x12345u32 << 12) | LUI];
         load_code(&mut cpu, &mut m, 0x1000, &code);
         run(&mut cpu, &mut m, 1);
         assert_eq!(cpu.read_reg(0), 0);

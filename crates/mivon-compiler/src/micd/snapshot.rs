@@ -310,8 +310,10 @@ mod tests {
 
     #[test]
     fn test_snapshot_roundtrip() {
-        let mut s = Snapshot::default();
-        s.id = 1;
+        let mut s = Snapshot {
+            id: 1,
+            ..Default::default()
+        };
         s.files.push(FileMeta {
             path: PathBuf::from("a.sv"),
             content_hash: 5,

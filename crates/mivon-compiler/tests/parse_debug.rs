@@ -95,6 +95,7 @@ fn debug_parse_body_localparam() {
     // Dump combined source lines 55-75 untuk konteks divergensi
     {
         let lines: Vec<&str> = combined.lines().collect();
+        #[allow(clippy::needless_range_loop)]
         for i in 55..75.min(lines.len()) {
             eprintln!("C[{}]: {}", i + 1, lines[i]);
         }

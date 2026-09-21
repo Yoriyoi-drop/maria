@@ -4,6 +4,7 @@
 //! and basic BMC behavior on minimal designs.
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::bmc::{collect_assertions, collect_combinational_assignments};
     use crate::*;
@@ -14,8 +15,10 @@ mod tests {
     // ── Helper: create a minimal FormalEngine for testing ──
 
     fn test_engine() -> FormalEngine {
-        let mut cfg = FormalConfig::default();
-        cfg.timeout = 10; // 10 second timeout for tests
+        let cfg = FormalConfig {
+            timeout: 10, // 10 second timeout for tests
+            ..Default::default()
+        };
         let mut engine = FormalEngine::new(cfg);
         engine.init();
         engine
@@ -549,10 +552,12 @@ mod tests {
     // ── k-Induction Tests ──
 
     fn test_engine_with_induction() -> FormalEngine {
-        let mut cfg = FormalConfig::default();
-        cfg.timeout = 10;
-        cfg.induction = true;
-        cfg.bound = 5;
+        let cfg = FormalConfig {
+            timeout: 10,
+            induction: true,
+            bound: 5,
+            ..Default::default()
+        };
         let mut engine = FormalEngine::new(cfg);
         engine.init();
         engine

@@ -1667,6 +1667,7 @@ mod tests {
             ports.push(v);
         }
         let mut acc = ports[0];
+        #[allow(clippy::needless_range_loop)]
         for i in 1..8 {
             let n = m.add_node(SirNodeKind::And, vec![acc, ports[i]], 1);
             acc = m.add_value(SirValue::Node(n));

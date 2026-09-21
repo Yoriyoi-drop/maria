@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_version() {
-        let v = unsafe { mivon_version() };
+        let v = mivon_version();
         let s = unsafe { CStr::from_ptr(v) };
         assert_eq!(s.to_str().unwrap(), "0.3.0");
     }

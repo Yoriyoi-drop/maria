@@ -1514,9 +1514,8 @@ fn scan_hover_info(content: &str, name: &str) -> HoverInfo {
             }
             if docs.is_none() {
                 if let Some(prev) = i.checked_sub(1).and_then(|p| lines.get(p)) {
-                    let pt = prev.trim_start();
-                    if pt.starts_with("//") {
-                        let c = pt[2..].trim().to_string();
+                    if let Some(c) = prev.trim_start().strip_prefix("//") {
+                        let c = c.trim().to_string();
                         if !c.is_empty() {
                             docs = Some(truncate_doc(&c));
                         }

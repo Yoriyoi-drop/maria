@@ -84,9 +84,11 @@ mod tests {
 
     #[test]
     fn test_lint_report() {
-        let mut r = LintReport::default();
-        r.unused = 3;
-        r.width = 2;
+        let r = LintReport {
+            unused: 3,
+            width: 2,
+            ..Default::default()
+        };
         assert_eq!(r.total(), 5);
         assert!(!r.is_clean());
         assert!(LintReport::default().is_clean());

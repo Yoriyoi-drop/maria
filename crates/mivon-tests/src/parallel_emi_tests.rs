@@ -85,8 +85,10 @@ fn run_emivariant(
 /// Jalur serial (parallel dimatikan) — referensi semantik §11.5.1.
 #[test]
 fn test_emi_partselect_serial_reference() {
-    let mut pcfg = mivon_simulator::simulator::parallel::ParallelConfig::default();
-    pcfg.parallel_processes = false;
+    let pcfg = mivon_simulator::simulator::parallel::ParallelConfig {
+        parallel_processes: false,
+        ..Default::default()
+    };
     let x = run_emivariant("", pcfg);
     assert_eq!(
         x, "xx01",
@@ -109,8 +111,10 @@ fn test_emi_partselect_parallel_with_dead_code() {
 /// Parallel dipaksa aktif untuk jumlah proses kecil.
 #[test]
 fn test_emi_partselect_parallel_forced() {
-    let mut pcfg = mivon_simulator::simulator::parallel::ParallelConfig::default();
-    pcfg.min_processes_parallel = 1;
+    let pcfg = mivon_simulator::simulator::parallel::ParallelConfig {
+        min_processes_parallel: 1,
+        ..Default::default()
+    };
     let x = run_emivariant("", pcfg);
     assert_eq!(
         x, "xx01",
@@ -135,8 +139,10 @@ endmodule
     let design = compile_str(source).unwrap();
     // Serial
     let mut engine = mivon_simulator::simulator::SimulationEngine::new(design.clone(), 10);
-    let mut ser = mivon_simulator::simulator::parallel::ParallelConfig::default();
-    ser.parallel_processes = false;
+    let ser = mivon_simulator::simulator::parallel::ParallelConfig {
+        parallel_processes: false,
+        ..Default::default()
+    };
     engine.set_parallel_config(ser);
     engine.run().unwrap();
     let sigs = engine.design.top.signals.clone();
@@ -144,8 +150,10 @@ endmodule
     let serial = engine.state.read_signal(idx).clone();
     // Parallel dipaksa
     let mut engine = mivon_simulator::simulator::SimulationEngine::new(design, 10);
-    let mut par = mivon_simulator::simulator::parallel::ParallelConfig::default();
-    par.min_processes_parallel = 1;
+    let par = mivon_simulator::simulator::parallel::ParallelConfig {
+        min_processes_parallel: 1,
+        ..Default::default()
+    };
     engine.set_parallel_config(par);
     engine.run().unwrap();
     let parallel = engine.state.read_signal(idx).clone();
@@ -337,10 +345,14 @@ module top;
   initial begin #1 $finish; end
 endmodule
 "#;
-    let mut serial = mivon_simulator::simulator::parallel::ParallelConfig::default();
-    serial.parallel_processes = false;
-    let mut par = mivon_simulator::simulator::parallel::ParallelConfig::default();
-    par.min_processes_parallel = 1;
+    let serial = mivon_simulator::simulator::parallel::ParallelConfig {
+        parallel_processes: false,
+        ..Default::default()
+    };
+    let par = mivon_simulator::simulator::parallel::ParallelConfig {
+        min_processes_parallel: 1,
+        ..Default::default()
+    };
     let s = run_pcfg_signal(src, "y", serial);
     let p = run_pcfg_signal(src, "y", par);
     assert_eq!(s, "xx", "serial: sel=X → merge bitwise = xx, got {s}");
@@ -364,10 +376,14 @@ module top;
   initial begin #1 $finish; end
 endmodule
 "#;
-    let mut serial = mivon_simulator::simulator::parallel::ParallelConfig::default();
-    serial.parallel_processes = false;
-    let mut par = mivon_simulator::simulator::parallel::ParallelConfig::default();
-    par.min_processes_parallel = 1;
+    let serial = mivon_simulator::simulator::parallel::ParallelConfig {
+        parallel_processes: false,
+        ..Default::default()
+    };
+    let par = mivon_simulator::simulator::parallel::ParallelConfig {
+        min_processes_parallel: 1,
+        ..Default::default()
+    };
     let s = run_pcfg_signal(src, "r", serial);
     let p = run_pcfg_signal(src, "r", par);
     assert_eq!(s, "0", "serial: bit menerima X → 0, got {s}");

@@ -4645,7 +4645,6 @@ endmodule
     let _sigs = simulate_signals(&source, 10).unwrap();
     let _ = std::fs::remove_file(&tmp);
     // Just verify no crash
-    assert!(true);
 }
 
 #[test]
@@ -4761,9 +4760,11 @@ endmodule
     let design = compile_str(source).unwrap();
     let mut engine = crate::simulator::SimulationEngine::new(design, 10);
     // Enable parallel with threshold of 1 for testing
-    let mut pcfg = crate::simulator::parallel::ParallelConfig::default();
-    pcfg.min_processes_parallel = 1;
-    pcfg.parallel_processes = true;
+    let pcfg = crate::simulator::parallel::ParallelConfig {
+            min_processes_parallel: 1,
+            parallel_processes: true,
+            ..Default::default()
+        };
     engine.set_parallel_config(pcfg);
     engine.run().unwrap();
     let sigs = engine.design.top.signals.clone();
@@ -5451,6 +5452,7 @@ endmodule
     assert_eq!(v1, 20, "rsort: second should be 20");
     assert_eq!(v2, 10, "rsort: third should be 10");
 }
+#[test]
 fn test_sformatf_basic() {
     let source = r#"
 module tb;
@@ -5689,7 +5691,6 @@ endmodule
 }
 
 #[test]
-#[test]
 fn test_signed_lt_literal_zero() {
     // signed signal vs literal 0: `s < 0` harus signed (SV: relational signed
     // bila SALAH SATU operand signed). Bug: kondisi lama && (kedua signed)
@@ -5715,7 +5716,6 @@ endmodule
 }
 
 #[test]
-#[test]
 fn test_real_arithmetic_literal_fold() {
     // Bug #6: `1.5 + 2.25` → NaN (evaluator biner tak kenal real utk literal;
     // hanya signal is_real). Fix: fold real literal+literal di elaborasi.
@@ -5737,7 +5737,6 @@ endmodule
     assert_eq!(r2, 2, "10/4 = 2.5 (f64), dapat `{r2}`");
 }
 
-#[test]
 #[test]
 fn test_signed_div_mod() {
     // Bug #7: `s = -4; sd = s / 2` → 126 (unsigned 252/2) — operand sinyal
@@ -8429,6 +8428,7 @@ endmodule
 }
 
 #[test]
+#[allow(clippy::approx_constant)] // literal `3.14` memang target RTL, bukan PI
 fn test_real_declaration_and_assignment() {
     let source = r#"
 module tb;
@@ -8447,7 +8447,7 @@ endmodule
         .map(|(_, v)| f64::from_bits(v.to_u64()))
         .unwrap();
     assert!(
-        (r_val - std::f64::consts::PI).abs() < 1e-9,
+        (r_val - 3.14).abs() < 1e-9,
         "r should be ~3.14, got {}",
         r_val
     );
@@ -9587,7 +9587,6 @@ endmodule
 "#;
     let _sigs = simulate_signals(source, 5).unwrap();
     // Just verify it compiles and runs without error
-    assert!(true);
 }
 
 #[test]
@@ -9830,7 +9829,6 @@ endmodule
 "#;
     let _sigs = simulate_signals(source, 5).unwrap();
     // get_type_name returns a string (bits), we just verify simulation completes
-    assert!(true, "get_type_name should work");
 }
 
 #[test]
@@ -11857,6 +11855,7 @@ endmodule
     assert!(result.is_ok(), "param class sim failed: {:?}", result.err());
 }
 
+#[test]
 fn test_uvm_scoreboard_compile() {
     let source = r#"
 class my_scoreboard extends uvm_scoreboard;
@@ -11881,6 +11880,7 @@ endmodule
     );
 }
 
+#[test]
 fn test_uvm_monitor_compile() {
     let source = r#"
 class my_monitor extends uvm_monitor;
@@ -11929,7 +11929,6 @@ endmodule
 "#;
     let _sigs = simulate_signals(source, 5).unwrap();
     // get_type_name returns string bits, we just verify sim completes
-    assert!(true, "sequence_item get_type_name should work");
 }
 
 #[test]
@@ -15049,8 +15048,7 @@ module top;
 endmodule"#,
     );
     // Package typedef with range may not be supported yet
-    if result.is_err() {
-        let err = result.unwrap_err();
+    if let Err(err) = result {
         if !err.to_string().contains("typedef") {
             panic!("unexpected error: {}", err);
         }

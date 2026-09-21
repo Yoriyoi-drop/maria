@@ -51,8 +51,8 @@ fn parse_precedence_power_vs_unary() {
             for s in stmts {
                 if let Stmt::Assign { rhs, .. } = s {
                     // rhs harus Unary("-", Binary("**", a, b))
-                    if let Expr::Unary(op, inner) = rhs {
-                        if op == "-" {
+                    match rhs {
+                        Expr::Unary(op, inner) if op.as_str() == "-" => {
                             if let Expr::Binary(bop, l, r) = inner.as_ref() {
                                 assert_eq!(bop, "**");
                                 assert!(matches!(l.as_ref(), Expr::Ident(..)));
@@ -60,6 +60,7 @@ fn parse_precedence_power_vs_unary() {
                                 found = true;
                             }
                         }
+                        _ => {}
                     }
                 }
             }

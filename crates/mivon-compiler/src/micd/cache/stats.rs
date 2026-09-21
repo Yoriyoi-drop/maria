@@ -107,12 +107,14 @@ mod tests {
 
     #[test]
     fn test_layer_summary_and_lookup() {
-        let mut l = CacheLayerStats::default();
-        l.stores = 2;
-        l.total_entries = 10;
-        l.total_bytes = 500;
-        l.total_hits = 4;
-        l.total_misses = 1;
+        let mut l = CacheLayerStats {
+            stores: 2,
+            total_entries: 10,
+            total_bytes: 500,
+            total_hits: 4,
+            total_misses: 1,
+            ..Default::default()
+        };
         l.per_category.push(CategoryStats {
             category: CacheCategory::Parser,
             entries: 7,

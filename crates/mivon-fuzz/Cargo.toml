@@ -31,4 +31,3 @@ mivon-ir = { path = "../mivon-ir", optional = true }
 mivon-parser = { path = "../mivon-parser", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-serde_json = "1"

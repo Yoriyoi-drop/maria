@@ -2350,6 +2350,7 @@ mod tests {
         // 10 siklus save/reload, tiap siklus tambah beberapa file baru.
         for cycle in 0..10 {
             let mut db = MicdDatabase::open(&root);
+            #[allow(clippy::needless_range_loop)]
             for i in 0..n_files {
                 let path = &paths[i];
                 let hash = (i as u64) * 1000 + cycle as u64;
@@ -2377,8 +2378,8 @@ mod tests {
         assert_eq!(db.files.len(), n_files);
         assert_eq!(db.ast_cache.len(), n_files / 2);
         // Verify semua file masih terbaca.
-        for i in 0..n_files {
-            let meta = db.get_file_meta(&paths[i]).unwrap();
+        for (i, path) in paths.iter().take(n_files).enumerate() {
+            let meta = db.get_file_meta(path).unwrap();
             assert_eq!(meta.content_hash, (i as u64) * 1000 + 9);
         }
         let _ = std::fs::remove_dir_all(&root);

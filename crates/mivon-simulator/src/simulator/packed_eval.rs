@@ -98,11 +98,11 @@ mod tests {
         assert_eq!(pv.num_chunks(), 2);
         // 64 bit pertama = 1, 64 bit kedua = 0
         let lv = pv.to_logicvec();
-        for i in 0..64 {
-            assert_eq!(lv.bits[i], LogicVal::One, "bit {} should be 1", i);
+        for (i, bit) in lv.bits.iter().take(64).enumerate() {
+            assert_eq!(*bit, LogicVal::One, "bit {} should be 1", i);
         }
-        for i in 64..128 {
-            assert_eq!(lv.bits[i], LogicVal::Zero, "bit {} should be 0", i);
+        for (i, bit) in lv.bits.iter().skip(64).take(64).enumerate() {
+            assert_eq!(*bit, LogicVal::Zero, "bit {} should be 0", i + 64);
         }
     }
 

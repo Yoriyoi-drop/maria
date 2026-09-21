@@ -125,14 +125,15 @@ mod tests {
     use super::*;
 
     fn sample() -> BuildProfile {
-        let mut p = BuildProfile::default();
-        p.build_id = 1;
-        p.total_ms = 100;
-        p.lex_ms = 10;
-        p.files = 5;
-        p.cache_hits = 4;
-        p.cache_misses = 1;
-        p
+        BuildProfile {
+            build_id: 1,
+            total_ms: 100,
+            lex_ms: 10,
+            files: 5,
+            cache_hits: 4,
+            cache_misses: 1,
+            ..Default::default()
+        }
     }
 
     #[test]

@@ -312,8 +312,10 @@ mod tests {
 
     #[test]
     fn test_max_runs_eviction() {
-        let mut db = TestResultDb::default();
-        db.max_runs = 3;
+        let mut db = TestResultDb {
+            max_runs: 3,
+            ..Default::default()
+        };
         for i in 0..5 {
             let run = TestResultDb::create_run(
                 vec![TestResult {

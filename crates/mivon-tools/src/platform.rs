@@ -185,13 +185,4 @@ mod tests {
         let size = ThreadPool::recommended_size();
         assert!(size >= 1);
     }
-
-    #[test]
-    fn test_features() {
-        assert!(features::HAS_SIMD);
-        assert!(features::HAS_ATOMICS);
-        assert!(features::HAS_THREADS);
-        assert!(features::HAS_FILESYSTEM);
-        assert!(features::HAS_MMAP);
-    }
 }

@@ -90,7 +90,7 @@ fn main() {
                 );
             }
         }
-        ring[((i % 6))] = pc;
+        ring[i % 6] = pc;
         if log {
             println!(
                 "  step={} pc=0x{:08x} [0x{:02x} 0x{:02x} 0x{:02x} 0x{:02x}]",

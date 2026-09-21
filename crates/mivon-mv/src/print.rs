@@ -898,6 +898,7 @@ mod tests {
 
     /// Round-trip: parse → print → parse — AST kedua harus identik (tanpa
     /// posisi; line/col diabaikan).
+    #[allow(dead_code)]
     fn roundtrip(src: &str) {
         let f1 = parse(src).expect("parse pertama");
         let text = print_file(&f1);
@@ -911,6 +912,7 @@ mod tests {
     }
 
     /// Hapus posisi (line,col) dari AST agar pembandingan fokus struktur.
+    #[allow(dead_code)]
     fn strip_pos(f: &MvFile) -> MvFile {
         // print-parse ulang TANPA posisi tidak bisa langsung; bandingkan
         // dengan mem-print AST kedua kali dan mengecek stabilitas: teks

@@ -556,6 +556,7 @@ pub enum BottomTab {
 }
 
 /// Event yang dikirim dari worker thread ke UI thread.
+#[allow(clippy::large_enum_variant)]
 pub enum GuiEvent {
     /// Compile selesai → (info, design ter-elaborasi untuk simulasi) atau daftar
     /// diagnostics error (dengan lokasi file/line) untuk Problems tab & Mini Map.

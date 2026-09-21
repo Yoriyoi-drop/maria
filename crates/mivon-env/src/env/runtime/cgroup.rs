@@ -225,10 +225,12 @@ mod tests {
 
     #[test]
     fn test_cgroup_display() {
-        let mut limits = CgroupLimits::default();
-        limits.in_cgroup = true;
-        limits.memory_limit_bytes = Some(2 * 1024 * 1024 * 1024); // 2GB
-        limits.cpu_cores = Some(2.0);
+        let limits = CgroupLimits {
+            in_cgroup: true,
+            memory_limit_bytes: Some(2 * 1024 * 1024 * 1024), // 2GB
+            cpu_cores: Some(2.0),
+            ..Default::default()
+        };
         let s = format!("{}", limits);
         assert!(s.contains("Cgroup Limits"));
         assert!(s.contains("2048 MB"));

@@ -151,11 +151,8 @@ fn test_edge_empty_always_comb() {
 fn test_edge_empty_fork_join() {
     let result =
         compile_str("module top; initial begin fork join end initial #1 $finish; endmodule");
-    // fork/join may hang in some versions; skip if so
-    if result.is_err() {
-        return;
-    }
-    assert!(true);
+    // fork/join may hang in some versions; guard: hasil tidak dicek
+    let _ = result;
 }
 
 // === 3. Nested constructs ===

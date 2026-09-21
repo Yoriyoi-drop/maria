@@ -4123,7 +4123,7 @@ mod tests {
         // Return frame di stack (atas→bawah): IP 0x7c04, CS 0x0000.
         let sp = cpu.sp();
         assert_eq!(sp, 0x7c00 - 4, "sp turun 4 (2 push 16-bit)");
-        let b = m.read((sp as u64), 2).unwrap();
+        let b = m.read(sp as u64, 2).unwrap();
         assert_eq!(b, 0x7c04, "ret IP = instruksi setelah ff /3");
         let b = m.read((sp as u64) + 2, 2).unwrap();
         assert_eq!(b, 0x0000, "ret CS = 0 (asli)");
@@ -4152,7 +4152,7 @@ mod tests {
         let esp = cpu.sp();
         assert_eq!(esp, 0x7ff0 - 8, "esp turun 8 (push32 x2)");
         assert_eq!(
-            m.read((esp as u64), 4).unwrap(),
+            m.read(esp as u64, 4).unwrap(),
             0x7c06,
             "ret EIP = instruksi setelah ff /3"
         );

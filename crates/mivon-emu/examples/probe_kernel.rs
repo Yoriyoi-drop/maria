@@ -26,6 +26,7 @@ fn main() {
     cpu.load_boot_sector(&mut m, &mbr).unwrap();
     cpu.disk = Some(Box::new(FileDisk::open(&iso).unwrap()));
     let mut n = 0;
+    #[allow(clippy::type_complexity)]
     let mut ring: Vec<(u64, u32, u32, u32, u32, u32, u32, u32)> = Vec::new();
     let mut halt_pc = 0u64;
     let mut last = 0u64;

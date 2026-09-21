@@ -254,6 +254,7 @@ pub(crate) mod test_utils {
     use super::*;
 
     /// Verify that all SIMD implementations produce the same result as scalar.
+    #[allow(dead_code)]
     pub fn verify_simd(buf: &[u8]) -> bool {
         let scalar = count_whitespace_scalar(buf);
 

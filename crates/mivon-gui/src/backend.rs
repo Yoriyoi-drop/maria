@@ -805,7 +805,8 @@ pub fn spawn_term(tx: Sender<GuiEvent>, cmd: String, cwd: Option<PathBuf>) {
         if let Some(out) = out {
             std::thread::spawn(move || {
                 use std::io::BufRead;
-                for l in std::io::BufReader::new(out).lines().flatten() {
+                for l in std::io::BufReader::new(out).lines() {
+                    let Ok(l) = l else { break };
                     let _ = tx_out.send(GuiEvent::TermOutput(l, false));
                 }
             });
@@ -813,7 +814,8 @@ pub fn spawn_term(tx: Sender<GuiEvent>, cmd: String, cwd: Option<PathBuf>) {
         if let Some(err) = err {
             std::thread::spawn(move || {
                 use std::io::BufRead;
-                for l in std::io::BufReader::new(err).lines().flatten() {
+                for l in std::io::BufReader::new(err).lines() {
+                    let Ok(l) = l else { break };
                     let _ = tx_err.send(GuiEvent::TermOutput(l, true));
                 }
             });
@@ -1038,7 +1040,7 @@ pub fn parse_vcd(text: &str) -> Vec<WaveformSignal> {
 
     let mut out: Vec<WaveformSignal> = vars
         .into_iter()
-        .filter_map(|(code, (name, width))| {
+        .map(|(code, (name, width))| {
             let mut trace = traces.remove(&code).unwrap_or_default();
             trace.sort_by_key(|(t, _)| *t);
             // Dedupe nilai berurutan yang sama (pertahankan waktu terakhir)
@@ -1049,13 +1051,12 @@ pub fn parse_vcd(text: &str) -> Vec<WaveformSignal> {
                     _ => dedup.push((t, v)),
                 }
             }
-            Some(WaveformSignal {
+            WaveformSignal {
                 name,
                 width,
                 trace: dedup,
-            })
-        })
-        .collect();
+            }
+        }).collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
