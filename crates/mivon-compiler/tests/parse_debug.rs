@@ -53,16 +53,36 @@ fn debug_nonansi_port_width() {
 
 #[test]
 fn debug_parse_body_localparam() {
-    let path = "/home/whale-d/mivon/opentitan/hw/top_englishbreakfast/ip/ast/rtl/rglts_pdm_3p3v.sv";
-    // Debug test ini butuh checkout OpenTitan di mesin dev; di CI file tidak
-    // ada → skip (bukan kegagalan).
-    let raw = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(_) => {
-            eprintln!("skip: {} tidak ditemukan (butuh checkout OpenTitan)", path);
+    // Debug test butuh satu file RTL dari checkout OpenTitan (proyek 3rd
+    // party, TIDAK ikut di-versioning). Resolusi: env `MIVON_OPENTITAN`
+    // (root checkout) atau `opentitan/` relatif ke repo root. Di CI file
+    // disediakan via sparse-clone (ci.yml). Bila tak ada → skip (bukan
+    // kegagalan) — restore skenario penuh saat checkout tersedia.
+    let rel = "hw/top_englishbreakfast/ip/ast/rtl/rglts_pdm_3p3v.sv";
+    let mut candidate = None;
+    if let Ok(root) = std::env::var("MIVON_OPENTITAN") {
+        candidate = Some(std::path::PathBuf::from(root).join(rel));
+    }
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .join("opentitan");
+    if candidate.as_ref().map(|p| !p.exists()).unwrap_or(true) {
+        candidate = Some(repo_root.join(rel));
+    }
+    let path = match candidate.as_ref().filter(|p| p.exists()) {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "skip: {} tidak ditemukan (butuh checkout OpenTitan; set MIVON_OPENTITAN)",
+                rel
+            );
             return;
         }
     };
+    let path = path.to_string_lossy().into_owned();
+    let raw = std::fs::read_to_string(&path).unwrap();
     let mut pp = mivon_parser::preprocessor::Preprocessor::new();
     let pre = pp.preprocess(&raw, None).unwrap();
     let combined = format!("`line 1 \"{}\"\n{}", path, pre);
@@ -110,7 +130,7 @@ fn debug_parse_body_localparam() {
     }
     // Bandingkan token streams: cari divergensi pertama
     {
-        let mut lex_f = mivon_compiler::frontend::FastLexer::new(&combined, path);
+        let mut lex_f = mivon_compiler::frontend::FastLexer::new(&combined, &path);
         let mut lex_l = mivon_parser::lexer::Lexer::new(&combined);
         let mut n = 0;
         loop {
@@ -138,7 +158,7 @@ fn debug_parse_body_localparam() {
     // Tes dengan FastLexer (jalur CompileSession) vs LegacyLexer
     for (label, toks) in [
         ("FAST", {
-            let mut lexer = mivon_compiler::frontend::FastLexer::new(&combined, path);
+            let mut lexer = mivon_compiler::frontend::FastLexer::new(&combined, &path);
             let mut t = Vec::new();
             loop {
                 let (tok, line, col) = lexer.next_token();
@@ -162,7 +182,7 @@ fn debug_parse_body_localparam() {
             t
         }),
     ] {
-        let mut parser = mivon_parser::Parser::new(toks, path);
+        let mut parser = mivon_parser::Parser::new(toks, &path);
         match parser.parse_design() {
             Ok(design) => {
                 for m in &design.modules {

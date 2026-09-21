@@ -53,3 +53,11 @@
 # Artifact laporan coverage (mcov/msim) — dihasilkan saat testing
 /covtest.coverage.html
 /covtest.ucis.xml
+
+# ── Fixture & corpus MILIK repo (bukan file eksternal) — wajib di-track ──
+# Test RTL CPU emu + seed corpus fuzz + filelist bench. Tanpa ini fresh
+# checkout / CI kehilangan sumber → test gagal (path-relative ke repo).
+!examples/rtl/*.sv
+!examples/rtl/*.v
+!crates/mivon-fuzz/fuzz/corpus/seeds/*.sv
+!crates/mivon-fuzz/fuzz/corpus/mv/*.mv
