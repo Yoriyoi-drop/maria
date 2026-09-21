@@ -404,12 +404,8 @@ mod tests {
         let mut layer = CacheLayer::open(&db, "pid1", 0).unwrap();
         // Isi melebihi budget kecil → GC buang.
         layer.store_mut(CacheCategory::Parser).unwrap().budget_bytes = 50;
-        layer
-            .put(CacheCategory::Parser, "a", &[1u8; 40])
-            .unwrap();
-        layer
-            .put(CacheCategory::Parser, "b", &[2u8; 40])
-            .unwrap();
+        layer.put(CacheCategory::Parser, "a", &[1u8; 40]).unwrap();
+        layer.put(CacheCategory::Parser, "b", &[2u8; 40]).unwrap();
         let removed = layer.run_gc();
         assert!(removed >= 1);
         assert!(layer.entry_count(CacheCategory::Parser) <= 1);

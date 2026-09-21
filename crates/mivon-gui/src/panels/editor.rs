@@ -1214,11 +1214,7 @@ fn build_sticky(content: &str) -> Vec<StickyScope> {
 /// Scope enclosing untuk `first_line`: semua scope dengan `line <= first_line`,
 /// ambil `max` terakhir (yang terdalam). Daftar scope terurut line menaik,
 /// jadi `take_while` berhenti di scope pertama yang mulai setelah first_line.
-fn enclosing_chain(
-    sticky: &[StickyScope],
-    first_line: usize,
-    max: usize,
-) -> Vec<&StickyScope> {
+fn enclosing_chain(sticky: &[StickyScope], first_line: usize, max: usize) -> Vec<&StickyScope> {
     let idx = sticky.iter().take_while(|s| s.line <= first_line).count();
     let start = idx.saturating_sub(max);
     sticky[start..idx].iter().collect()

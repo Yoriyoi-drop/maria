@@ -974,7 +974,7 @@ pub(crate) fn collect_expr_signal_ids(expr: &IrExpr, ids: &mut HashSet<SignalId>
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use mivon_core::intern::Symbol;
 
     /// Helper to create a default SignalInfo with just a name.

@@ -2894,9 +2894,7 @@ endmodule
         // Kursor di nama module sendiri → definisi tetap ditemukan.
         let (line, col, _) = LspBackend::find_definition(SAMPLE, 0, 10).unwrap();
         assert_eq!(line, line_of("module counter"), "definisi module counter");
-        assert!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("counter")
-        );
+        assert!(SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("counter"));
 
         // Instance `counter_aux aux` (baris pemakaian) → definisi module
         // counter_aux.
@@ -2926,9 +2924,7 @@ endmodule
             .unwrap() as u32;
         let (line, col, _) = LspBackend::find_definition(SAMPLE, use_line, enable_col).unwrap();
         assert_eq!(line, line_of("reg enable"));
-        assert!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("enable")
-        );
+        assert!(SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("enable"));
 
         // Pemakaian `clk` di port connection `.clk(clk)` → port decl
         // `input logic clk,` di module counter.
@@ -2942,9 +2938,7 @@ endmodule
             .unwrap();
         let (line, col, _) = LspBackend::find_definition(SAMPLE, inst_line, clk_col).unwrap();
         assert_eq!(line, line_of("input logic clk,"));
-        assert!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("clk")
-        );
+        assert!(SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("clk"));
 
         // Signal `state` dipakai? Tidak ada pemakaian; deklarasinya sendiri
         // tetap ditemukan.
@@ -2957,9 +2951,7 @@ endmodule
             .unwrap() as u32;
         let (line, col, _) = LspBackend::find_definition(SAMPLE, decl_line, st_col).unwrap();
         assert_eq!(line, decl_line);
-        assert!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("state")
-        );
+        assert!(SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("state"));
     }
 
     #[test]
@@ -2974,9 +2966,7 @@ endmodule
             .unwrap() as u32;
         let (line, col, _) = LspBackend::find_definition(SAMPLE, out_line, w_col).unwrap();
         assert_eq!(line, line_of("parameter WIDTH"));
-        assert!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("WIDTH")
-        );
+        assert!(SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("WIDTH"));
     }
 
     #[test]
@@ -3434,10 +3424,9 @@ endmodule
         let lenses = LspBackend::compute_code_lens(src, &uri);
         // Module counter → 1 lens
         assert!(
-            lenses.iter().any(|l| l
-                .command
-                .as_ref()
-                .is_some_and(|c| c.title.contains("test"))),
+            lenses
+                .iter()
+                .any(|l| l.command.as_ref().is_some_and(|c| c.title.contains("test"))),
             "module lens: {:?}",
             lenses
                 .iter()
@@ -3500,10 +3489,9 @@ endmodule
         let lenses = LspBackend::compute_code_lens(src, &uri);
         // Module counter -> test count lens
         assert!(
-            lenses.iter().any(|l| l
-                .command
-                .as_ref()
-                .is_some_and(|c| c.title.contains("test"))),
+            lenses
+                .iter()
+                .any(|l| l.command.as_ref().is_some_and(|c| c.title.contains("test"))),
             "module lens: {:?}",
             lenses
                 .iter()
@@ -3512,11 +3500,11 @@ endmodule
         );
         // test_add -> 'Run test' lens (LSP-21)
         assert!(
-            lenses.iter().any(|l| l
-                .command
-                .as_ref()
-                .is_some_and(|c| c.command.contains("runTest")
-                    && c.command.contains("test_add"))),
+            lenses
+                .iter()
+                .any(|l| l.command.as_ref().is_some_and(
+                    |c| c.command.contains("runTest") && c.command.contains("test_add")
+                )),
             "test_add should have runTest lens: {:?}",
             lenses
                 .iter()

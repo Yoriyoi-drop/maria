@@ -426,7 +426,6 @@ impl crate::cpu::CpuCore for Rv64JitCpu {
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     #[cfg(feature = "jit")]

@@ -1530,11 +1530,7 @@ mod tests {
     fn bitfn_init_table_or_not() {
         let sir = tiny_sir();
         let o = BitFn::Or(Box::new(BitFn::Leaf(0, 0)), Box::new(BitFn::Leaf(1, 0)));
-        assert_eq!(
-            o.init_table(&[(0, 0), (1, 0)], &sir),
-            0xE,
-            "a|b → init 0xE"
-        );
+        assert_eq!(o.init_table(&[(0, 0), (1, 0)], &sir), 0xE, "a|b → init 0xE");
         let n = BitFn::Not(Box::new(BitFn::Leaf(0, 0)));
         assert_eq!(
             n.init_table(&[(0, 0)], &sir),

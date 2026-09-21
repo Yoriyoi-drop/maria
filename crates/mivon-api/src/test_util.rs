@@ -1,6 +1,5 @@
 //! Test utilities — AST comparison, regression helpers.
 
-
 /// Assert that two designs are structurally equivalent.
 #[macro_export]
 macro_rules! assert_designs_eq {

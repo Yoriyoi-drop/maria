@@ -94,7 +94,6 @@ pub fn vhpi_scan(iter_handle: VhpiHandle) -> VhpiHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     // FIX flake (ROUND 106): lock bersama lintas modul vhpi.
     use crate::vhpi::VHPI_TEST_LOCK as TEST_LOCK;

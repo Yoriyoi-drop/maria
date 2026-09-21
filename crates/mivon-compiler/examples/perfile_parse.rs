@@ -49,14 +49,13 @@ fn discover(src: &str, classes: &mut HashSet<Symbol>, typedefs: &mut HashSet<Sym
                     last_ident = Some(n);
                 }
             }
-            Token::Semi
-                if in_typedef && brace_depth == 0 => {
-                    if let Some(n) = last_ident {
-                        typedefs.insert(n);
-                    }
-                    in_typedef = false;
-                    last_ident = None;
+            Token::Semi if in_typedef && brace_depth == 0 => {
+                if let Some(n) = last_ident {
+                    typedefs.insert(n);
                 }
+                in_typedef = false;
+                last_ident = None;
+            }
             _ => {}
         }
     }

@@ -1,4 +1,3 @@
-
 #[test]
 fn test_preprocess_then_lex() {
     use mivon_parser::lexer::{Lexer, Token};

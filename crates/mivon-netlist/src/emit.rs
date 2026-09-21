@@ -438,7 +438,7 @@ pub fn emit_summary(nl: &Netlist) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use crate::lower::lower_module;
     use mivon_core::intern::Symbol;
     use mivon_core::LogicVec;

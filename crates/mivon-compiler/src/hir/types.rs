@@ -256,7 +256,6 @@ impl Default for TypeSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn test_typesystem_basic() {

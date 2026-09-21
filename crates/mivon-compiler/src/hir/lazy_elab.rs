@@ -139,7 +139,6 @@ impl Default for LazyElaborator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn test_lazy_elab_basic() {

@@ -180,10 +180,9 @@ impl MivonApp {
             let cmd = i.modifiers.command;
 
             // Global: selalu aktif
-            if cmd && i.key_pressed(Key::S)
-                && self.state.save_active_file() {
-                    self.state.log("💾 File disimpan");
-                }
+            if cmd && i.key_pressed(Key::S) && self.state.save_active_file() {
+                self.state.log("💾 File disimpan");
+            }
             if cmd && i.key_pressed(Key::O) {
                 trigger_open_project(&mut self.state);
             }

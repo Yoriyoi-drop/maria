@@ -4761,10 +4761,10 @@ endmodule
     let mut engine = crate::simulator::SimulationEngine::new(design, 10);
     // Enable parallel with threshold of 1 for testing
     let pcfg = crate::simulator::parallel::ParallelConfig {
-            min_processes_parallel: 1,
-            parallel_processes: true,
-            ..Default::default()
-        };
+        min_processes_parallel: 1,
+        parallel_processes: true,
+        ..Default::default()
+    };
     engine.set_parallel_config(pcfg);
     engine.run().unwrap();
     let sigs = engine.design.top.signals.clone();
@@ -16591,7 +16591,6 @@ endmodule
 
 #[test]
 fn test_ucis_export() {
-    
     let source = r#"
 module tb_ucis;
     reg clk;

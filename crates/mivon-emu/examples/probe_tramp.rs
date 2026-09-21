@@ -39,10 +39,7 @@ fn main() {
         line.push_str(&format!("{b:02x} "));
     }
     println!("code @pc: {}", line);
-    println!(
-        "console_bytes: {:02x?}",
-        cpu.out.to_vec()
-    );
+    println!("console_bytes: {:02x?}", cpu.out.to_vec());
     // Dump 0x9080..0x9180 (grub_bios_interrupt + prot/real trampolin).
     let mut v = Vec::with_capacity(0x100);
     for k in 0x9080u64..0x9180 {

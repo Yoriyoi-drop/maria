@@ -1056,7 +1056,8 @@ pub fn parse_vcd(text: &str) -> Vec<WaveformSignal> {
                 width,
                 trace: dedup,
             }
-        }).collect();
+        })
+        .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
