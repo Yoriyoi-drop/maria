@@ -134,16 +134,17 @@ fn make_session_config(
     defines: &[String],
     top: Option<String>,
 ) -> SessionConfig {
-    let mut cfg = SessionConfig::default();
-    cfg.sources = files;
-    cfg.incdirs = incdirs.iter().map(PathBuf::from).collect();
-    cfg.defines = defines
-        .iter()
-        .filter_map(|d| d.split_once('='))
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    cfg.top_module = top;
-    cfg
+    SessionConfig {
+        sources: files,
+        incdirs: incdirs.iter().map(PathBuf::from).collect(),
+        defines: defines
+            .iter()
+            .filter_map(|d| d.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        top_module: top,
+        ..Default::default()
+    }
 }
 
 /// F10: bangun `SessionConfig` dari daftar file + CLI options, sekaligus

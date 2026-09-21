@@ -205,8 +205,8 @@ fn generate_iv() -> [u8; 16] {
         .unwrap_or_default()
         .as_nanos();
     let mut iv = [0u8; 16];
-    for i in 0..16 {
-        iv[i] = ((nanos >> (i * 8)) ^ (i as u128 * 0x9E37_79B9)) as u8;
+    for (i, slot) in iv.iter_mut().enumerate() {
+        *slot = ((nanos >> (i * 8)) ^ (i as u128 * 0x9E37_79B9)) as u8;
     }
     iv
 }

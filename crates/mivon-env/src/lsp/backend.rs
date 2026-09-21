@@ -2565,7 +2565,7 @@ impl LspBackend {
         let syms = Self::document_symbols(text);
 
         #[allow(clippy::only_used_in_recursion)]
-        fn walk(items: &[DocSymbol], text: &str, uri: &Url, lenses: &mut Vec<CodeLens>) {
+        fn walk(items: &[DocSymbol], text: &str, _uri: &Url, lenses: &mut Vec<CodeLens>) {
             for sym in items {
                 match sym.kind {
                     // Module → "Run tests" lens
@@ -2635,7 +2635,7 @@ impl LspBackend {
                     _ => {}
                 }
                 // Recurse into children.
-                walk(&sym.children, text, uri, lenses);
+                walk(&sym.children, text, _uri, lenses);
             }
         }
 

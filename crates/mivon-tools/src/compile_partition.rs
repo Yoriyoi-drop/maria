@@ -129,6 +129,7 @@ fn tarjan_scc(modules: &[CompileModule], name_to_idx: &HashMap<&str, usize>) -> 
     let mut idx_counter = 0;
     let mut sccs = Vec::new();
 
+    #[allow(clippy::too_many_arguments)]
     fn strongconnect(
         v: usize,
         modules: &[CompileModule],
@@ -233,12 +234,11 @@ fn build_scc_deps(
 /// BFS layer computation on DAG.
 fn compute_layers(deps: &[HashSet<usize>], n: usize) -> Vec<Vec<usize>> {
     let _in_degree = vec![0usize; n];
-    for scc_id in 0..n {
-        for &_dep in &deps[scc_id] {
-            // scc_id depends on dep → dep is a prerequisite
-            // In compile order, dep comes BEFORE scc_id
-            // Layer: dep should have LOWER layer number
-        }
+    for deps_scc in deps.iter().take(n) {
+        let _ = deps_scc;
+        // scc_id depends on dep → dep is a prerequisite
+        // In compile order, dep comes BEFORE scc_id
+        // Layer: dep should have LOWER layer number
     }
 
     // Actually we need reverse: which SCCs depend on which
@@ -355,9 +355,9 @@ fn assign_partitions(
             .flat_map(|(i, p)| p.modules.iter().map(move |m| (m.clone(), i)))
             .collect();
 
-        for i in 0..partitions.len() {
+        for (i, part) in partitions.iter_mut().enumerate() {
             let mut deps = HashSet::new();
-            for mod_name in &partitions[i].modules {
+            for mod_name in &part.modules {
                 if let Some(m) = modules.iter().find(|m| m.name == *mod_name) {
                     for dep_name in &m.dependencies {
                         if let Some(&dep_part) = name_to_part.get(dep_name.as_str()) {
@@ -368,7 +368,7 @@ fn assign_partitions(
                     }
                 }
             }
-            partitions[i].depends_on = deps.into_iter().collect();
+            part.depends_on = deps.into_iter().collect();
         }
     }
 

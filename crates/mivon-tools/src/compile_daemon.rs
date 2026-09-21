@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -197,7 +198,7 @@ fn handle_connection(
     stream: TcpStream,
     stats: &Arc<Mutex<DaemonStats>>,
     cache: &Arc<Mutex<HashMap<String, CompileResponse>>>,
-    root: &PathBuf,
+    root: &Path,
 ) {
     let reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = stream;

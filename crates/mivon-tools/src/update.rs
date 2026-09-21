@@ -193,11 +193,11 @@ fn abbreviate(s: &str) -> String {
 
 fn manifest_url_for(channel: Option<&str>) -> String {
     match channel {
-        Some(c) if c == "beta" => format!(
+        Some("beta") => format!(
             "https://raw.githubusercontent.com/{}/main/dist/latest-beta.json",
             REPO
         ),
-        Some(c) if c == "stable" => DEFAULT_MANIFEST_URL.to_string(),
+        Some("stable") => DEFAULT_MANIFEST_URL.to_string(),
         Some(other) => format!(
             "https://raw.githubusercontent.com/{}/main/dist/latest-{}.json",
             REPO, other

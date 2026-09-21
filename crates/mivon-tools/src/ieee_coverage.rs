@@ -43,6 +43,7 @@ pub struct CoverageReport {
 }
 
 impl CoverageReport {
+    #[allow(clippy::vec_init_then_push)]
     /// Generate laporan komprehensif.
     pub fn generate() -> Self {
         let mut features = Vec::new();

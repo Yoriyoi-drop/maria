@@ -1155,9 +1155,8 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
     }
 
     // ── MICD: simpan hasil preprocess baru untuk run berikutnya ──
-    for r in &fresh_results {
-        if let Ok((idx, combined_str, ts, includes)) = r {
-            if let Ok(content) = read_source_bytes(Path::new(&sources[*idx]), &inline_src) {
+    for (idx, combined_str, ts, includes) in fresh_results.iter().flatten() {
+        if let Ok(content) = read_source_bytes(Path::new(&sources[*idx]), &inline_src) {
                 let h = mivon_compiler::cache::compute_checksum(&content);
                 let path = std::path::PathBuf::from(&sources[*idx]);
                 micd.cache_preprocessed(
@@ -1201,7 +1200,6 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
                     mivon_compiler::micd::CheckResult::pass(0),
                 );
                 micd.set_verify(v);
-            }
         }
     }
     // Save ditunda ke akhir run (setelah symbol/type/graph + prune_stale)
@@ -1855,8 +1853,7 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
                 return;
             }
             println!("✗ {} ({} error)", label, count);
-            let mut shown = 0;
-            for d in diags {
+            for (shown, d) in diags.iter().enumerate() {
                 if shown >= max {
                     break;
                 }
@@ -1868,7 +1865,6 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
                     msg
                 };
                 println!("  {} | {}", loc, short);
-                shown += 1;
             }
             if count > max {
                 println!("  ... dan {} error lainnya", count - max);
@@ -2256,12 +2252,12 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
                     .signals
                     .iter()
                     .enumerate()
-                    .filter_map(|(id, s)| {
+                    .map(|(id, s)| {
                         let is_output = matches!(
                             s.kind,
                             mivon_ir::SignalKind::Output | mivon_ir::SignalKind::Inout
                         );
-                        Some((id, s.name.to_string(), is_output))
+                        (id, s.name.to_string(), is_output)
                     })
                     .collect()
             };
@@ -3225,8 +3221,7 @@ fn run_fast(
             return;
         }
         println!("✗ {} ({} error)", label, count);
-        let mut shown = 0;
-        for d in errors {
+        for (shown, d) in errors.iter().enumerate() {
             if shown >= max_show {
                 break;
             }
@@ -3239,7 +3234,6 @@ fn run_fast(
                 msg
             };
             println!("  {} | {}", loc, msg_short);
-            shown += 1;
         }
         if count > max_show {
             println!("  ... dan {} error lainnya", count - max_show);

@@ -9,7 +9,7 @@
 //! - `tree`    — index hierarki scope + sinyal (WAV-08)
 //! - `stats`   — statistik per sinyal: toggle, transitions, aktivitas (WAV-17)
 //! - `decode`  — protokol-aware decode transaksi bus dari VCD: apb /
-//!               axi4lite / ahb (WAV-16)
+//!   axi4lite / ahb (WAV-16)
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -116,7 +116,6 @@ fn err(msg: impl Into<String>) -> SimError {
 }
 
 /// ── Parser VCD ──
-
 fn parse_vcd(path: &str) -> Result<VcdData, SimError> {
     let src = std::fs::read_to_string(path).map_err(|e| err(format!("{}: {}", path, e)))?;
     let lines: Vec<&str> = src.lines().map(|l| l.trim()).collect();
@@ -307,7 +306,6 @@ fn write_vcd(
 }
 
 /// ── merge ──
-
 fn merge(inputs: &[String], output: Option<&str>) -> Result<(), SimError> {
     if inputs.len() < 2 {
         return Err(err("merge membutuhkan minimal 2 VCD input"));
@@ -357,7 +355,6 @@ fn merge(inputs: &[String], output: Option<&str>) -> Result<(), SimError> {
 }
 
 /// ── export ──
-
 fn export(input: &str, format: &str, output: Option<&str>) -> Result<(), SimError> {
     let data = parse_vcd(input)?;
     let out_path = output
@@ -469,7 +466,6 @@ fn input_name(data: &VcdData) -> String {
 }
 
 /// ── filter ──
-
 fn filter(input: &str, keep: &[String], output: Option<&str>) -> Result<(), SimError> {
     let data = parse_vcd(input)?;
     let keep_set: std::collections::HashSet<String> = keep
@@ -663,10 +659,12 @@ fn compare_data(da: &VcdData, db: &VcdData) -> CompareResult {
                     let va = val_at(&ta, t);
                     let vb = val_at(&tb, t);
                     // Kedua punya nilai & berbeda → mismatch.
-                    if va.is_some() && vb.is_some() && va != vb {
-                        count += 1;
-                        if first.is_none() {
-                            first = Some((t, va.unwrap(), vb.unwrap()));
+                    if let (Some(a), Some(b)) = (va, vb) {
+                        if a != b {
+                            count += 1;
+                            if first.is_none() {
+                                first = Some((t, a, b));
+                            }
                         }
                     }
                     t += 1;
@@ -787,12 +785,12 @@ fn tree(input: &str) -> Result<(), SimError> {
 /// (wildcard `*`/`?`) dan mode query, kembalikan nilai sinyal tanpa harus
 /// memindai seluruh dump secara manual. Tiga mode:
 ///   - `--at T`      : sample di waktu T (perubahan terakhir ≤ T; "x" bila
-///                     belum ada perubahan) — random access murni.
+///     belum ada perubahan) — random access murni.
 ///   - `--range a:b` : semua perubahan dalam [a, b].
 ///   - (tanpa flag)  : timeline penuh per sinyal.
 ///
 /// Hasil terstruktur di `get_data` (bisa diuji); `get` hanya mencetak.
-
+///
 /// Satu entri hasil query: sinyal + daftar (waktu, nilai mentah bits).
 #[derive(Debug, Clone)]
 struct GetEntry {
@@ -955,11 +953,7 @@ fn stats(input: &str) -> Result<(), SimError> {
         if s.toggles == 0 {
             stuck += 1;
         }
-        let act = if s.duration > 0 {
-            s.activity * 100 / s.duration
-        } else {
-            0
-        };
+        let act = s.activity.checked_mul(100).and_then(|a| a.checked_div(s.duration)).unwrap_or(0);
         println!(
             "  {:<22} {:<5} {:<7} {:<7} {:<10} {:<7} {}%",
             s.name, s.width, s.toggles, s.changes, s.first, s.last, act
@@ -1078,7 +1072,7 @@ fn _pathbuf(s: &str) -> PathBuf {
 /// - `apb`      — AMBA 3/4 APB (psel/penable/pwrite/paddr/pwdata/prdata/pready)
 /// - `axi4lite` — AXI4-Lite (aw/w/b channel + ar/r channel, handshake valid/ready)
 /// - `ahb`      — AHB-Lite single transfer (htrans NONSEQ/SEQ + hready pipelining)
-
+///
 /// Satu transaksi ter-dekode dari waveform.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecodedTx {

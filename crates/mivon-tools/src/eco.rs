@@ -112,16 +112,16 @@ impl EcoDb {
             .iter_mut()
             .find(|e| e.id == id)
             .ok_or_else(|| format!("ECO {} not found", id))?;
-        let valid = match (&entry.status, &new_status) {
-            (EcoStatus::Draft, EcoStatus::Submitted) => true,
-            (EcoStatus::Submitted, EcoStatus::Reviewed) => true,
-            (EcoStatus::Reviewed, EcoStatus::Approved) => true,
-            (EcoStatus::Reviewed, EcoStatus::Rejected) => true,
-            (EcoStatus::Approved, EcoStatus::Implemented) => true,
-            (EcoStatus::Implemented, EcoStatus::Verified) => true,
-            (EcoStatus::Verified, EcoStatus::Closed) => true,
-            _ => false,
-        };
+        let valid = matches!(
+            (&entry.status, &new_status),
+            (EcoStatus::Draft, EcoStatus::Submitted)
+                | (EcoStatus::Submitted, EcoStatus::Reviewed)
+                | (EcoStatus::Reviewed, EcoStatus::Approved)
+                | (EcoStatus::Reviewed, EcoStatus::Rejected)
+                | (EcoStatus::Approved, EcoStatus::Implemented)
+                | (EcoStatus::Implemented, EcoStatus::Verified)
+                | (EcoStatus::Verified, EcoStatus::Closed)
+        );
         if !valid {
             return Err(format!(
                 "Invalid transition {:?} -> {:?}",

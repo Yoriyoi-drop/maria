@@ -126,7 +126,7 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
 }
 
 /// ── Analisis per module ──
-
+#[allow(clippy::too_many_arguments)]
 fn lint_module(
     module: &mivon_ast::types::Module,
     do_unused: bool,
@@ -160,6 +160,7 @@ fn lint_module(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lint_items(
     scope: &str,
     decls: &[mivon_ast::types::Decl],
@@ -460,7 +461,6 @@ fn walk_items<'a>(
 }
 
 /// ── Width ──
-
 fn decl_width(d: &mivon_ast::types::Decl, v: &mivon_ast::types::DeclVar) -> usize {
     if let Some(r) = &v.range {
         return r.width();
@@ -565,7 +565,6 @@ fn check_width(
 }
 
 /// ── Read/write collection ──
-
 fn lvalue_root(e: &Expr) -> Option<Symbol> {
     match e {
         Expr::Ident { name, .. } => Some(*name),
@@ -599,6 +598,7 @@ fn scan_sequence_reads(
     }
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn scan_expr_reads(e: &Expr, reads: &mut HashSet<Symbol>, writes: &mut HashSet<Symbol>) {
     match e {
         Expr::Ident { name, .. } => {
@@ -1039,7 +1039,6 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
 }
 
 /// ── Latch ──
-
 fn find_incomplete_if(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
     for stmt in stmts {
         match stmt {
@@ -1072,7 +1071,6 @@ fn find_incomplete_if(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
 }
 
 /// ── FSM ──
-
 fn find_fsm(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
     for stmt in stmts {
         match stmt {
@@ -1385,39 +1383,41 @@ fn find_redundant_assigns(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
     let mut writes: StdHashMap<Symbol, usize> = StdHashMap::new(); // name → line count
     for stmt in stmts {
         match stmt {
-            Stmt::BlockingAssign { lhs, .. } => {
-                if let mivon_ast::expr::Expr::Ident { name, .. } = lhs {
-                    let count = writes.entry(*name).or_insert(0);
-                    *count += 1;
-                    if *count == 2 {
-                        // Only report once per signal
-                        out.push(Finding {
-                            module: scope.to_string(),
-                            check: "gate-opt-redundant",
-                            severity: "W",
-                            message: format!(
-                                "signal '{}' overwritten in same block (redundant assignment)",
-                                name.as_str()
-                            ),
-                        });
-                    }
+            Stmt::BlockingAssign {
+                lhs: mivon_ast::expr::Expr::Ident { name, .. },
+                ..
+            } => {
+                let count = writes.entry(*name).or_insert(0);
+                *count += 1;
+                if *count == 2 {
+                    // Only report once per signal
+                    out.push(Finding {
+                        module: scope.to_string(),
+                        check: "gate-opt-redundant",
+                        severity: "W",
+                        message: format!(
+                            "signal '{}' overwritten in same block (redundant assignment)",
+                            name.as_str()
+                        ),
+                    });
                 }
             }
-            Stmt::NonBlockingAssign { lhs, .. } => {
-                if let mivon_ast::expr::Expr::Ident { name, .. } = lhs {
-                    let count = writes.entry(*name).or_insert(0);
-                    *count += 1;
-                    if *count == 2 {
-                        out.push(Finding {
-                            module: scope.to_string(),
-                            check: "gate-opt-redundant",
-                            severity: "W",
-                            message: format!(
-                                "signal '{}' overwritten in same block (redundant NBA)",
-                                name.as_str()
-                            ),
-                        });
-                    }
+            Stmt::NonBlockingAssign {
+                lhs: mivon_ast::expr::Expr::Ident { name, .. },
+                ..
+            } => {
+                let count = writes.entry(*name).or_insert(0);
+                *count += 1;
+                if *count == 2 {
+                    out.push(Finding {
+                        module: scope.to_string(),
+                        check: "gate-opt-redundant",
+                        severity: "W",
+                        message: format!(
+                            "signal '{}' overwritten in same block (redundant NBA)",
+                            name.as_str()
+                        ),
+                    });
                 }
             }
             Stmt::Block { stmts: inner } => {

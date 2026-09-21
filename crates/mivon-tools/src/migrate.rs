@@ -247,7 +247,7 @@ impl MigrationReport {
                 categories.push((hint.category.clone(), 1));
             }
         }
-        categories.sort_by(|a, b| b.1.cmp(&a.1));
+        categories.sort_by_key(|a| std::cmp::Reverse(a.1));
 
         MigrationSummary {
             total_hints: total,

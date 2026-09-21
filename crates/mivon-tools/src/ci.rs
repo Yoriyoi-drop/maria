@@ -222,6 +222,12 @@ pub struct SarifRegion {
     pub start_column: u32,
 }
 
+impl Default for SarifLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SarifLog {
     /// Buat SARIF log baru.
     pub fn new() -> Self {
