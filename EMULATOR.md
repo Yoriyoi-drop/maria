@@ -1128,13 +1128,23 @@ handler call/ret):
   kernel) jadi data buffer → epilogue pop data + ret 0x313b44 → region
   kosong. Bukan bug decoder; di hardware GRUB menempatkan buffer tanpa
   menimpa frame.
+- **FIX root cause (2026-09-21)**: real-mode addressing 16-bit pada
+  INT 13h AH=42 buffer write — **offset me-wrap per segmen 64KB** (byte
+  ke-65537 kembali ke awal segmen, bukan linear lanjut). Tanpa wrap, read
+  CD besar (47×2048=96KB dari seg 0x6800) menembus ke 0x7F800 dan menimpa
+  stack pmode → crash epilogue. Dengan wrap: buffer tetap dalam segmen
+  (0x68000..0x78000), frame aman. 1 unit test
+  (`test_int13_dap_segment_wrap_16bit`). **Efek: boot lewat step
+  8,647,411 (lewat crash 8,623,675) — halt baru: opcode 0f a3 (BT)
+  belum didukung.**
+- **BT/BTS/BTR/BTC (0f a3/ab/b3/bb) + grup 0f ba /4-7 diimplementasi**
+  (CF = bit; bts/btr/btc = set/clear/toggle) — 2 unit test. GRUB kernel
+  sekarang lanjut melewati titik halt BT pertama.
 - Tool baru (debug, env-gated, off default): `MIVON_X86_WTRACE=addr:len`
   — trace tulis CPU (write8/16/32 + bulk INT13 + fast path movs/stos)
   dengan step/pc/addr/val; window parse hex "0x..." maupun desimal.
-- Langkah berikut (fix epilogue 2): cek DAP aktual (seg/off @ds:si) &
-  ESP kernel saat caller 0x424fdbd8 — apakah GRUB memakai buffer yang
-  semestinya tidak menimpa frame (mis. segmen DAP/EADK salah decode,
-  atau ESP kernel emulator salah harus > 0x7F800).
+- Langkah berikut: lanjut boot (>8.647M) — opcode baru/kendala berikutnya
+  di kernel GRUB (console BIOS/VGA text, modul load, dst).
 
 **Tidak teratasi / langkah berikut**:
 - Akar 4-byte drift stack di jalur prot_to_real↔real_to_prot belum

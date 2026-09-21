@@ -2468,6 +2468,57 @@ impl X86Cpu {
                     self.r16_set(r, signed as u16);
                 }
             }
+            // ── bt/bts/btr/btc (0f a3/ab/b3/bb) + grup 0f ba /4-7 ──
+            0xa3 | 0xab | 0xb3 | 0xbb => {
+                // bt r/m16/32, r16/32: CF = bit (idx & width-1) dari dest;
+                // bts/btr/btc: CF = bit lama lalu set/clear/toggle.
+                let mr = self.fetch8(mem)?;
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
+                let ea = self.ea16(mem, m, None)?;
+                let bits = if opsz == 32 { 32u32 } else { 16 };
+                let bit = (if opsz == 32 {
+                    self.r32(m.r as usize)
+                } else {
+                    self.r16(m.r as usize) as u32
+                }) & (bits - 1);
+                let d = self.read_op(mem, &ea, opsz, true)?;
+                self.set_flag(FLAG_CF, (d >> bit) & 1 != 0);
+                let nd = match op {
+                    0xa3 => d,                  // BT
+                    0xab => d | (1u64 << bit),  // BTS
+                    0xb3 => d & !(1u64 << bit), // BTR
+                    _ => d ^ (1u64 << bit),     // BTC
+                };
+                self.write_op(mem, &ea, nd, opsz, true)?;
+            }
+            0xba => {
+                // 0f ba /4 bt imm8, /5 bts, /6 btr, /7 btc — r/m, imm8.
+                let mr = self.fetch8(mem)?;
+                let m = ModRm {
+                    m: mr >> 6,
+                    r: (mr >> 3) & 7,
+                    rm: mr & 7,
+                };
+                if !(4..=7).contains(&m.r) {
+                    return Err(self.fault(format!("0f ba /{} belum didukung", m.r)));
+                }
+                let ea = self.ea16(mem, m, None)?;
+                let bits = if opsz == 32 { 32u32 } else { 16 };
+                let bit = (self.fetch8(mem)? as u32) & (bits - 1);
+                let d = self.read_op(mem, &ea, opsz, true)?;
+                self.set_flag(FLAG_CF, (d >> bit) & 1 != 0);
+                let nd = match m.r {
+                    4 => d,                  // bt imm
+                    5 => d | (1u64 << bit),  // bts imm
+                    6 => d & !(1u64 << bit), // btr imm
+                    _ => d ^ (1u64 << bit),  // btc imm
+                };
+                self.write_op(mem, &ea, nd, opsz, true)?;
+            }
             // ── grup sistem 0f 01: sgdt/sidt/lgdt/lidt/smsw/lmsw/invlpg ──
             0x01 => {
                 let mr = self.fetch8(mem)?;
@@ -3145,6 +3196,12 @@ impl X86Cpu {
                 let seg = self.read16(mem, self.ds, si + 6)?;
                 let lba = self.read32(mem, self.ds, si + 8)? as u64
                     | ((self.read32(mem, self.ds, si + 12)? as u64) << 32);
+                if w_trace_window().is_some() {
+                    eprintln!(
+                        "INT13 step={} pc=0x{:x} AH=42 ds=0x{:x} si=0x{:x} count={} seg=0x{:x} off=0x{:x} lba=0x{:x} dl=0x{:x}",
+                        self.steps, self.pc(), self.ds, si, count, seg, off, lba, self.dl()
+                    );
+                }
                 // Drive CD (El Torito no-emul): LBA & count dalam blok 2048-byte
                 // (CD logical sector), bukan 512 (HDD). GRUB CD (biosdisk)
                 // membuka CD dengan log_sector_size=11 → semua AH=42 via DL CD.
@@ -3157,28 +3214,36 @@ impl X86Cpu {
                     self.read_disk(lba, count, &mut data)
                 } {
                     Ok(()) => {
-                        // Tulis bulk ke buffer seg:off (fast path).
-                        let dst_lin = self.lin(seg, off as u32);
-                        if w_trace_window().is_some_and(|(wa, wl)| {
-                            dst_lin < wa + wl && dst_lin + data.len() as u64 > wa
-                        }) {
-                            eprintln!(
-                                "WTRACEB step={} pc=0x{:x} bulk dst=0x{:x} len={} first=0x{:02x}",
-                                self.steps,
-                                self.pc(),
-                                dst_lin,
-                                data.len(),
-                                data[0]
-                            );
-                        }
-                        if self.vga_hits(dst_lin, data.len()) {
-                            for (i, &b) in data.iter().enumerate() {
-                                self.write8(mem, seg, off as u32 + i as u32, b)?;
+                        // Tulis bulk ke buffer seg:off — real-mode addressing 16-bit:
+                        // offset me-wrap per segmen 64KB (byte ke-65537 kembali ke
+                        // awal segmen, BUKAN lanjut linear). Tanpa wrap, read CD besar
+                        // (mis. 47 x 2048 = 96KB dari seg 0x6800) menimpa stack pmode
+                        // di 0x7f800-an → epilogue biosdisk pop data (crash lama).
+                        let mut o = off as u32;
+                        let mut idx = 0usize;
+                        while idx < data.len() {
+                            let win = (0x10000u32 - o) as usize; // sisa offset dalam segmen
+                            let n = win.min(data.len() - idx);
+                            let dst_lin = self.lin(seg, o);
+                            if w_trace_window().is_some_and(|(wa, wl)| {
+                                dst_lin < wa + wl && dst_lin + n as u64 > wa
+                            }) {
+                                eprintln!(
+                                    "WTRACEB step={} pc=0x{:x} bulk dst=0x{:x} n={} first=0x{:02x}",
+                                    self.steps, self.pc(), dst_lin, n, data[idx]
+                                );
                             }
-                        } else {
-                            mem.write_exact(dst_lin, &data).map_err(|e| {
-                                self.fault(format!("int13 AH=42 buf 0x{:x}: {}", dst_lin, e))
-                            })?;
+                            if self.vga_hits(dst_lin, n) {
+                                for (i, &b) in data[idx..idx + n].iter().enumerate() {
+                                    self.write8(mem, seg, o + i as u32, b)?;
+                                }
+                            } else {
+                                mem.write_exact(dst_lin, &data[idx..idx + n]).map_err(|e| {
+                                    self.fault(format!("int13 AH=42 buf 0x{:x}: {}", dst_lin, e))
+                                })?;
+                            }
+                            idx += n;
+                            o = 0; // wrap: offset kembali ke awal segmen
                         }
                         self.r8h_set(0, 0);
                         self.set_flag(FLAG_CF, false);
@@ -4066,6 +4131,66 @@ mod tests {
     }
 
     #[test]
+    fn test_bt_group() {
+        // BT/BTS/BTR/BTC register dest (0f a3/ab/b3/bb).
+        // eax=0x2000 (bit13); ecx=13; lalu ecx=14 utk bts/btr/btc bit14.
+        let code = [
+            0xb8, 0x00, 0x20, 0x00, 0x00, // mov eax, 0x2000
+            0xb9, 0x0d, 0x00, 0x00, 0x00, // mov ecx, 13
+            0x0f, 0xa3, 0xc8, // bt eax, ecx
+            0x0f, 0xab, 0xc8, // bts eax, ecx (bit13 tetap 1)
+            0xb9, 0x0e, 0x00, 0x00, 0x00, // mov ecx, 14
+            0x0f, 0xab, 0xc8, // bts eax, ecx (bit14 0->1, CF=0)
+            0x0f, 0xb3, 0xc8, // btr eax, ecx (bit14 hapus, CF=1)
+            0x0f, 0xbb, 0xc8, // btc eax, ecx (bit14 0->1, CF=0)
+            0x90,
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        cpu.pmode = true; // opsz 32
+        cpu.cr[0] = 1;
+        run(&mut cpu, &mut m, 3); // mov, mov, bt
+        assert!(cpu.flag(FLAG_CF), "bt bit13 (0x2000) → CF=1");
+        assert_eq!(cpu.r32(0), 0x2000, "bt tidak mengubah dest");
+        run(&mut cpu, &mut m, 1); // bts bit13
+        assert!(cpu.flag(FLAG_CF), "bts ke bit yang sudah set → CF=1");
+        run(&mut cpu, &mut m, 2); // mov ecx,14 + bts bit14
+        assert!(!cpu.flag(FLAG_CF), "bts ke bit kosong → CF=0");
+        assert_eq!(cpu.r32(0) & (1 << 14), 1 << 14, "bts set bit14");
+        run(&mut cpu, &mut m, 1); // btr bit14
+        assert!(cpu.flag(FLAG_CF), "btr bit ter-set → CF=1");
+        assert_eq!(cpu.r32(0) & (1 << 14), 0, "btr hapus bit14");
+        run(&mut cpu, &mut m, 1); // btc bit14
+        assert!(!cpu.flag(FLAG_CF), "btc bit kosong → CF=0");
+        assert_eq!(cpu.r32(0) & (1 << 14), 1 << 14, "btc toggle bit14");
+    }
+
+    #[test]
+    fn test_bt_group_imm() {
+        // 0f ba /4 (bt imm8) dan /7 (btc imm8) pada register.
+        let code = [
+            0xb8, 0x00, 0x10, 0x00, 0x00, // mov eax, 0x1000 (bit 12)
+            0x0f, 0xba, 0xe0, 0x0c, // bt eax, 12 -> CF=1 (modrm e0: mod11 reg100=bt rm000=eax)
+            0x0f, 0xba, 0xf8, 0x0c, // btc eax, 12 -> CF=1, hapus bit (modrm f8: reg111=btc)
+            0xb8, 0x00, 0x00, 0x00, 0x00, // mov eax, 0
+            0x0f, 0xba, 0xe8, 0x01, // bt eax, 1 -> CF=0 (modrm e8: reg100)
+            0x90,
+        ];
+        let mut m = mem();
+        let mut cpu = load(&mut m, &code);
+        cpu.pmode = true;
+        cpu.cr[0] = 1;
+        run(&mut cpu, &mut m, 2);
+        assert!(cpu.flag(FLAG_CF), "bt imm12 (0x1000) CF=1");
+        assert_eq!(cpu.r32(0), 0x1000);
+        run(&mut cpu, &mut m, 1);
+        assert!(cpu.flag(FLAG_CF), "btc imm12 CF=1 (bit lama set)");
+        assert_eq!(cpu.r32(0), 0, "btc hapus bit12");
+        run(&mut cpu, &mut m, 2);
+        assert!(!cpu.flag(FLAG_CF), "bt imm1 dari 0 CF=0");
+    }
+
+    #[test]
     fn test_rep_movs_bulk_fast_path() {
         // Fast path bulk: rep movsw (f3 a5) — copy 100 byte per chunk,
         // si/di maju, cx = 0, isi dst = source.
@@ -4319,6 +4444,59 @@ mod tests {
 
     /// INT 13h AH=42 DAP 64-bit LBA: dword tinggi (+12) harus ikut dibaca.
     /// Disk rekaman mencatat LBA yang diminta.
+    #[test]
+    fn test_int13_dap_segment_wrap_16bit() {
+        // Real-mode addressing: offset me-wrap per segmen 64KB. INT 13h AH=42
+        // dgn count besar (> 64KB dari seg 0x6800) harus menulis ulang awal
+        // segmen, BUKAN lanjut linear menimpa stack (0x78000-an).
+        struct RecDisk;
+        impl X86Disk for RecDisk {
+            fn read(&mut self, lba: u64, _count: u16, buf: &mut [u8]) -> Result<(), String> {
+                // Pola: byte = (lba + i*7) mod 251 — deterministik, mudah dicek.
+                for (i, b) in buf.iter_mut().enumerate() {
+                    *b = ((lba.wrapping_add((i * 7) as u64) & 0xfb) as u8) ^ 0xa5;
+                }
+                Ok(())
+            }
+            fn total_sectors(&self) -> u64 {
+                0x1000
+            }
+            fn read_bytes(&mut self, _offset: u64, buf: &mut [u8]) -> Result<(), String> {
+                buf.fill(0);
+                Ok(())
+            }
+        }
+        let mut m = mem();
+        // DAP @ 0:0x600: count=192 (192*512=98304 > 64KB), off=0, seg=0x6800.
+        m.write(0x602, 2, 192).unwrap();
+        m.write(0x604, 2, 0x0000).unwrap();
+        m.write(0x606, 2, 0x6800).unwrap();
+        m.write(0x608, 4, 0).unwrap();
+        m.write(0x60c, 4, 0).unwrap();
+        let mut cpu = load(&mut m, &[0xcd, 0x13]);
+        cpu.disk = Some(Box::new(RecDisk));
+        cpu.ds = 0;
+        cpu.si_set(0x600);
+        cpu.r8h_set(0, 0x42);
+        run(&mut cpu, &mut m, 1);
+        assert!(!cpu.cf(), "INT 13h AH=42 harus sukses");
+        // Byte ke-65537 (idx 0x10000) harus kembali ke awal segmen 0x68000,
+        // bukan ke 0x78000 (wrap 16-bit).
+        let w0 = m.read(0x68000, 1).unwrap();
+        assert_eq!(
+            w0,
+            (((0u64.wrapping_add(0x10000u64.wrapping_mul(7)) & 0xfb) as u8) ^ 0xa5) as u64,
+            "wrap: byte idx 0x10000 menulis ulang 0x68000"
+        );
+        // Byte terakhir segmen (off 0xFFFF) = data idx 0xFFFF — area stack
+        // di atas 0x78000 tidak boleh tersentuh.
+        assert_eq!(
+            m.read(0x68000 + 0xffff, 1).unwrap(),
+            (((0xffffu64 * 7 & 0xfb) as u8) ^ 0xa5) as u64
+        );
+        assert_eq!(m.read(0x78000, 1).unwrap(), 0, "0x78000 (luar segmen) tak tersentuh");
+    }
+
     #[test]
     fn test_int13_dap_64bit_lba() {
         struct RecDisk {

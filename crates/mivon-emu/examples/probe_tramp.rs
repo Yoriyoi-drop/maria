@@ -20,7 +20,7 @@ fn main() {
     let mut cpu = X86Cpu::new();
     cpu.disk = Some(Box::new(mivon_emu::cpu::x86::FileDisk::open(&iso).unwrap()));
     cpu.load_boot_image(&mut mem, &image, 0xE0).unwrap();
-    for i in 0..8_624_000u64 {
+    for i in 0..16_000_000u64 {
         if cpu.halted {
             println!("HALT {:?} at step {}", cpu.halt_reason, i);
             break;
@@ -28,10 +28,22 @@ fn main() {
         cpu.step(&mut mem).unwrap();
     }
     println!(
-        "final: steps done pc=0x{:x} cs=0x{:x} pmode={}",
+        "final: steps done pc=0x{:x} cs=0x{:x} pmode={} halted={:?}",
         cpu.pc(),
         cpu.cs,
-        cpu.pmode
+        cpu.pmode,
+        cpu.halted
+    );
+    // Dump kode di sekitar pc (region kosong / opcode tak dikenal?).
+    let mut line = String::new();
+    for k in 0..32u64 {
+        let b = mem.read(cpu.pc().saturating_add(k), 1).unwrap_or(0xff);
+        line.push_str(&format!("{b:02x} "));
+    }
+    println!("code @pc: {}", line);
+    println!(
+        "console_bytes: {:02x?}",
+        cpu.out.iter().map(|b| *b as u8).collect::<Vec<_>>()
     );
     // Dump 0x9080..0x9180 (grub_bios_interrupt + prot/real trampolin).
     let mut v = Vec::with_capacity(0x100);
