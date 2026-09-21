@@ -458,15 +458,9 @@ impl Parser {
         // params dari package ter-import tersedia di generate expansion context.
         while self.peek() == &Token::Import {
             self.advance(); // consume 'import'
-            loop {
-                let pkg = match self.peek() {
-                    Token::Ident(s) => {
-                        let n = *s;
-                        self.advance();
-                        n
-                    }
-                    _ => break,
-                };
+            while let Token::Ident(s) = self.peek() {
+                let pkg = *s;
+                self.advance();
                 if self.peek() == &Token::Scope {
                     self.advance(); // consume '::'
                     let item_name = match self.peek() {

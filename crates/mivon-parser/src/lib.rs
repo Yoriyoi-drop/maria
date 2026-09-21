@@ -1808,7 +1808,7 @@ impl Parser {
                         self.class_names.contains(name),
                         self.typedef_names.contains(name),
                         self.module_type_params.contains(name),
-                        format!("{}", self.peek_ahead(1))
+                        self.peek_ahead(1)
                     );
                 }
                 // `chandle` adalah built-in SV type untuk C pointer (DPI).
@@ -2126,15 +2126,13 @@ impl Parser {
                 {
                     // Treat as implicit wire/reg declaration: `name;` or `name <= expr;` or `name = expr;`
                     let vname = self.expect_ident()?;
-                    let expr = if self.peek() == &Token::BlockingAssign {
-                        self.advance();
-                        self.parse_expr(0).ok()
-                    } else if self.peek() == &Token::NonBlockingAssign {
-                        self.advance();
-                        self.parse_expr(0).ok()
-                    } else {
-                        None
-                    };
+                    let expr =
+                        if matches!(self.peek(), &Token::BlockingAssign | &Token::NonBlockingAssign) {
+                            self.advance();
+                            self.parse_expr(0).ok()
+                        } else {
+                            None
+                        };
                     self.skip_semi();
                     let names = vec![DeclVar {
                         name: vname,
@@ -2313,16 +2311,11 @@ impl Parser {
                 self.advance(); // consume 'alias'
                 let mut pairs: Vec<(Expr, Expr)> = Vec::new();
                 let mut lhs = self.parse_primary_expr()?;
-                loop {
-                    match self.peek() {
-                        Token::BlockingAssign => {
-                            self.advance();
-                            let rhs = self.parse_primary_expr()?;
-                            pairs.push((lhs.clone(), rhs.clone()));
-                            lhs = rhs;
-                        }
-                        _ => break,
-                    }
+                while self.peek() == &Token::BlockingAssign {
+                    self.advance();
+                    let rhs = self.parse_primary_expr()?;
+                    pairs.push((lhs.clone(), rhs.clone()));
+                    lhs = rhs;
                 }
                 self.skip_semi();
                 Ok(Some(ModuleItem::NetAlias(pairs)))

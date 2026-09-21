@@ -832,9 +832,8 @@ impl Preprocessor {
         let mut out = String::with_capacity(text.len());
         let mut stack: Vec<CondFrame> = Vec::new();
         let mut rest = text;
-        loop {
+        while let Some(bt) = rest.find('`') {
             // Cari direktif berikutnya: backtick + nama direktif di token boundary.
-            let Some(bt) = rest.find('`') else { break };
             let after = &rest[bt + 1..];
             let name_len = after
                 .chars()
@@ -1370,11 +1369,11 @@ impl Default for Preprocessor {
 /// - daftar parameter `define (LRM 1800 §22.5.1) — default bernilai string
 ///   yang memuat koma (mis. `A="x,y"`) tetap satu param penuh.
 /// Koma yang TIDAK memisahkan juga tetap dipertahankan di token aslinya.
-/// KOMENTAR di-skip penuh: arg macro Multi-baris (mis. `DV_SPINWAIT_EXIT`
-/// dengan `i = 0; // restart the delay, since ...`) membawa koma di dalam
-/// komentar — tanpa skip, koma itu memutus argumen → ekspansi korup
-/// (arg bergeser: MSG_ dapat nilai EXIT_, error "expected expression,
-/// found Wait" di ratusan file DV OpenTitan).
+/// KOMENTAR di-skip penuh: arg macro multi-baris (mis. `DV_SPINWAIT_EXIT`
+///   dengan `i = 0; // restart the delay, since ...`) membawa koma di dalam
+///   komentar — tanpa skip, koma itu memutus argumen → ekspansi korup
+///   (arg bergeser: MSG_ dapat nilai EXIT_, error "expected expression,
+///   found Wait" di ratusan file DV OpenTitan).
 fn split_args_string_aware(args_str: &str, expected_count: usize) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();

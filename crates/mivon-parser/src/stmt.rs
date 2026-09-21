@@ -2489,11 +2489,7 @@ impl Parser {
         } else {
             false
         };
-        if is_case_inside {
-            self.advance();
-        } else {
-            self.advance();
-        }
+        self.advance();
         self.expect(Token::LParen)?;
         let expr = self.parse_expr(0)?;
         self.expect(Token::RParen)?;
@@ -3060,11 +3056,7 @@ impl Parser {
                             Token::RBrack => {
                                 depth -= 1;
                                 self.advance();
-                                if depth == 0 {
-                                    array_var.push(']');
-                                } else {
-                                    array_var.push(']');
-                                }
+                                array_var.push(']');
                             }
                             Token::LBrack => {
                                 depth += 1;
