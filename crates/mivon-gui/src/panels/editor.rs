@@ -459,7 +459,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                     .at_pointer()
                     .gap(12.0)
                     .show(|ui| {
-                        hover_tooltip_ui(ui, &f, &name, kind, sig_info, ref_counts);
+                        hover_tooltip_ui(ui, f, &name, kind, sig_info, ref_counts);
                     });
             }
             // Go To Definition: Ctrl+Click → buka file deklarasi / lompat baris.
@@ -474,7 +474,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                         line_h,
                         pos,
                     ) {
-                        want_goto = resolve_goto(&f, &name, kind, symbol_files);
+                        want_goto = resolve_goto(f, &name, kind, symbol_files);
                     }
                 }
             }
@@ -494,7 +494,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                         line_h,
                         pos,
                     ) {
-                        if let Some((path, line)) = resolve_goto(&f, &name, kind, symbol_files) {
+                        if let Some((path, line)) = resolve_goto(f, &name, kind, symbol_files) {
                             want_peek = Some((name, path, line.unwrap_or(1), pos));
                         }
                     }
@@ -801,11 +801,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                 let n = replace_word(&mut of.content, &old, &new);
                 if n > 0 {
                     renamed += n;
-                    if std::fs::write(&of.path, &of.content).is_ok() {
-                        of.dirty = false;
-                    } else {
-                        of.dirty = true;
-                    }
+                    of.dirty = !std::fs::write(&of.path, &of.content).is_ok();
                 }
             }
             state.log(format!(
@@ -1218,11 +1214,11 @@ fn build_sticky(content: &str) -> Vec<StickyScope> {
 /// Scope enclosing untuk `first_line`: semua scope dengan `line <= first_line`,
 /// ambil `max` terakhir (yang terdalam). Daftar scope terurut line menaik,
 /// jadi `take_while` berhenti di scope pertama yang mulai setelah first_line.
-fn enclosing_chain<'a>(
-    sticky: &'a [StickyScope],
+fn enclosing_chain(
+    sticky: &[StickyScope],
     first_line: usize,
     max: usize,
-) -> Vec<&'a StickyScope> {
+) -> Vec<&StickyScope> {
     let idx = sticky.iter().take_while(|s| s.line <= first_line).count();
     let start = idx.saturating_sub(max);
     sticky[start..idx].iter().collect()

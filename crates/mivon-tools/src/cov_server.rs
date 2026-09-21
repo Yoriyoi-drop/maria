@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_compare() {
         let server = CoverageServer::new();
-        let mut r1 = make_report("run1");
+        let r1 = make_report("run1");
         let mut r2 = make_report("run2");
         r2.entries[0].percentage = 90.0; // improved
         server.add_report(r1);

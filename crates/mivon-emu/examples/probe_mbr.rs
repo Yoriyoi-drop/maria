@@ -57,7 +57,7 @@ fn main() {
     let mut s = String::new();
     for a in (esp.saturating_sub(0x40))..(esp + 0x20) {
         s.push_str(&format!("{:02x} ", m.read(a as u64, 1).unwrap_or(0)));
-        if (a - esp.saturating_sub(0x40) + 1) % 16 == 0 {
+        if (a - esp.saturating_sub(0x40) + 1).is_multiple_of(16) {
             s.push('\n');
         }
     }

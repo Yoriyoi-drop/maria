@@ -55,7 +55,7 @@ endmodule
 /// nilai sinyal `name` dalam bentuk string bit (mis. "xx01").
 fn run_emivariant(
     dead_code: &str,
-    mut pcfg: mivon_simulator::simulator::parallel::ParallelConfig,
+    pcfg: mivon_simulator::simulator::parallel::ParallelConfig,
 ) -> String {
     let source = EMI_PARTSEL_SRC.replace("  DEAD_CODE", dead_code);
     let design = compile_str(&source).unwrap();
@@ -193,7 +193,7 @@ input tms;
     // Watchdog 10s: sebelum fix input ini hang >170 s (infinite loop parser).
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(compile_str(&src));
+        let _ = tx.send(compile_str(src));
     });
     let result = rx
         .recv_timeout(std::time::Duration::from_secs(10))
@@ -231,7 +231,7 @@ endmodule
 "#;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(compile_str(&src));
+        let _ = tx.send(compile_str(src));
     });
     let r = rx
         .recv_timeout(std::time::Duration::from_secs(10))
@@ -266,7 +266,7 @@ module tlul_socket_m1 #(
     };
 endmodule
 "#;
-    let r = super::simulate_str(&src, 10).unwrap_err();
+    let r = super::simulate_str(src, 10).unwrap_err();
     let msg = r.to_string();
     assert!(
         msg.contains("a_source") && !msg.contains("signal '' not found"),
@@ -299,7 +299,7 @@ endmodule
 fn run_pcfg_signal(
     source: &str,
     name: &str,
-    mut pcfg: mivon_simulator::simulator::parallel::ParallelConfig,
+    pcfg: mivon_simulator::simulator::parallel::ParallelConfig,
 ) -> String {
     let design = compile_str(source).unwrap();
     let mut engine = mivon_simulator::simulator::SimulationEngine::new(design, 100);

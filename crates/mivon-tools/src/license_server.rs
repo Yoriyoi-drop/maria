@@ -186,7 +186,7 @@ mod tests {
         let mut server = LicenseServer::new(300);
         server.register_pool("mivon-sim", 2);
         let id1 = server.checkout("mivon-sim", "alice", "host1").unwrap();
-        let id2 = server.checkout("mivon-sim", "bob", "host2").unwrap();
+        let _id2 = server.checkout("mivon-sim", "bob", "host2").unwrap();
         assert!(server.checkout("mivon-sim", "carol", "host3").is_err());
         server.checkin(&id1).unwrap();
         assert!(server.checkout("mivon-sim", "carol", "host3").is_ok());
@@ -213,7 +213,7 @@ mod tests {
     fn test_pool_status() {
         let mut server = LicenseServer::new(300);
         server.register_pool("mivon-sim", 3);
-        let id = server.checkout("mivon-sim", "alice", "h").unwrap();
+        let _id = server.checkout("mivon-sim", "alice", "h").unwrap();
         let (total, avail, in_use) = server.pool_status("mivon-sim").unwrap();
         assert_eq!(total, 3);
         assert_eq!(avail, 2);

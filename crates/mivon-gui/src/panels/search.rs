@@ -322,10 +322,9 @@ fn instances_ui(
             i.module.clone()
         };
         let file = if has_file { Some(&i.file) } else { None };
-        if result_row(ui, &i.name, &sec, file) {
-            if has_file {
+        if result_row(ui, &i.name, &sec, file)
+            && has_file {
                 *to_open = Some((i.file.clone(), Some(i.line)));
             }
-        }
     }
 }

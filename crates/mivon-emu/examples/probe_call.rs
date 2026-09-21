@@ -33,7 +33,7 @@ fn main() {
         let pc = cpu.pc();
         let _ = cpu.step(&mut m);
         n += 1;
-        if n >= 195 && n <= 310 {
+        if (195..=310).contains(&n) {
             println!("[{n}] pc=0x{pc:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} esp=0x{:08x}",
                 cpu.r32(0), cpu.r32(3), cpu.r32(1), cpu.r32(2), cpu.r32(6), cpu.r32(7), cpu.r32(4));
         }

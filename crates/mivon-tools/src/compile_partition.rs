@@ -566,7 +566,7 @@ mod tests {
         let modules = vec![module("a", &["b"], 100), module("b", &["a"], 100)];
         let result = CompilePartitioner::partition(&modules, 4);
         // Both in same SCC → same partition or both in compile_order
-        assert!(result.partitions.len() >= 1);
+        assert!(!result.partitions.is_empty());
         assert!(!result.compile_order.is_empty());
     }
 

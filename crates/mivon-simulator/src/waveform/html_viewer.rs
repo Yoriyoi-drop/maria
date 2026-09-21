@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_html_viewer_save() {
-        use std::io::Write;
+        
         let dir = std::env::temp_dir().join("mivon_html_viewer_test");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("viewer.html");

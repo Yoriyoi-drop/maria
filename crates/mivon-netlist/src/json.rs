@@ -102,7 +102,7 @@ mod tests {
     use super::*;
     use crate::lower::lower_module;
     use mivon_core::{intern::Symbol, LogicVec};
-    use mivon_sir::{ResetSpec, SirNode, SirNodeKind, SirRegister, SirValue};
+    use mivon_sir::{ResetSpec, SirNodeKind, SirRegister, SirValue};
 
     fn counter_sir() -> mivon_sir::SirModule {
         let mut m = mivon_sir::SirModule::new(Symbol::intern("counter"));

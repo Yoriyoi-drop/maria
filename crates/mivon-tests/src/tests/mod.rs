@@ -2406,10 +2406,10 @@ endclass
     let mut parser = mivon_parser::Parser::new(tokens, "test");
     let design = parser.parse_design().unwrap();
     assert!(
-        design.classes.len() >= 1,
+        !design.classes.is_empty(),
         "should have parsed at least one class"
     );
-    let mod_names: Vec<_> = design.modules.iter().map(|m| m.name.clone()).collect();
+    let mod_names: Vec<_> = design.modules.iter().map(|m| m.name).collect();
     assert!(mod_names.contains(&Symbol::intern("tb")));
 }
 
@@ -2978,10 +2978,10 @@ endmodule
     let x = get("xv");
     assert!(x > -10 && x < 100, "x in (-10, 100), got {}", x);
     let y = get("yv");
-    assert!(y >= -200 && y <= -100, "y in [-200, -100], got {}", y);
+    assert!((-200..=-100).contains(&y), "y in [-200, -100], got {}", y);
     let z = get("zv");
     assert!(
-        (z >= -5 && z <= 5) || z == 100,
+        (-5..=5).contains(&z) || z == 100,
         "z in dist [-5..5, 100], got {}",
         z
     );
@@ -2991,7 +2991,7 @@ endmodule
     assert!(u > 0xF0, "u > 8'hF0 unsigned, got {:#x}", u);
     let v = getu("vv");
     assert!(
-        v >= 0x20 && v <= 0x30,
+        (0x20..=0x30).contains(&v),
         "v in [0x20, 0x30] unsigned, got {:#x}",
         v
     );
@@ -8447,7 +8447,7 @@ endmodule
         .map(|(_, v)| f64::from_bits(v.to_u64()))
         .unwrap();
     assert!(
-        (r_val - 3.14).abs() < 1e-9,
+        (r_val - std::f64::consts::PI).abs() < 1e-9,
         "r should be ~3.14, got {}",
         r_val
     );
@@ -8688,7 +8688,7 @@ endmodule
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
     assert!(
-        v >= 50 && v <= 100,
+        (50..=100).contains(&v),
         "urandom_range(100,50) should be [50,100], got {}",
         v
     );
@@ -14062,7 +14062,7 @@ module top(output logic [7:0] z);
 endmodule
 "#;
     let d = compile_str(src).expect("interface header import + typedef port harus compile");
-    assert!(d.modules.len() >= 1, "module top harus ada");
+    assert!(!d.modules.is_empty(), "module top harus ada");
 }
 
 /// SVA label + property TANPA ';' penutup (aksi `else `MACRO` di-skip
@@ -16593,7 +16593,7 @@ endmodule
 
 #[test]
 fn test_ucis_export() {
-    use std::io::Write;
+    
     let source = r#"
 module tb_ucis;
     reg clk;
@@ -19652,7 +19652,7 @@ endmodule
         engine.coverage_enabled_types
     );
     // Hanya toggle yang tercatat
-    assert!(engine.cover_toggle.len() >= 1, "toggle harus tercatat");
+    assert!(!engine.cover_toggle.is_empty(), "toggle harus tercatat");
     // Line coverage NONAKTIF setelah $coverage_control. Satu-satunya line-hit yang
     // boleh ada adalah statement $coverage_control itu sendiri (di-record SEBELUM
     // gate diaktifkan — statement dieksekusi saat line coverage masih aktif).

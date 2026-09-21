@@ -525,124 +525,6 @@ fn run_ast_diff(targets: &[String], other: &str) -> Result<(), SimError> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Nama file unik per test — 3 test berjalan PARALLEL; bila semua memakai
-    // `t.sv` di dir sama, salah satu test meng-overwrite file test lain →
-    // isi campur → diff palsu (flaky). Dir per-test juga unik.
-    fn elabor(file: &str) -> mivon_ir::IrDesign {
-        let dir = std::env::temp_dir().join(format!(
-            "mivon_astdiff_{}_{}",
-            std::process::id(),
-            std::thread::current()
-                .name()
-                .unwrap_or("t")
-                .replace("::", "_")
-        ));
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("t.sv");
-        std::fs::write(&path, file).unwrap();
-        let (_, _, ir) = crate::open_elaborated(
-            &[path.to_string_lossy().to_string()],
-            &[],
-            &[],
-            None,
-            mivon_elaboration::elaborator::ElaborateMode::StrictSimulation,
-        )
-        .unwrap();
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_dir(&dir);
-        ir
-    }
-
-    #[test]
-    fn test_ast_diff_identical() {
-        // PARSER-13: dua file identik → 0 perbedaan.
-        let src = "module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule";
-        let a = elabor(src);
-        let b = elabor(src);
-        assert!(
-            compare_ir_designs(&a, &b).is_empty(),
-            "file identik harus 0 diff"
-        );
-    }
-
-    #[test]
-    fn test_ast_diff_width_mismatch() {
-        // PARSER-13: lebar signal berbeda → diff terdeteksi.
-        let a =
-            elabor("module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule");
-        let b = elabor(
-            "module m(input clk); reg [15:0] q; always @(posedge clk) q <= q + 1; endmodule",
-        );
-        let diffs = compare_ir_designs(&a, &b);
-        assert!(
-            diffs
-                .iter()
-                .any(|d| d.contains("width") && d.contains("8 vs 16")),
-            "lebar 8 vs 16 harus terdeteksi: {:?}",
-            diffs
-        );
-    }
-
-    #[test]
-    fn test_ast_diff_process_count_mismatch() {
-        // PARSER-13: jumlah proses berbeda → diff terdeteksi.
-        let a = elabor("module m(input clk); reg q; always @(posedge clk) q <= 1; endmodule");
-        let b = elabor(
-            "module m(input clk); reg q; always @(posedge clk) q <= 1; always @(posedge clk) q <= 0; endmodule",
-        );
-        let diffs = compare_ir_designs(&a, &b);
-        assert!(
-            diffs.iter().any(|d| d.contains("process count")),
-            "jumlah proses harus terdeteksi: {:?}",
-            diffs
-        );
-    }
-
-    #[test]
-    fn test_ast_diff_order_insensitive() {
-        // PARSER-13: dua design dengan SET signal sama tapi URUTAN deklarasi
-        // beda harus 0 perbedaan (name-based, bukan pairwise index). Sebelum
-        // fix by-name: zip by index membandingkan q vs r → diff palsu
-        // "width: 8 vs 15" + asimetri A→B != B→A (ditemukan mivon-fuzz
-        // target astdiff).
-        let a = elabor(
-            "module m(input clk); reg [7:0] q; reg [15:0] r; always @(posedge clk) q <= q + 1; endmodule",
-        );
-        let b = elabor(
-            "module m(input clk); reg [15:0] r; reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule",
-        );
-        let diffs = compare_ir_designs(&a, &b);
-        assert!(
-            diffs.is_empty(),
-            "order deklarasi beda tidak boleh menghasilkan diff: {:?}",
-            diffs
-        );
-        // Simetri: arah swap juga 0 diff.
-        assert!(compare_ir_designs(&b, &a).is_empty());
-    }
-
-    #[test]
-    fn test_ast_diff_missing_signal() {
-        // PARSER-13: signal hanya ada di A → dilaporkan "only in A" eksplisit
-        // (bukan diff width palsu hasil zip index yang bergeser).
-        let a = elabor(
-            "module m(input clk); reg [7:0] q; reg [7:0] r; always @(posedge clk) q <= q + 1; endmodule",
-        );
-        let b =
-            elabor("module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule");
-        let diffs = compare_ir_designs(&a, &b);
-        assert!(
-            diffs.iter().any(|d| d.contains("'r' only in A")),
-            "signal hilang harus 'only in A': {:?}",
-            diffs
-        );
-    }
-}
-
 // ═══ ENT-22: SV Version Compatibility Check ═══
 
 /// Scan source files for SV feature usage patterns.
@@ -792,4 +674,122 @@ fn run_sv_version_check(targets: &[String]) -> Result<(), SimError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Nama file unik per test — 3 test berjalan PARALLEL; bila semua memakai
+    // `t.sv` di dir sama, salah satu test meng-overwrite file test lain →
+    // isi campur → diff palsu (flaky). Dir per-test juga unik.
+    fn elabor(file: &str) -> mivon_ir::IrDesign {
+        let dir = std::env::temp_dir().join(format!(
+            "mivon_astdiff_{}_{}",
+            std::process::id(),
+            std::thread::current()
+                .name()
+                .unwrap_or("t")
+                .replace("::", "_")
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("t.sv");
+        std::fs::write(&path, file).unwrap();
+        let (_, _, ir) = crate::open_elaborated(
+            &[path.to_string_lossy().to_string()],
+            &[],
+            &[],
+            None,
+            mivon_elaboration::elaborator::ElaborateMode::StrictSimulation,
+        )
+        .unwrap();
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+        ir
+    }
+
+    #[test]
+    fn test_ast_diff_identical() {
+        // PARSER-13: dua file identik → 0 perbedaan.
+        let src = "module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule";
+        let a = elabor(src);
+        let b = elabor(src);
+        assert!(
+            compare_ir_designs(&a, &b).is_empty(),
+            "file identik harus 0 diff"
+        );
+    }
+
+    #[test]
+    fn test_ast_diff_width_mismatch() {
+        // PARSER-13: lebar signal berbeda → diff terdeteksi.
+        let a =
+            elabor("module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule");
+        let b = elabor(
+            "module m(input clk); reg [15:0] q; always @(posedge clk) q <= q + 1; endmodule",
+        );
+        let diffs = compare_ir_designs(&a, &b);
+        assert!(
+            diffs
+                .iter()
+                .any(|d| d.contains("width") && d.contains("8 vs 16")),
+            "lebar 8 vs 16 harus terdeteksi: {:?}",
+            diffs
+        );
+    }
+
+    #[test]
+    fn test_ast_diff_process_count_mismatch() {
+        // PARSER-13: jumlah proses berbeda → diff terdeteksi.
+        let a = elabor("module m(input clk); reg q; always @(posedge clk) q <= 1; endmodule");
+        let b = elabor(
+            "module m(input clk); reg q; always @(posedge clk) q <= 1; always @(posedge clk) q <= 0; endmodule",
+        );
+        let diffs = compare_ir_designs(&a, &b);
+        assert!(
+            diffs.iter().any(|d| d.contains("process count")),
+            "jumlah proses harus terdeteksi: {:?}",
+            diffs
+        );
+    }
+
+    #[test]
+    fn test_ast_diff_order_insensitive() {
+        // PARSER-13: dua design dengan SET signal sama tapi URUTAN deklarasi
+        // beda harus 0 perbedaan (name-based, bukan pairwise index). Sebelum
+        // fix by-name: zip by index membandingkan q vs r → diff palsu
+        // "width: 8 vs 15" + asimetri A→B != B→A (ditemukan mivon-fuzz
+        // target astdiff).
+        let a = elabor(
+            "module m(input clk); reg [7:0] q; reg [15:0] r; always @(posedge clk) q <= q + 1; endmodule",
+        );
+        let b = elabor(
+            "module m(input clk); reg [15:0] r; reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule",
+        );
+        let diffs = compare_ir_designs(&a, &b);
+        assert!(
+            diffs.is_empty(),
+            "order deklarasi beda tidak boleh menghasilkan diff: {:?}",
+            diffs
+        );
+        // Simetri: arah swap juga 0 diff.
+        assert!(compare_ir_designs(&b, &a).is_empty());
+    }
+
+    #[test]
+    fn test_ast_diff_missing_signal() {
+        // PARSER-13: signal hanya ada di A → dilaporkan "only in A" eksplisit
+        // (bukan diff width palsu hasil zip index yang bergeser).
+        let a = elabor(
+            "module m(input clk); reg [7:0] q; reg [7:0] r; always @(posedge clk) q <= q + 1; endmodule",
+        );
+        let b =
+            elabor("module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule");
+        let diffs = compare_ir_designs(&a, &b);
+        assert!(
+            diffs.iter().any(|d| d.contains("'r' only in A")),
+            "signal hilang harus 'only in A': {:?}",
+            diffs
+        );
+    }
 }

@@ -505,7 +505,7 @@ mod tests {
     fn test_bad_magic() {
         let path = test_path("badmagic");
         // File > HEADER_SIZE dengan magic salah → BadMagic (bukan Truncated).
-        let mut junk = vec![b'X'; HEADER_SIZE + 32];
+        let junk = vec![b'X'; HEADER_SIZE + 32];
         std::fs::write(&path, &junk).unwrap();
         assert!(matches!(
             MdbReader::open(&path).unwrap_err(),
@@ -522,7 +522,7 @@ mod tests {
         w.write_to(&path).unwrap();
         // Rusak payload: flip byte di objek pertama.
         let data = std::fs::read(&path).unwrap();
-        let table = (1 * ENTRY_SIZE) as usize;
+        let table = ENTRY_SIZE;
         let corrupt = {
             let mut d = data.clone();
             let off = HEADER_SIZE + table;

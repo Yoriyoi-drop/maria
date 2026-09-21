@@ -291,7 +291,7 @@ mod tests {
     fn test_purge_expired() {
         let mut store = WaiverStore::new();
         store.add("LINT-001", None, "active", "alice");
-        let mut expired = Waiver {
+        let expired = Waiver {
             id: "W-000002".into(),
             rule: "LINT-002".into(),
             file_pattern: None,

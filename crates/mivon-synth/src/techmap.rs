@@ -1507,7 +1507,7 @@ mod tests {
     use mivon_core::intern::Symbol;
     use mivon_core::LogicVec;
     use mivon_netlist::graph::verify_dag;
-    use mivon_sir::{SirNode, SirRegister, ValueId};
+    use mivon_sir::{SirRegister, ValueId};
     use mivon_tech::GenericArch;
 
     /// SIR minimal untuk menguji init/leaf — dua slot nilai konstanta.
@@ -1531,13 +1531,13 @@ mod tests {
         let sir = tiny_sir();
         let o = BitFn::Or(Box::new(BitFn::Leaf(0, 0)), Box::new(BitFn::Leaf(1, 0)));
         assert_eq!(
-            o.init_table(&vec![(0, 0), (1, 0)], &sir),
+            o.init_table(&[(0, 0), (1, 0)], &sir),
             0xE,
             "a|b → init 0xE"
         );
         let n = BitFn::Not(Box::new(BitFn::Leaf(0, 0)));
         assert_eq!(
-            n.init_table(&vec![(0, 0)], &sir),
+            n.init_table(&[(0, 0)], &sir),
             0x1,
             "~a → init bit0 (input di i0, high tie 0)"
         );
@@ -1553,7 +1553,7 @@ mod tests {
             Box::new(BitFn::Const(false)),
         );
         // f=0 → y = s & t → init 0x8
-        assert_eq!(m.init_table(&vec![(0, 0), (1, 0)], &sir), 0x8);
+        assert_eq!(m.init_table(&[(0, 0), (1, 0)], &sir), 0x8);
     }
 
     #[test]

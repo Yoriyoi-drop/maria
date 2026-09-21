@@ -189,7 +189,7 @@ mod tests {
     fn test_detect_topology() {
         let topo = NumaTopology::detect();
         assert!(!topo.nodes.is_empty());
-        assert!(topo.nodes[0].cpus.len() > 0);
+        assert!(!topo.nodes[0].cpus.is_empty());
     }
 
     #[test]

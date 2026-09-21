@@ -136,7 +136,7 @@ mod debug_syscall_lex {
         // EOF/lokasi lain.
         let any_line5 = warns
             .iter()
-            .any(|d| d.source_snippet.as_ref().map_or(false, |s| s.line == 5));
+            .any(|d| d.source_snippet.as_ref().is_some_and(|s| s.line == 5));
         assert!(
             any_line5,
             "warning harus berlokasi di baris 5, dapat {:?}",
@@ -179,7 +179,7 @@ mod debug_syscall_lex {
         );
         let any_line1 = warns
             .iter()
-            .any(|d| d.source_snippet.as_ref().map_or(false, |s| s.line == 1));
+            .any(|d| d.source_snippet.as_ref().is_some_and(|s| s.line == 1));
         assert!(
             any_line1,
             "warning harus berlokasi di baris 1 (token `LBrace`), dapat {:?}",

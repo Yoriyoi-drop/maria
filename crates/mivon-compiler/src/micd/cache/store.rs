@@ -604,7 +604,7 @@ mod tests {
         let st2 = CategoryStore::open(&root, cat, 0);
         assert!(!st2.journal_path().exists(), "journal dihapus recovery");
         assert_eq!(st2.len(), 0, "index corrupt tidak di-load");
-        assert_eq!(st2.rebuilt, false, "manifest valid → bukan rebuild");
+        assert!(!st2.rebuilt, "manifest valid → bukan rebuild");
         // Save berikutnya membangun ulang index + menyinkronkan manifest.
         let mut st3 = st2;
         st3.put("k", b"data").unwrap();
@@ -685,9 +685,9 @@ mod tests {
         let mut st = CategoryStore::open(&root, CacheCategory::Parser, 0);
         st.budget_bytes = 30;
         // 3 entry @ 20B = 60B; budget 30B → 2 ter-evict, 1 tersisa.
-        st.put("a", &vec![1u8; 20]).unwrap();
-        st.put("b", &vec![2u8; 20]).unwrap();
-        st.put("c", &vec![3u8; 20]).unwrap();
+        st.put("a", &[1u8; 20]).unwrap();
+        st.put("b", &[2u8; 20]).unwrap();
+        st.put("c", &[3u8; 20]).unwrap();
         let removed = st.gc();
         assert!(removed >= 1);
         assert!(st.bytes() <= 30);

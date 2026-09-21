@@ -476,8 +476,8 @@ mod tests {
         assert_eq!(p.partitions.len(), 2);
 
         // Each partition should have some instance names
-        assert!(p.partitions[0].instance_names.len() >= 1);
-        assert!(p.partitions[1].instance_names.len() >= 1);
+        assert!(!p.partitions[0].instance_names.is_empty());
+        assert!(!p.partitions[1].instance_names.is_empty());
     }
 
     #[test]

@@ -38,7 +38,7 @@ mod tests {
         let add_z3 = add_z3.unwrap();
 
         let eight = z3::ast::BV::from_u64(8, 8);
-        solver.assert(&add_z3.eq(&eight));
+        solver.assert(add_z3.eq(&eight));
         assert_eq!(solver.check(), z3::SatResult::Sat, "5 + 3 should equal 8");
     }
 
@@ -56,7 +56,7 @@ mod tests {
 
         let mul_z3 = engine.expr_to_z3_int(&mul).unwrap();
         let fourteen = z3::ast::BV::from_u64(14, 8);
-        solver.assert(&mul_z3.eq(&fourteen));
+        solver.assert(mul_z3.eq(&fourteen));
         assert_eq!(
             solver.check(),
             z3::SatResult::Sat,
@@ -76,7 +76,7 @@ mod tests {
 
         let and_z3 = engine.expr_to_z3_int(&bitand).unwrap();
         let one = z3::ast::BV::from_u64(1, 4);
-        solver.assert(&and_z3.eq(&one));
+        solver.assert(and_z3.eq(&one));
         assert_eq!(solver.check(), z3::SatResult::Sat, "5 & 3 should equal 1");
     }
 
@@ -111,7 +111,7 @@ mod tests {
 
         let lt_bool = engine.expr_to_z3_bool(&lt).unwrap();
         // Assert NOT(3 < 5) and verify UNSAT
-        solver.assert(&lt_bool.not());
+        solver.assert(lt_bool.not());
         assert_eq!(
             solver.check(),
             z3::SatResult::Unsat,
@@ -132,7 +132,7 @@ mod tests {
 
         let cond_z3 = engine.expr_to_z3_int(&cond_expr).unwrap();
         let one_z3 = z3::ast::BV::from_u64(1, 8);
-        solver.assert(&cond_z3.eq(&one_z3));
+        solver.assert(cond_z3.eq(&one_z3));
         assert_eq!(solver.check(), z3::SatResult::Sat, "true ? 1 : 0 == 1");
     }
 
@@ -145,7 +145,7 @@ mod tests {
         let fill = IrExpr::FillLit(LogicVal::One);
         let fill_z3 = engine.expr_to_z3_int(&fill).unwrap();
         let one = z3::ast::BV::from_u64(1, 1);
-        solver.assert(&fill_z3.eq(&one));
+        solver.assert(fill_z3.eq(&one));
         assert_eq!(solver.check(), z3::SatResult::Sat, "FillLit(One) == 1");
     }
 
@@ -280,7 +280,7 @@ mod tests {
         let rhs = IrExpr::Const(LogicVec::from_u64(42, 8));
         let assign = IrStmt::BlockingAssign {
             lhs: IrLValue::Signal(0, 8),
-            rhs: rhs,
+            rhs,
             delay: None,
         };
 
@@ -490,7 +490,7 @@ mod tests {
 
         let shl_z3 = engine.expr_to_z3_int(&shl).unwrap();
         let eight = z3::ast::BV::from_u64(8, 8);
-        solver.assert(&shl_z3.eq(&eight));
+        solver.assert(shl_z3.eq(&eight));
         assert_eq!(solver.check(), z3::SatResult::Sat, "1 << 3 == 8");
     }
 
@@ -525,7 +525,7 @@ mod tests {
         let and_expr = IrExpr::BinaryOp(BinaryIrOp::LogicalAnd, Box::new(t_a), Box::new(t_b));
 
         let and_bool = engine.expr_to_z3_bool(&and_expr).unwrap();
-        solver.assert(&and_bool.not());
+        solver.assert(and_bool.not());
         assert_eq!(
             solver.check(),
             z3::SatResult::Unsat,
@@ -1006,7 +1006,7 @@ mod tests {
     fn test_z3_bvadd_simple() {
         // Minimal Z3 test: a=0, b=a+1. Assert b < 0 (should be unsat).
         // Then assert b = 1 (should be sat).
-        let mut engine = test_engine();
+        let engine = test_engine();
         let solver = engine.solver.as_ref().unwrap();
 
         let a = z3::ast::BV::new_const("a", 8);
@@ -1014,12 +1014,12 @@ mod tests {
         let zero = z3::ast::BV::from_u64(0, 8);
         let one = z3::ast::BV::from_u64(1, 8);
 
-        solver.assert(&a.eq(&zero)); // a == 0
-        solver.assert(&b.eq(&a.bvadd(&one))); // b == a + 1
+        solver.assert(a.eq(&zero)); // a == 0
+        solver.assert(b.eq(a.bvadd(&one))); // b == a + 1
 
         // Check: b == 1?
         solver.push();
-        solver.assert(&b.eq(&one));
+        solver.assert(b.eq(&one));
         assert_eq!(
             solver.check(),
             z3::SatResult::Sat,
@@ -1029,7 +1029,7 @@ mod tests {
 
         // Check: b < 0? (should be unsat)
         solver.push();
-        solver.assert(&b.bvslt(&zero));
+        solver.assert(b.bvslt(&zero));
         assert_eq!(
             solver.check(),
             z3::SatResult::Unsat,
@@ -1040,7 +1040,7 @@ mod tests {
         // Check: b > 2? (should be unsat)
         solver.push();
         let two = z3::ast::BV::from_u64(2, 8);
-        solver.assert(&b.bvsgt(&two));
+        solver.assert(b.bvsgt(&two));
         assert_eq!(
             solver.check(),
             z3::SatResult::Unsat,
@@ -1051,7 +1051,7 @@ mod tests {
         // Check: b == 1 is forced
         solver.push();
         let one_bv = z3::ast::BV::from_u64(1, 8);
-        solver.assert(&b.ne(&one_bv));
+        solver.assert(b.ne(&one_bv));
         assert_eq!(
             solver.check(),
             z3::SatResult::Unsat,

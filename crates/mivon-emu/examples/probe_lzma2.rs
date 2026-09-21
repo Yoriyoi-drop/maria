@@ -43,7 +43,7 @@ fn main() {
                 println!("--- after 2nd WRITE (al=0xff), next region exec:");
             }
         }
-        if in_region && pc >= 0x8b0f && pc <= 0x8b2d {
+        if in_region && (0x8b0f..=0x8b2d).contains(&pc) {
             let ebp = cpu.r32(5);
             let now = m.read(ebp.wrapping_sub(4) as u64, 4).unwrap_or(0);
             let prev = m.read(ebp.wrapping_sub(8) as u64, 4).unwrap_or(0);

@@ -685,7 +685,7 @@ impl crate::simulator::engine::SimulationEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mivon_ir::*;
+    
 
     #[test]
     fn test_checkpoint_basic_roundtrip() {

@@ -49,15 +49,14 @@ fn discover(src: &str, classes: &mut HashSet<Symbol>, typedefs: &mut HashSet<Sym
                     last_ident = Some(n);
                 }
             }
-            Token::Semi => {
-                if in_typedef && brace_depth == 0 {
+            Token::Semi
+                if in_typedef && brace_depth == 0 => {
                     if let Some(n) = last_ident {
                         typedefs.insert(n);
                     }
                     in_typedef = false;
                     last_ident = None;
                 }
-            }
             _ => {}
         }
     }
@@ -66,7 +65,7 @@ fn discover(src: &str, classes: &mut HashSet<Symbol>, typedefs: &mut HashSet<Sym
 fn main() {
     let file = std::env::var("PP_FILE").unwrap();
     let filelist = std::env::var("PP_FILELIST").unwrap_or_default();
-    let mut pp_paths: Vec<String> = std::env::var("PP_PATHS")
+    let pp_paths: Vec<String> = std::env::var("PP_PATHS")
         .unwrap_or_default()
         .split(':')
         .filter(|s| !s.is_empty())
@@ -146,7 +145,7 @@ fn main() {
         if tok == Token::Eof {
             break;
         }
-        tokens.push((tok, line + 0 + 1, col));
+        tokens.push((tok, line + 1, col));
     }
     let mut parser = Parser::new(tokens, &abs_file)
         .with_global_type_names(&classes, &typedefs)

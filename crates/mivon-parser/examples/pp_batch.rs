@@ -8,7 +8,7 @@ use mivon_parser::Parser;
 
 fn main() {
     let filelist = std::env::var("PP_FILELIST").unwrap();
-    let mut pp_paths: Vec<String> = std::env::var("PP_PATHS")
+    let pp_paths: Vec<String> = std::env::var("PP_PATHS")
         .unwrap_or_default()
         .split(':')
         .filter(|s| !s.is_empty())

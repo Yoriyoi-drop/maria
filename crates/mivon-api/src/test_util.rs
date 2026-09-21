@@ -1,6 +1,5 @@
 //! Test utilities — AST comparison, regression helpers.
 
-use crate::compare_asts;
 
 /// Assert that two designs are structurally equivalent.
 #[macro_export]

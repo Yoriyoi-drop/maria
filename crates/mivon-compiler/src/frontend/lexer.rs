@@ -1243,7 +1243,7 @@ mod tests {
     fn test_fast_lexer_line_directive() {
         let input = "`line 42 \"test.sv\"\nmodule test;";
         let mut lexer = FastLexer::new(input, "");
-        let (tok, line, col) = lexer.next_token();
+        let (tok, line, _col) = lexer.next_token();
         assert_eq!(tok, Token::Module);
         // Cumulative line: directive at line 1, content starts at line 2
         assert_eq!(line, 2);

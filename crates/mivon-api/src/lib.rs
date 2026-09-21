@@ -1018,7 +1018,7 @@ dpi = ["libdpi.so"]
         assert!(proj.dpi_libs[0].contains("libdpi.so"));
         // Path library juga relatif ke direktori project.
         assert!(proj.vhpi_libs[0].starts_with(base.to_str().unwrap()));
-        let _ = std::fs::remove_dir_all(&p.parent().unwrap());
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
     #[test]
@@ -1035,7 +1035,7 @@ vhpi = ["libvhpi.so"]
         let files = read_project_file(p.to_str().unwrap()).expect("parse");
         assert_eq!(files.len(), 1, "bagian [foreign] TIDAK boleh jadi file .sv");
         assert!(files[0].contains("rtl/top.sv"));
-        let _ = std::fs::remove_dir_all(&p.parent().unwrap());
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
     #[test]
@@ -1054,7 +1054,7 @@ foo = ["libfoo.so"]
         assert_eq!(proj.vhpi_libs.len(), 1);
         assert!(proj.dpi_libs.is_empty(), "kunci tak dikenal diabaikan");
         assert!(proj.pli_libs.is_empty());
-        let _ = std::fs::remove_dir_all(&p.parent().unwrap());
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
     #[test]
@@ -1065,6 +1065,6 @@ foo = ["libfoo.so"]
         assert!(proj.vhpi_libs.is_empty());
         assert!(proj.pli_libs.is_empty());
         assert!(proj.dpi_libs.is_empty());
-        let _ = std::fs::remove_dir_all(&p.parent().unwrap());
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 }

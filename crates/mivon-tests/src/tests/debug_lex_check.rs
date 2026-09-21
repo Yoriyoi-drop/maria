@@ -1,4 +1,3 @@
-use super::*;
 
 #[test]
 fn test_preprocess_then_lex() {

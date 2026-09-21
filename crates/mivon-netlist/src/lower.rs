@@ -377,7 +377,7 @@ fn map_kind(k: &SirNodeKind) -> CellKind {
 mod tests {
     use super::*;
     use mivon_core::{intern::Symbol, LogicVec};
-    use mivon_sir::{ResetSpec, SirNode, SirRegister, SirValue, ValueId};
+    use mivon_sir::{ResetSpec, SirRegister, SirValue, ValueId};
 
     fn counter_sir() -> SirModule {
         let mut m = SirModule::new(Symbol::intern("counter"));
@@ -475,7 +475,7 @@ mod tests {
         let _ = m.add_value(SirValue::Port(0)); // 0 — input a
         let _ = m.add_value(SirValue::Port(1)); // 1 — input b
         let n = m.add_node(SirNodeKind::And, vec![0, 1], 8);
-        let out = m.nodes[n].output;
+        let _out = m.nodes[n].output;
         let _ = m.add_value(SirValue::Node(n)); // out — kanonik
                                                 // Port output y → ALIAS node (slot berbeda berisi Node(n)).
         let _ = m.add_value(SirValue::Node(n)); // alias

@@ -4,7 +4,7 @@
 
 use crate::compile_str;
 use mivon_compiler::frontend::compile_session::{CompileSession, SessionConfig};
-use mivon_compiler::profiling::{Counter, Phase, PhaseTimer, Profiler};
+use mivon_compiler::profiling::{Counter, Profiler};
 use std::time::Instant;
 
 #[test]

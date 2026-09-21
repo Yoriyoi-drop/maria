@@ -1296,7 +1296,7 @@ mod tests {
     /// Design post-generate-expansion untuk module TOP (sub-instance IR top
     /// dikonsumsi flatten → hierarki diambil dari AST post-expansion).
     fn expanded_design() -> Design {
-        let mut m = Module {
+        let m = Module {
             name: Symbol::intern("genmod"),
             ports: vec![],
             params: vec![],

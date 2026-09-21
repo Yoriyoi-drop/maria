@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(idx.len(), 2);
         assert!(idx.contains("a.sv"));
         assert_eq!(idx.get("a.sv").unwrap().content_hash, 1);
-        assert!(idx.get("a.sv").unwrap().large == false);
+        assert!(!idx.get("a.sv").unwrap().large);
         assert!(idx.get("b.sv").unwrap().large);
         assert_eq!(idx.bytes(), 15);
         assert_eq!(idx.remove("a.sv").unwrap().size, 5);
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(idx.len(), 50);
         assert_eq!(idx.get("mod_7.sv").unwrap().content_hash, 21);
         assert!(idx.get("mod_8.sv").unwrap().large);
-        assert!(idx.get("mod_9.sv").unwrap().large == false);
+        assert!(!idx.get("mod_9.sv").unwrap().large);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

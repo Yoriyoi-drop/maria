@@ -198,7 +198,7 @@ fn test_stress_mmap_io() {
     let start = Instant::now();
     for _ in 0..100 {
         let mf = MmapFile::open(&path).unwrap();
-        assert!(mf.len() > 0);
+        assert!(!mf.is_empty());
     }
     let elapsed = start.elapsed();
     eprintln!("Mmap 100 reads of {:?} file: {:?}", path, elapsed);

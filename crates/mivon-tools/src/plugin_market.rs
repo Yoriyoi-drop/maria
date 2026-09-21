@@ -398,7 +398,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let registry = dir.path().join("registry");
 
-        let mut reg = PluginRegistry::new(registry);
+        let reg = PluginRegistry::new(registry);
         let summary = reg.summary();
         assert!(summary.contains("0 plugins"));
     }

@@ -3983,7 +3983,7 @@ mod tests {
         run(&mut cpu, &mut m, 4);
         assert_eq!(cpu.r16(0), 0xD123, "shrd ax, cx, 4 = 0xD123");
         // CF = bit terakhir keluar = bit (x-1=3) dari dest 0x1234 = 0
-        assert_eq!(cpu.flag(FLAG_CF), false, "CF = bit 3 dest = 0");
+        assert!(!cpu.flag(FLAG_CF), "CF = bit 3 dest = 0");
 
         // 32-bit SHRD imm (prefix 66): shrd eax, ecx, 8
         // eax = 0x12345678, ecx = 0xAAAAAAAA → (eax>>8)|(ecx<<24) = 0x00123456 | 0xAA000000 = 0xAA123456
@@ -4070,7 +4070,7 @@ mod tests {
         ];
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 3);
-        assert_eq!(cpu.flag(FLAG_OF), true, "inc ax 0x7fff→0x8000 harus OF");
+        assert!(cpu.flag(FLAG_OF), "inc ax 0x7fff→0x8000 harus OF");
 
         // Dari 0x8000: inc → 0x8001 (TIDAK overflow), dec dari 0x8001 → 0x8000 (tidak)
         let code = [
@@ -4081,9 +4081,8 @@ mod tests {
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 3);
-        assert_eq!(
-            cpu.flag(FLAG_OF),
-            false,
+        assert!(
+            !cpu.flag(FLAG_OF),
             "inc/dec di sekitar 0x8000 (negatif) tak OF"
         );
 
@@ -4095,7 +4094,7 @@ mod tests {
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 2);
-        assert_eq!(cpu.flag(FLAG_OF), true, "inc al 0x7f→0x80 harus OF");
+        assert!(cpu.flag(FLAG_OF), "inc al 0x7f→0x80 harus OF");
 
         let code = [
             0xb0, 0x00, // mov al, 0x00
@@ -4104,7 +4103,7 @@ mod tests {
         let mut m = mem();
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 2);
-        assert_eq!(cpu.flag(FLAG_OF), false, "dec al 0x00→0xff tak OF");
+        assert!(!cpu.flag(FLAG_OF), "dec al 0x00→0xff tak OF");
     }
 
     #[test]
@@ -4124,9 +4123,9 @@ mod tests {
         // Return frame di stack (atas→bawah): IP 0x7c04, CS 0x0000.
         let sp = cpu.sp();
         assert_eq!(sp, 0x7c00 - 4, "sp turun 4 (2 push 16-bit)");
-        let b = m.read(0x0 + sp as u64, 2).unwrap();
+        let b = m.read((sp as u64), 2).unwrap();
         assert_eq!(b, 0x7c04, "ret IP = instruksi setelah ff /3");
-        let b = m.read(0x0 + sp as u64 + 2, 2).unwrap();
+        let b = m.read((sp as u64) + 2, 2).unwrap();
         assert_eq!(b, 0x0000, "ret CS = 0 (asli)");
     }
 
@@ -4153,12 +4152,12 @@ mod tests {
         let esp = cpu.sp();
         assert_eq!(esp, 0x7ff0 - 8, "esp turun 8 (push32 x2)");
         assert_eq!(
-            m.read(0x0 + esp as u64, 4).unwrap(),
+            m.read((esp as u64), 4).unwrap(),
             0x7c06,
             "ret EIP = instruksi setelah ff /3"
         );
         assert_eq!(
-            m.read(0x0 + esp as u64 + 4, 4).unwrap(),
+            m.read((esp as u64) + 4, 4).unwrap(),
             0x0000,
             "ret CS (32-bit slot) = 0"
         );
@@ -4243,10 +4242,10 @@ mod tests {
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 4);
         assert_eq!(cpu.cx(), 0, "cx habis setelah rep");
-        assert_eq!(cpu.si(), 0x8064 as u16, "si maju 100");
-        assert_eq!(cpu.di(), 0x9064 as u16, "di maju 100");
+        assert_eq!(cpu.si(), 0x8064_u16, "si maju 100");
+        assert_eq!(cpu.di(), 0x9064_u16, "di maju 100");
         for i in 0..100u64 {
-            assert_eq!(m.read(0x9000 + i, 1).unwrap(), i as u64, "copy byte {i}");
+            assert_eq!(m.read(0x9000 + i, 1).unwrap(), i, "copy byte {i}");
         }
     }
 
@@ -4265,7 +4264,7 @@ mod tests {
         let mut cpu = load(&mut m, &code);
         run(&mut cpu, &mut m, 4);
         assert_eq!(cpu.cx(), 0, "cx habis setelah rep");
-        assert_eq!(cpu.di(), 0x9064 as u16, "di maju 100");
+        assert_eq!(cpu.di(), 0x9064_u16, "di maju 100");
         for i in 0..50u64 {
             assert_eq!(m.read(0x9000 + i * 2, 2).unwrap(), 0x3234, "pola dword {i}");
         }
@@ -4523,7 +4522,7 @@ mod tests {
         // di atas 0x78000 tidak boleh tersentuh.
         assert_eq!(
             m.read(0x68000 + 0xffff, 1).unwrap(),
-            (((0xffffu64 * 7 & 0xfb) as u8) ^ 0xa5) as u64
+            ((((0xffffu64 * 7) & 0xfb) as u8) ^ 0xa5) as u64
         );
         assert_eq!(
             m.read(0x78000, 1).unwrap(),

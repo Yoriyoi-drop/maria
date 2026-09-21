@@ -2894,9 +2894,8 @@ endmodule
         // Kursor di nama module sendiri → definisi tetap ditemukan.
         let (line, col, _) = LspBackend::find_definition(SAMPLE, 0, 10).unwrap();
         assert_eq!(line, line_of("module counter"), "definisi module counter");
-        assert_eq!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("counter"),
-            true
+        assert!(
+            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("counter")
         );
 
         // Instance `counter_aux aux` (baris pemakaian) → definisi module
@@ -2910,9 +2909,8 @@ endmodule
             .unwrap() as u32;
         let (line, col, _) = LspBackend::find_definition(SAMPLE, use_line, aux_col + 3).unwrap();
         assert_eq!(line, line_of("module counter_aux"));
-        assert_eq!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("counter_aux"),
-            true
+        assert!(
+            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("counter_aux")
         );
     }
 
@@ -2928,9 +2926,8 @@ endmodule
             .unwrap() as u32;
         let (line, col, _) = LspBackend::find_definition(SAMPLE, use_line, enable_col).unwrap();
         assert_eq!(line, line_of("reg enable"));
-        assert_eq!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("enable"),
-            true
+        assert!(
+            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("enable")
         );
 
         // Pemakaian `clk` di port connection `.clk(clk)` → port decl
@@ -2945,9 +2942,8 @@ endmodule
             .unwrap();
         let (line, col, _) = LspBackend::find_definition(SAMPLE, inst_line, clk_col).unwrap();
         assert_eq!(line, line_of("input logic clk,"));
-        assert_eq!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("clk"),
-            true
+        assert!(
+            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("clk")
         );
 
         // Signal `state` dipakai? Tidak ada pemakaian; deklarasinya sendiri
@@ -2961,9 +2957,8 @@ endmodule
             .unwrap() as u32;
         let (line, col, _) = LspBackend::find_definition(SAMPLE, decl_line, st_col).unwrap();
         assert_eq!(line, decl_line);
-        assert_eq!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("state"),
-            true
+        assert!(
+            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("state")
         );
     }
 
@@ -2979,9 +2974,8 @@ endmodule
             .unwrap() as u32;
         let (line, col, _) = LspBackend::find_definition(SAMPLE, out_line, w_col).unwrap();
         assert_eq!(line, line_of("parameter WIDTH"));
-        assert_eq!(
-            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("WIDTH"),
-            true
+        assert!(
+            SAMPLE.lines().nth(line as usize).unwrap()[col as usize..].starts_with("WIDTH")
         );
     }
 
@@ -3190,7 +3184,7 @@ endmodule
         let folds = LspBackend::compute_folding_ranges(SAMPLE);
         // Module counter (0 → endmodule) dan counter_aux.
         let m0 = line_of("module counter");
-        let m1 = line_of("module counter_aux");
+        let _m1 = line_of("module counter_aux");
         let e1 = line_of("endmodule");
         assert!(
             folds.contains(&(m0, e1)),
@@ -3380,7 +3374,7 @@ endmodule
         }
         // 'counter' appears in 'counter' (line 0) and 'counter_aux' (not standalone).
         assert!(
-            ranges.len() >= 1,
+            !ranges.is_empty(),
             "at least 1 standalone occurrence: {:?}",
             ranges
         );
@@ -3443,7 +3437,7 @@ endmodule
             lenses.iter().any(|l| l
                 .command
                 .as_ref()
-                .map_or(false, |c| c.title.contains("test"))),
+                .is_some_and(|c| c.title.contains("test"))),
             "module lens: {:?}",
             lenses
                 .iter()
@@ -3509,7 +3503,7 @@ endmodule
             lenses.iter().any(|l| l
                 .command
                 .as_ref()
-                .map_or(false, |c| c.title.contains("test"))),
+                .is_some_and(|c| c.title.contains("test"))),
             "module lens: {:?}",
             lenses
                 .iter()
@@ -3521,7 +3515,7 @@ endmodule
             lenses.iter().any(|l| l
                 .command
                 .as_ref()
-                .map_or(false, |c| c.command.contains("runTest")
+                .is_some_and(|c| c.command.contains("runTest")
                     && c.command.contains("test_add"))),
             "test_add should have runTest lens: {:?}",
             lenses
@@ -3534,7 +3528,7 @@ endmodule
             !lenses.iter().any(|l| l
                 .command
                 .as_ref()
-                .map_or(false, |c| c.command.contains("not_a_test"))),
+                .is_some_and(|c| c.command.contains("not_a_test"))),
             "not_a_test should NOT have runTest lens"
         );
     }

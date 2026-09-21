@@ -1067,7 +1067,7 @@ mod tests {
         // Semua sel spasi dengan attribute 0x07 (white on black)
         assert_eq!(disp.buffer[0], b' ');
         assert_eq!(disp.buffer[1], 0x07);
-        assert_eq!(disp.dirty, true);
+        assert!(disp.dirty);
     }
 
     #[test]
@@ -1103,8 +1103,8 @@ mod tests {
             disp.framebuffer[idx] != 0x000000,
             "font 'A' pixel harus putih (foreground)"
         );
-        // Background harus hitam
-        let bg_idx = 0 * fb_w + 0; // gx=0 gy=0 = background
+        // Background harus hitam — pixel (0,0) = kiri-atas.
+        let bg_idx = 0; // gx=0 gy=0 = background
         assert_eq!(disp.framebuffer[bg_idx], 0x000000);
     }
 

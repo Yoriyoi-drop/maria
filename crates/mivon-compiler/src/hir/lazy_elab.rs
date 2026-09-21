@@ -139,7 +139,7 @@ impl Default for LazyElaborator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hir::hir::*;
+    
 
     #[test]
     fn test_lazy_elab_basic() {

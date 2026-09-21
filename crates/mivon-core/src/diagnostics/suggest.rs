@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_suggest_name_basic() {
-        let candidates = vec!["clk", "rst_n", "data_in", "data_out", "valid"];
+        let candidates = ["clk", "rst_n", "data_in", "data_out", "valid"];
         // Exact match "clka" mirip "clk"
         let (suggested, dist) = suggest_name("clka", candidates.iter().copied()).unwrap();
         assert_eq!(suggested, "clk");
@@ -129,21 +129,21 @@ mod tests {
 
     #[test]
     fn test_suggest_name_close() {
-        let candidates = vec!["data_in", "data_out", "valid", "ready"];
+        let candidates = ["data_in", "data_out", "valid", "ready"];
         let (suggested, _) = suggest_name("data_oun", candidates.iter().copied()).unwrap();
         assert_eq!(suggested, "data_out");
     }
 
     #[test]
     fn test_suggest_name_no_match() {
-        let candidates = vec!["clk", "rst_n"];
+        let candidates = ["clk", "rst_n"];
         let result = suggest_name("xyz_completely_different", candidates.iter().copied());
         assert!(result.is_none());
     }
 
     #[test]
     fn test_suggest_name_typo() {
-        let candidates = vec!["counter", "config", "control", "clock"];
+        let candidates = ["counter", "config", "control", "clock"];
         let (suggested, _) = suggest_name("conter", candidates.iter().copied()).unwrap();
         assert_eq!(suggested, "counter");
     }

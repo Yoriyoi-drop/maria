@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_signal_stats_write_file() {
-        use std::io::Write;
+        
         let dir = std::env::temp_dir().join("mivon_stats_test");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("stats.txt");

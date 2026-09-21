@@ -335,7 +335,7 @@ mod tests {
         };
         let st = run_gc(&mut db, &cfg);
         assert_eq!(st.evicted_ast, 1);
-        assert!(db.ast_cache.contains_key(&PathBuf::from("a.sv")) == false);
+        assert!(!db.ast_cache.contains_key(&PathBuf::from("a.sv")));
         assert!(db.ast_cache.contains_key(&PathBuf::from("b.sv")));
         assert!(db.ast_bytes <= 150);
         assert!(st.changed);

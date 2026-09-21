@@ -579,7 +579,7 @@ endmodule"#,
         dbg.engine.debug_mode = DebugMode::DeepDebug;
         dbg.engine.snapshot_interval = 2;
         dbg.run().ok();
-        assert!(dbg.engine.snapshots.len() > 0);
+        assert!(!dbg.engine.snapshots.is_empty());
     }
 
     #[test]
@@ -588,7 +588,7 @@ endmodule"#,
         dbg.engine.debug_mode = DebugMode::DeepDebug;
         dbg.engine.snapshot_interval = 1;
         dbg.run().ok();
-        if dbg.engine.snapshots.len() > 0 {
+        if !dbg.engine.snapshots.is_empty() {
             let r = dbg.reverse_step();
             assert!(r.is_ok(), "reverse step failed: {:?}", r);
         }

@@ -150,11 +150,11 @@ pub fn compile_project(
             verify_hits: stats
                 .as_ref()
                 .map(|s| s.verify_hits)
-                .unwrap_or_else(|| db_ref.map(|d| micd_verify_hits(d)).unwrap_or(0)),
+                .unwrap_or_else(|| db_ref.map(micd_verify_hits).unwrap_or(0)),
             verify_misses: stats
                 .as_ref()
                 .map(|s| s.verify_misses)
-                .unwrap_or_else(|| db_ref.map(|d| micd_verify_misses(d)).unwrap_or(0)),
+                .unwrap_or_else(|| db_ref.map(micd_verify_misses).unwrap_or(0)),
             snapshots: db_ref.map(|d| d.snapshots.len()).unwrap_or(0),
             db_bytes: micd_db_bytes(micd_root.as_deref()),
         })
@@ -494,7 +494,7 @@ fn lint_unused_signals(text: &str, fname: &str, out: &mut Vec<DiagEntry>) {
         // `[7:0]`. Contoh: `logic [7:0] data;` → `data`, `wire a, b;` → a,b.
         let mut rest = code;
         if first_word.contains(" ") {
-            rest = rest.splitn(2, ' ').nth(1).unwrap_or("");
+            rest = rest.split_once(' ').map(|x| x.1).unwrap_or("");
         }
         let rest = rest.trim_start();
         // Buang range `[...]` di awal (mengandung angka/`:`/`-`).
@@ -805,20 +805,16 @@ pub fn spawn_term(tx: Sender<GuiEvent>, cmd: String, cwd: Option<PathBuf>) {
         if let Some(out) = out {
             std::thread::spawn(move || {
                 use std::io::BufRead;
-                for line in std::io::BufReader::new(out).lines() {
-                    if let Ok(l) = line {
-                        let _ = tx_out.send(GuiEvent::TermOutput(l, false));
-                    }
+                for l in std::io::BufReader::new(out).lines().flatten() {
+                    let _ = tx_out.send(GuiEvent::TermOutput(l, false));
                 }
             });
         }
         if let Some(err) = err {
             std::thread::spawn(move || {
                 use std::io::BufRead;
-                for line in std::io::BufReader::new(err).lines() {
-                    if let Ok(l) = line {
-                        let _ = tx_err.send(GuiEvent::TermOutput(l, true));
-                    }
+                for l in std::io::BufReader::new(err).lines().flatten() {
+                    let _ = tx_err.send(GuiEvent::TermOutput(l, true));
                 }
             });
         }
@@ -1077,7 +1073,7 @@ pub fn logicvec_to_hex(lv: &LogicVec) -> String {
     if all_z {
         return format!("'z{}", lv.width);
     }
-    let nibbles = (lv.width + 3) / 4;
+    let nibbles = lv.width.div_ceil(4);
     let mut hex = String::with_capacity(nibbles);
     for nib in (0..nibbles).rev() {
         let mut val = 0u8;

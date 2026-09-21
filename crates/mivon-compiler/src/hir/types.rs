@@ -256,7 +256,7 @@ impl Default for TypeSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hir::hir::*;
+    
 
     #[test]
     fn test_typesystem_basic() {

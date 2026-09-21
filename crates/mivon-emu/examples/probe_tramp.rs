@@ -41,7 +41,7 @@ fn main() {
     println!("code @pc: {}", line);
     println!(
         "console_bytes: {:02x?}",
-        cpu.out.iter().map(|b| *b as u8).collect::<Vec<_>>()
+        cpu.out.iter().map(|b| *b).collect::<Vec<_>>()
     );
     // Dump 0x9080..0x9180 (grub_bios_interrupt + prot/real trampolin).
     let mut v = Vec::with_capacity(0x100);

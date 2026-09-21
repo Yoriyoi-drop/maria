@@ -2297,6 +2297,77 @@ impl CompileSession {
     }
 }
 
+/// Discovery pass ringan: scan satu combined source (sudah preprocessed) dan
+/// kumpulkan nama `class <name>` serta nama typedef (`typedef ... <name>;`).
+/// Dipakai untuk seed Parser per-file dengan nama global (lintas file).
+/// Nama class diambil dari ident pertama setelah `class`; nama typedef dari
+/// ident terakhir sebelum `;` selama masih di dalam satu deklarasi typedef.
+/// Over-collection aman: nama ekstra hanya membuat parser lebih condong
+/// mem-parse `name var;` sebagai deklarasi (benar untuk tipe) — tidak pernah
+/// mengubah instantiation module (yang tetap lewat sintaks `#( )` / `( )`).
+fn discover_names_in_source(
+    src: &str,
+    classes: &mut HashSet<Symbol>,
+    typedefs: &mut HashSet<Symbol>,
+) {
+    let mut lexer = FastLexer::new(src, "");
+    let mut in_typedef = false;
+    let mut last_ident: Option<Symbol> = None;
+    // Depth kurung kurawal di dalam typedef: `typedef struct packed {...} name;`
+    // punya SEMI internal (mis. deklarasi member), jadi nama typedef baru
+    // muncul setelah `}` PENUTUP. Semi hanya dianggap terminasi saat depth==0.
+    let mut brace_depth: usize = 0;
+    loop {
+        let (tok, _, _) = lexer.next_token();
+        match tok {
+            Token::Eof => break,
+            Token::Class => {
+                // LRM: `class <class_identifier> ...` — nama selalu ident
+                // pertama setelah `class`. Ambil dan berhenti.
+                loop {
+                    let (t, _, _) = lexer.next_token();
+                    match t {
+                        Token::Eof => break,
+                        Token::Ident(n) => {
+                            classes.insert(n);
+                            break;
+                        }
+                        _ => continue,
+                    }
+                }
+            }
+            Token::Typedef => {
+                in_typedef = true;
+                last_ident = None;
+                brace_depth = 0;
+            }
+            Token::LBrace => {
+                if in_typedef {
+                    brace_depth += 1;
+                }
+            }
+            Token::RBrace => {
+                if in_typedef && brace_depth > 0 {
+                    brace_depth -= 1;
+                }
+            }
+            Token::Ident(n) => {
+                if in_typedef && brace_depth == 0 {
+                    last_ident = Some(n);
+                }
+            }
+            Token::Semi if in_typedef && brace_depth == 0 => {
+                if let Some(n) = last_ident {
+                    typedefs.insert(n);
+                }
+                in_typedef = false;
+                last_ident = None;
+            }
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2322,7 +2393,7 @@ mod tests {
             !design.modules.is_empty(),
             "should have at least one module"
         );
-        assert!(index.len() >= 1, "should have indexed at least one module");
+        assert!(!index.is_empty(), "should have indexed at least one module");
     }
 
     #[test]
@@ -2563,7 +2634,7 @@ mod tests {
     #[test]
     fn test_incremental_detect_changed_no_prev() {
         // Empty prev_checksums should return ALL files as changed
-        let mut session = CompileSession::new(SessionConfig::default());
+        let session = CompileSession::new(SessionConfig::default());
         let files = vec![root_rel("test/counter.sv"), root_rel("test/tb_counter.sv")];
         let changed = session.detect_changed(&files);
         assert_eq!(
@@ -2659,7 +2730,7 @@ mod tests {
         // Affected set: mod_a tidak tergantung mod_b → tidak terdampak.
         {
             let mut db = MicdDatabase::open(&db_root);
-            let affected = db.affected(&[f2.clone()]);
+            let affected = db.affected(std::slice::from_ref(&f2));
             assert!(!affected.contains(&f1), "mod_a tidak tergantung mod_b");
         }
 
@@ -2899,76 +2970,5 @@ mod tests {
         let names: Vec<&str> = design.modules.iter().map(|m| m.name.as_str()).collect();
         assert!(names.contains(&"disk_mod"));
         assert!(names.contains(&"inline_peer"));
-    }
-}
-
-/// Discovery pass ringan: scan satu combined source (sudah preprocessed) dan
-/// kumpulkan nama `class <name>` serta nama typedef (`typedef ... <name>;`).
-/// Dipakai untuk seed Parser per-file dengan nama global (lintas file).
-/// Nama class diambil dari ident pertama setelah `class`; nama typedef dari
-/// ident terakhir sebelum `;` selama masih di dalam satu deklarasi typedef.
-/// Over-collection aman: nama ekstra hanya membuat parser lebih condong
-/// mem-parse `name var;` sebagai deklarasi (benar untuk tipe) — tidak pernah
-/// mengubah instantiation module (yang tetap lewat sintaks `#( )` / `( )`).
-fn discover_names_in_source(
-    src: &str,
-    classes: &mut HashSet<Symbol>,
-    typedefs: &mut HashSet<Symbol>,
-) {
-    let mut lexer = FastLexer::new(src, "");
-    let mut in_typedef = false;
-    let mut last_ident: Option<Symbol> = None;
-    // Depth kurung kurawal di dalam typedef: `typedef struct packed {...} name;`
-    // punya SEMI internal (mis. deklarasi member), jadi nama typedef baru
-    // muncul setelah `}` PENUTUP. Semi hanya dianggap terminasi saat depth==0.
-    let mut brace_depth: usize = 0;
-    loop {
-        let (tok, _, _) = lexer.next_token();
-        match tok {
-            Token::Eof => break,
-            Token::Class => {
-                // LRM: `class <class_identifier> ...` — nama selalu ident
-                // pertama setelah `class`. Ambil dan berhenti.
-                loop {
-                    let (t, _, _) = lexer.next_token();
-                    match t {
-                        Token::Eof => break,
-                        Token::Ident(n) => {
-                            classes.insert(n);
-                            break;
-                        }
-                        _ => continue,
-                    }
-                }
-            }
-            Token::Typedef => {
-                in_typedef = true;
-                last_ident = None;
-                brace_depth = 0;
-            }
-            Token::LBrace => {
-                if in_typedef {
-                    brace_depth += 1;
-                }
-            }
-            Token::RBrace => {
-                if in_typedef && brace_depth > 0 {
-                    brace_depth -= 1;
-                }
-            }
-            Token::Ident(n) => {
-                if in_typedef && brace_depth == 0 {
-                    last_ident = Some(n);
-                }
-            }
-            Token::Semi if in_typedef && brace_depth == 0 => {
-                if let Some(n) = last_ident {
-                    typedefs.insert(n);
-                }
-                in_typedef = false;
-                last_ident = None;
-            }
-            _ => {}
-        }
     }
 }

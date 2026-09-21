@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(back.active_file, Some(1));
         assert_eq!(back.sidebar_tab, SidebarTab::Architecture);
         assert_eq!(back.bottom_tab, BottomTab::Waveform);
-        assert_eq!(back.show_sidebar, false);
+        assert!(!back.show_sidebar);
         assert_eq!(back.bottom_height, 320.0);
         assert_eq!(back.wave_zoom, 8.0);
         assert_eq!(back.max_time, 5000);

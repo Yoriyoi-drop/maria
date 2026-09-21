@@ -203,14 +203,14 @@ mod tests {
         g.set_deps(cpu.clone(), vec![uart.clone()]);
         g.set_deps(dma.clone(), vec![defines.clone()]);
 
-        let affected = g.affected(&[defines.clone()]);
+        let affected = g.affected(std::slice::from_ref(&defines));
         assert!(affected.contains(&defines));
         assert!(affected.contains(&uart));
         assert!(affected.contains(&dma));
         // cpu → uart → defines: terdampak transitif
         assert!(affected.contains(&cpu));
 
-        let affected_uart = g.affected(&[uart.clone()]);
+        let affected_uart = g.affected(std::slice::from_ref(&uart));
         assert!(affected_uart.contains(&uart));
         assert!(affected_uart.contains(&cpu));
     }
@@ -231,7 +231,7 @@ mod tests {
         g.rebuild();
         let bytes = bincode::serialize(&g).unwrap();
         let mut g2: FileGraph = bincode::deserialize(&bytes).unwrap();
-        assert_eq!(g2.deps_of(&Path::new("b.sv")), vec![PathBuf::from("a.sv")]);
+        assert_eq!(g2.deps_of(Path::new("b.sv")), vec![PathBuf::from("a.sv")]);
         assert_eq!(g2.len(), 1);
         // affected (setelah deserialize, lazy rebuild otomatis)
         let a = g2.affected(&[PathBuf::from("a.sv")]);

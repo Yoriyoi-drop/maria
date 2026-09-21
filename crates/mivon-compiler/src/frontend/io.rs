@@ -125,7 +125,7 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         let mf = MmapFile::open(&path).unwrap();
         assert!(!mf.is_empty());
-        assert!(mf.len() > 0);
+        assert!(!mf.is_empty());
         assert!(mf.as_str().contains("mivon"));
     }
 
@@ -192,7 +192,7 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         let mf = MmapFile::open(&path).unwrap();
         let s = mf.as_str();
-        assert!(s.len() > 0);
+        assert!(!s.is_empty());
         assert!(s.contains("mivon"));
     }
 }

@@ -2476,7 +2476,7 @@ mod tests {
         // Prune internal (private) — panggil via snapshot berulang lalu buktikan
         // yang tersisa tidak merusak keturunan. Maks 16 → buat 20 linear.
         for i in 0..20 {
-            db.snapshot(format!("b{}", i).into()).unwrap();
+            db.snapshot(format!("b{}", i)).unwrap();
         }
         assert!(db.snapshots.len() <= 16, "prune batasi jumlah snapshot");
         assert_eq!(

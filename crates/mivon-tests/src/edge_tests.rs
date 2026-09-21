@@ -942,7 +942,7 @@ endmodule"#,
     let (_, v) = sigs.iter().find(|(n, _)| n == "out").unwrap();
     // 0F^F0 per bit → xxxx_xxxx; +1 dengan salah satu operand ber-X → tetap X.
     assert!(
-        v.bits.iter().any(|b| *b == mivon_ir::LogicVal::X),
+        v.bits.contains(&mivon_ir::LogicVal::X),
         "ternary-X bertingkat harus X, got {:?}",
         v.bits
     );

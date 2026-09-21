@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(nl.net_fanout(d), 1);
         assert_eq!(nl.nets[q].driver, Some(0));
         assert_eq!(nl.ffs().count(), 1);
-        assert_eq!(nl.nets[clk].is_clock, false); // set terpisah oleh infer
+        assert!(!nl.nets[clk].is_clock); // set terpisah oleh infer
     }
 
     #[test]
