@@ -1069,16 +1069,42 @@ handler call/ret):
   address) — siap dipakai untuk sesi lanjutan.
 - `X86Disk::read_bytes`, prefetch instruksi, bulk memory (lihat §Optimasi).
 
+**Sesi lanjutan (2026-09-21)** — trampolin teratasi + `ff /3` call far:
+- `ff /3` (CALL FAR m16:16/m16:32) diimplementasi di `exec_ff_group`
+  (`crates/mivon-emu/src/cpu/x86.rs`): baca off:seg dari operand memori
+  (real mode `[ea]`+`[ea+2]`, pmode `[ea]`+`[ea+4]`), push frame return
+  (CS lalu IP/EIP — konsisten dgn frame `int`/`iret`), lompat + recompute
+  `pmode`. 2 test baru (real-mode `ff 1e 00 90` → cs=0x1234 ip=0x2000,
+  ret frame 0x7c04/0x0000 di stack; pmode `ff 1d <disp32>` → cs=0x8
+  eip=0x100000, ret frame push32). Sebelumnya `ff /3` → `halt("ff /N
+  belum didukung")` (potensi blocker di `0x9083` `lcall *%ss:0x6(%edi)`).
+  Catatan: ModRM `ff 36` = **PUSH** [disp16] (reg=6), bukan call far —
+  encoding benar utk `/3` dgn `[disp16]` = `ff 1e`, `[disp32]` pmode =
+  `ff 1d`.
+- Nama file ISO di test diperbarui `ubuntu-26.04` → `ubuntu-26.04.1
+  -desktop-amd64.iso` → 2 test e2e (MBR execute + GRUB boot.img execute)
+  hijau lagi.
+- Verifikasi e2e `mivon emu --boot-iso ubuntu-26.04.1-desktop-amd64.iso
+  --config iso_boot.meu --run --max-steps 200000000` (release): **tidak
+  ada fault** — pc=0x170192d1 @200M step (sebelumnya crash region-nol di
+  step ~8.5M). Titik crash trampolin biosdisk sudah dilewati; GRUB lanjut
+  relokasi image. Console BIOS masih kosong (GRUB pakai VGA text, belum
+  teletype) → tahap berikut: JIT / block-translation (R3) utk relokasi.
+
 **Tidak teratasi / langkah berikut**:
 - Akar 4-byte drift stack di jalur prot_to_real↔real_to_prot belum
-  terisolasi instruksi-demi-instruksi. Referensi differential QEMU
+  terisolasi instruksi-demi-instruksi — kini TIDAK memblock boot (crash
+  trampolin teratasi); diff per-instruksi vs QEMU opsional utk bukti
+  formal (window 0x82d2-0x8326).
+- Referensi differential QEMU
   (`qemu-system-i386 -d in_asm,cpu`) tidak sampai trampolin (SeaBIOS idle
   di boot menu headless — perlu `-nographic -no-reboot` + opsi menu off /
   input). Bochs tak bisa (plugin display rusak).
 - Rekomendasi: (a) diff per-instruksi vs QEMU pada window prot_to_real
-  (0x82d2-0x8326) — cari instruksi yang menghasilkan sp berbeda; (b)
-  implementasi `ff /3` (lcall) + `iret` frame penuh; (c) setelah trampolin
-  benar, GRUB lanjut ke relokasi → JIT (R3).
+  (0x82d2-0x8326) — cari instruksi yang menghasilkan sp berbeda (opsional
+  pasca-trampolin-hijau); (b) `ff /3` + `iret` frame penuh — ✅ selesai;
+  (c) GRUB lanjut ke relokasi → **JIT (R3) block-translation loop
+  copy/relokasi** (target berikut).
 
 ---
 

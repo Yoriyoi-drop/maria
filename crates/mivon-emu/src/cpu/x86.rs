@@ -2,7 +2,7 @@
 //! override) untuk boot chain BIOS: MBR / ISOLINUX hybrid / GRUB boot.img —
 //! EMULATOR.md §21 R6 (mesin x86-64; tahap awal = real-mode boot).
 //!
-//! Target konkret: `ubuntu-26.04-desktop-amd64.iso`.
+//! Target konkret: `ubuntu-26.04.1-desktop-amd64.iso`.
 //! Rantai boot (dianalisis dari ISO, 2026-08-16):
 //!   MBR LBA 0 (ISOLINUX hybrid, `eb 63`, INT 13h AH=02) →
 //!   El Torito boot catalog LBA 666 → boot image LBA 667 (GRUB boot.img,
@@ -2223,6 +2223,34 @@ impl X86Cpu {
                 let t = self.read_op(mem, &ea, opsz, true)?;
                 self.ip = t as u32;
             }
+            3 => {
+                // ff /3 CALL FAR m16:16 / m16:32 — push frame CS:IP/EIP, lompat.
+                // Real mode (opsz 16): [ea] = IP 16-bit, [ea+2] = CS 16-bit.
+                // Protected mode (opsz 32): [ea] = EIP 32-bit, [ea+4] = CS 16-bit.
+                // Frame stack (atas→bawah): IP/EIP, lalu CS — sama dengan frame
+                // `int` (exec_int) agar `retf`/`iret` pop dengan urutan benar.
+                let (off, seg) = if opsz == 32 {
+                    let eip = self.read32(mem, ea.seg, ea.off)?;
+                    let seg = self.read16(mem, ea.seg, ea.off + 4)?;
+                    (eip, seg)
+                } else {
+                    let off = self.read16(mem, ea.seg, ea.off)?;
+                    let seg = self.read16(mem, ea.seg, ea.off + 2)?;
+                    (off as u32, seg)
+                };
+                let ret_ip = self.ip;
+                let ret_cs = self.cs;
+                if opsz == 32 {
+                    self.push32(mem, ret_cs as u32)?;
+                    self.push32(mem, ret_ip)?;
+                } else {
+                    self.push16(mem, ret_cs)?;
+                    self.push16(mem, ret_ip as u16)?;
+                }
+                self.ip = off;
+                self.cs = seg;
+                self.pmode = self.cr[0] & 1 != 0;
+            }
             5 => {
                 let off = self.read16(mem, ea.seg, ea.off)?;
                 let seg = self.read16(mem, ea.seg, ea.off + 2)?;
@@ -3483,7 +3511,7 @@ mod tests {
     #[test]
     fn test_int13_extended_read_iso_mbr() {
         // INT 13h AH=42 dengan DAP di DS:SI — baca sektor 0 dari ISO
-        let iso = root_of("ubuntu-26.04-desktop-amd64.iso");
+        let iso = root_of("ubuntu-26.04.1-desktop-amd64.iso");
         let mut cpu = X86Cpu::new();
         cpu.disk = Some(Box::new(FileDisk::open(&iso).expect("open iso")));
         let mut m = mem();
@@ -3520,7 +3548,7 @@ mod tests {
     #[ignore]
     #[test]
     fn test_boot_iso_mbr_executes() {
-        let iso = root_of("ubuntu-26.04-desktop-amd64.iso");
+        let iso = root_of("ubuntu-26.04.1-desktop-amd64.iso");
         let mut file = std::fs::File::open(&iso).expect("open");
         let mut mbr = [0u8; 512];
         use std::io::Read;
@@ -3558,7 +3586,7 @@ mod tests {
     #[ignore]
     #[test]
     fn test_boot_grub_bootimg_executes() {
-        let iso = root_of("ubuntu-26.04-desktop-amd64.iso");
+        let iso = root_of("ubuntu-26.04.1-desktop-amd64.iso");
         use std::io::{Read, Seek, SeekFrom};
         let mut file = std::fs::File::open(&iso).expect("open");
         file.seek(SeekFrom::Start(667 * 2048)).expect("seek");
@@ -3799,6 +3827,63 @@ mod tests {
     }
 
     #[test]
+    fn test_ff3_call_far_real_mode() {
+        // ff 1e 00 90 = ff /3 mod=00 rm=110 → [disp16] 0x9000 (DS).
+        // Real mode (opsz 16): [0x9000] = off 16-bit, [0x9002] = cs 16-bit.
+        // Sebelum lompat: push CS lalu push IP (return address).
+        let code = [0xff, 0x1e, 0x00, 0x90, 0x90];
+        let mut m = mem();
+        m.write(0x9000, 2, 0x2000).unwrap();
+        m.write(0x9002, 2, 0x1234).unwrap();
+        let mut cpu = load(&mut m, &code); // cs=0, ip=0x7c00, ss=0, sp=0x7c00
+        run(&mut cpu, &mut m, 1);
+        assert_eq!(cpu.cs, 0x1234, "cs = 0x1234 (segmen target)");
+        assert_eq!(cpu.ip, 0x2000, "ip = 0x2000 (offset target)");
+        assert_eq!(cpu.pc(), 0x1234 * 16 + 0x2000);
+        // Return frame di stack (atas→bawah): IP 0x7c04, CS 0x0000.
+        let sp = cpu.sp();
+        assert_eq!(sp, 0x7c00 - 4, "sp turun 4 (2 push 16-bit)");
+        let b = m.read(0x0 + sp as u64, 2).unwrap();
+        assert_eq!(b, 0x7c04, "ret IP = instruksi setelah ff /3");
+        let b = m.read(0x0 + sp as u64 + 2, 2).unwrap();
+        assert_eq!(b, 0x0000, "ret CS = 0 (asli)");
+    }
+
+    #[test]
+    fn test_ff3_call_far_pmode_cs_eip() {
+        // Protected mode: ff /3 dengan opsz 32 — [ea] = EIP 32-bit, [ea+4] = CS.
+        // Setup: masuk pmode manual (cr0 bit0). modrm 00_011_101 = mod=00 rm=101
+        // → [disp32] (32-bit addressing, bukan SIB).
+        // Arahkan CS ke segmen 8 (flat, seperti GRUB pmode), EIP = 0x100000.
+        let mut m = mem();
+        // Buat regs: mem[0x2000] = EIP(4B), mem[0x2004] = CS(2B)
+        m.write(0x2000, 4, 0x100_000).unwrap();
+        m.write(0x2004, 2, 0x0008).unwrap();
+        // code: ff 1d <disp32=0x2000> → call far [ds:0x2000]
+        let code = [0xff, 0x1d, 0x00, 0x20, 0x00, 0x00, 0x90];
+        let mut cpu = load(&mut m, &code);
+        cpu.cr[0] = 1; // PE bit → pmode
+        cpu.pmode = true;
+        cpu.sp_set(0x7ff0); // ESP di bawah 1MB (stack pmode)
+        run(&mut cpu, &mut m, 1);
+        assert_eq!(cpu.cs, 0x0008, "cs = 0x8 (selector flat)");
+        assert_eq!(cpu.ip, 0x100_000, "eip = 0x100000");
+        // Frame: [esp] = EIP ret (0x7c06), [esp+4] = CS (0).
+        let esp = cpu.sp();
+        assert_eq!(esp, 0x7ff0 - 8, "esp turun 8 (push32 x2)");
+        assert_eq!(
+            m.read(0x0 + esp as u64, 4).unwrap(),
+            0x7c06,
+            "ret EIP = instruksi setelah ff /3"
+        );
+        assert_eq!(
+            m.read(0x0 + esp as u64 + 4, 4).unwrap(),
+            0x0000,
+            "ret CS (32-bit slot) = 0"
+        );
+    }
+
+    #[test]
     fn test_idiv_signed_16bit() {
         // DX:AX = -21 (0xFFFFFFEB); idiv cx (cx=7) → AX = -3 (0xFFFD), DX = 0
         let code = [
@@ -3872,7 +3957,8 @@ mod tests {
 
     /// E2E boot CD (El Torito): load_boot_image (DL=0xE0) + AH=42 drive CD
     /// membaca dalam blok 2048 (byte offset = lba*2048). Disk rekaman mencatat
-    /// read_bytes — cdboot harus membacanya di offset bi_file*2048 = 667*2048.
+    /// read_bytes — cdboot harus membacanya di offset bi_file*2048
+    /// (ubuntu-26.04: 667; 26.04.1: 673 — tidak di-hardcode).
     #[test]
     fn test_cd_boot_eltorito_ah42_reads_2048_block() {
         use crate::iso::{parse_eltorito, read_boot_image};
@@ -3893,14 +3979,16 @@ mod tests {
                 0
             }
         }
-        let iso = root_of("ubuntu-26.04-desktop-amd64.iso");
+        let iso = root_of("ubuntu-26.04.1-desktop-amd64.iso");
         if !std::path::Path::new(&iso).exists() {
             eprintln!("skipped: ISO tidak ada");
             return;
         }
         let mut f = std::fs::File::open(&iso).unwrap();
         let boot = parse_eltorito(&mut f).unwrap();
-        assert_eq!(boot.entry.image_lba, 667);
+        // Boot image LBA spesifik versi ISO (26.04: 667, 26.04.1: 673) —
+        // validasi umum, bukan hardcode per-ISO.
+        assert!(boot.entry.image_lba > 0, "boot image LBA harus ada");
         let image = read_boot_image(&mut f, &boot.entry, 0x10000).unwrap();
         let mut m = mem();
         let mut cpu = X86Cpu::new();
