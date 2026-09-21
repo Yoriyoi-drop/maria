@@ -1229,7 +1229,9 @@ fn find_clock_gating(scope: &str, stmts: &[Stmt], out: &mut Vec<Finding>) {
                             module: scope.to_string(),
                             check: "clock_gating",
                             severity: "W",
-                            message: "always_ff dengan if tanpa else: potensi clock gating implisit".to_string(),
+                            message:
+                                "always_ff dengan if tanpa else: potensi clock gating implisit"
+                                    .to_string(),
                         });
                     }
                 }

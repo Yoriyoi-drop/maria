@@ -4447,7 +4447,9 @@ impl Elaborator {
                         },
                         None => last,
                     };
-                    if let std::collections::hash_map::Entry::Vacant(e) = effective_params.entry(member_name) {
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        effective_params.entry(member_name)
+                    {
                         e.insert(val);
                         changed = true;
                     }
@@ -6343,10 +6345,14 @@ pub(crate) fn collect_procedural_decls(stmts: &[Stmt], out: &mut Vec<Decl>) {
                     collect_procedural_decls(std::slice::from_ref(f), out);
                 }
             }
-            Stmt::Cover { pass_stmt: Some(p), .. } => {
+            Stmt::Cover {
+                pass_stmt: Some(p), ..
+            } => {
                 collect_procedural_decls(std::slice::from_ref(p), out);
             }
-            Stmt::WaitOrder { fail_stmt: Some(f), .. } => {
+            Stmt::WaitOrder {
+                fail_stmt: Some(f), ..
+            } => {
                 collect_procedural_decls(std::slice::from_ref(f), out);
             }
             Stmt::Fork { processes, .. } => {

@@ -1701,8 +1701,8 @@ impl SimulationEngine {
                                 .sysfunc_prev
                                 .entry(Symbol::intern(&key))
                                 .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
-                            let rose = !prev.to_bool().unwrap_or(false)
-                                && val.to_bool().unwrap_or(false);
+                            let rose =
+                                !prev.to_bool().unwrap_or(false) && val.to_bool().unwrap_or(false);
                             *prev = val;
                             Ok(LogicVec::from_u64(if rose { 1 } else { 0 }, 1))
                         } else {
@@ -1717,8 +1717,8 @@ impl SimulationEngine {
                                 .sysfunc_prev
                                 .entry(Symbol::intern(&key))
                                 .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
-                            let fell = prev.to_bool().unwrap_or(false)
-                                && !val.to_bool().unwrap_or(false);
+                            let fell =
+                                prev.to_bool().unwrap_or(false) && !val.to_bool().unwrap_or(false);
                             *prev = val;
                             Ok(LogicVec::from_u64(if fell { 1 } else { 0 }, 1))
                         } else {

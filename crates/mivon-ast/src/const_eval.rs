@@ -243,10 +243,7 @@ pub fn sized_width(e: &Expr) -> Option<u64> {
             op: BinaryOp::Shl | BinaryOp::Shr | BinaryOp::Sshl | BinaryOp::Sshr,
             lhs,
             ..
-        } =>
-        {
-            sized_width(lhs)
-        }
+        } => sized_width(lhs),
         // Perbandingan/relasional/logical biner → 1 bit.
         Expr::BinaryOp { op, .. } => matches!(
             op,

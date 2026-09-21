@@ -996,9 +996,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan kiri di-zero-extend ke result_width (LRM
                     // §11.8.1 context-determined) — tanpa ini indexing
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
-                    result
-                        .bits
-                        .extend(std::iter::repeat_n(LogicVal::Zero, result_width - lhs.width));
+                    result.bits.extend(std::iter::repeat_n(
+                        LogicVal::Zero,
+                        result_width - lhs.width,
+                    ));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1055,9 +1056,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan kiri di-zero-extend ke result_width (LRM
                     // §11.8.1 context-determined) — tanpa ini indexing
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
-                    result
-                        .bits
-                        .extend(std::iter::repeat_n(LogicVal::Zero, result_width - lhs.width));
+                    result.bits.extend(std::iter::repeat_n(
+                        LogicVal::Zero,
+                        result_width - lhs.width,
+                    ));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1114,9 +1116,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan kiri di-zero-extend ke result_width (LRM
                     // §11.8.1 context-determined) — tanpa ini indexing
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
-                    result
-                        .bits
-                        .extend(std::iter::repeat_n(LogicVal::Zero, result_width - lhs.width));
+                    result.bits.extend(std::iter::repeat_n(
+                        LogicVal::Zero,
+                        result_width - lhs.width,
+                    ));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {
@@ -1180,9 +1183,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     // Operan kiri di-zero-extend ke result_width (LRM
                     // §11.8.1 context-determined) — tanpa ini indexing
                     // result.bits OOB (ditemukan fuzzer seed=668917811772).
-                    result
-                        .bits
-                        .extend(std::iter::repeat_n(LogicVal::Zero, result_width - lhs.width));
+                    result.bits.extend(std::iter::repeat_n(
+                        LogicVal::Zero,
+                        result_width - lhs.width,
+                    ));
                     result.width = result_width;
                 }
                 if shift > 0 && shift < result_width {

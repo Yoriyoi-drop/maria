@@ -3,6 +3,7 @@
 #[cfg(feature = "jit")]
 pub mod jit;
 pub mod lower;
+#[allow(clippy::module_inception)]
 pub mod mir;
 pub mod opt;
 
@@ -37,5 +38,12 @@ impl MirJitCompiler {
     ) -> Option<CompiledMirProcess> {
         None
     }
+    /// Call a compiled process. Stub — no-op saat `jit` feature tidak aktif.
+    ///
+    /// # Safety
+    /// Implementasi nyata (feature `jit`) mengharuskan `_code_ptr` menunjuk
+    /// entry point process yang valid hasil kompilasi. Stub ini tidak membaca
+    /// memory sama sekali; safety requirement dipertahankan agar signature
+    /// identik dengan jalur `jit` (callers tetap harus menjamin validity).
     pub unsafe fn call_process(_code_ptr: *const u8, _signals: &[u64], _out: &mut [u64]) {}
 }

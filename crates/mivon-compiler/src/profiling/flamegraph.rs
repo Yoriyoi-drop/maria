@@ -155,7 +155,7 @@ impl FlamegraphProfiler {
     pub fn top_stacks(&self, n: usize) -> Vec<(String, u64)> {
         let samples = self.samples.lock().unwrap();
         let mut sorted: Vec<(String, u64)> = samples.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
         sorted.truncate(n);
         sorted
     }

@@ -17,8 +17,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 /// License feature flags (bitfield).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LicenseFeatures(pub u64);
 
 impl LicenseFeatures {
@@ -45,7 +44,6 @@ impl LicenseFeatures {
         self.0 & flag != 0
     }
 }
-
 
 /// Tipe lisensi.
 #[derive(Debug, Clone, PartialEq, Eq)]

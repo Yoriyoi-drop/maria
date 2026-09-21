@@ -81,10 +81,7 @@ impl RegressionDb {
     pub fn record(&mut self, run: RegressionRun) {
         // Update flaky history
         for result in &run.results {
-            let history = self
-                .flaky_history
-                .entry(result.name.clone())
-                .or_default();
+            let history = self.flaky_history.entry(result.name.clone()).or_default();
             history.push(matches!(
                 result.status,
                 TestStatus::Pass | TestStatus::Flaky

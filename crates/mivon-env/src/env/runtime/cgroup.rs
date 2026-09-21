@@ -68,18 +68,16 @@ impl CgroupLimits {
         let cpu_max = cgroup_path.join("cpu.max");
         if let Ok(content) = std::fs::read_to_string(&cpu_max) {
             let parts: Vec<&str> = content.split_whitespace().collect();
-            if parts.len() == 2
-                && parts[0] != "max" {
-                    if let (Ok(quota), Ok(period)) =
-                        (parts[0].parse::<u64>(), parts[1].parse::<u64>())
-                    {
-                        limits.cpu_quota_us = Some(quota);
-                        limits.cpu_period_us = Some(period);
-                        if period > 0 {
-                            limits.cpu_cores = Some(quota as f64 / period as f64);
-                        }
+            if parts.len() == 2 && parts[0] != "max" {
+                if let (Ok(quota), Ok(period)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>())
+                {
+                    limits.cpu_quota_us = Some(quota);
+                    limits.cpu_period_us = Some(period);
+                    if period > 0 {
+                        limits.cpu_cores = Some(quota as f64 / period as f64);
                     }
                 }
+            }
         }
 
         Some(limits)

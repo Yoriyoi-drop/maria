@@ -57,7 +57,7 @@ fn find_const_value(instrs: &[MirInstr], reg: usize) -> Option<u64> {
 // ── Pass 1: Constant Folding ──
 
 /// Fold binary operations where both operands are constants.
-fn constant_fold(instrs: &mut Vec<MirInstr>) -> bool {
+fn constant_fold(instrs: &mut [MirInstr]) -> bool {
     let mut changed = false;
     let mut i = 0;
     while i < instrs.len() {
@@ -116,7 +116,7 @@ fn constant_fold(instrs: &mut Vec<MirInstr>) -> bool {
 
 /// Fold unary operations where the operand is constant.
 /// Also replaces identity ops (x | 0, x & all-ones) with the operand.
-fn copy_propagate(instrs: &mut Vec<MirInstr>) -> bool {
+fn copy_propagate(instrs: &mut [MirInstr]) -> bool {
     let mut changed = false;
     // Pre-scan: collect constant values from Const instructions
     let const_map: HashMap<usize, u64> = instrs
@@ -195,8 +195,8 @@ fn dead_store_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
                 if prev_idx < i {
                     // Check if reg was NOT read between prev_idx+1 and i-1
                     let mut is_dead = true;
-                    for j in (prev_idx + 1)..i {
-                        if reads_register(&instrs[j], reg) {
+                    for ins in &instrs[(prev_idx + 1)..i] {
+                        if reads_register(ins, reg) {
                             is_dead = false;
                             break;
                         }
@@ -451,10 +451,9 @@ fn rewrite_read_register(instr: &mut MirInstr, from: usize, to: usize) {
                 *src = to;
             }
         }
-        MirInstr::Branch { cond, .. }
-            if *cond == from => {
-                *cond = to;
-            }
+        MirInstr::Branch { cond, .. } if *cond == from => {
+            *cond = to;
+        }
         _ => {}
     }
 }
@@ -542,6 +541,7 @@ fn licm(instrs: &mut Vec<MirInstr>) -> bool {
 
         // Kandidat hoist: posisi instruksi invariant (urut naik).
         let mut candidates: Vec<usize> = Vec::new();
+        #[allow(clippy::needless_range_loop)]
         for i in hdr + 1..tail {
             let (opnds, dest) = match &instrs[i] {
                 MirInstr::Binary { lhs, rhs, dest, .. } => (vec![*lhs, *rhs], *dest),
@@ -583,7 +583,7 @@ fn licm(instrs: &mut Vec<MirInstr>) -> bool {
 
 /// Replace branches with constant conditions: if cond is always true → Jump,
 /// if cond is always false → remove branch.
-fn constant_branch_fold(instrs: &mut Vec<MirInstr>) -> bool {
+fn constant_branch_fold(instrs: &mut [MirInstr]) -> bool {
     let mut changed = false;
     let mut i = 0;
     while i < instrs.len() {
@@ -729,7 +729,7 @@ fn remove_nops(instrs: &mut Vec<MirInstr>) -> bool {
 /// - `Shl(x, N)` where N >= width → Const 0 (logical shift left past width)
 ///
 /// CONSERVATIVE: only operates on constants found via find_const_value.
-fn sign_ext_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
+fn sign_ext_eliminate(instrs: &mut [MirInstr]) -> bool {
     let mut changed = false;
     let mut i = 0;
     while i < instrs.len() {
@@ -804,7 +804,7 @@ fn sign_ext_eliminate(instrs: &mut Vec<MirInstr>) -> bool {
 /// This pass specifically targets patterns left by strength_reduce or
 /// constant_fold that operate on power-of-2 masks and bit-field operations
 /// common in RTL designs (masking MSB/LSB bits).
-fn xz_propagate(instrs: &mut Vec<MirInstr>) -> bool {
+fn xz_propagate(instrs: &mut [MirInstr]) -> bool {
     let mut changed = false;
     let mut i = 0;
     while i < instrs.len() {

@@ -4552,7 +4552,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
         // RTL .sv/.v user, BUKAN model software Rust. Rust hanya menyediakan
         // memori + orkestrasi bus; register file/ALU/control dieksekusi engine
         // RTL mivon (picorv32-style kontrak bus). ──
-        
+
         let mem_final: MemoryMap = if a.run || !a.rtl_cpu.is_empty() {
             if a.rtl_cpu.is_empty() {
                 return Err(SimError::with_diag(

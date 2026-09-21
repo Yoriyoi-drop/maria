@@ -119,8 +119,7 @@ pub fn analyze(nl: &Netlist, c: &Constraint, opts: &TimingOptions) -> TimingRepo
 
     // ── Startpoint ──
     // Input port: arrival = input_delay. Konstanta: 0. FF-Q: clk_to_q.
-    let port_dir: Vec<(Symbol, PortDir)> =
-        nl.ports.iter().map(|p| (p.name, p.dir)).collect();
+    let port_dir: Vec<(Symbol, PortDir)> = nl.ports.iter().map(|p| (p.name, p.dir)).collect();
     for (id, net) in nl.nets.iter().enumerate() {
         let is_input_port = port_dir
             .iter()
@@ -365,8 +364,7 @@ pub fn render_timing_report(r: &TimingReport, constraint_name: &str) -> String {
     for p in &r.critical_paths {
         s.push_str(&format!(
             "  critical path ({:.2} ns):\n    {}\n    ↓\n",
-            p.delay_ns,
-            p.from
+            p.delay_ns, p.from
         ));
         for (i, c) in p.cells.iter().rev().enumerate() {
             let arrow = if i + 1 < p.cells.len() {

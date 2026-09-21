@@ -665,7 +665,8 @@ fn first_value(body: &[Item]) -> Option<f64> {
 
 /// Ambil angka pertama dari string nilai (`"0.5"`, `"0.5" "0.7"`, `(0.5)`).
 fn extract_first_number(s: &str) -> Option<f64> {
-    s.split(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+').find(|t| !t.is_empty())
+    s.split(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+')
+        .find(|t| !t.is_empty())
         .and_then(|t| t.parse::<f64>().ok())
 }
 

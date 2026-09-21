@@ -25,14 +25,14 @@
 //! | profile/       | profil build terakhir                      | "last"       |
 //!
 //! elaborate/ diisi dari IR bila tersedia (dipakai `save_elaborate_cache`
-//! setelah elaborasi); tanpa IR diisi fallback AST (instance saja). optimize/
-//! + expression/ diisi dari snapshot statistik elaborator (dipakai juga
-//! `save_elaborate_cache`). simulation/ + waveform/ diisi `msim` setelah run
-//! (initial state, scheduler, signal index); coverage/ diisi `mcov`/`msim
-//! --coverage`; lint/ diisi `mlint`. Semua lewat [`super::CacheLayer::put`].
+//!   setelah elaborasi); tanpa IR diisi fallback AST (instance saja). optimize/
+//!   + expression/ diisi dari snapshot statistik elaborator (dipakai juga
+//!     `save_elaborate_cache`). simulation/ + waveform/ diisi `msim` setelah run
+//!     (initial state, scheduler, signal index); coverage/ diisi `mcov`/`msim
+//!     --coverage`; lint/ diisi `mlint`. Semua lewat [`super::CacheLayer::put`].
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use mivon_ast::types::{Module, ModuleItem, PortDirection};
 use mivon_ast::Design;
@@ -913,7 +913,9 @@ fn elaborate_from_ast(m: &Module) -> ElaboratePayload {
                 instance: inst.instance_name.to_string(),
                 port_bindings: inst.port_conns.len(),
                 param_overrides: inst
-                    .param_assigns.keys().map(|k| (k.to_string(), 0))
+                    .param_assigns
+                    .keys()
+                    .map(|k| (k.to_string(), 0))
                     .collect(),
                 line: inst.line,
                 col: inst.col,
@@ -978,7 +980,7 @@ fn direct_instance_count(m: &Module) -> usize {
 }
 
 /// Hash key stabil untuk path (dipakai tool pembaca cache).
-pub fn cache_key_path(path: &PathBuf) -> u64 {
+pub fn cache_key_path(path: &Path) -> u64 {
     path_hash(path)
 }
 

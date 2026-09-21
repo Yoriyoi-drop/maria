@@ -98,10 +98,7 @@ impl CategoryStore {
         let _ = std::fs::create_dir_all(root.join(DIR_STATS));
 
         // Crash recovery (Kritik 5): journal tersisa → validasi store.
-        txn::recover(
-            root,
-            &root.join(DIR_JOURNAL).join("journal.mdb"),
-        );
+        txn::recover(root, &root.join(DIR_JOURNAL).join("journal.mdb"));
 
         let mut st = CategoryStore {
             category,

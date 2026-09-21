@@ -136,6 +136,10 @@ impl<V> CacheStore<V> {
         self.primary.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.primary.is_empty()
+    }
+
     pub fn memory_used(&self) -> u64 {
         self.used.load(Ordering::Relaxed)
     }
@@ -210,7 +214,7 @@ pub enum RemoteSyncMode {
 }
 
 impl RemoteSyncMode {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_name(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "none" => RemoteSyncMode::None,
             "manual" => RemoteSyncMode::Manual,

@@ -991,9 +991,10 @@ impl SimulationEngine {
             // ── Layer resource guard (MIVON-SIM-34): poll RSS tiap interval
             // untuk mencegah kernel OOM-kill pada design besar (OpenTitan).
             if self.resource_guard.is_enabled()
-                && (t as u64).is_multiple_of(self.resource_guard.check_interval()) {
-                    self.resource_guard.poll(self.state.time, t as u64)?;
-                }
+                && (t as u64).is_multiple_of(self.resource_guard.check_interval())
+            {
+                self.resource_guard.poll(self.state.time, t as u64)?;
+            }
 
             // ── Guard: event di luar jendela alokasi → abort graceful ──
             if self.event_alloc_exceeded {
@@ -1336,7 +1337,8 @@ impl SimulationEngine {
                                     self.process_event(re.event, t)?;
                                 }
                             }
-                            let buffered: Vec<EventKind> = std::mem::take(&mut self.reactive_events);
+                            let buffered: Vec<EventKind> =
+                                std::mem::take(&mut self.reactive_events);
                             if !buffered.is_empty() {
                                 activity = true;
                                 for event in buffered {
@@ -1406,7 +1408,9 @@ impl SimulationEngine {
                 // /proc/self/status (~37k instr + alokasi) SETIAP delta tiap
                 // step (probe perf2: 14.8% instruction di check_rss).
                 let cum_delta = self.sim_perf.counters.delta_cycles;
-                if self.resource_guard.is_enabled() && (cum_delta < 1024 || cum_delta.is_multiple_of(256)) {
+                if self.resource_guard.is_enabled()
+                    && (cum_delta < 1024 || cum_delta.is_multiple_of(256))
+                {
                     self.resource_guard.check_limit(self.state.time)?;
                 }
 

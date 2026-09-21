@@ -97,10 +97,11 @@ impl StatsDb {
 
     /// Buat profil kosong dengan build_id lanjutan.
     pub fn next_profile(&self) -> BuildProfile {
-        let mut p = BuildProfile::default();
-        p.build_id = self.profiles.last().map(|l| l.build_id + 1).unwrap_or(1);
-        p.verified_at_ns = now_ns();
-        p
+        BuildProfile {
+            build_id: self.profiles.last().map(|l| l.build_id + 1).unwrap_or(1),
+            verified_at_ns: now_ns(),
+            ..Default::default()
+        }
     }
 }
 

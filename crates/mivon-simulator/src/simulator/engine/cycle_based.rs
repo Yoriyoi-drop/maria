@@ -288,10 +288,12 @@ fn settle(
         let mut activity = false;
 
         // Resume `@(clk)` / level waits yang cocok dengan sinyal berubah.
-        if !changed_ids.is_empty() && !engine.pending_events.is_empty()
-            && engine.process_pending_events(changed_ids)? {
-                activity = true;
-            }
+        if !changed_ids.is_empty()
+            && !engine.pending_events.is_empty()
+            && engine.process_pending_events(changed_ids)?
+        {
+            activity = true;
+        }
 
         // Drain reactive buffer (hasil evaluasi comb/reactive sebelumnya).
         loop {

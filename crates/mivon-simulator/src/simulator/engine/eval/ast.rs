@@ -647,9 +647,9 @@ impl SimulationEngine {
                             && self
                                 .find_method_quiet(obj.class_name.as_str(), name.as_str())
                                 .is_some()
-                            {
-                                return self.execute_method(obj_id, name.as_str(), &arg_vals);
-                            }
+                        {
+                            return self.execute_method(obj_id, name.as_str(), &arg_vals);
+                        }
                     }
                 }
                 // F18: method builtin UVM dipanggil tanpa `this.` di body task

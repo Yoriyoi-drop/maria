@@ -779,6 +779,7 @@ impl MicdDatabase {
     /// Daftarkan hasil kompilasi satu file.
     /// Tidak menandai `dirty` bila metadata identik (mtime diabaikan —
     /// agar warm run tidak menulis ulang metadata.mdb tanpa perubahan nyata).
+    #[allow(clippy::too_many_arguments)]
     pub fn record_file(
         &mut self,
         path: PathBuf,
@@ -1404,9 +1405,9 @@ impl MicdDatabase {
     }
 }
 
-/// Kebalikan path_hash tidak bisa; key numerik tidak perlu dipetakan kembali
-/// karena object store di-load dengan iterasi metadata store (path → hash →
-/// objek).
+// Kebalikan path_hash tidak bisa; key numerik tidak perlu dipetakan kembali
+// karena object store di-load dengan iterasi metadata store (path → hash →
+// objek).
 
 // ─── Layout database (Opsi B db.md) ───
 

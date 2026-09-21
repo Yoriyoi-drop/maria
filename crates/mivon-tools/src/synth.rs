@@ -307,10 +307,7 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
     kv("elab time", format!("{} µs", session.timing.elab_us));
 
     // ── Output ──
-    let prefix = args
-        .output
-        .clone()
-        .unwrap_or_else(|| top_name.to_string());
+    let prefix = args.output.clone().unwrap_or_else(|| top_name.to_string());
     if args.emit_mvnet {
         let mvnet = emit_mvnet(nl, mivon_synth::VERSION);
         let path = PathBuf::from(format!("{}.mvnet", prefix));

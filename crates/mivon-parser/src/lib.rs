@@ -549,16 +549,17 @@ impl Parser {
                 // Generate fix-it for common warnings
                 let trimmed = source_line.trim_end();
                 if (msg.contains("missing semicolon") || msg.contains("expected ';'"))
-                    && !trimmed.ends_with(';') {
-                        let fix_it = FixItHint::insert(
-                            display_file.clone(),
-                            display_line,
-                            trimmed.len() + 1,
-                            ";",
-                            "Add missing semicolon",
-                        );
-                        diag = diag.with_fix_it(fix_it);
-                    }
+                    && !trimmed.ends_with(';')
+                {
+                    let fix_it = FixItHint::insert(
+                        display_file.clone(),
+                        display_line,
+                        trimmed.len() + 1,
+                        ";",
+                        "Add missing semicolon",
+                    );
+                    diag = diag.with_fix_it(fix_it);
+                }
             }
         }
         self.errors.push(diag);
@@ -2126,13 +2127,15 @@ impl Parser {
                 {
                     // Treat as implicit wire/reg declaration: `name;` or `name <= expr;` or `name = expr;`
                     let vname = self.expect_ident()?;
-                    let expr =
-                        if matches!(self.peek(), &Token::BlockingAssign | &Token::NonBlockingAssign) {
-                            self.advance();
-                            self.parse_expr(0).ok()
-                        } else {
-                            None
-                        };
+                    let expr = if matches!(
+                        self.peek(),
+                        &Token::BlockingAssign | &Token::NonBlockingAssign
+                    ) {
+                        self.advance();
+                        self.parse_expr(0).ok()
+                    } else {
+                        None
+                    };
                     self.skip_semi();
                     let names = vec![DeclVar {
                         name: vname,
@@ -2295,7 +2298,9 @@ impl Parser {
                         self.advance();
                         break;
                     }
-                    if let Some(item) = self.parse_module_item()? { items.push(item) }
+                    if let Some(item) = self.parse_module_item()? {
+                        items.push(item)
+                    }
                 }
                 Ok(Some(ModuleItem::Checker(CheckerDecl {
                     name,

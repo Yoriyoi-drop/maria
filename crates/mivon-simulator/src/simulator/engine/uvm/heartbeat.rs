@@ -29,9 +29,7 @@ impl SimulationEngine {
                 self.uvm_object_data
                     .entry(obj_id)
                     .or_insert_with(|| UvmObjectData { name: name.clone() });
-                self.uvm_heartbeat_data
-                    .entry(obj_id)
-                    .or_default();
+                self.uvm_heartbeat_data.entry(obj_id).or_default();
                 Ok(LogicVec::from_u64(1, 1))
             }
             // set_heartbeat(object, count) — daftarkan object wajib heartbeat.

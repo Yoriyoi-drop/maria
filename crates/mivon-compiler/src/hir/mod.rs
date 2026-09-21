@@ -3,6 +3,7 @@
 //! Phase 3: HIR layer yang immutable dan cacheable.
 
 pub mod builder;
+#[allow(clippy::module_inception)]
 pub mod hir;
 pub mod lazy_elab;
 pub mod types;

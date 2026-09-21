@@ -405,9 +405,7 @@ impl SimulationEngine {
                 self.uvm_object_data
                     .entry(obj_id)
                     .or_insert_with(|| UvmObjectData { name });
-                self.uvm_reg_block_data
-                    .entry(obj_id)
-                    .or_default();
+                self.uvm_reg_block_data.entry(obj_id).or_default();
                 Ok(LogicVec::from_u64(1, 1))
             }
             "build" => {
@@ -497,9 +495,7 @@ impl SimulationEngine {
                 self.uvm_object_data
                     .entry(obj_id)
                     .or_insert_with(|| UvmObjectData { name });
-                self.uvm_reg_map_data
-                    .entry(obj_id)
-                    .or_default();
+                self.uvm_reg_map_data.entry(obj_id).or_default();
                 Ok(LogicVec::from_u64(1, 1))
             }
             "add_reg" => {

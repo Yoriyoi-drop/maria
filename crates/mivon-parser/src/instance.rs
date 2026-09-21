@@ -75,10 +75,7 @@ impl Parser {
                 } else {
                     self.typedef_names.insert(item);
                 }
-                items.push(ModuleItem::Import {
-                    package: pkg,
-                    item,
-                });
+                items.push(ModuleItem::Import { package: pkg, item });
                 if self.peek() == &Token::Comma {
                     self.advance();
                     continue;

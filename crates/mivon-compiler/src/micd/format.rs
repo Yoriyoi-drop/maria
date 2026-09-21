@@ -107,7 +107,7 @@ impl ObjectEntry {
             kind: b[16],
         }
     }
-    fn to_bytes(&self) -> [u8; ENTRY_SIZE] {
+    fn to_bytes(self) -> [u8; ENTRY_SIZE] {
         let mut out = [0u8; ENTRY_SIZE];
         out[0..8].copy_from_slice(&self.key.to_le_bytes());
         out[8..12].copy_from_slice(&self.offset.to_le_bytes());

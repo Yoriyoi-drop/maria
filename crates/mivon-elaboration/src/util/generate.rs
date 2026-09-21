@@ -292,18 +292,19 @@ fn eval_generate_cond(
                 });
             }
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
-                if gen_expr_is_signed(lhs, signed_params) && gen_expr_is_signed(rhs, signed_params)
-                => {
-                    let l = const_eval_with_params(lhs, params)?;
-                    let r = const_eval_with_params(rhs, params)?;
-                    let b = match op {
-                        BinaryOp::Lt => l < r,
-                        BinaryOp::Le => l <= r,
-                        BinaryOp::Gt => l > r,
-                        _ => l >= r,
-                    };
-                    return Ok(if b { 1 } else { 0 });
-                }
+                if gen_expr_is_signed(lhs, signed_params)
+                    && gen_expr_is_signed(rhs, signed_params) =>
+            {
+                let l = const_eval_with_params(lhs, params)?;
+                let r = const_eval_with_params(rhs, params)?;
+                let b = match op {
+                    BinaryOp::Lt => l < r,
+                    BinaryOp::Le => l <= r,
+                    BinaryOp::Gt => l > r,
+                    _ => l >= r,
+                };
+                return Ok(if b { 1 } else { 0 });
+            }
             _ => {}
         },
         _ => {}

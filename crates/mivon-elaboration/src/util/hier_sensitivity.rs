@@ -15,10 +15,7 @@ pub fn collect_hier_refs_expr(expr: &IrExpr) -> Vec<Symbol> {
         IrExpr::UnaryOp(_, inner) | IrExpr::Cast { expr: inner, .. } | IrExpr::Signed(inner) => {
             collect_hier_refs_expr(inner)
         }
-        IrExpr::Concat(exprs) => exprs
-            .iter()
-            .flat_map(collect_hier_refs_expr)
-            .collect(),
+        IrExpr::Concat(exprs) => exprs.iter().flat_map(collect_hier_refs_expr).collect(),
         IrExpr::ExprBitSelect(inner, _) => collect_hier_refs_expr(inner),
         IrExpr::ExprRangeSelect(inner, _, _) => collect_hier_refs_expr(inner),
         IrExpr::ExprPartSelect(base, idx, w) => {

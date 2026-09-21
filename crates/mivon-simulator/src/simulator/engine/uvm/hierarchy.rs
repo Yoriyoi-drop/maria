@@ -213,10 +213,9 @@ impl SimulationEngine {
                         return true;
                     }
                 }
-                IrStmt::Cover { pass_stmt, .. }
-                    if Self::ir_has_run_test(pass_stmt) => {
-                        return true;
-                    }
+                IrStmt::Cover { pass_stmt, .. } if Self::ir_has_run_test(pass_stmt) => {
+                    return true;
+                }
                 _ => {}
             }
         }

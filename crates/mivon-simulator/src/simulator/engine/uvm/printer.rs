@@ -58,8 +58,10 @@ impl SimulationEngine {
             .map(|d| d.name.as_str())
             .unwrap_or("unnamed");
         let mut out = String::new();
-        out.push_str("Name               Type                 Size          Value\n\
-             ----------------------------------------------------------------\n");
+        out.push_str(
+            "Name               Type                 Size          Value\n\
+             ----------------------------------------------------------------\n",
+        );
         out.push_str(&format!(
             "{:<18} {:<20} {:<13} @{}\n",
             name, class_name, "-", obj_id

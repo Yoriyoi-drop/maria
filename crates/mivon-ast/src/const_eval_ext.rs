@@ -475,8 +475,8 @@ fn resolve_typedef_bits(
     let (td, typedef_pkg): (&crate::types::TypedefDecl, String) = if let Some(pkg) = pkg_opt {
         {
             let td = package_symbols
-            .get(&Symbol::intern(pkg))
-            .and_then(|items| lookup_pkg_typedef(items, type_name))?;
+                .get(&Symbol::intern(pkg))
+                .and_then(|items| lookup_pkg_typedef(items, type_name))?;
             (td, pkg.to_string())
         }
     } else {
@@ -542,9 +542,7 @@ fn typedef_dtype_bits(
         }
         DataType::Signed(inner) => typedef_dtype_bits(ctx, inner, typedef_pkg, depth),
         DataType::StructType { members } => members.iter().map(&member_width).sum(),
-        DataType::UnionType { members } => {
-            members.iter().map(member_width).max().unwrap_or(1)
-        }
+        DataType::UnionType { members } => members.iter().map(member_width).max().unwrap_or(1),
         _ => dtype.width(),
     }
 }

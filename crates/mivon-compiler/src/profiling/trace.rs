@@ -53,6 +53,11 @@ impl Tracer {
         self.events.lock().unwrap().len()
     }
 
+    /// Whether no events have been recorded.
+    pub fn is_empty(&self) -> bool {
+        self.events.lock().unwrap().is_empty()
+    }
+
     /// Clear events.
     pub fn clear(&self) {
         self.events.lock().unwrap().clear();

@@ -26,14 +26,12 @@ pub struct VaultEntry {
 }
 
 /// Access permissions for a file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AccessPermissions {
     pub owner: String,
     pub read_access: Vec<String>,
     pub write_access: Vec<String>,
 }
-
 
 /// Audit log entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]

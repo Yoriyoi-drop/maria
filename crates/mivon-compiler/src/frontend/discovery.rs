@@ -67,10 +67,14 @@ impl FileDiscovery {
             walk
         };
 
-        for entry in walk.into_iter().filter_entry(|e| {
-            let name = e.file_name().to_str().unwrap_or("");
-            !skip_dirs.contains(&name)
-        }).flatten() {
+        for entry in walk
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_str().unwrap_or("");
+                !skip_dirs.contains(&name)
+            })
+            .flatten()
+        {
             if entry.file_type().is_file() {
                 if mivon_core::template::is_template_source(entry.path()) {
                     continue;

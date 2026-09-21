@@ -633,7 +633,7 @@ fn alloc_temp_const(mir: &mut MirModule, _value: u64, _width: usize) -> usize {
 }
 
 /// Generate a unique label number.
-fn generate_label(instrs: &mut Vec<MirInstr>) -> usize {
+fn generate_label(instrs: &mut [MirInstr]) -> usize {
     // Find the highest label number and add 1
     let max_label = instrs
         .iter()

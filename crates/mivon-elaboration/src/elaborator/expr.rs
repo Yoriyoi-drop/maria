@@ -1197,10 +1197,12 @@ impl Elaborator {
                         // field diakses via hier path `b.clk` yang di-resolve
                         // engine via hier_signal_map setelah flatten. Bukan
                         // VirtualIfaceAccess (itu untuk vif yang di-bind runtime).
-                        if sig_info.iface_type.is_some() && sig_info.class_name.is_none()
-                            && !hier_name.is_empty() {
-                                return Ok(IrExpr::HierRef(Symbol::intern(&hier_name)));
-                            }
+                        if sig_info.iface_type.is_some()
+                            && sig_info.class_name.is_none()
+                            && !hier_name.is_empty()
+                        {
+                            return Ok(IrExpr::HierRef(Symbol::intern(&hier_name)));
+                        }
                         // Check if this is a virtual interface variable
                         if let Some(ref iface_type) = sig_info.iface_type {
                             // Look up the interface definition to find field width

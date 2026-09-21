@@ -2806,10 +2806,12 @@ impl Elaborator {
                 {
                     if let Some(&base_sid) = signal_map.get(&Symbol::intern(&base_name)) {
                         let base_info = &signals[base_sid];
-                        if base_info.iface_type.is_some() && base_info.class_name.is_none()
-                            && !hier_name.is_empty() {
-                                return Ok(IrLValue::HierRef(Symbol::intern(&hier_name)));
-                            }
+                        if base_info.iface_type.is_some()
+                            && base_info.class_name.is_none()
+                            && !hier_name.is_empty()
+                        {
+                            return Ok(IrLValue::HierRef(Symbol::intern(&hier_name)));
+                        }
                     }
                 }
                 // Nested member access lvalue (`hw2reg.val.d = x`): kumpulkan

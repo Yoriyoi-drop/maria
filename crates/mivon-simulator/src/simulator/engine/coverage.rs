@@ -750,9 +750,7 @@ impl SimulationEngine {
         // Clone snapshot and current values to avoid double borrow of self.
         // Pakai coverage_snapshot (capture di awal time step) — signal_snapshot
         // di-refresh tiap delta cycle sehingga diff selalu kosong (fix SIM-30).
-        let old_vals: Vec<LogicVec> = self
-            .coverage_snapshot.clone()
-            .unwrap_or_default();
+        let old_vals: Vec<LogicVec> = self.coverage_snapshot.clone().unwrap_or_default();
         let n = old_vals.len();
         for sig_id in 0..n {
             let old_val = &old_vals[sig_id];

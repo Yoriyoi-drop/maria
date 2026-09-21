@@ -10,8 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 /// Job priority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 pub enum Priority {
     Critical = 0,
     High = 1,
@@ -20,7 +21,6 @@ pub enum Priority {
     Low = 3,
     Background = 4,
 }
-
 
 /// Job status.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

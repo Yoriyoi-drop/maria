@@ -142,7 +142,9 @@ impl Rv32Cpu {
     /// Interrupt tertunda berprioritas tertinggi (MEI > MTI > MSI).
     fn pending_interrupt(&self) -> Option<u32> {
         let pending = self.mie & self.mip;
-        [IRQ_MEI, IRQ_MTI, IRQ_MSI].into_iter().find(|&irq| pending & (1 << irq) != 0)
+        [IRQ_MEI, IRQ_MTI, IRQ_MSI]
+            .into_iter()
+            .find(|&irq| pending & (1 << irq) != 0)
     }
 
     fn csr_read(&self, addr: u64) -> Option<u64> {

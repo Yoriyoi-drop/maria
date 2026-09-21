@@ -419,7 +419,7 @@ impl VcdWriter {
             .iter()
             .map(|t| {
                 let sig = &design.top.signals[t.signal_idx];
-                
+
                 if let Some(elem) = t.elem_idx {
                     let e_val = self.elem_val(&sig.init_val, elem, t.elem_width);
                     vec_to_vcd(&e_val)

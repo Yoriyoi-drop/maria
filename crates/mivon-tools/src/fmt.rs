@@ -214,10 +214,9 @@ fn render_line(line: &[(Token, usize)]) -> String {
         }
         let next = line.get(i + 1).map(|(t, _)| t);
         let sep = space_between(prev, tok, next, &text);
-        if sep
-            && !s.is_empty() && !s.ends_with(' ') {
-                s.push(' ');
-            }
+        if sep && !s.is_empty() && !s.ends_with(' ') {
+            s.push(' ');
+        }
         s.push_str(&text);
         prev = Some(tok);
     }
