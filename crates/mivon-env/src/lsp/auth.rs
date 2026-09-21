@@ -168,8 +168,15 @@ impl Default for AuthStore {
 mod tests {
     use super::*;
 
+    /// Mutasi env var `MIVON_LSP_API_KEY` bersifat GLOBAL (process-wide) —
+    /// test paralel saling menimpa (`AuthStore::new()` baca env). Seriakan
+    /// test yang menyentuh env ini agar deterministik (fix flaky CI: race
+    /// membuat has_scope balikin true saat enabled=false).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_auth_disabled_by_default() {
+        let _g = ENV_LOCK.lock().unwrap();
         // Clear env var
         std::env::remove_var("MIVON_LSP_API_KEY");
         let store = AuthStore::new();
@@ -180,6 +187,7 @@ mod tests {
 
     #[test]
     fn test_auth_with_env_key() {
+        let _g = ENV_LOCK.lock().unwrap();
         std::env::set_var("MIVON_LSP_API_KEY", "test-key-123");
         let store = AuthStore::new();
         assert!(store.is_enabled());
@@ -190,6 +198,7 @@ mod tests {
 
     #[test]
     fn test_auth_scopes() {
+        let _g = ENV_LOCK.lock().unwrap();
         std::env::set_var("MIVON_LSP_API_KEY", "scoped-key");
         let store = AuthStore::new();
         assert!(store.has_scope("scoped-key", "read"));
@@ -199,6 +208,7 @@ mod tests {
 
     #[test]
     fn test_auth_revoke() {
+        let _g = ENV_LOCK.lock().unwrap();
         std::env::set_var("MIVON_LSP_API_KEY", "revoke-me");
         let store = AuthStore::new();
         assert!(store.validate("revoke-me").is_some());

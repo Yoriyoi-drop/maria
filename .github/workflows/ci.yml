@@ -244,8 +244,8 @@ jobs:
 
       - name: Run installer tests
         run: |
-          echo "Running installer integration tests"
-          cargo test -p mivon-tools --test integration
+          echo "Running mivon-tools tests"
+          cargo test -p mivon-tools
 
   documentation-check:
     name: Documentation validation
