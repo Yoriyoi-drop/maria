@@ -146,7 +146,7 @@ impl Ctx {
             );
             *err += 1;
         }
-        if s.class_name.is_some() {
+        if let Some(cls) = &s.class_name {
             self.push(
                 module,
                 "SYN-5",
@@ -154,7 +154,7 @@ impl Ctx {
                 format!(
                     "signal '{}' adalah objek class '{}' — class tidak bisa disintesis",
                     s.name.as_str(),
-                    s.class_name.unwrap().as_str()
+                    cls.as_str()
                 ),
             );
             *err += 1;

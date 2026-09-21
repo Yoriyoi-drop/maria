@@ -205,6 +205,7 @@ impl BitFn {
         let mut init = 0u64;
         let mut assign = vec![None; k];
         for addr in 0usize..(1usize << k.min(6)) {
+            #[allow(clippy::needless_range_loop)]
             for j in 0..k {
                 assign[j] = Some(((addr >> j) & 1) == 1);
             }
@@ -469,10 +470,7 @@ fn eq_fn(sir: &SirModule, a: usize, b: usize, w: usize) -> BitFn {
 
 /// Reduction: chain bitwise.
 fn reduce_fn(sir: &SirModule, vid: usize, w: usize, kind: &SirNodeKind) -> BitFn {
-    let init = match kind {
-        SirNodeKind::ReduceAnd => true,
-        _ => false,
-    };
+    let init = matches!(kind, SirNodeKind::ReduceAnd);
     let mut acc = BitFn::Const(init);
     for i in 0..w {
         let b = val_bit(sir, vid, i);
@@ -1094,12 +1092,14 @@ impl<'a> TechMapper<'a> {
             };
             if is_const {
                 if matches!(&sel, BitFn::Const(true)) {
+                    #[allow(clippy::needless_range_loop)]
                     for i in 0..w {
                         bits[i] = shifted_at(i);
                     }
                 }
                 continue;
             }
+            #[allow(clippy::needless_range_loop)]
             for i in 0..w {
                 bits[i] = BitFn::Mux(
                     Box::new(sel.clone()),
