@@ -54,7 +54,15 @@ fn debug_nonansi_port_width() {
 #[test]
 fn debug_parse_body_localparam() {
     let path = "/home/whale-d/mivon/opentitan/hw/top_englishbreakfast/ip/ast/rtl/rglts_pdm_3p3v.sv";
-    let raw = std::fs::read_to_string(path).unwrap();
+    // Debug test ini butuh checkout OpenTitan di mesin dev; di CI file tidak
+    // ada → skip (bukan kegagalan).
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("skip: {} tidak ditemukan (butuh checkout OpenTitan)", path);
+            return;
+        }
+    };
     let mut pp = mivon_parser::preprocessor::Preprocessor::new();
     let pre = pp.preprocess(&raw, None).unwrap();
     let combined = format!("`line 1 \"{}\"\n{}", path, pre);
