@@ -1,0 +1,54 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh Mivon HDL (.mv) — counter 8-bit dengan enable.
+// Generate: mivon mgen counter.mv  →  counter.sv + counter.svh
+// ─────────────────────────────────────────────────────────────
+
+package counter_pkg {
+    type Addr = logic[15:0]
+    packed struct Packet {
+        valid : bit,
+        addr  : Addr,
+        data  : logic[31:0]
+    }
+}
+
+module counter #(WIDTH = 8, MOD = 100) {
+    use counter_pkg::*
+
+    in  clk, rst_n : bit
+    in  enable     : bit
+    out count      : logic[WIDTH-1:0]
+    out packet     : Packet
+
+    seq(clk, rst_n) {
+        if (!rst_n) {
+            count <= '0
+        } else if (enable) {
+            count <= (count == MOD-1) ? '0 : count + 1
+        }
+    }
+
+    comb {
+        packet.valid = enable
+        packet.addr  = count
+        packet.data  = 32'd0
+    }
+}
+
+// Testbench: drive clk/rst + $finish — agar hang asli (infinite loop) vs
+// sim normal ketahuan (tanpa tb, module RTL quiesce bukan hang).
+module tb_counter_hz {
+    in clk, rst_n : bit  // unused — paksa port ke instance
+    sig clk_i : bit
+    sig rst_ni : bit
+    sig en : bit
+    sig cnt : logic[7:0]
+    sig pkt : counter_pkg::Packet
+
+    inst counter u #(8, 100) (.clk(clk_i), .rst_n(rst_ni), .enable(en), .count(cnt), .packet(pkt))
+
+    initial {
+        #1
+        $finish
+    }
+}

@@ -1,0 +1,87 @@
+// AXI-Lite interface (F26/F28 — MIVON-HDL.md §6.10)
+// Interface di-emit ke .svh; port module bertipe interface di-emit tanpa
+// arah; field interface diakses via dot: `axi_if.awvalid`.
+//
+// F28: `sig bus : axi_lite` di-emit sebagai INSTANCE interface
+// (`axi_lite bus();`) sehingga hasil `mgen` benar-benar bisa di-simulasikan:
+//     mivon mgen examples/mv/axi_interface.mv
+//     mivon sim  examples/mv/axi_interface.sv examples/mv/axi_interface.svh \
+//                --top tb_axi -T 200
+
+interface axi_lite {
+    in  clk : bit
+    sig awaddr  : logic[31:0]
+    sig awvalid : bit
+    sig awready : bit
+    sig wdata   : logic[31:0]
+    sig wready  : bit
+
+    modport slave {
+        in  awaddr, awvalid, wdata
+        out awready, wready
+    }
+    modport master {
+        out awaddr, awvalid, wdata
+        in  awready, wready
+    }
+}
+
+module axi_slave {
+    in axi_if : axi_lite
+    out done  : bit
+
+    sig cnt : logic[3:0]
+
+    seq(axi_if.clk) {
+        if (axi_if.awvalid && axi_if.awready) {
+            cnt <= cnt + 1
+            done <= 1
+        } else {
+            done <= 0
+        }
+    }
+
+    comb {
+        // slave siap menerima saat addr valid
+        axi_if.awready = axi_if.awvalid
+    }
+}
+
+module tb_axi {
+    sig bus  : axi_lite
+    sig done : bit
+
+    // module dengan port interface — nama port (`axi_if`) beda dari nama
+    // instance (`bus`): alias hier di flatten menghubungkan keduanya (F28).
+    inst axi_slave u_slave (
+        .axi_if(bus),
+        .done(done)
+    )
+
+    initial {
+        // clock generator lewat field interface
+        while (1) {
+            bus.clk = 0
+            #5
+            bus.clk = 1
+            #5
+        }
+    }
+
+    initial {
+        // drive request: addr valid + ready tinggi
+        bus.awaddr  = 32'h0000_0010
+        bus.awvalid = 1
+        bus.wdata   = 32'hdead_beef
+        bus.wready  = 1
+
+        #40
+
+        if (done) {
+            $display("TB_AXI_OK done=%0d", done)
+        } else {
+            $display("TB_AXI_BROKEN done=%0d", done)
+        }
+        $finish
+    }
+}

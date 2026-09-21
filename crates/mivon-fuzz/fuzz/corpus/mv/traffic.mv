@@ -1,0 +1,70 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh Mivon HDL (.mv) — FSM traffic light.
+// Generate: mivon mgen traffic.mv  →  traffic.sv + traffic.svh
+// ─────────────────────────────────────────────────────────────
+
+package traffic_pkg {
+    enum State { RED, GREEN, YELLOW }
+}
+
+module traffic #(GREEN_T = 30, YELLOW_T = 5) {
+    use traffic_pkg::*
+
+    in  clk, rst_n : bit
+    out state      : State
+    out red, green, yellow : bit
+
+    reg state : State
+    reg timer : uint[8]
+
+    seq(clk, rst_n) {
+        if (!rst_n) {
+            state <= RED
+            timer <= 0
+        } else {
+            case (state) {
+                RED: {
+                    if (timer == GREEN_T) {
+                        state <= GREEN
+                        timer <= 0
+                    } else {
+                        timer <= timer + 1
+                    }
+                }
+                GREEN: {
+                    if (timer == YELLOW_T) {
+                        state <= YELLOW
+                        timer <= 0
+                    } else {
+                        timer <= timer + 1
+                    }
+                }
+                YELLOW: {
+                    state <= RED
+                    timer <= 0
+                }
+            }
+        }
+    }
+
+    comb {
+        red    = (state == RED)
+        green  = (state == GREEN)
+        yellow = (state == YELLOW)
+    }
+}
+
+// Testbench: drive clk + $finish agar hang asli ketahuan.
+module tb_traffic_hz {
+    sig clk_i : bit
+    sig rst_ni : bit
+    sig st : traffic_pkg::State
+    sig r, g, y : bit
+
+    inst traffic u (.clk(clk_i), .rst_n(rst_ni), .state(st), .red(r), .green(g), .yellow(y))
+
+    initial {
+        #1
+        $finish
+    }
+}

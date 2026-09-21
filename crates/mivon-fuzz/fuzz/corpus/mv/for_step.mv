@@ -1,0 +1,35 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh `for i in 0..N step 2` — step pada loop behavioral &
+// generate (emisi `i = i + 2`).
+// step_dut: bit genap y[0,2,4,6] = 1 → y = 8'h55.
+// ─────────────────────────────────────────────────────────────
+
+module step_dut {
+    in  clk : bit
+    out y   : logic[7:0]
+
+    comb {
+        y = 8'h00
+        for i in 0..7 step 2 {
+            y[i] = 1'b1
+        }
+    }
+}
+
+module tb_step {
+    sig clk : bit
+    sig y   : logic[7:0]
+
+    inst step_dut u (.clk(clk), .y(y))
+
+    initial {
+        clk = 0
+        #10
+        if (y == 8'h55) {
+            $display("TB_STEP_OK y=%0h", y)
+        } else {
+            $display("TB_STEP_BROKEN y=%0h", y)
+        }
+        $finish
+    }
+}
