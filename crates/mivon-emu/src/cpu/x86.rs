@@ -2664,7 +2664,7 @@ impl X86Cpu {
                         // Family 6, Model 0x1A (Nehalem), Stepping 0
                         // EAX: [31:28] ext_family=0, [27:20]=0, [19:16] family=6,
                         //       [15:12] ext_model=0, [11:8] model=0x1A, [7:0] stepping=0
-                        self.r32_set(0, 0x000_06_1A_00);
+                        self.r32_set(0, 0x0006_1A00);
                         // EBX: brand index=0, cache line=0, max apic=0, logical proc=0
                         self.r32_set(3, 0);
                         // ECX: feature bits (SSE3=0, SSSE3=0, CX16=0, POPCNT=0)
@@ -3044,6 +3044,7 @@ impl X86Cpu {
             let dst_lin = self.lin(self.es, di);
             if self.vga_hits(dst_lin, n as usize) {
                 // Dest VGA → per-byte (agar mirror VGA ikut terisi).
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..n as usize {
                     self.write8(mem, self.es, di + i as u32, pat[i])?;
                 }
@@ -3088,10 +3089,11 @@ impl X86Cpu {
     ///   lompat ke handler guest (GRUB install IVT sendiri untuk trampolin
     ///   prot_to_real; handler-nya nanti iret). Bila IVT KOSONG (boot awal,
     ///   belum ada BIOS vector) → host stub.
+    ///
     /// BUG FIX: sebelumnya `int` langsung memanggil stub tanpa frame & tanpa
-    /// melihat IVT — bookkeeping stack GRUB (frame push + handler iret + jalur
-    /// real_to_prot) tidak pernah terjadi → stack korup di epilogue trampolin
-    /// biosdisk (ret pop alamat sampah 0x313b44 → eksekusi region nol).
+    ///   melihat IVT — bookkeeping stack GRUB (frame push + handler iret + jalur
+    ///   real_to_prot) tidak pernah terjadi → stack korup di epilogue trampolin
+    ///   biosdisk (ret pop alamat sampah 0x313b44 → eksekusi region nol).
     fn exec_int(&mut self, n: u8, mem: &mut dyn MemoryPort) -> Result<(), CpuFault> {
         if self.pmode {
             return self.int_dispatch(n, mem);
@@ -3183,6 +3185,7 @@ impl X86Cpu {
                 let mut data = vec![0u8; (al * 512) as usize];
                 match self.read_disk(lba, al as u16, &mut data) {
                     Ok(()) => {
+                        #[allow(clippy::needless_range_loop)]
                         for i in 0..data.len() {
                             self.write8(mem, buf_seg, buf_off as u32 + i as u32, data[i])?;
                         }
@@ -3478,6 +3481,7 @@ impl X86Cpu {
         // boot image no-emul (cdboot 512 byte; BIOS umumnya muat 1 sektor).
         let cap = (0x9FC00 - 0x7C00).min(data.len());
         self.write8(mem, 0x0000, 0x7c00, 0)?; // pastikan region ada
+        #[allow(clippy::needless_range_loop)]
         for i in 0..cap {
             self.write8(mem, 0x0000, 0x7c00 + i as u32, data[i])?;
         }

@@ -209,8 +209,7 @@ impl VgaDisplay {
                 let fg = vga_attr_fg(attr);
                 let bg = vga_attr_bg(attr);
                 let glyph = FONT_BITMAP[ch as usize];
-                for gy in 0..FONT_H {
-                    let bits = glyph[gy];
+                for (gy, &bits) in glyph.iter().enumerate() {
                     for gx in 0..FONT_W {
                         let on = (bits >> (7 - gx)) & 1 != 0;
                         let color = if on { fg } else { bg };

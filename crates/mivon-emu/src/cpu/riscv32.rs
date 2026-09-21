@@ -622,11 +622,7 @@ impl Rv32Cpu {
                     }
                     0xd => {
                         // DIVU
-                        if b == 0 {
-                            0xffff_ffff
-                        } else {
-                            a / b
-                        }
+                        a.checked_div(b).unwrap_or(0xffff_ffff)
                     }
                     0xe => {
                         // REM
