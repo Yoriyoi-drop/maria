@@ -619,7 +619,7 @@ impl XPropagationMode {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_name(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "optimistic" | "opt" => Some(XPropagationMode::Optimistic),
             "pessimistic" | "pess" => Some(XPropagationMode::Pessimistic),

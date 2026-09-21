@@ -110,11 +110,12 @@ impl SimulationEngine {
         match method {
             // VERIF-18: singleton — semua get_db() → obj id sama.
             "get_db" | "new" => {
-                let id = if self.uvm_tr_db_id.is_none() {
-                    self.uvm_tr_db_id = Some(obj_id);
-                    obj_id
-                } else {
-                    self.uvm_tr_db_id.unwrap()
+                let id = match self.uvm_tr_db_id {
+                    Some(existing) => existing,
+                    None => {
+                        self.uvm_tr_db_id = Some(obj_id);
+                        obj_id
+                    }
                 };
                 Ok(LogicVec::from_u64(id as u64, 64))
             }

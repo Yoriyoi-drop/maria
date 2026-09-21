@@ -114,6 +114,7 @@ impl PackedLogicVec {
         let w = lv.width.max(1);
         let num_chunks = w.div_ceil(CELLS_PER_CHUNK);
         let mut chunks = vec![(0u64, 0u64); num_chunks];
+        #[allow(clippy::needless_range_loop)]
         for i in 0..lv.width {
             let (k, v) = match lv.bits[i] {
                 LogicVal::X => (0u64, 0u64),
@@ -327,6 +328,7 @@ impl PackedLogicVec {
                 }
             }
             // New chunks are already (0, 0) = X, need to make them zero
+            #[allow(clippy::needless_range_loop)]
             for i in (old_width / CELLS_PER_CHUNK + 1)..new_chunks {
                 let chunk_width = (w - i * CELLS_PER_CHUNK).min(CELLS_PER_CHUNK);
                 let mask = if chunk_width >= 64 {
@@ -555,8 +557,8 @@ impl PackedLogicVec {
         for i in (shift..self.width).rev() {
             lv.bits[i] = lv.bits[i - shift];
         }
-        for i in 0..shift.min(self.width) {
-            lv.bits[i] = LogicVal::Zero;
+        for b in lv.bits.iter_mut().take(shift.min(self.width)) {
+            *b = LogicVal::Zero;
         }
         PackedLogicVec::from_logicvec(&lv)
     }
@@ -573,8 +575,8 @@ impl PackedLogicVec {
         for i in 0..(self.width - shift) {
             lv.bits[i] = lv.bits[i + shift];
         }
-        for i in (self.width - shift)..self.width {
-            lv.bits[i] = LogicVal::Zero;
+        for b in lv.bits.iter_mut().skip(self.width - shift) {
+            *b = LogicVal::Zero;
         }
         PackedLogicVec::from_logicvec(&lv)
     }
@@ -598,8 +600,8 @@ impl PackedLogicVec {
         for i in 0..(self.width - shift) {
             lv.bits[i] = lv.bits[i + shift];
         }
-        for i in (self.width - shift)..self.width {
-            lv.bits[i] = msb;
+        for b in lv.bits.iter_mut().skip(self.width - shift) {
+            *b = msb;
         }
         PackedLogicVec::from_logicvec(&lv)
     }

@@ -160,10 +160,12 @@ impl FstWaveWriter {
             .map_err(|e| format!("FST scope end failed: {}", e))?;
 
         // Write header — SETELAH hierarchy lengkap (lihat nota di atas).
-        let mut header = Header::default();
-        header.version = "Mivon RTL Simulator".to_string();
-        header.timescale_exponent = -9; // 1ns
-        header.end_time = 0;
+        let header = Header {
+            version: "Mivon RTL Simulator".to_string(),
+            timescale_exponent: -9, // 1ns
+            end_time: 0,
+            ..Default::default()
+        };
         writer
             .write_header(header)
             .map_err(|e| format!("FST header write failed: {}", e))?;

@@ -505,6 +505,7 @@ fn to_u128_wide(lv: &LogicVec) -> u128 {
 /// Konversi u128 → LogicVec selebar `width` (zero-extend / truncate).
 fn from_u128_wide(val: u128, width: usize) -> LogicVec {
     let mut lv = LogicVec::new(width);
+    #[allow(clippy::needless_range_loop)]
     for i in 0..width.min(128) {
         lv.bits[i] = if (val >> i) & 1 == 1 {
             LogicVal::One
@@ -754,9 +755,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     if exp_bits[i] == LogicVal::One {
                         // acc *= base (shifted by i)
                         let mut shifted = vec![LogicVal::Zero; w];
-                        for j in i..w {
-                            shifted[j] = base[j - i];
-                        }
+                        shifted[i..w].copy_from_slice(&base[..w - i]);
                         add_mod(&mut acc, &shifted);
                     }
                     // base *= base (square) — hanya perlu bila masih ada
@@ -767,9 +766,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                         for j in 0..w {
                             if old[j] == LogicVal::One {
                                 let mut shifted = vec![LogicVal::Zero; w];
-                                for k in j..w {
-                                    shifted[k] = old[k - j];
-                                }
+                                shifted[j..w].copy_from_slice(&old[..w - j]);
                                 add_mod(&mut sq, &shifted);
                             }
                         }
@@ -1012,9 +1009,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                             LogicVal::Zero
                         };
                     }
-                    for i in 0..shift {
-                        result.bits[i] = LogicVal::Zero;
-                    }
+                    result.bits[..shift].fill(LogicVal::Zero);
                 } else if shift >= result_width {
                     // Shift by >= width -> all zeros
                     for bit in result.bits.iter_mut() {
@@ -1072,9 +1067,7 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                             LogicVal::Zero
                         };
                     }
-                    for i in (result_width - shift)..result_width {
-                        result.bits[i] = LogicVal::Zero;
-                    }
+                    result.bits[result_width - shift..].fill(LogicVal::Zero);
                 } else if shift >= result_width {
                     // Shift by >= width -> all zeros
                     for bit in result.bits.iter_mut() {

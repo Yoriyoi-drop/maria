@@ -87,9 +87,7 @@ fn wildcard_match(value: u64, pattern: &str) -> bool {
         for j in 1..=plen {
             if pat_chars[j - 1] == '*' {
                 dp[i][j] = dp[i - 1][j] || dp[i][j - 1];
-            } else if pat_chars[j - 1] == '?' {
-                dp[i][j] = dp[i - 1][j - 1];
-            } else if pat_chars[j - 1] == val_chars[i - 1] {
+            } else if pat_chars[j - 1] == '?' || pat_chars[j - 1] == val_chars[i - 1] {
                 dp[i][j] = dp[i - 1][j - 1];
             }
         }
@@ -751,9 +749,7 @@ impl SimulationEngine {
         // Pakai coverage_snapshot (capture di awal time step) — signal_snapshot
         // di-refresh tiap delta cycle sehingga diff selalu kosong (fix SIM-30).
         let old_vals: Vec<LogicVec> = self.coverage_snapshot.clone().unwrap_or_default();
-        let n = old_vals.len();
-        for sig_id in 0..n {
-            let old_val = &old_vals[sig_id];
+        for (sig_id, old_val) in old_vals.iter().enumerate() {
             // Read current signal value (now we can borrow self.state immutably)
             let new_val = self.state.read_signal(sig_id).clone();
             if old_val != &new_val {

@@ -191,6 +191,12 @@ pub struct CoverageDatabase {
     path: Option<String>,
 }
 
+impl Default for CoverageDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoverageDatabase {
     /// Create a new empty database.
     pub fn new() -> Self {

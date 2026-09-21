@@ -346,7 +346,7 @@ fn refresh_snapshot(engine: &mut SimulationEngine) {
 /// Jalankan loop cycle-based. Return:
 /// - `Ok(true)`  → mode selesai dieksekusi penuh (caller skip loop utama).
 /// - `Ok(false)` → desain tidak cocok (pesan fallback sudah dicetak) →
-///                 caller lanjut event-driven biasa.
+///   caller lanjut event-driven biasa.
 /// - `Err(e)`    → error runtime nyata.
 pub(crate) fn run_cycle_based(engine: &mut SimulationEngine) -> Result<bool, SimError> {
     let plan = match analyze_plan(engine) {

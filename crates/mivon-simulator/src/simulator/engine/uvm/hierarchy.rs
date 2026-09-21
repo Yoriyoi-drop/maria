@@ -225,12 +225,12 @@ impl SimulationEngine {
     fn ast_has_run_test(stmts: &[mivon_ast::Stmt]) -> bool {
         for s in stmts {
             match s {
-                mivon_ast::Stmt::Expr { expr } => {
-                    if let mivon_ast::Expr::FuncCall { name, .. } = expr {
-                        // VERIF-04: varian uvm_root::run_test sama dgn bare.
-                        if name.as_str() == "run_test" || name.as_str() == "uvm_root::run_test" {
-                            return true;
-                        }
+                mivon_ast::Stmt::Expr {
+                    expr: mivon_ast::Expr::FuncCall { name, .. },
+                } => {
+                    // VERIF-04: varian uvm_root::run_test sama dgn bare.
+                    if name.as_str() == "run_test" || name.as_str() == "uvm_root::run_test" {
+                        return true;
                     }
                 }
                 mivon_ast::Stmt::SysCall { name, .. } if name.as_str() == "run_test" => {
@@ -311,17 +311,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-                mivon_ast::Stmt::Delay { stmt, .. } => {
-                    if Self::ast_has_run_test(std::slice::from_ref(stmt)) {
-                        return true;
-                    }
-                }
-                mivon_ast::Stmt::Wait { stmt, .. } => {
-                    if let Some(st) = stmt {
-                        if Self::ast_has_run_test(std::slice::from_ref(st)) {
-                            return true;
-                        }
-                    }
+                mivon_ast::Stmt::Delay { stmt, .. }
+                | mivon_ast::Stmt::Wait { stmt: Some(stmt), .. }
+                    if Self::ast_has_run_test(std::slice::from_ref(stmt)) =>
+                {
+                    return true;
                 }
                 _ => {}
             }

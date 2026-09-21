@@ -428,13 +428,11 @@ impl SimulationEngine {
                                                 tok.parse::<i64>()
                                             } {
                                                 let out_idx = 2 + ai;
-                                                if let Some(arg) = ir_args.get(out_idx) {
-                                                    if let IrExpr::Signal(sid, _) = arg {
-                                                        self.state.write_signal(
-                                                            *sid,
-                                                            LogicVec::from_u64(val as u64, 32),
-                                                        );
-                                                    }
+                                                if let Some(IrExpr::Signal(sid, _)) = ir_args.get(out_idx) {
+                                                    self.state.write_signal(
+                                                        *sid,
+                                                        LogicVec::from_u64(val as u64, 32),
+                                                    );
                                                 }
                                                 ai += 1;
                                             }
@@ -590,11 +588,9 @@ impl SimulationEngine {
         } else if name == "assertpasson" || name == "assertfailon" || name == "assertnonvacuouson" {
             // Stubs — acknowledge but no-op
         } else if name == "isunbounded" {
-            if let Some(sig_arg) = ir_args.first() {
-                if let IrExpr::Signal(id, _) = sig_arg {
+            if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
                     self.state.write_signal(*id, LogicVec::from_u64(0, 1));
                 }
-            }
         } else if name == "coverage_control" {
             if let Some(arg) = ir_args.first() {
                 if let Ok(val) = self.evaluate_expr(arg) {
@@ -622,12 +618,10 @@ impl SimulationEngine {
             } else {
                 0.0
             };
-            if let Some(sig_arg) = ir_args.first() {
-                if let IrExpr::Signal(id, _) = sig_arg {
+            if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
                     self.state
                         .write_signal(*id, LogicVec::from_u64(pct as u64, 64));
                 }
-            }
         } else if name == "coverage_save" {
             let path = ir_args
                 .first()
@@ -690,12 +684,10 @@ impl SimulationEngine {
             } else {
                 0
             };
-            if let Some(sig_arg) = ir_args.first() {
-                if let IrExpr::Signal(id, _) = sig_arg {
+            if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
                     self.state
                         .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
                 }
-            }
         } else if name == "load_coverage_db" {
             self.emit_warning(
                 mivon_core::diagnostics::DiagCode::NotImplemented,
@@ -763,21 +755,18 @@ impl SimulationEngine {
                                             10
                                         };
                                         if let Ok(val) = i64::from_str_radix(tok, radix) {
-                                            if let Some(out_arg) = ir_args.get(2 + ai) {
-                                                if let IrExpr::Signal(sid, _) = out_arg {
-                                                    self.state.write_signal(
-                                                        *sid,
-                                                        LogicVec::from_u64(val as u64, 32),
-                                                    );
-                                                }
+                                            if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2 + ai) {
+                                                self.state.write_signal(
+                                                    *sid,
+                                                    LogicVec::from_u64(val as u64, 32),
+                                                );
                                             }
                                             ai += 1;
                                         }
                                     }
                                     ti += 1;
                                 } else if spec == 's' {
-                                    if let Some(out_arg) = ir_args.get(2 + ai) {
-                                        if let IrExpr::Signal(sid, _) = out_arg {
+                                    if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2 + ai) {
                                             let s = tokens[ti..].join(" ");
                                             let mut bits = Vec::with_capacity(s.len() * 8);
                                             for c in s.chars() {
@@ -798,7 +787,6 @@ impl SimulationEngine {
                                                 },
                                             );
                                         }
-                                    }
                                     break;
                                 }
                             }
@@ -859,10 +847,8 @@ impl SimulationEngine {
                         precision = v.to_u64() as i64;
                     }
                 }
-                if let Some(a) = ir_args.get(2) {
-                    if let IrExpr::String(s) = a {
-                        suffix = s.clone();
-                    }
+                if let Some(IrExpr::String(s)) = ir_args.get(2) {
+                    suffix = s.clone();
                 }
                 if let Some(a) = ir_args.get(3) {
                     if let Ok(v) = self.evaluate_expr(a) {
@@ -914,11 +900,11 @@ impl SimulationEngine {
             "deposit" => {
                 // $deposit(sig, value) — deposit sekali, tidak persistent override.
                 // Driver berikutnya tetap bisa menimpa (beda dgn $assign).
-                if let (Some(sig_arg), Some(val_arg)) = (ir_args.first(), ir_args.get(1)) {
-                    if let IrExpr::Signal(id, _) = sig_arg {
-                        let val = self.evaluate_expr(val_arg)?;
-                        self.state.write_signal(*id, val);
-                    }
+                if let (Some(IrExpr::Signal(id, _)), Some(val_arg)) =
+                    (ir_args.first(), ir_args.get(1))
+                {
+                    let val = self.evaluate_expr(val_arg)?;
+                    self.state.write_signal(*id, val);
                 }
                 Ok(true)
             }
@@ -926,10 +912,11 @@ impl SimulationEngine {
                 // $assign(sig, value) — procedural continuous assignment.
                 // Override nilai signal; write berikutnya ditekan sampai $deassign
                 // (dicek di write_lvalue via forced_signals).
-                if let (Some(sig_arg), Some(val_arg)) = (ir_args.first(), ir_args.get(1)) {
-                    if let IrExpr::Signal(id, _) = sig_arg {
-                        // Simpan nilai SEBELUM $assign (hanya untuk wire)
-                        if !self.forced_signals.contains(id) {
+                if let (Some(IrExpr::Signal(id, _)), Some(val_arg)) =
+                    (ir_args.first(), ir_args.get(1))
+                {
+                    // Simpan nilai SEBELUM $assign (hanya untuk wire)
+                    if !self.forced_signals.contains(id) {
                             let is_wire = self
                                 .design
                                 .top
@@ -951,40 +938,33 @@ impl SimulationEngine {
                         let val = self.evaluate_expr(val_arg)?;
                         self.state.write_signal(*id, val);
                         self.forced_signals.insert(*id);
-                    }
                 }
                 Ok(true)
             }
             "deassign" => {
-                if let Some(sig_arg) = ir_args.first() {
-                    if let IrExpr::Signal(id, _) = sig_arg {
-                        self.forced_signals.remove(id);
-                        // Restore nilai asli setelah $deassign
-                        if let Some(saved) = self.pre_force_values.remove(id) {
-                            if let Some(sig) = self.state.signals.get_mut(*id) {
-                                *sig = saved;
-                            }
+                if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
+                    self.forced_signals.remove(id);
+                    // Restore nilai asli setelah $deassign
+                    if let Some(saved) = self.pre_force_values.remove(id) {
+                        if let Some(sig) = self.state.signals.get_mut(*id) {
+                            *sig = saved;
                         }
                     }
                 }
                 Ok(true)
             }
             "get_randcount" => {
-                if let Some(sig_arg) = ir_args.first() {
-                    if let IrExpr::Signal(id, _) = sig_arg {
-                        self.state
-                            .write_signal(*id, LogicVec::from_u64(self.rand_call_count, 32));
-                    }
+                if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
+                    self.state
+                        .write_signal(*id, LogicVec::from_u64(self.rand_call_count, 32));
                 }
                 Ok(true)
             }
             "get_randstate" => {
                 // Konsisten dengan expression-form di expr.rs (64-bit).
-                if let Some(sig_arg) = ir_args.first() {
-                    if let IrExpr::Signal(id, _) = sig_arg {
-                        self.state
-                            .write_signal(*id, LogicVec::from_u64(self.rand_seed, 64));
-                    }
+                if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
+                    self.state
+                        .write_signal(*id, LogicVec::from_u64(self.rand_seed, 64));
                 }
                 Ok(true)
             }
@@ -1319,13 +1299,11 @@ impl SimulationEngine {
                                                 tok.parse::<i64>()
                                             } {
                                                 let out_idx = 2 + ai;
-                                                if let Some(arg) = ir_args.get(out_idx) {
-                                                    if let IrExpr::Signal(sid, _) = arg {
-                                                        self.state.write_signal(
-                                                            *sid,
-                                                            LogicVec::from_u64(val as u64, 32),
-                                                        );
-                                                    }
+                                                if let Some(IrExpr::Signal(sid, _)) = ir_args.get(out_idx) {
+                                                    self.state.write_signal(
+                                                        *sid,
+                                                        LogicVec::from_u64(val as u64, 32),
+                                                    );
                                                 }
                                                 ai += 1;
                                             }
@@ -1481,11 +1459,9 @@ impl SimulationEngine {
         } else if name == "assertpasson" || name == "assertfailon" || name == "assertnonvacuouson" {
             // Stubs
         } else if name == "isunbounded" {
-            if let Some(sig_arg) = ir_args.first() {
-                if let IrExpr::Signal(id, _) = sig_arg {
+            if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
                     self.state.write_signal(*id, LogicVec::from_u64(0, 1));
                 }
-            }
         } else if name == "coverage_control" {
             if let Some(arg) = ir_args.first() {
                 if let Ok(val) = self.evaluate_expr(arg) {
@@ -1513,12 +1489,10 @@ impl SimulationEngine {
             } else {
                 0.0
             };
-            if let Some(sig_arg) = ir_args.first() {
-                if let IrExpr::Signal(id, _) = sig_arg {
+            if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
                     self.state
                         .write_signal(*id, LogicVec::from_u64(pct as u64, 64));
                 }
-            }
         } else if name == "coverage_save" {
             let path = ir_args
                 .first()
@@ -1581,12 +1555,10 @@ impl SimulationEngine {
             } else {
                 0
             };
-            if let Some(sig_arg) = ir_args.first() {
-                if let IrExpr::Signal(id, _) = sig_arg {
+            if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
                     self.state
                         .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
                 }
-            }
         } else if name == "load_coverage_db" {
             self.emit_warning(
                 mivon_core::diagnostics::DiagCode::NotImplemented,
@@ -1654,21 +1626,18 @@ impl SimulationEngine {
                                             10
                                         };
                                         if let Ok(val) = i64::from_str_radix(tok, radix) {
-                                            if let Some(out_arg) = ir_args.get(2 + ai) {
-                                                if let IrExpr::Signal(sid, _) = out_arg {
-                                                    self.state.write_signal(
-                                                        *sid,
-                                                        LogicVec::from_u64(val as u64, 32),
-                                                    );
-                                                }
+                                            if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2 + ai) {
+                                                self.state.write_signal(
+                                                    *sid,
+                                                    LogicVec::from_u64(val as u64, 32),
+                                                );
                                             }
                                             ai += 1;
                                         }
                                     }
                                     ti += 1;
                                 } else if spec == 's' {
-                                    if let Some(out_arg) = ir_args.get(2 + ai) {
-                                        if let IrExpr::Signal(sid, _) = out_arg {
+                                    if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2 + ai) {
                                             let s = tokens[ti..].join(" ");
                                             let mut bits = Vec::with_capacity(s.len() * 8);
                                             for c in s.chars() {
@@ -1689,7 +1658,6 @@ impl SimulationEngine {
                                                 },
                                             );
                                         }
-                                    }
                                     break;
                                 }
                             }

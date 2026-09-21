@@ -191,6 +191,7 @@ impl SimulationEngine {
     /// Ok(false) = kondisi sudah terpenuhi, lanjut statement berikutnya.
     /// Side effect: `wait_for` MENAMBAH count sekali (statement tidak diulang
     /// karena continuation = statement SETELAH wait).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn uvm_try_wait(
         &mut self,
         obj_id: ObjId,
@@ -438,6 +439,7 @@ impl SimulationEngine {
     /// Blocking wait mailbox (dipanggil block.rs `Stmt::Expr`):
     /// - "get": kosong → daftar waiter, suspend (Ok(true)); ada → Ok(false).
     /// - "put": bounded + penuh → daftar waiter, suspend; ada ruang → Ok(false).
+    ///
     /// Return Ok(true) = harus suspend. (LANG-24)
     pub(crate) fn uvm_try_mailbox_wait(
         &mut self,

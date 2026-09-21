@@ -92,6 +92,12 @@ pub struct HierarchicalTimingWheel {
     total_events: usize,
 }
 
+impl Default for HierarchicalTimingWheel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HierarchicalTimingWheel {
     /// Create a new empty timing wheel.
     pub fn new() -> Self {

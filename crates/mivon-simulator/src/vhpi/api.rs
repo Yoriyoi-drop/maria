@@ -18,6 +18,9 @@ pub const vhpiReset: i32 = 3;
 pub const vhpiSetInteractiveScope: i32 = 5;
 
 /// vhpi_handle_by_name(name, scope) — temukan object by hierarchical name.
+///
+/// # Safety
+/// `name` harus valid null-terminated C-String (null-check dilakukan).
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_handle_by_name(
     name: *const std::os::raw::c_char,
@@ -34,24 +37,40 @@ pub unsafe extern "C" fn vhpi_handle_by_name(
 }
 
 /// vhpi_iterate(kind, ref_handle) — iterator object terkait.
+///
+/// # Safety
+/// Caller wajib memastikan `ref_handle` berasal dari VHPI API Mivon (bukan
+/// handle asing); handle invalid ditangani aman (NULL).
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_iterate(kind: i32, ref_handle: VhpiHandle) -> VhpiHandle {
     iterator::vhpi_iterate(kind, ref_handle)
 }
 
 /// vhpi_scan(iterator) — object berikutnya (NULL saat habis).
+///
+/// # Safety
+/// `iterator_handle` harus handle hasil `vhpi_iterate` yang belum di-release.
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_scan(iterator_handle: VhpiHandle) -> VhpiHandle {
     iterator::vhpi_scan(iterator_handle)
 }
 
 /// vhpi_get(property, handle) — properti integer.
+///
+/// # Safety
+/// `handle` harus valid dari Mivon VHPI; property/value di-copy by value,
+/// tidak ada pointer yang diikuti.
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_get(property: i32, handle: VhpiHandle) -> i32 {
     object::vhpi_get(property, handle)
 }
 
 /// vhpi_get_str(property, handle) — properti string.
+///
+/// # Safety
+/// `handle` harus valid dari Mivon VHPI; hasil pointer mengikuti aturan
+/// ownership string VHPI (eksploitasi/alias oleh caller di luar tanggung
+/// jawab adapter ini).
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_get_str(
     property: i32,
@@ -61,6 +80,10 @@ pub unsafe extern "C" fn vhpi_get_str(
 }
 
 /// vhpi_get_value(handle, value_p) — baca nilai signal.
+///
+/// # Safety
+/// `value_p` harus pointer valid ke `t_vhpi_value` yang caller alokasikan
+/// (null-check dilakukan; ukuran buffer harus cukup untuk `format` meminta).
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_get_value(handle: VhpiHandle, value_p: *mut t_vhpi_value) -> i32 {
     if value_p.is_null() {
@@ -86,6 +109,10 @@ pub unsafe extern "C" fn vhpi_get_value(handle: VhpiHandle, value_p: *mut t_vhpi
 }
 
 /// vhpi_put_value(handle, value_p, time_p, flags) — tulis nilai signal.
+///
+/// # Safety
+/// `value_p` harus pointer valid `t_vhpi_value` (null-check dilakukan) dan
+/// isinya sudah diisi caller; `_time_p` tidak di-dereference di sini.
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_put_value(
     handle: VhpiHandle,
@@ -115,12 +142,21 @@ pub unsafe extern "C" fn vhpi_put_value(
 }
 
 /// vhpi_release_handle(handle) — bebaskan object handle.
+///
+/// # Safety
+/// `handle` harus dari Mivon VHPI; setelah dipanggil, handle tidak boleh
+/// dipakai lagi oleh caller.
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_release_handle(handle: VhpiHandle) -> i32 {
     super::handle::vhpi_release_handle(handle)
 }
 
 /// vhpi_register_cb(cb_data_p) — daftarkan callback VHPI.
+///
+/// # Safety
+/// `cb_data_p` harus pointer valid `t_vhpi_cb_data` yang tetap hidup selama
+/// callback terdaftar (null-check dilakukan); callback pointer diambil dari
+/// struct tersebut.
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_register_cb(cb_data_p: *mut t_vhpi_cb_data) -> VhpiHandle {
     if cb_data_p.is_null() {
@@ -130,12 +166,19 @@ pub unsafe extern "C" fn vhpi_register_cb(cb_data_p: *mut t_vhpi_cb_data) -> Vhp
 }
 
 /// vhpi_remove_cb(handle) — hapus callback.
+///
+/// # Safety
+/// `handle` harus hasil `vhpi_register_cb` yang masih terdaftar.
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_remove_cb(handle: VhpiHandle) -> i32 {
     callback::vhpi_remove_cb(handle)
 }
 
 /// vhpi_control(operation, ...) — kontrol simulasi (stop/finish/reset).
+///
+/// # Safety
+/// `_user_data` tidak di-dereference oleh implementasi ini; caller tetap
+/// harus memastikan argumen vararg mengikuti spesifikasi VHPI/1076-2008.
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_control(operation: i32, _user_data: *mut std::ffi::c_void) -> i32 {
     match operation {
@@ -151,6 +194,9 @@ pub unsafe extern "C" fn vhpi_control(operation: i32, _user_data: *mut std::ffi:
 }
 
 /// vhpi_is_defined(kind) — dukungan object kind.
+///
+/// # Safety
+/// Tidak ada pointer yang diikuti; fungsi murni query integer.
 #[no_mangle]
 pub unsafe extern "C" fn vhpi_is_defined(kind: i32) -> i32 {
     object::vhpi_is_defined(kind)

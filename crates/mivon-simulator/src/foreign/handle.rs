@@ -101,6 +101,11 @@ impl HandleRegistry {
     pub fn len(&self) -> usize {
         self.objects.len()
     }
+
+    /// Apakah registry kosong.
+    pub fn is_empty(&self) -> bool {
+        self.objects.is_empty()
+    }
 }
 
 #[cfg(test)]

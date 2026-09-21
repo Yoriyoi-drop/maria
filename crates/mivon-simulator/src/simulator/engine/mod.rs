@@ -445,8 +445,8 @@ pub struct SimulationEngine {
     pub objection_count: usize,
     pub objection_triggered: bool,
     /// VERIF-05: objection per-objek — count utk tiap objek (raise langsung
-    /// + propagasi dari descendants via hierarki parent). get_objection_count
-    /// membacanya; end-of-test tetap berbasis objection_count global (sum).
+    ///     + propagasi dari descendants via hierarki parent). get_objection_count
+    ///     membacanya; end-of-test tetap berbasis objection_count global (sum).
     pub uvm_objection_data: HashMap<ObjId, u64>,
     /// JIT evaluator (native code compilation for fast expression eval)
     pub jit_evaluator: Option<crate::simulator::JITEvaluator>,

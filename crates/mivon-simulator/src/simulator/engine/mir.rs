@@ -63,12 +63,11 @@ impl SimulationEngine {
             IrExpr::BinaryOp(_, lhs, rhs) => {
                 Self::is_expr_jit_safe(lhs) && Self::is_expr_jit_safe(rhs)
             }
-            IrExpr::UnaryOp(op, inner) => match op {
-                mivon_ir::UnaryIrOp::BitNot
-                | mivon_ir::UnaryIrOp::Minus
-                | mivon_ir::UnaryIrOp::Plus => Self::is_expr_jit_safe(inner),
-                _ => false,
-            },
+            IrExpr::UnaryOp(
+                mivon_ir::UnaryIrOp::BitNot | mivon_ir::UnaryIrOp::Minus | mivon_ir::UnaryIrOp::Plus,
+                inner,
+            ) => Self::is_expr_jit_safe(inner),
+            IrExpr::UnaryOp(_, _) => false,
             // Cond (ternary) supported with Branch/Jump/Label in MIR JIT phase 3
             IrExpr::Cond(cond, t, f) => {
                 Self::is_expr_jit_safe(cond)
@@ -427,21 +426,21 @@ impl SimulationEngine {
 
         for stmt in body {
             match stmt {
-                IrStmt::BlockingAssign { lhs, rhs, .. } => {
-                    if let IrLValue::Signal(sig_id, _) = lhs {
-                        if *sig_id >= n_sigs {
-                            return None;
-                        }
-                        let dest_reg = next_reg;
-                        next_reg += 1;
-                        Self::ir_expr_to_mir(rhs, &mut instrs, dest_reg, &mut next_reg);
-                        instrs.push(mivon_compiler::mir::MirInstr::Store {
-                            signal: *sig_id,
-                            src: dest_reg,
-                        });
-                    } else {
+                IrStmt::BlockingAssign {
+                    lhs: IrLValue::Signal(sig_id, _),
+                    rhs,
+                    ..
+                } => {
+                    if *sig_id >= n_sigs {
                         return None;
                     }
+                    let dest_reg = next_reg;
+                    next_reg += 1;
+                    Self::ir_expr_to_mir(rhs, &mut instrs, dest_reg, &mut next_reg);
+                    instrs.push(mivon_compiler::mir::MirInstr::Store {
+                        signal: *sig_id,
+                        src: dest_reg,
+                    });
                 }
                 // Block / NamedBlock: flatten inner statements
                 IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
@@ -679,22 +678,22 @@ impl SimulationEngine {
                     instrs.push(mivon_compiler::mir::MirInstr::Label(end_label));
                 }
                 // NonBlockingAssign: write to output buffer (JIT: same as Store, caller handles NBA semantics)
-                IrStmt::NonBlockingAssign { lhs, rhs, .. } => {
-                    if let IrLValue::Signal(sig_id, _) = lhs {
-                        if *sig_id >= n_sigs {
-                            return None;
-                        }
-                        let dest_reg = next_reg;
-                        next_reg += 1;
-                        Self::ir_expr_to_mir(rhs, &mut instrs, dest_reg, &mut next_reg);
-                        instrs.push(mivon_compiler::mir::MirInstr::NonBlocking {
-                            signal: *sig_id,
-                            src: dest_reg,
-                            delay: None,
-                        });
-                    } else {
+                IrStmt::NonBlockingAssign {
+                    lhs: IrLValue::Signal(sig_id, _),
+                    rhs,
+                    ..
+                } => {
+                    if *sig_id >= n_sigs {
                         return None;
                     }
+                    let dest_reg = next_reg;
+                    next_reg += 1;
+                    Self::ir_expr_to_mir(rhs, &mut instrs, dest_reg, &mut next_reg);
+                    instrs.push(mivon_compiler::mir::MirInstr::NonBlocking {
+                        signal: *sig_id,
+                        src: dest_reg,
+                        delay: None,
+                    });
                 }
                 _ => {
                     return None;
@@ -797,11 +796,13 @@ impl SimulationEngine {
             let mut targets = HashSet::new();
             for stmt in stmts {
                 match stmt {
-                    IrStmt::NonBlockingAssign { lhs, .. } => {
-                        if let IrLValue::Signal(id, _) = lhs {
-                            targets.insert(*id);
-                        }
+                    IrStmt::NonBlockingAssign {
+                        lhs: IrLValue::Signal(id, _),
+                        ..
+                    } => {
+                        targets.insert(*id);
                     }
+                    IrStmt::NonBlockingAssign { .. } => {}
                     IrStmt::Block { stmts: inner } | IrStmt::NamedBlock { stmts: inner, .. } => {
                         targets.extend(collect_nba_signals(inner));
                     }
@@ -840,8 +841,8 @@ impl SimulationEngine {
         // Extract signal values
         let mut signal_vals = vec![0u64; n_sigs.max(1)];
         let mut out_vals = vec![0u64; n_sigs.max(1)];
-        for i in 0..n_sigs {
-            signal_vals[i] = self.state.read_signal(i).to_u64();
+        for (i, slot) in signal_vals.iter_mut().enumerate().take(n_sigs) {
+            *slot = self.state.read_signal(i).to_u64();
         }
         // Execute compiled native code
         unsafe {

@@ -32,9 +32,7 @@ pub(crate) fn config_db_path_match(pattern: &str, inst_path: &str) -> bool {
                 }
             }
             '?' => {
-                for j in 1..=s.len() {
-                    next[j] = dp[j - 1];
-                }
+                next[1..=s.len()].copy_from_slice(&dp[..s.len()]);
             }
             c => {
                 for j in 1..=s.len() {

@@ -28,7 +28,7 @@ pub enum TimingMode {
 }
 
 impl TimingMode {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_name(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "min" => Some(TimingMode::Min),
             "typ" | "typical" => Some(TimingMode::Typ),
@@ -1468,10 +1468,10 @@ mod tests {
 
     #[test]
     fn test_timing_mode_from_str() {
-        assert_eq!(TimingMode::from_str("min"), Some(TimingMode::Min));
-        assert_eq!(TimingMode::from_str("typ"), Some(TimingMode::Typ));
-        assert_eq!(TimingMode::from_str("max"), Some(TimingMode::Max));
-        assert_eq!(TimingMode::from_str("invalid"), None);
+        assert_eq!(TimingMode::from_name("min"), Some(TimingMode::Min));
+        assert_eq!(TimingMode::from_name("typ"), Some(TimingMode::Typ));
+        assert_eq!(TimingMode::from_name("max"), Some(TimingMode::Max));
+        assert_eq!(TimingMode::from_name("invalid"), None);
     }
 
     #[test]

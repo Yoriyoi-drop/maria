@@ -11,7 +11,7 @@ pub enum XPropMode {
 
 impl XPropMode {
     pub fn from_str(s: &str) -> Option<Self> {
-        match XPropagationMode::from_str(s)? {
+        match XPropagationMode::from_name(s)? {
             XPropagationMode::Optimistic => Some(XPropMode::Optimistic),
             XPropagationMode::Pessimistic => Some(XPropMode::Pessimistic),
             XPropagationMode::XAnywhere => Some(XPropMode::XAnywhere),

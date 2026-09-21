@@ -160,7 +160,7 @@ impl SignalHistoryStore {
     }
 
     /// Create a store with default settings: 10K in-memory entries, no disk spill.
-    pub fn default() -> Self {
+    pub fn with_defaults() -> Self {
         Self::new(10000, None)
     }
 

@@ -255,14 +255,12 @@ pub fn acc_next(vpi_type: u8, ref_handle: AccHandle) -> AccHandle {
                 return AccHandle::NULL;
             }
             // update cursor di registry
-            if let Some(o) = acc_objects()
+            if let Some(AccObject::Iterator { cursor: c, .. }) = acc_objects()
                 .lock()
                 .unwrap()
                 .get_mut(&(ref_handle.ptr as u64))
             {
-                if let AccObject::Iterator { cursor: c, .. } = o {
-                    *c = idx + 1;
-                }
+                *c = idx + 1;
             }
             items[idx]
         }

@@ -1207,16 +1207,13 @@ impl SimulationEngine {
                                                             tok.parse::<i64>()
                                                         } {
                                                             let out_idx = 2 + ai;
-                                                            if let Some(arg) = args.get(out_idx) {
-                                                                if let IrExpr::Signal(sid, _) = arg
-                                                                {
+                                                            if let Some(IrExpr::Signal(sid, _)) = args.get(out_idx) {
                                                                     self.state.write_signal(
                                                                         *sid,
                                                                         LogicVec::from_u64(
                                                                             val as u64, 32,
                                                                         ),
                                                                     );
-                                                                }
                                                             }
                                                             ai += 1;
                                                         }
@@ -1323,12 +1320,13 @@ impl SimulationEngine {
                     "uvm_root::get" => {
                         // VERIF-04: singleton uvm_root — semua get() → obj id
                         // sama (pola sama dengan uvm_cmdline_processor::get).
-                        let obj_id = if self.uvm_root_id.is_none() {
-                            let id = self.state.alloc_object(Symbol::intern("uvm_root"));
-                            self.uvm_root_id = Some(id);
-                            id
-                        } else {
-                            self.uvm_root_id.unwrap()
+                        let obj_id = match self.uvm_root_id {
+                            Some(id) => id,
+                            None => {
+                                let id = self.state.alloc_object(Symbol::intern("uvm_root"));
+                                self.uvm_root_id = Some(id);
+                                id
+                            }
                         };
                         Ok(LogicVec::from_u64(obj_id as u64, 64))
                     }
@@ -1355,12 +1353,13 @@ impl SimulationEngine {
                     "uvm_tr_database::get_db" => {
                         // VERIF-18: singleton uvm_tr_database — semua get_db()
                         // → obj id sama (pola sama dgn uvm_root::get).
-                        let obj_id = if self.uvm_tr_db_id.is_none() {
-                            let id = self.state.alloc_object(Symbol::intern("uvm_tr_database"));
-                            self.uvm_tr_db_id = Some(id);
-                            id
-                        } else {
-                            self.uvm_tr_db_id.unwrap()
+                        let obj_id = match self.uvm_tr_db_id {
+                            Some(id) => id,
+                            None => {
+                                let id = self.state.alloc_object(Symbol::intern("uvm_tr_database"));
+                                self.uvm_tr_db_id = Some(id);
+                                id
+                            }
                         };
                         Ok(LogicVec::from_u64(obj_id as u64, 64))
                     }
@@ -1499,10 +1498,8 @@ impl SimulationEngine {
                         // F19: exact match menang, lalu wildcard paling spesifik.
                         let stored = self.config_db_find(&inst_name, &field_name);
                         if let Some(val) = stored {
-                            if let Some(last_arg) = args.get(3) {
-                                if let IrExpr::Signal(sig_id, _) = last_arg {
-                                    self.state.write_signal(*sig_id, val);
-                                }
+                            if let Some(IrExpr::Signal(sig_id, _)) = args.get(3) {
+                                self.state.write_signal(*sig_id, val);
                             }
                             Ok(LogicVec::from_u64(1, 1))
                         } else {
@@ -1577,10 +1574,8 @@ impl SimulationEngine {
                         };
                         let stored = self.resource_db_find(&scope, &rname);
                         if let Some(val) = stored {
-                            if let Some(last_arg) = args.get(2) {
-                                if let IrExpr::Signal(sig_id, _) = last_arg {
-                                    self.state.write_signal(*sig_id, val);
-                                }
+                            if let Some(IrExpr::Signal(sig_id, _)) = args.get(2) {
+                                self.state.write_signal(*sig_id, val);
                             }
                             Ok(LogicVec::from_u64(1, 1))
                         } else {
@@ -1618,14 +1613,15 @@ impl SimulationEngine {
                         // handle objek (obj_id) — variabel `cl` menyimpannya;
                         // method has_plusarg/get_arg_value di-dispatch via
                         // execute_uvm_cmdline_method (class uvm_cmdline_processor).
-                        let obj_id = if self.uvm_cmdline_id.is_none() {
-                            let id = self
-                                .state
-                                .alloc_object(Symbol::intern("uvm_cmdline_processor"));
-                            self.uvm_cmdline_id = Some(id);
-                            id
-                        } else {
-                            self.uvm_cmdline_id.unwrap()
+                        let obj_id = match self.uvm_cmdline_id {
+                            Some(id) => id,
+                            None => {
+                                let id = self
+                                    .state
+                                    .alloc_object(Symbol::intern("uvm_cmdline_processor"));
+                                self.uvm_cmdline_id = Some(id);
+                                id
+                            }
                         };
                         Ok(LogicVec::from_u64(obj_id as u64, 64))
                     }

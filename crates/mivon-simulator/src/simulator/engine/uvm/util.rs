@@ -721,8 +721,8 @@ impl SimulationEngine {
                         if !self.check_with_clause(with_clause, &elem)? {
                             continue;
                         }
-                        for j in 0..elem_width {
-                            if bits.get(j) == Some(&LogicVal::Zero) {
+                        for (j, bit) in bits.iter().enumerate().take(elem_width) {
+                            if bit == &LogicVal::Zero {
                                 result.bits[j] = LogicVal::Zero;
                             }
                         }
@@ -751,8 +751,8 @@ impl SimulationEngine {
                         if !self.check_with_clause(with_clause, &elem)? {
                             continue;
                         }
-                        for j in 0..elem_width {
-                            if bits.get(j) == Some(&LogicVal::One) {
+                        for (j, bit) in bits.iter().enumerate().take(elem_width) {
+                            if bit == &LogicVal::One {
                                 result.bits[j] = LogicVal::One;
                             }
                         }
@@ -781,8 +781,8 @@ impl SimulationEngine {
                         if !self.check_with_clause(with_clause, &elem)? {
                             continue;
                         }
-                        for j in 0..elem_width {
-                            if bits.get(j) == Some(&LogicVal::One) {
+                        for (j, bit) in bits.iter().enumerate().take(elem_width) {
+                            if bit == &LogicVal::One {
                                 result.bits[j] = match result.bits[j] {
                                     LogicVal::Zero => LogicVal::One,
                                     LogicVal::One => LogicVal::Zero,
@@ -940,9 +940,7 @@ impl SimulationEngine {
                     }
                     if method == "find_first" && count > 0 {
                         let mut bits = Vec::with_capacity(elem_width);
-                        for j in 0..elem_width {
-                            bits.push(lv.bits[j]);
-                        }
+                        bits.extend(lv.bits.iter().take(elem_width));
                         return Ok(LogicVec {
                             width: elem_width,
                             bits,

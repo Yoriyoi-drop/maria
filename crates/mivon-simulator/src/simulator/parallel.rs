@@ -85,6 +85,12 @@ impl<'a> SignalView<'a> {
         self.next_synth
     }
 
+    /// Apakah belum ada signal sintetis.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.overlay.is_empty()
+    }
+
     /// Push sinyal sintetis (Foreach index variable) ke overlay.
     #[inline]
     pub fn push(&mut self, val: Arc<LogicVec>) {
@@ -666,6 +672,7 @@ fn eval_assign_rhs_simple(
 }
 
 /// Get lvalue width (no design reference)
+#[allow(clippy::only_used_in_recursion)]
 fn get_lvalue_width_simple(
     lvalue: &IrLValue,
     signals: &SignalView,

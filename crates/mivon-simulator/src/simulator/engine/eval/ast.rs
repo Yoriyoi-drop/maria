@@ -568,12 +568,13 @@ impl SimulationEngine {
                 }
                 // VERIF-04: uvm_root::get() — singleton handle.
                 if name == "uvm_root::get" {
-                    let obj_id = if self.uvm_root_id.is_none() {
-                        let id = self.state.alloc_object(Symbol::intern("uvm_root"));
-                        self.uvm_root_id = Some(id);
-                        id
-                    } else {
-                        self.uvm_root_id.unwrap()
+                    let obj_id = match self.uvm_root_id {
+                        Some(id) => id,
+                        None => {
+                            let id = self.state.alloc_object(Symbol::intern("uvm_root"));
+                            self.uvm_root_id = Some(id);
+                            id
+                        }
                     };
                     return Ok(LogicVec::from_u64(obj_id as u64, 64));
                 }
@@ -586,12 +587,13 @@ impl SimulationEngine {
                 }
                 // VERIF-18: uvm_tr_database — singleton db + stream/record query.
                 if name == "uvm_tr_database::get_db" {
-                    let obj_id = if self.uvm_tr_db_id.is_none() {
-                        let id = self.state.alloc_object(Symbol::intern("uvm_tr_database"));
-                        self.uvm_tr_db_id = Some(id);
-                        id
-                    } else {
-                        self.uvm_tr_db_id.unwrap()
+                    let obj_id = match self.uvm_tr_db_id {
+                        Some(id) => id,
+                        None => {
+                            let id = self.state.alloc_object(Symbol::intern("uvm_tr_database"));
+                            self.uvm_tr_db_id = Some(id);
+                            id
+                        }
                     };
                     return Ok(LogicVec::from_u64(obj_id as u64, 64));
                 }

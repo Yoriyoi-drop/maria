@@ -427,9 +427,8 @@ impl CdcAnalysis {
                             continue;
                         }
 
-                        if let Some(&src_domain_opt) = signal_to_domain.get(&sig_id) {
-                            if let Some(src_domain_id) = src_domain_opt {
-                                if src_domain_id != dst_domain_id {
+                        if let Some(Some(src_domain_id)) = signal_to_domain.get(&sig_id).copied() {
+                            if src_domain_id != dst_domain_id {
                                     let key = (sig_id, src_domain_id, dst_domain_id);
                                     if crossing_set.insert(key) {
                                         let signal_name = signals
@@ -449,7 +448,6 @@ impl CdcAnalysis {
                                             width,
                                         });
                                     }
-                                }
                             }
                         }
                     }

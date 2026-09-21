@@ -364,7 +364,8 @@ impl SimulationEngine {
             if c == '%' {
                 let mut zero_fill = false;
                 let mut width = 0usize;
-                let precision: Option<usize> = None;
+                let precision = 6usize;
+                // (precision default 6 IEEE 1800 §21.2.1.4; parsing `%.Nf` belum diimplementasi)
                 if let Some(&next) = chars.peek() {
                     if next == '0' {
                         zero_fill = true;
@@ -559,23 +560,23 @@ impl SimulationEngine {
                         if let Some((val, _)) = value_args.next() {
                             // `%f` default precision 6 (IEEE 1800 §21.2.1.4);
                             // `%.Nf`/`%0.Nf` → N digit presisi.
-                            let prec = precision.unwrap_or(6);
+                            let prec = precision.min(20);
                             let _ = write!(
                                 result,
                                 "{:.data$}",
                                 f64::from_bits(val.to_u64()),
-                                data = prec.min(20)
+                                data = prec
                             );
                         }
                     }
                     Some('e') | Some('E') => {
                         if let Some((val, _)) = value_args.next() {
-                            let prec = precision.unwrap_or(6);
+                            let prec = precision.min(20);
                             let _ = write!(
                                 result,
                                 "{:.data$e}",
                                 f64::from_bits(val.to_u64()),
-                                data = prec.min(20)
+                                data = prec
                             );
                         }
                     }

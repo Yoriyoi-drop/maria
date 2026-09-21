@@ -2141,9 +2141,13 @@ impl SimulationEngine {
 
             // Check if stable: no signal changes
             let mut changed = false;
-            for i in 0..num_sigs.min(prev_snapshot.len()) {
+            for (i, prev) in prev_snapshot
+                .iter()
+                .enumerate()
+                .take(num_sigs.min(prev_snapshot.len()))
+            {
                 let cur = self.state.read_signal(i);
-                if cur != &prev_snapshot[i] {
+                if cur != prev {
                     changed = true;
                     break;
                 }

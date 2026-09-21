@@ -28,11 +28,12 @@ impl SimulationEngine {
             // Singleton: semua panggilan get() mengembalikan obj_id yang sama
             // (disimpan di uvm_root_id agar state konsisten).
             "get" | "new" => {
-                let id = if self.uvm_root_id.is_none() {
-                    self.uvm_root_id = Some(obj_id);
-                    obj_id
-                } else {
-                    self.uvm_root_id.unwrap()
+                let id = match self.uvm_root_id {
+                    Some(existing) => existing,
+                    None => {
+                        self.uvm_root_id = Some(obj_id);
+                        obj_id
+                    }
                 };
                 Ok(LogicVec::from_u64(id as u64, 64))
             }

@@ -219,6 +219,7 @@ impl SimulationEngine {
     /// - "get"/"peek": kosong → daftar waiter, suspend (Ok(true));
     ///   tersedia → pop/peek + tulis lvalue (di block.rs) → Ok(false).
     /// - "put": penuh → daftar waiter, suspend; ada ruang → push → Ok(false).
+    ///
     /// Return Ok(true) = harus suspend.
     pub(crate) fn uvm_try_fifo_wait(
         &mut self,
