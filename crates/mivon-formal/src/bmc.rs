@@ -110,6 +110,7 @@ impl FormalEngine {
     }
 
     /// Check a single assertion with BMC using transition relation encoding.
+    #[allow(clippy::too_many_arguments)]
     fn bmc_check_single(
         &mut self,
         bound: u64,
@@ -149,6 +150,7 @@ impl FormalEngine {
         // sig_i_0 == init_val_i — hanya untuk sinyal dengan init terdefinisi
         // penuh (tanpa X/Z); sinyal lain unconstrained (lihat catatan FIX di
         // atas).
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n_signals {
             if let Some(Some(init)) = init_vals.get(i) {
                 let width = *signal_widths.get(i).unwrap_or(&64);
@@ -333,8 +335,9 @@ impl FormalEngine {
     /// Satu langkah k-induction pada kedalaman k. Mengembalikan outcome:
     /// - Proved      : asumsi P(0..k-1) ∧ ¬P(k) UNSAT → invariant.
     /// - Spurious    : SAT (counterexample palsu di kedalaman ini) — butuh k
-    ///                 lebih dalam.
+    ///   lebih dalam.
     /// - Inconclusive: Z3 unknown / kondisi tidak bisa diterjemahkan.
+    #[allow(clippy::too_many_arguments)]
     fn induction_step(
         &mut self,
         k: u64,
@@ -715,7 +718,7 @@ pub(crate) fn collect_assertions(processes: &[Process]) -> Vec<(String, IrExpr)>
             _ => continue,
         };
         // Walk body recursively looking for Assert stmts
-        walk_assertions(&name.to_string(), body, &mut result);
+        walk_assertions(name.as_str(), body, &mut result);
     }
     result
 }
@@ -784,12 +787,14 @@ fn walk_assignments(
 ) {
     for stmt in stmts {
         match stmt {
-            IrStmt::BlockingAssign { lhs, rhs, .. } => {
-                if let IrLValue::Signal(id, _) = lhs {
-                    if !seen.contains(id) {
-                        seen.insert(*id);
-                        result.push((*id, Box::new(rhs.clone())));
-                    }
+            IrStmt::BlockingAssign {
+                lhs: IrLValue::Signal(id, _),
+                rhs,
+                ..
+            } => {
+                if !seen.contains(id) {
+                    seen.insert(*id);
+                    result.push((*id, Box::new(rhs.clone())));
                 }
             }
             IrStmt::Block { stmts: inner } => {
@@ -832,7 +837,7 @@ pub(crate) fn collect_covers(processes: &[Process]) -> Vec<(String, IrExpr)> {
             Process::CombReactive { name, body, .. } => (name, body),
             _ => continue,
         };
-        walk_covers(&name.to_string(), body, &mut result);
+        walk_covers(name.as_str(), body, &mut result);
     }
     result
 }
@@ -928,6 +933,7 @@ impl FormalEngine {
 
     /// FORMAL-16: Check a single cover property with BMC.
     /// Cover BMC checks if P is SAT at any depth (reachability).
+    #[allow(clippy::too_many_arguments)]
     fn cover_check_single(
         &mut self,
         bound: u64,
@@ -955,10 +961,11 @@ impl FormalEngine {
             sig_vars.push(depth_vars);
         }
 
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n_signals {
             if let Some(Some(init)) = init_vals.get(i) {
                 let width = *signal_widths.get(i).unwrap_or(&64);
-                solver.assert(sig_vars[0][i].eq(&z3::ast::BV::from_u64(*init, width)));
+                solver.assert(sig_vars[0][i].eq(z3::ast::BV::from_u64(*init, width)));
             }
         }
         for (sig_id, rhs) in init_assigns {
@@ -1125,10 +1132,11 @@ impl FormalEngine {
             }
 
             // Initial state constraints
+            #[allow(clippy::needless_range_loop)]
             for i in 0..n_signals {
                 if let Some(Some(init)) = init_vals.get(i) {
                     let width = *signal_widths.get(i).unwrap_or(&64);
-                    solver.assert(sig_vars[0][i].eq(&z3::ast::BV::from_u64(*init, width)));
+                    solver.assert(sig_vars[0][i].eq(z3::ast::BV::from_u64(*init, width)));
                 }
             }
             for (sig_id, rhs) in &init_assigns {
@@ -1178,11 +1186,8 @@ impl FormalEngine {
             // Check 1: ¬P at depth 0 — if UNSAT, P is always true
             solver.push();
             let always_true = if let Some(cond_bool) = self.expr_to_z3_bool_at(cond, 0, &sig_vars) {
-                solver.assert(&cond_bool.not());
-                match solver.check() {
-                    z3::SatResult::Unsat => true,
-                    _ => false,
-                }
+                solver.assert(cond_bool.not());
+                matches!(solver.check(), z3::SatResult::Unsat)
             } else {
                 false
             };
@@ -1193,7 +1198,7 @@ impl FormalEngine {
             for d in 0..=check_bound {
                 solver.push();
                 if let Some(cond_bool) = self.expr_to_z3_bool_at(cond, d as isize, &sig_vars) {
-                    solver.assert(&cond_bool.not());
+                    solver.assert(cond_bool.not());
                     if let z3::SatResult::Sat = solver.check() {
                         can_violate = true;
                         solver.pop(1);

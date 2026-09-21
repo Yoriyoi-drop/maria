@@ -133,12 +133,12 @@ impl XPropAnalyzer {
                 Process::Combinational { name, body, .. } => {
                     self.analyze_stmts(body, &mut state);
                     // Check outputs of combinational logic for X
-                    self.check_comb_outputs(name.as_str(), body, &state, &design, &mut issues);
+                    self.check_comb_outputs(name.as_str(), body, &state, design, &mut issues);
                 }
                 Process::Sequential { name, body, .. } => {
                     self.analyze_stmts(body, &mut state);
                     // Check if FF outputs could be X
-                    self.check_seq_outputs(name.as_str(), body, &state, &design, &mut issues);
+                    self.check_seq_outputs(name.as_str(), body, &state, design, &mut issues);
                 }
                 _ => {}
             }
@@ -359,24 +359,26 @@ impl XPropAnalyzer {
     ) {
         // Walk assignments and check if any output could be X
         for stmt in stmts {
-            if let IrStmt::BlockingAssign { lhs, .. } = stmt {
-                if let mivon_ir::IrLValue::Signal(id, _) = lhs {
-                    let val = state.get(*id);
-                    if val.may_be_unknown() {
-                        let sig_name = design
-                            .top
-                            .signals
-                            .get(*id)
-                            .map(|s| s.name.as_str())
-                            .unwrap_or("?");
-                        issues.push((
-                            sig_name.to_string(),
-                            format!(
-                                "combinational output '{}' in process '{}' may be X",
-                                sig_name, name
-                            ),
-                        ));
-                    }
+            if let IrStmt::BlockingAssign {
+                lhs: mivon_ir::IrLValue::Signal(id, _),
+                ..
+            } = stmt
+            {
+                let val = state.get(*id);
+                if val.may_be_unknown() {
+                    let sig_name = design
+                        .top
+                        .signals
+                        .get(*id)
+                        .map(|s| s.name.as_str())
+                        .unwrap_or("?");
+                    issues.push((
+                        sig_name.to_string(),
+                        format!(
+                            "combinational output '{}' in process '{}' may be X",
+                            sig_name, name
+                        ),
+                    ));
                 }
             }
         }
@@ -393,24 +395,26 @@ impl XPropAnalyzer {
     ) {
         // Walk assignments and check if any FF output could be X
         for stmt in stmts {
-            if let IrStmt::NonBlockingAssign { lhs, .. } = stmt {
-                if let mivon_ir::IrLValue::Signal(id, _) = lhs {
-                    let val = state.get(*id);
-                    if val.may_be_unknown() {
-                        let sig_name = design
-                            .top
-                            .signals
-                            .get(*id)
-                            .map(|s| s.name.as_str())
-                            .unwrap_or("?");
-                        issues.push((
-                            sig_name.to_string(),
-                            format!(
-                                "sequential output '{}' in process '{}' may be X",
-                                sig_name, name
-                            ),
-                        ));
-                    }
+            if let IrStmt::NonBlockingAssign {
+                lhs: mivon_ir::IrLValue::Signal(id, _),
+                ..
+            } = stmt
+            {
+                let val = state.get(*id);
+                if val.may_be_unknown() {
+                    let sig_name = design
+                        .top
+                        .signals
+                        .get(*id)
+                        .map(|s| s.name.as_str())
+                        .unwrap_or("?");
+                    issues.push((
+                        sig_name.to_string(),
+                        format!(
+                            "sequential output '{}' in process '{}' may be X",
+                            sig_name, name
+                        ),
+                    ));
                 }
             }
         }

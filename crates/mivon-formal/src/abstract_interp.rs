@@ -172,6 +172,12 @@ impl AbsState {
     }
 }
 
+impl Default for AbsState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Abstract interpreter for RTL designs.
 pub struct AbstractInterpreter {
     pub max_iterations: usize,

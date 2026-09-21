@@ -3457,7 +3457,7 @@ fn run_fast(
     // Configure remote cache backend
     if let Some(ref remote_dir) = cli.cache_remote_dir {
         let sync_mode =
-            mivon_compiler::cache::cache_manager::RemoteSyncMode::from_str(&cli.cache_remote_sync);
+            mivon_compiler::cache::cache_manager::RemoteSyncMode::from_name(&cli.cache_remote_sync);
         match mivon_compiler::cache::FilesystemCache::new(remote_dir) {
             Ok(backend) => {
                 let remote: std::sync::Arc<dyn mivon_compiler::cache::RemoteCacheBackend> =
