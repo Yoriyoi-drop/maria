@@ -140,6 +140,12 @@ pub struct DpiEngine {
     lib_search_paths: Vec<String>,
 }
 
+impl Default for DpiEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DpiEngine {
     pub fn new() -> Self {
         let mut lib_search_paths = Vec::new();
@@ -374,7 +380,7 @@ unsafe fn call_dpi_ffi_generic(
     // struct DpiCallFrame { int n_args; int* tags; void** args; void* ret_buf; int ret_max; };
     let call_frame = DpiCallFrame {
         n_args: n_args as i32,
-        tags: tags.as_ptr() as *const i32,
+        tags: tags.as_ptr(),
         args: ptrs.as_ptr(),
         ret_buf: if ret_bytes.is_empty() {
             std::ptr::null_mut()
@@ -432,7 +438,7 @@ fn marshal_arg(val: &LogicVec, width: usize) -> (DpiType, Vec<u8>) {
         let mut all_printable = true;
         for i in 0..n_chars {
             let byte = (bytes >> (i * 8)) & 0xFF;
-            if byte > 0 && (byte < 32 || byte > 126) && byte != 10 && byte != 13 {
+            if byte > 0 && !(32..=126).contains(&byte) && byte != 10 && byte != 13 {
                 all_printable = false;
                 break;
             }

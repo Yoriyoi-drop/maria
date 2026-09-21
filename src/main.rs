@@ -2111,7 +2111,7 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
     };
 
     // Set X-propagation mode from CLI
-    if let Some(mode) = mivon_api::simulator::types::XPropagationMode::from_str(&cli.xprop) {
+    if let Some(mode) = mivon_api::simulator::types::XPropagationMode::from_name(&cli.xprop) {
         mivon_api::simulator::value::set_xprop_mode(mode);
         if !cli.quiet {
             println!("X-propagation mode: {}", mode.as_str());
@@ -2170,7 +2170,7 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
     engine.report_progress = !cli.quiet;
 
     // ── Set SDF timing mode ──
-    if let Some(mode) = mivon_api::simulator::sdf::TimingMode::from_str(&cli.timing_mode) {
+    if let Some(mode) = mivon_api::simulator::sdf::TimingMode::from_name(&cli.timing_mode) {
         mivon_api::simulator::sdf::set_timing_mode(mode);
         if !cli.quiet {
             println!("SDF timing mode: {}", mode.as_str());
@@ -3564,7 +3564,7 @@ fn run_fast(
     };
 
     // Set X-propagation mode from CLI
-    if let Some(mode) = mivon_api::simulator::types::XPropagationMode::from_str(&cli.xprop) {
+    if let Some(mode) = mivon_api::simulator::types::XPropagationMode::from_name(&cli.xprop) {
         mivon_api::simulator::value::set_xprop_mode(mode);
         if !cli.quiet {
             println!("X-propagation mode: {}", mode.as_str());

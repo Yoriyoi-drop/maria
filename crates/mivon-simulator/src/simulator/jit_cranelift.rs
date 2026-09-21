@@ -340,7 +340,7 @@ impl CraneliftEngine {
         // Clear context for next compilation
         self.module.clear_context(&mut ctx);
 
-        Some(code_ptr as *const u8)
+        Some(code_ptr)
     }
 
     /// Call a compiled binary function with arguments.
