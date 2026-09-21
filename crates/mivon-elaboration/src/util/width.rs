@@ -617,7 +617,7 @@ pub fn eval_width_aware_param(
                         Some(l.wrapping_rem(r))
                     }
                 }
-                BinaryOp::Power => Some(l.pow(r.max(0).min(31) as u32)),
+                BinaryOp::Power => Some(l.pow(r.clamp(0, 31) as u32)),
                 BinaryOp::BitAnd => Some(l & r),
                 BinaryOp::BitOr => Some(l | r),
                 BinaryOp::BitXor => Some(l ^ r),
@@ -709,7 +709,7 @@ pub fn eval_width_aware_param(
                 compute_expr_width(expr, signal_map, signals, effective_params, package_symbols)
                     .unwrap_or(1)
                     .max(1);
-            let n = n.max(0).min(63) as u32;
+            let n = n.clamp(0, 63) as u32;
             if v == 0 {
                 Some(0)
             } else if v == 1 && w == 1 {
@@ -755,8 +755,7 @@ pub fn eval_width_aware_param(
                     package_symbols,
                 )
                 .unwrap_or(32)
-                .max(1)
-                .min(63) as u32;
+                .clamp(1, 63) as u32;
                 let masked = (v as u64) & ((1u64 << w).wrapping_sub(1));
                 acc |= masked.wrapping_shl(shift.min(63));
                 shift = shift.saturating_add(w);

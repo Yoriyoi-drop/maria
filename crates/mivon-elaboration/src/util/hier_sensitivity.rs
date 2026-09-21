@@ -306,7 +306,7 @@ fn collect_hier_refs_lvalue(lvalue: &IrLValue) -> Vec<Symbol> {
 /// `collect_sensitivity` (AST-level) cannot resolve hierarchical names that only
 /// exist in `hier_signal_map` (created by flatten_instances after module elaboration).
 pub fn fix_hier_sensitivity(
-    processes: &mut Vec<Process>,
+    processes: &mut [Process],
     hier_signal_map: &HashMap<Symbol, SignalId>,
 ) {
     for proc in processes.iter_mut() {

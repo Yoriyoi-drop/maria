@@ -348,15 +348,11 @@ fn collect_loop_var_names_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
             collect_loop_var_names(stmts, out)
         }
         Stmt::Repeat { stmts, .. } => collect_loop_var_names(stmts, out),
-        Stmt::Wait { stmt, .. } => {
-            if let Some(s) = stmt {
-                collect_loop_var_names_stmt(s, out);
-            }
+        Stmt::Wait { stmt: Some(s), .. } => {
+            collect_loop_var_names_stmt(s, out);
         }
-        Stmt::EventControl { stmt, .. } => {
-            if let Some(s) = stmt {
-                collect_loop_var_names_stmt(s, out);
-            }
+        Stmt::EventControl { stmt: Some(s), .. } => {
+            collect_loop_var_names_stmt(s, out);
         }
         Stmt::NamedBlock { stmts, .. } => collect_loop_var_names(stmts, out),
         Stmt::ForeachLoop { stmts, .. } => collect_loop_var_names(stmts, out),

@@ -100,6 +100,7 @@ pub fn substitute_data_type(dt: DataType, param_name: &str, replacement: &DataTy
 
 /// Substitusi type parameter di dalam Expr AST.
 /// Berguna untuk constraint expression dengan type parameter.
+#[allow(clippy::only_used_in_recursion)]
 pub fn substitute_expr_types(e: Expr, param_name: &str, replacement: &DataType) -> Expr {
     match e {
         Expr::BinaryOp { lhs, op, rhs } => Expr::BinaryOp {

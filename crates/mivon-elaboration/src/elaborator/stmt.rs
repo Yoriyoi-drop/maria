@@ -694,6 +694,7 @@ impl Elaborator {
 
     /// Elaborasi case dengan CaseType tertentu tanpa const-fold (struktur
     /// dipertahankan). Dipakai qualifier unique/unique0/priority (LANG-16/17).
+    #[allow(clippy::too_many_arguments)]
     fn elaborate_case_raw(
         &self,
         expr: &Expr,
@@ -1069,7 +1070,9 @@ impl Elaborator {
                 } else {
                     // ── Fold aman: case expr + semua label konstanta ──
                     // Cari branch pertama yang match (prioritas Verilog).
-                    let case_val = case_const.unwrap();
+                    let Ok(case_val) = case_const else {
+                        unreachable!("case_const Ok karena is_err() sudah di-guard di atas");
+                    };
                     let mut matched_body: Option<&Stmt> = None;
                     for item in items {
                         for label in &item.labels {

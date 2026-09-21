@@ -4781,10 +4781,10 @@ impl Elaborator {
                     };
                     for i in 0..elems_covered {
                         let j_span = elem_width.min(elem_init.bits.len());
-                        for j in 0..j_span {
+                        for (j, bit) in elem_init.bits[..j_span].iter().copied().enumerate() {
                             let idx = i * elem_width + j;
                             if idx < init_n {
-                                full_init.bits[idx] = elem_init.bits[j];
+                                full_init.bits[idx] = bit;
                             }
                         }
                     }
@@ -6314,15 +6314,11 @@ pub(crate) fn collect_procedural_decls(stmts: &[Stmt], out: &mut Vec<Decl>) {
             Stmt::LoopFor { stmts, .. } => collect_procedural_decls(stmts, out),
             Stmt::Repeat { stmts, .. } => collect_procedural_decls(stmts, out),
             Stmt::Delay { stmt, .. } => collect_procedural_decls(std::slice::from_ref(stmt), out),
-            Stmt::Wait { stmt, .. } => {
-                if let Some(s) = stmt {
-                    collect_procedural_decls(std::slice::from_ref(s), out);
-                }
+            Stmt::Wait { stmt: Some(s), .. } => {
+                collect_procedural_decls(std::slice::from_ref(s), out);
             }
-            Stmt::EventControl { stmt, .. } => {
-                if let Some(s) = stmt {
-                    collect_procedural_decls(std::slice::from_ref(s), out);
-                }
+            Stmt::EventControl { stmt: Some(s), .. } => {
+                collect_procedural_decls(std::slice::from_ref(s), out);
             }
             Stmt::ForeachLoop { stmts, .. } => collect_procedural_decls(stmts, out),
             Stmt::Assert {
@@ -6347,15 +6343,11 @@ pub(crate) fn collect_procedural_decls(stmts: &[Stmt], out: &mut Vec<Decl>) {
                     collect_procedural_decls(std::slice::from_ref(f), out);
                 }
             }
-            Stmt::Cover { pass_stmt, .. } => {
-                if let Some(p) = pass_stmt {
-                    collect_procedural_decls(std::slice::from_ref(p), out);
-                }
+            Stmt::Cover { pass_stmt: Some(p), .. } => {
+                collect_procedural_decls(std::slice::from_ref(p), out);
             }
-            Stmt::WaitOrder { fail_stmt, .. } => {
-                if let Some(f) = fail_stmt {
-                    collect_procedural_decls(std::slice::from_ref(f), out);
-                }
+            Stmt::WaitOrder { fail_stmt: Some(f), .. } => {
+                collect_procedural_decls(std::slice::from_ref(f), out);
             }
             Stmt::Fork { processes, .. } => {
                 for p in processes {

@@ -1945,6 +1945,7 @@ impl Elaborator {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn elaborate_package_func(
         &self,
         pkg_name: &str,
