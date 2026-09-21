@@ -1157,49 +1157,49 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
     // ── MICD: simpan hasil preprocess baru untuk run berikutnya ──
     for (idx, combined_str, ts, includes) in fresh_results.iter().flatten() {
         if let Ok(content) = read_source_bytes(Path::new(&sources[*idx]), &inline_src) {
-                let h = mivon_compiler::cache::compute_checksum(&content);
-                let path = std::path::PathBuf::from(&sources[*idx]);
-                micd.cache_preprocessed(
-                    path.clone(),
-                    mivon_compiler::micd::PreprocEntry {
-                        content_hash: h,
-                        combined: combined_str.clone(),
-                        timescale: ts.clone(),
-                    },
-                );
-                // Metadata + include hashes (verifikasi header saat reuse).
-                let include_hashes: Vec<(std::path::PathBuf, u64)> = includes
-                    .iter()
-                    .map(|inc| {
-                        let hh = std::fs::read(inc)
-                            .map(|b| mivon_compiler::cache::compute_checksum(&b))
-                            .unwrap_or(0);
-                        (inc.clone(), hh)
-                    })
-                    .collect();
-                // Ukuran memakai isi sumber yang BENAR-BENAR di-hash (buffer
-                // inline untuk .mv, file disk untuk .sv) agar konsisten dengan
-                // `content_hash` — bukan metadata disk (yang untuk .mv adalah
-                // ukuran sumber .mv asli, bukan buffer transpile).
-                let size = content.len() as u64;
-                micd.record_file(
-                    path,
-                    h,
-                    vec![],
-                    mivon_compiler::micd::FileStatus::Unchanged,
-                    0,
-                    size,
-                    include_hashes,
-                );
-                // verify.mdb: jalur legacy juga menandai file terverifikasi
-                // (parse) agar store lengkap walau tanpa `--fast`.
-                let mut v = mivon_compiler::micd::VerifyResult::fresh(h);
-                v.parse_ok = true;
-                v.set_check(
-                    mivon_compiler::micd::VerifyCheckKind::Parse,
-                    mivon_compiler::micd::CheckResult::pass(0),
-                );
-                micd.set_verify(v);
+            let h = mivon_compiler::cache::compute_checksum(&content);
+            let path = std::path::PathBuf::from(&sources[*idx]);
+            micd.cache_preprocessed(
+                path.clone(),
+                mivon_compiler::micd::PreprocEntry {
+                    content_hash: h,
+                    combined: combined_str.clone(),
+                    timescale: ts.clone(),
+                },
+            );
+            // Metadata + include hashes (verifikasi header saat reuse).
+            let include_hashes: Vec<(std::path::PathBuf, u64)> = includes
+                .iter()
+                .map(|inc| {
+                    let hh = std::fs::read(inc)
+                        .map(|b| mivon_compiler::cache::compute_checksum(&b))
+                        .unwrap_or(0);
+                    (inc.clone(), hh)
+                })
+                .collect();
+            // Ukuran memakai isi sumber yang BENAR-BENAR di-hash (buffer
+            // inline untuk .mv, file disk untuk .sv) agar konsisten dengan
+            // `content_hash` — bukan metadata disk (yang untuk .mv adalah
+            // ukuran sumber .mv asli, bukan buffer transpile).
+            let size = content.len() as u64;
+            micd.record_file(
+                path,
+                h,
+                vec![],
+                mivon_compiler::micd::FileStatus::Unchanged,
+                0,
+                size,
+                include_hashes,
+            );
+            // verify.mdb: jalur legacy juga menandai file terverifikasi
+            // (parse) agar store lengkap walau tanpa `--fast`.
+            let mut v = mivon_compiler::micd::VerifyResult::fresh(h);
+            v.parse_ok = true;
+            v.set_check(
+                mivon_compiler::micd::VerifyCheckKind::Parse,
+                mivon_compiler::micd::CheckResult::pass(0),
+            );
+            micd.set_verify(v);
         }
     }
     // Save ditunda ke akhir run (setelah symbol/type/graph + prune_stale)

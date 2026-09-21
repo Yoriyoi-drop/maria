@@ -429,25 +429,24 @@ impl CdcAnalysis {
 
                         if let Some(Some(src_domain_id)) = signal_to_domain.get(&sig_id).copied() {
                             if src_domain_id != dst_domain_id {
-                                    let key = (sig_id, src_domain_id, dst_domain_id);
-                                    if crossing_set.insert(key) {
-                                        let signal_name = signals
-                                            .get(sig_id)
-                                            .map(|si| si.name.as_str().to_string())
-                                            .unwrap_or_else(|| format!("sig_{}", sig_id));
-                                        let width =
-                                            signals.get(sig_id).map(|si| si.width).unwrap_or(1);
+                                let key = (sig_id, src_domain_id, dst_domain_id);
+                                if crossing_set.insert(key) {
+                                    let signal_name = signals
+                                        .get(sig_id)
+                                        .map(|si| si.name.as_str().to_string())
+                                        .unwrap_or_else(|| format!("sig_{}", sig_id));
+                                    let width = signals.get(sig_id).map(|si| si.width).unwrap_or(1);
 
-                                        crossings.push(CdcSignalCrossing {
-                                            signal_id: sig_id,
-                                            signal_name,
-                                            src_domain_id,
-                                            dst_domain_id,
-                                            is_synchronized: false, // will detect later
-                                            synchronizer_flops: 0,
-                                            width,
-                                        });
-                                    }
+                                    crossings.push(CdcSignalCrossing {
+                                        signal_id: sig_id,
+                                        signal_name,
+                                        src_domain_id,
+                                        dst_domain_id,
+                                        is_synchronized: false, // will detect later
+                                        synchronizer_flops: 0,
+                                        width,
+                                    });
+                                }
                             }
                         }
                     }

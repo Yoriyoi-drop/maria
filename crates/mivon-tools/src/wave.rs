@@ -953,7 +953,11 @@ fn stats(input: &str) -> Result<(), SimError> {
         if s.toggles == 0 {
             stuck += 1;
         }
-        let act = s.activity.checked_mul(100).and_then(|a| a.checked_div(s.duration)).unwrap_or(0);
+        let act = s
+            .activity
+            .checked_mul(100)
+            .and_then(|a| a.checked_div(s.duration))
+            .unwrap_or(0);
         println!(
             "  {:<22} {:<5} {:<7} {:<7} {:<10} {:<7} {}%",
             s.name, s.width, s.toggles, s.changes, s.first, s.last, act

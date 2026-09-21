@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
 use std::net::{TcpListener, TcpStream};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 

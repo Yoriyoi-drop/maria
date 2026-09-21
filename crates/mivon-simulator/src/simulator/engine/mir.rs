@@ -64,7 +64,9 @@ impl SimulationEngine {
                 Self::is_expr_jit_safe(lhs) && Self::is_expr_jit_safe(rhs)
             }
             IrExpr::UnaryOp(
-                mivon_ir::UnaryIrOp::BitNot | mivon_ir::UnaryIrOp::Minus | mivon_ir::UnaryIrOp::Plus,
+                mivon_ir::UnaryIrOp::BitNot
+                | mivon_ir::UnaryIrOp::Minus
+                | mivon_ir::UnaryIrOp::Plus,
                 inner,
             ) => Self::is_expr_jit_safe(inner),
             IrExpr::UnaryOp(_, _) => false,

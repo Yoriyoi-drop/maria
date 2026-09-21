@@ -428,7 +428,9 @@ impl SimulationEngine {
                                                 tok.parse::<i64>()
                                             } {
                                                 let out_idx = 2 + ai;
-                                                if let Some(IrExpr::Signal(sid, _)) = ir_args.get(out_idx) {
+                                                if let Some(IrExpr::Signal(sid, _)) =
+                                                    ir_args.get(out_idx)
+                                                {
                                                     self.state.write_signal(
                                                         *sid,
                                                         LogicVec::from_u64(val as u64, 32),
@@ -589,8 +591,8 @@ impl SimulationEngine {
             // Stubs — acknowledge but no-op
         } else if name == "isunbounded" {
             if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
-                    self.state.write_signal(*id, LogicVec::from_u64(0, 1));
-                }
+                self.state.write_signal(*id, LogicVec::from_u64(0, 1));
+            }
         } else if name == "coverage_control" {
             if let Some(arg) = ir_args.first() {
                 if let Ok(val) = self.evaluate_expr(arg) {
@@ -619,9 +621,9 @@ impl SimulationEngine {
                 0.0
             };
             if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
-                    self.state
-                        .write_signal(*id, LogicVec::from_u64(pct as u64, 64));
-                }
+                self.state
+                    .write_signal(*id, LogicVec::from_u64(pct as u64, 64));
+            }
         } else if name == "coverage_save" {
             let path = ir_args
                 .first()
@@ -685,9 +687,9 @@ impl SimulationEngine {
                 0
             };
             if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
-                    self.state
-                        .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
-                }
+                self.state
+                    .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
+            }
         } else if name == "load_coverage_db" {
             self.emit_warning(
                 mivon_core::diagnostics::DiagCode::NotImplemented,
@@ -755,7 +757,9 @@ impl SimulationEngine {
                                             10
                                         };
                                         if let Ok(val) = i64::from_str_radix(tok, radix) {
-                                            if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2 + ai) {
+                                            if let Some(IrExpr::Signal(sid, _)) =
+                                                ir_args.get(2 + ai)
+                                            {
                                                 self.state.write_signal(
                                                     *sid,
                                                     LogicVec::from_u64(val as u64, 32),
@@ -767,26 +771,26 @@ impl SimulationEngine {
                                     ti += 1;
                                 } else if spec == 's' {
                                     if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2 + ai) {
-                                            let s = tokens[ti..].join(" ");
-                                            let mut bits = Vec::with_capacity(s.len() * 8);
-                                            for c in s.chars() {
-                                                let byte = c as u8;
-                                                for i in 0..8 {
-                                                    bits.push(if (byte >> i) & 1 == 1 {
-                                                        LogicVal::One
-                                                    } else {
-                                                        LogicVal::Zero
-                                                    });
-                                                }
+                                        let s = tokens[ti..].join(" ");
+                                        let mut bits = Vec::with_capacity(s.len() * 8);
+                                        for c in s.chars() {
+                                            let byte = c as u8;
+                                            for i in 0..8 {
+                                                bits.push(if (byte >> i) & 1 == 1 {
+                                                    LogicVal::One
+                                                } else {
+                                                    LogicVal::Zero
+                                                });
                                             }
-                                            self.state.write_signal(
-                                                *sid,
-                                                LogicVec {
-                                                    width: bits.len(),
-                                                    bits,
-                                                },
-                                            );
                                         }
+                                        self.state.write_signal(
+                                            *sid,
+                                            LogicVec {
+                                                width: bits.len(),
+                                                bits,
+                                            },
+                                        );
+                                    }
                                     break;
                                 }
                             }
@@ -917,27 +921,27 @@ impl SimulationEngine {
                 {
                     // Simpan nilai SEBELUM $assign (hanya untuk wire)
                     if !self.forced_signals.contains(id) {
-                            let is_wire = self
-                                .design
-                                .top
-                                .signals
-                                .get(*id)
-                                .map(|s| {
-                                    matches!(
-                                        s.kind,
-                                        mivon_ir::SignalKind::Wire | mivon_ir::SignalKind::Logic
-                                    )
-                                })
-                                .unwrap_or(false);
-                            if is_wire {
-                                if let Some(sig) = self.state.signals.get(*id) {
-                                    self.pre_force_values.insert(*id, sig.clone());
-                                }
+                        let is_wire = self
+                            .design
+                            .top
+                            .signals
+                            .get(*id)
+                            .map(|s| {
+                                matches!(
+                                    s.kind,
+                                    mivon_ir::SignalKind::Wire | mivon_ir::SignalKind::Logic
+                                )
+                            })
+                            .unwrap_or(false);
+                        if is_wire {
+                            if let Some(sig) = self.state.signals.get(*id) {
+                                self.pre_force_values.insert(*id, sig.clone());
                             }
                         }
-                        let val = self.evaluate_expr(val_arg)?;
-                        self.state.write_signal(*id, val);
-                        self.forced_signals.insert(*id);
+                    }
+                    let val = self.evaluate_expr(val_arg)?;
+                    self.state.write_signal(*id, val);
+                    self.forced_signals.insert(*id);
                 }
                 Ok(true)
             }
@@ -1299,7 +1303,9 @@ impl SimulationEngine {
                                                 tok.parse::<i64>()
                                             } {
                                                 let out_idx = 2 + ai;
-                                                if let Some(IrExpr::Signal(sid, _)) = ir_args.get(out_idx) {
+                                                if let Some(IrExpr::Signal(sid, _)) =
+                                                    ir_args.get(out_idx)
+                                                {
                                                     self.state.write_signal(
                                                         *sid,
                                                         LogicVec::from_u64(val as u64, 32),
@@ -1460,8 +1466,8 @@ impl SimulationEngine {
             // Stubs
         } else if name == "isunbounded" {
             if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
-                    self.state.write_signal(*id, LogicVec::from_u64(0, 1));
-                }
+                self.state.write_signal(*id, LogicVec::from_u64(0, 1));
+            }
         } else if name == "coverage_control" {
             if let Some(arg) = ir_args.first() {
                 if let Ok(val) = self.evaluate_expr(arg) {
@@ -1490,9 +1496,9 @@ impl SimulationEngine {
                 0.0
             };
             if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
-                    self.state
-                        .write_signal(*id, LogicVec::from_u64(pct as u64, 64));
-                }
+                self.state
+                    .write_signal(*id, LogicVec::from_u64(pct as u64, 64));
+            }
         } else if name == "coverage_save" {
             let path = ir_args
                 .first()
@@ -1556,9 +1562,9 @@ impl SimulationEngine {
                 0
             };
             if let Some(IrExpr::Signal(id, _)) = ir_args.first() {
-                    self.state
-                        .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
-                }
+                self.state
+                    .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
+            }
         } else if name == "load_coverage_db" {
             self.emit_warning(
                 mivon_core::diagnostics::DiagCode::NotImplemented,
@@ -1626,7 +1632,9 @@ impl SimulationEngine {
                                             10
                                         };
                                         if let Ok(val) = i64::from_str_radix(tok, radix) {
-                                            if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2 + ai) {
+                                            if let Some(IrExpr::Signal(sid, _)) =
+                                                ir_args.get(2 + ai)
+                                            {
                                                 self.state.write_signal(
                                                     *sid,
                                                     LogicVec::from_u64(val as u64, 32),
@@ -1638,26 +1646,26 @@ impl SimulationEngine {
                                     ti += 1;
                                 } else if spec == 's' {
                                     if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2 + ai) {
-                                            let s = tokens[ti..].join(" ");
-                                            let mut bits = Vec::with_capacity(s.len() * 8);
-                                            for c in s.chars() {
-                                                let byte = c as u8;
-                                                for i in 0..8 {
-                                                    bits.push(if (byte >> i) & 1 == 1 {
-                                                        LogicVal::One
-                                                    } else {
-                                                        LogicVal::Zero
-                                                    });
-                                                }
+                                        let s = tokens[ti..].join(" ");
+                                        let mut bits = Vec::with_capacity(s.len() * 8);
+                                        for c in s.chars() {
+                                            let byte = c as u8;
+                                            for i in 0..8 {
+                                                bits.push(if (byte >> i) & 1 == 1 {
+                                                    LogicVal::One
+                                                } else {
+                                                    LogicVal::Zero
+                                                });
                                             }
-                                            self.state.write_signal(
-                                                *sid,
-                                                LogicVec {
-                                                    width: bits.len(),
-                                                    bits,
-                                                },
-                                            );
                                         }
+                                        self.state.write_signal(
+                                            *sid,
+                                            LogicVec {
+                                                width: bits.len(),
+                                                bits,
+                                            },
+                                        );
+                                    }
                                     break;
                                 }
                             }

@@ -312,9 +312,9 @@ impl SimulationEngine {
                     }
                 }
                 mivon_ast::Stmt::Delay { stmt, .. }
-                | mivon_ast::Stmt::Wait { stmt: Some(stmt), .. }
-                    if Self::ast_has_run_test(std::slice::from_ref(stmt)) =>
-                {
+                | mivon_ast::Stmt::Wait {
+                    stmt: Some(stmt), ..
+                } if Self::ast_has_run_test(std::slice::from_ref(stmt)) => {
                     return true;
                 }
                 _ => {}

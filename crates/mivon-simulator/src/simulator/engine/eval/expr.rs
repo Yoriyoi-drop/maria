@@ -1207,13 +1207,15 @@ impl SimulationEngine {
                                                             tok.parse::<i64>()
                                                         } {
                                                             let out_idx = 2 + ai;
-                                                            if let Some(IrExpr::Signal(sid, _)) = args.get(out_idx) {
-                                                                    self.state.write_signal(
-                                                                        *sid,
-                                                                        LogicVec::from_u64(
-                                                                            val as u64, 32,
-                                                                        ),
-                                                                    );
+                                                            if let Some(IrExpr::Signal(sid, _)) =
+                                                                args.get(out_idx)
+                                                            {
+                                                                self.state.write_signal(
+                                                                    *sid,
+                                                                    LogicVec::from_u64(
+                                                                        val as u64, 32,
+                                                                    ),
+                                                                );
                                                             }
                                                             ai += 1;
                                                         }
