@@ -79,7 +79,7 @@ jobs:
               echo "::warning::gagal clone OpenTitan — test terkait di-skip"
               exit 0
             }
-            (cd opentitan && git sparse-checkout set \
+            (cd opentitan && git sparse-checkout set \ben
               hw/top_englishbreakfast/ip/ast/rtl \
               hw/dv/sv/cip_lib/seq_lib)
           fi
@@ -90,7 +90,7 @@ jobs:
           fi
 
       - name: Unit and integration tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --ignored
 
   area-detection:
     name: Change area detection
