@@ -20,7 +20,7 @@ use mivon_simulator::simulator::SimulationEngine;
 use super::state::{
     blocking_assign_pos, word_count, AssertionRow, CompileInfo, CoverageInfo, CovergroupRow,
     DepRow, DiagEntry, DiagLevel, FileNode, GuiEvent, InstanceRow, MacroRow, MicdInfo, ParamRow,
-    PipelineStage, QuickFix, QuickFixKind, SignalRow, SimInfo, TraceEvent, WaveformSignal,
+    PipelineStage, QuickFix, QuickFixKind, SignalRow, SimInfo, TextHit, TraceEvent, WaveformSignal,
     STAGE_SIMULATOR,
 };
 
@@ -1306,6 +1306,42 @@ pub fn signals_to_vcd(signals: &[WaveformSignal]) -> String {
                 out.push_str(&format!("{}{}\n", v, code));
             } else {
                 out.push_str(&format!("b{} {}\n", v, code));
+            }
+        }
+    }
+    out
+}
+
+/// Pencarian teks (case-insensitive) di file RTL/header/mv proyek. Kap maksimal
+/// `max_results` hasil & lewati file tak terbaca. Dipakai tab Search → Text;
+/// klik hasil → buka file & lompat baris.
+pub fn search_text_in_files(files: &[PathBuf], needle: &str, max_results: usize) -> Vec<TextHit> {
+    let q = needle.trim().to_lowercase();
+    if q.is_empty() || max_results == 0 {
+        return Vec::new();
+    }
+    let mut out: Vec<TextHit> = Vec::new();
+    'file: for p in files {
+        if out.len() >= max_results {
+            break;
+        }
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext, "sv" | "svh" | "v" | "vh" | "mv") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        for (i, raw) in text.lines().enumerate() {
+            if out.len() >= max_results {
+                continue 'file;
+            }
+            if raw.to_lowercase().contains(&q) {
+                out.push(TextHit {
+                    file: p.clone(),
+                    line: i + 1,
+                    text: raw.trim().to_string(),
+                });
             }
         }
     }

@@ -32,6 +32,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             (SearchCat::Package, "Package"),
             (SearchCat::Macro, "Macro"),
             (SearchCat::Instance, "Instance"),
+            (SearchCat::Text, "Text"),
         ] {
             if ui
                 .selectable_label(state.search_cat == cat, label)
@@ -55,6 +56,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     let q = state.search_filter.to_lowercase();
     let info = state.compile_info.as_ref();
     let design = state.design.as_ref();
+    // Clone hits teks SEKALI di luar closure (arm tidak boleh memindah
+    // `state` — binding yang sama dipakai arm lain & closure FnMut).
+    let text_hits = state.text_hits.clone();
     let mut to_open: Option<(PathBuf, Option<usize>)> = None;
     let mut found_any = false;
 
@@ -67,6 +71,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             SearchCat::Package => packages_ui(ui, info, &q, &mut to_open, &mut found_any),
             SearchCat::Macro => macros_ui(ui, info, &q, &mut to_open, &mut found_any),
             SearchCat::Instance => instances_ui(ui, info, &q, &mut to_open, &mut found_any),
+            SearchCat::Text => text_hits_ui(ui, &text_hits, &q, &mut to_open, &mut found_any),
         });
 
     if !q.is_empty() && !found_any {
@@ -325,5 +330,40 @@ fn instances_ui(
         if result_row(ui, &i.name, &sec, file) && has_file {
             *to_open = Some((i.file.clone(), Some(i.line)));
         }
+    }
+}
+
+/// Cari teks (Text): tampilkan hasil `text_hits` (dari backend
+/// `search_text_in_files` atau LSP) — klik → buka file di baris yang cocok.
+fn text_hits_ui(
+    ui: &mut egui::Ui,
+    hits: &[crate::state::TextHit],
+    q: &str,
+    to_open: &mut Option<(PathBuf, Option<usize>)>,
+    found_any: &mut bool,
+) {
+    let _ = q;
+    if hits.is_empty() {
+        ui.label(
+            egui::RichText::new("Ketik kata kunci teks untuk mencari di seluruh file project")
+                .weak()
+                .italics()
+                .size(11.0),
+        );
+        return;
+    }
+    *found_any = true;
+    ui.label(
+        egui::RichText::new(format!("Text hits ({})", hits.len()))
+            .strong()
+            .size(11.0),
+    );
+    for h in hits {
+        let file = h.file.display().to_string();
+        let sec = format!("L{}", h.line);
+        if result_row(ui, &file, &sec, Some(&h.file)) {
+            *to_open = Some((h.file.clone(), Some(h.line)));
+        }
+        ui.label(egui::RichText::new(&h.text).monospace().size(10.0).weak());
     }
 }

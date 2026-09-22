@@ -228,6 +228,15 @@ pub struct InstanceRow {
     pub line: usize,
 }
 
+/// Satu hasil pencarian teks di file proyek (tab Search → Text).
+#[derive(Debug, Clone)]
+pub struct TextHit {
+    pub file: PathBuf,
+    pub line: usize,
+    /// Isi baris (di-trim) untuk konteks tampilan.
+    pub text: String,
+}
+
 /// Satu node hasil layout graf dependensi (tab Dependency visual) — posisi dan
 /// ukuran di layar + daftar edge (index node target, jumlah instance).
 #[derive(Debug, Clone)]
@@ -479,6 +488,7 @@ pub enum SearchCat {
     Package,
     Macro,
     Instance,
+    Text,
 }
 
 /// Kategori file di Project Explorer (desain: "Hierarki file. RTL, Testbench,
@@ -672,8 +682,13 @@ pub struct GuiState {
     pub show_outline: bool,
     pub outline_filter: String,
     pub search_filter: String,
-    /// Kategori aktif tab Search (Module/Signal/Parameter/Package/Macro/Instance).
+    /// Kategori aktif tab Search (Module/Signal/Parameter/Package/Macro/Instance/Text).
     pub search_cat: SearchCat,
+    /// Pencarian teks (tab Search → Text): needle, hasil & needle terakhir
+    /// yang dihitung (deteksi hasil kedaluwarsa saat needle berubah).
+    pub text_search: String,
+    pub text_hits: Vec<TextHit>,
+    pub text_last_needle: String,
 
     // ── Bookmarks (Project Explorer) ──
     /// Path file yang di-bookmark (toggle via ikon ★ di file tree). Dipakai
@@ -818,6 +833,9 @@ impl GuiState {
             outline_filter: String::new(),
             search_filter: String::new(),
             search_cat: SearchCat::Module,
+            text_search: String::new(),
+            text_hits: Vec::new(),
+            text_last_needle: String::new(),
             bookmarks: std::collections::HashSet::new(),
             bookmarks_only: false,
             explorer_cat: FileCat::All,
@@ -1111,6 +1129,26 @@ impl GuiState {
                 } else {
                     let ext = n.path.extension().and_then(|e| e.to_str()).unwrap_or("");
                     if ext == "mv" {
+                        out.push(n.path.clone());
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.files, &mut out);
+        out
+    }
+
+    /// Kumpulkan file RTL/header/mv (.sv/.svh/.v/.vh/.mv) — dipakai pencarian
+    /// teks tab Search.
+    pub fn collect_all_rtl_files(&self) -> Vec<PathBuf> {
+        fn walk(nodes: &[FileNode], out: &mut Vec<PathBuf>) {
+            for n in nodes {
+                if n.is_dir {
+                    walk(&n.children, out);
+                } else {
+                    let ext = n.path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if matches!(ext, "sv" | "svh" | "v" | "vh" | "mv") {
                         out.push(n.path.clone());
                     }
                 }

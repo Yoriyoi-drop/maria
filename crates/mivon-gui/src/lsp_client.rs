@@ -450,6 +450,7 @@ pub fn definition_target(value: &Value) -> Option<(PathBuf, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn framing_single_message() {
@@ -506,5 +507,69 @@ mod tests {
             }
             _ => panic!("bukan LspDiagnostics"),
         }
+    }
+
+    /// E2E: client nyata ↔ server nyata (`mivon --lsp`). DIDOpen file SV
+    /// invalid → server harus balas publishDiagnostics dengan error.
+    /// Dilewati (bukan gagal) bila binary server belum dibangun.
+    #[test]
+    fn lsp_end_to_end_with_real_server() {
+        let Some(bin) = lsp_binary_path() else {
+            eprintln!("SKIP: binary 'mivon' tidak ditemukan (build dulu: cargo build --bin mivon)");
+            return;
+        };
+        let ws = std::env::temp_dir().join(format!("mivon_lsp_e2e_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&ws);
+        let file = ws.join("bad.sv");
+        let src = "module bad;\n  logic q = ;\nendmodule\n";
+        std::fs::write(&file, src).unwrap();
+
+        let client = LspClient::start(bin, ws.clone());
+        // Tunggu handshake selesai (server pertama bisa lambat, beri 30s).
+        let mut ready = false;
+        for _ in 0..30 {
+            match client.rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(GuiEvent::LspStarted(_)) => {
+                    ready = true;
+                    break;
+                }
+                Ok(GuiEvent::LspStopped(reason)) => {
+                    panic!("server berhenti sebelum siap: {}", reason);
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        if !ready {
+            let _ = std::fs::remove_dir_all(&ws);
+            panic!("timeout menunggu LspStarted (30s)");
+        }
+
+        client
+            .tx
+            .send(LspCmd::DidOpen {
+                path: file.clone(),
+                text: src.to_string(),
+            })
+            .unwrap();
+
+        // Harus terima diagnostics (SV invalid) dalam 30s.
+        let mut got = false;
+        for _ in 0..30 {
+            match client.rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(GuiEvent::LspDiagnostics(f, diags)) => {
+                    let expect_path = file.display().to_string();
+                    assert_eq!(f, expect_path, "file diagnostics cocok");
+                    assert!(!diags.is_empty(), "SV invalid harus punya diagnostic");
+                    got = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        client.tx.send(LspCmd::Stop).unwrap();
+        let _ = std::fs::remove_dir_all(&ws);
+        assert!(got, "tidak menerima publishDiagnostics dari server dalam 30s");
     }
 }
