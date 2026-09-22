@@ -86,7 +86,7 @@ jobs:
           fi
 
       - name: Unit and integration tests
-        run: cargo test --workspace --all-targets --ignored
+        run: cargo test --workspace --all-targets -- --ignored
 
   area-detection:
     name: Change area detection
