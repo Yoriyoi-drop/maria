@@ -85,6 +85,23 @@ jobs:
             echo "warning: OpenTitan RTL tidak lengkap — test debug di-skip"
           fi
 
+      - name: Provision Ubuntu ISO (boot E2E, opsional)
+        # Test boot emu (#[ignore]) butuh ISO Ubuntu nyata (~6 GB). Default
+        # TIDAK diunduh (berat tiap run) — test terkait otomatis skip. Aktifkan
+        # full boot E2E: set secret/variabel BOOT_ISO_URL=https://...iso; file
+        # tersimpan di repo root dgn nama ubuntu-26.04.1-desktop-amd64.iso.
+        run: |
+          if [ -n "$BOOT_ISO_URL" ] && [ ! -f ubuntu-26.04.1-desktop-amd64.iso ]; then
+            curl -fL --retry 3 -o ubuntu-26.04.1-desktop-amd64.iso "$BOOT_ISO_URL" || {
+              echo "::warning::gagal unduh ISO — test boot di-skip"
+            }
+          fi
+          if [ -f ubuntu-26.04.1-desktop-amd64.iso ]; then
+            echo "Ubuntu ISO tersedia — test boot E2E akan jalan"
+          else
+            echo "Ubuntu ISO tidak diunduh — test boot E2E di-skip"
+          fi
+
       - name: Unit and integration tests
         run: cargo test --workspace --all-targets -- --ignored
 

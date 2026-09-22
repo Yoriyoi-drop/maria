@@ -3708,6 +3708,27 @@ mod tests {
         root.join(rel).to_string_lossy().to_string()
     }
 
+    /// Path ISO Ubuntu utk test boot — env `MIVON_UBUNTU_ISO` dulu, fallback
+    /// repo-root `ubuntu-26.04.1-desktop-amd64.iso`. Test ini butuh ISO NYATA
+    /// (~6 GB, boot sector + El Torito boot.img); bila tidak tersedia → skip
+    /// (non-fatal), opsional unduh di CI via env `BOOT_ISO_URL` (ci.yml).
+    fn boot_iso_path() -> Option<String> {
+        if let Ok(p) = std::env::var("MIVON_UBUNTU_ISO") {
+            if std::path::Path::new(&p).is_file() {
+                return Some(p);
+            }
+            eprintln!("skip: MIVON_UBUNTU_ISO={p} tidak ada");
+        }
+        let pb = root_of("ubuntu-26.04.1-desktop-amd64.iso");
+        if std::path::Path::new(&pb).is_file() {
+            return Some(pb);
+        }
+        eprintln!(
+            "skip: ubuntu ISO tidak ada di repo root (set MIVON_UBUNTU_ISO / unduh via BOOT_ISO_URL)"
+        );
+        None
+    }
+
     /// Muat opcode mentah ke 0x7c00, CS:IP = 0:0x7c00.
     fn load(m: &mut MemoryMap, code: &[u8]) -> X86Cpu {
         let mut cpu = X86Cpu::new();
@@ -3792,7 +3813,7 @@ mod tests {
     #[test]
     fn test_int13_extended_read_iso_mbr() {
         // INT 13h AH=42 dengan DAP di DS:SI — baca sektor 0 dari ISO
-        let iso = root_of("ubuntu-26.04.1-desktop-amd64.iso");
+        let Some(iso) = boot_iso_path() else { return };
         let mut cpu = X86Cpu::new();
         cpu.disk = Some(Box::new(FileDisk::open(&iso).expect("open iso")));
         let mut m = mem();
@@ -3829,7 +3850,7 @@ mod tests {
     #[ignore]
     #[test]
     fn test_boot_iso_mbr_executes() {
-        let iso = root_of("ubuntu-26.04.1-desktop-amd64.iso");
+        let Some(iso) = boot_iso_path() else { return };
         let mut file = std::fs::File::open(&iso).expect("open");
         let mut mbr = [0u8; 512];
         use std::io::Read;
@@ -3867,7 +3888,7 @@ mod tests {
     #[ignore]
     #[test]
     fn test_boot_grub_bootimg_executes() {
-        let iso = root_of("ubuntu-26.04.1-desktop-amd64.iso");
+        let Some(iso) = boot_iso_path() else { return };
         use std::io::{Read, Seek, SeekFrom};
         let mut file = std::fs::File::open(&iso).expect("open");
         file.seek(SeekFrom::Start(667 * 2048)).expect("seek");
