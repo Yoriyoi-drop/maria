@@ -48,6 +48,61 @@ struct LastWorkspace {
     pub project_root: String,
 }
 
+/// Daftar proyek terakhir dibuka (`<config>/mivon/recent.json`) — paling baru
+/// di depan, maks `RECENT_MAX`. Dipakai welcome screen "Recent projects".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RecentProjects {
+    pub projects: Vec<String>,
+}
+
+/// Maksimal proyek yang diingat di daftar recent.
+pub const RECENT_MAX: usize = 8;
+
+/// Path daftar proyek recent.
+fn recent_projects_path() -> PathBuf {
+    config_dir().join("mivon").join("recent.json")
+}
+
+/// Baca daftar proyek recent (hanya yang masih ada di disk).
+pub fn load_recents() -> Vec<PathBuf> {
+    let Ok(json) = std::fs::read_to_string(recent_projects_path()) else {
+        return Vec::new();
+    };
+    let Ok(rp) = serde_json::from_str::<RecentProjects>(&json) else {
+        return Vec::new();
+    };
+    rp.projects
+        .iter()
+        .filter_map(|p| {
+            let path = PathBuf::from(p);
+            if path.is_dir() {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Tambah proyek ke daftar recent (paling depan, dedupe, cap `RECENT_MAX`).
+pub fn push_recent(root: &Path) {
+    let mut list: Vec<String> = load_recents()
+        .into_iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    list.retain(|p| p != &root.display().to_string());
+    list.insert(0, root.display().to_string());
+    list.truncate(RECENT_MAX);
+    let rp = RecentProjects { projects: list };
+    if let Ok(json) = serde_json::to_string_pretty(&rp) {
+        let p = recent_projects_path();
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(p, json);
+    }
+}
+
 /// Direktori konfigurasi pengguna ($XDG_CONFIG_HOME atau ~/.config).
 fn config_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
@@ -273,5 +328,38 @@ mod tests {
         assert_eq!(back.wave_zoom, 8.0);
         assert_eq!(back.max_time, 5000);
         assert_eq!(back.bookmarks, vec!["core/cache.sv".to_string()]);
+    }
+
+    #[test]
+    fn recent_projects_roundtrip_dedupe_cap() {
+        // Isolasi config dir ke temp — jangan sentuh config user asli.
+        let cfg = std::env::temp_dir().join(format!("mivon_ws_test_{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", &cfg);
+        let a = cfg.join("proj_a");
+        let b = cfg.join("proj_b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+
+        push_recent(&a);
+        push_recent(&b);
+        push_recent(&a); // dedupe → pindah ke depan, bukan duplikat
+        let recents = load_recents();
+        assert_eq!(recents.len(), 2);
+        assert_eq!(recents[0], a);
+        assert_eq!(recents[1], b);
+
+        // Isi > cap → tertimpa yang paling lama.
+        for i in 0..(RECENT_MAX + 3) {
+            let p = cfg.join(format!("proj_{}", i));
+            if !p.exists() {
+                std::fs::create_dir_all(&p).unwrap();
+            }
+            push_recent(&p);
+        }
+        let capped = load_recents();
+        assert!(capped.len() <= RECENT_MAX, "cap recent");
+
+        std::fs::remove_dir_all(&cfg).ok();
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }

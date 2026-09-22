@@ -404,19 +404,26 @@ pub fn trigger_open_project(state: &mut GuiState) {
     let Some(dir) = rfd::FileDialog::new().pick_folder() else {
         return;
     };
+    open_project_dir(state, &dir);
+}
+
+/// Buka proyek dari path langsung (dipanggil trigger dialog & klik recent
+/// di welcome screen) — tanpa dialog, tanpa GUI block.
+pub fn open_project_dir(state: &mut GuiState, dir: &std::path::Path) {
     let name = dir
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "Project".to_string());
-    let files = scan_tree(&dir);
+    let files = scan_tree(dir);
     state.project_name = name;
-    state.project_root = Some(dir);
+    state.project_root = Some(dir.to_path_buf());
     state.files = files;
     state.compile_info = None;
     state.signals.clear();
     state.diagnostics.clear();
     state.log("📂 Proyek dibuka");
-    // Proyek ini jadi "last workspace" — dipulihkan saat app dibuka kembali.
+    // Catat recent (welcome screen) + "last workspace" (restore saat startup).
+    super::workspace::push_recent(dir);
     save_workspace(state);
 }
 

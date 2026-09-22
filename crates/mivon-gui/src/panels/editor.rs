@@ -39,6 +39,34 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                 if ui.button("📂 Open Project").clicked() {
                     super::super::app::trigger_open_project(state);
                 }
+                // ── Recent projects — klik buka langsung ──
+                let recents = crate::workspace::load_recents();
+                if !recents.is_empty() {
+                    ui.add_space(16.0);
+                    ui.label(egui::RichText::new("Recent projects").strong().size(12.0));
+                    ui.add_space(4.0);
+                    let mut to_open: Option<std::path::PathBuf> = None;
+                    for p in recents {
+                        let label = p
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| p.display().to_string());
+                        if ui
+                            .button(
+                                egui::RichText::new(format!("▸ {}", label))
+                                    .monospace()
+                                    .size(11.0),
+                            )
+                            .on_hover_text(p.display().to_string())
+                            .clicked()
+                        {
+                            to_open = Some(p.clone());
+                        }
+                    }
+                    if let Some(p) = to_open {
+                        super::super::app::open_project_dir(state, &p);
+                    }
+                }
             });
         });
         return;
