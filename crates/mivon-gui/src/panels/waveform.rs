@@ -10,7 +10,12 @@
 
 use eframe::egui;
 
-use super::super::state::{GuiState, WaveformSignal};
+use std::path::PathBuf;
+
+use mivon_core::Symbol;
+use mivon_ir::IrDesign;
+
+use super::super::state::{word_count, GuiState, WaveformSignal};
 
 // ── Palet ──
 const GRID_COLOR: egui::Color32 = egui::Color32::from_rgb(46, 49, 56);
@@ -118,6 +123,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     let wf_w = (t_end as f32 + 8.0) * scale;
     let mut wf_rect: Option<egui::Rect> = None;
     let mut readout: Option<u64> = None;
+    // Nama sinyal yang diklik — dibuka deklarasinya SETELAH ScrollArea
+    // (borrow `state` bersih; di dalam closure hanya field terpisah yang
+    // dipinjam, sama seperti `wave_zoom`/`waveform`).
+    let mut want_goto: Option<String> = None;
 
     egui::ScrollArea::both()
         .id_salt("waveform_scroll")
@@ -140,18 +149,32 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             for sig in &visible {
                 ui.horizontal(|ui| {
                     let icon = if sig.width == 1 { "─" } else { "≡" };
-                    ui.add_sized(
-                        [NAME_W, ROW_H],
-                        egui::Label::new(
-                            egui::RichText::new(format!("{} {}  [{}]", icon, sig.name, sig.width))
+                    let label_resp = ui
+                        .add_sized(
+                            [NAME_W, ROW_H],
+                            egui::Label::new(
+                                egui::RichText::new(format!(
+                                    "{} {}  [{}]",
+                                    icon, sig.name, sig.width
+                                ))
                                 .monospace()
                                 .size(11.0),
+                            )
+                            .truncate()
+                            .sense(egui::Sense::click()),
                         )
-                        .truncate(),
-                    );
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(wf_w, ROW_H), egui::Sense::hover());
+                        .on_hover_text("Klik: buka deklarasi sinyal di RTL");
+                    let (rect, resp) =
+                        ui.allocate_exact_size(egui::vec2(wf_w, ROW_H), egui::Sense::click());
                     paint_signal(ui, rect, sig, scale);
+                    let _ = resp
+                        .clone()
+                        .on_hover_text("Klik: buka deklarasi sinyal di RTL");
+                    // Klik nama atau area trace → catat sinyal untuk resolve
+                    // sumber (dieksekusi setelah ScrollArea selesai).
+                    if resp.clicked() || label_resp.clicked() {
+                        want_goto = Some(sig.name.clone());
+                    }
                     wf_rect = Some(match wf_rect {
                         Some(r) => r.union(rect),
                         None => rect,
@@ -208,6 +231,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                     .color(CURSOR_COLOR),
             );
         });
+    }
+
+    // ── Klik sinyal → buka deklarasi di RTL. Ditempatkan PALING AKHIR:
+    // `visible` (referensi ke `state.waveform`) dipakai sampai readout strip
+    // selesai — memanggil `open_signal_declaration(..., state)` (borrow mut)
+    // sebelum itu memicu E0502. File target = module pemilik sinyal; baris =
+    // deklarasi heuristic (lihat `find_signal_decl_line`). ──
+    if let Some(name) = want_goto {
+        open_signal_declaration(state, &name);
     }
 }
 
@@ -374,5 +406,172 @@ fn bin_to_hex(bin: &str) -> String {
         "0".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+// ───────────────────────── Klik sinyal → deklarasi ─────────────────────────
+
+/// Pisahkan nama sinyal waveform menjadi (owner scope, nama signal): "u1.q" →
+/// ("u1", "q"); nama bare → (None, nama). Nama invalid (scope/signal kosong)
+/// diperlakukan sebagai bare (fallback ke modul top).
+fn split_scope(name: &str) -> (Option<String>, String) {
+    match name.split_once('.') {
+        Some((m, s)) if !m.is_empty() && !s.is_empty() => (Some(m.to_string()), s.to_string()),
+        _ => (None, name.to_string()),
+    }
+}
+
+/// Cari nama module dari nama instance (scan sub_instances seluruh design —
+/// waveform scope bisa berupa nama instance, bukan nama module).
+fn instance_to_module(design: &IrDesign, inst: &str) -> Option<String> {
+    let check = |m: &mivon_ir::IrModule| {
+        m.sub_instances
+            .iter()
+            .find(|i| i.instance_name.as_str() == inst)
+            .map(|i| i.module_name.to_string())
+    };
+    if let Some(m) = check(&design.top) {
+        return Some(m);
+    }
+    design.modules.values().find_map(check)
+}
+
+/// Resolve nama sinyal waveform → (file RTL module pemilik, baris deklarasi).
+///
+/// Alur: pisahkan scope → tentukan module pemilik (nama module langsung, nama
+/// instance, atau fallback modul top) → file dari `module_files` → baris
+/// deklarasi heuristic dari isi file. Baris `None` = module ditemukan tapi
+/// deklarasi tidak terdeteksi.
+pub fn decl_location(state: &GuiState, name: &str) -> Option<(PathBuf, Option<usize>)> {
+    let design = state.design.as_ref()?;
+    let ci = state.compile_info.as_ref()?;
+    let (owner, sig) = split_scope(name);
+
+    let top_name = design.top.name.to_string();
+    let module_name = match &owner {
+        Some(m) if *m == top_name => top_name,
+        Some(m) if design.modules.contains_key(&Symbol::intern(m)) => m.clone(),
+        Some(m) => instance_to_module(design, m).unwrap_or(top_name),
+        None => top_name,
+    };
+
+    let path = ci.module_files.get(&module_name)?.clone();
+    let content = std::fs::read_to_string(&path).ok()?;
+    let line = find_signal_decl_line(&content, &sig);
+    Some((path, line))
+}
+
+/// Baris (1-based) deklarasi `sig` di file — scan heuristic per-baris: baris
+/// berisi kata utuh `sig` DAN diawali keyword deklarasi data
+/// (logic/reg/wire/bit/input/output/inout/tri). Mengembalikan baris pertama
+/// yang cocok; `None` bila tidak ada. Cukup untuk navigasi — bukan parser.
+fn find_signal_decl_line(content: &str, sig: &str) -> Option<usize> {
+    const DECL_KW: &[&str] = &[
+        "logic",
+        "reg",
+        "wire",
+        "bit",
+        "input",
+        "output",
+        "inout",
+        "tri",
+    ];
+    if sig.is_empty() {
+        return None;
+    }
+    for (i, raw) in content.lines().enumerate() {
+        let code = raw.split("//").next().unwrap_or(raw).trim_start();
+        if code.is_empty() {
+            continue;
+        }
+        let first = code.split_whitespace().next().unwrap_or("");
+        if DECL_KW.contains(&first) && word_count(code, sig) > 0 {
+            return Some(i + 1);
+        }
+    }
+    None
+}
+
+/// Buka file module pemilik sinyal & lompat ke baris deklarasi (via
+/// `pending_goto` editor, sama seperti navigasi diagnostic di Problems tab).
+fn open_signal_declaration(state: &mut GuiState, name: &str) {
+    match decl_location(state, name) {
+        Some((path, Some(line))) => {
+            if !state.open_files.iter().any(|of| of.path == path) {
+                state.open_file(path.clone());
+            }
+            if let Some(idx) = state.open_files.iter().position(|of| of.path == path) {
+                state.active_file = Some(idx);
+                state.open_files[idx].pending_goto = Some(line);
+            }
+            state.log(format!("→ Deklarasi '{}': {}:{}", name, path.display(), line));
+        }
+        Some((path, None)) => {
+            state.open_file(path);
+            state.log(format!(
+                "→ Deklarasi '{}': file module dibuka (baris tak terdeteksi)",
+                name
+            ));
+        }
+        None => {
+            state.log(format!(
+                "⚠ Deklarasi '{}' tidak ditemukan — compile dulu?",
+                name
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_scope_bare_and_scoped() {
+        assert_eq!(split_scope("u1.q"), (Some("u1".into()), "q".into()));
+        assert_eq!(split_scope("clk"), (None, "clk".into()));
+        // scope/signal kosong → diperlakukan sebagai nama bare.
+        assert_eq!(split_scope(".."), (None, "..".into()));
+        assert_eq!(split_scope(".x"), (None, ".x".into()));
+    }
+
+    #[test]
+    fn decl_line_simple_signal() {
+        let src = "module top;\n  logic clk;\nendmodule\n";
+        assert_eq!(find_signal_decl_line(src, "clk"), Some(2));
+    }
+
+    #[test]
+    fn decl_line_port_with_range() {
+        let src = "module m (\n  input logic [7:0] data_in,\n  output logic [7:0] data_out\n);\nendmodule\n";
+        assert_eq!(find_signal_decl_line(src, "data_in"), Some(2));
+        assert_eq!(find_signal_decl_line(src, "data_out"), Some(3));
+    }
+
+    #[test]
+    fn decl_line_multi_decl_same_line() {
+        let src = "module m;\n  logic a, b, c;\nendmodule\n";
+        assert_eq!(find_signal_decl_line(src, "c"), Some(2));
+        assert_eq!(find_signal_decl_line(src, "b"), Some(2));
+    }
+
+    #[test]
+    fn decl_line_picks_decl_not_assignment() {
+        // `y` dideklarasikan baris 2; baris assign bukan deklarasi — tetap
+        // ambil baris deklarasi pertama.
+        let src = "module m;\n  logic y;\n  assign y = 1'b0;\nendmodule\n";
+        assert_eq!(find_signal_decl_line(src, "y"), Some(2));
+        // `z` tidak pernah dideklarasikan (hanya di-assign) → None.
+        let no_decl = "module m;\n  assign z = 1'b0;\nendmodule\n";
+        assert_eq!(find_signal_decl_line(no_decl, "z"), None);
+    }
+
+    #[test]
+    fn decl_line_ignores_always_block_for_clk() {
+        // `clk` ada di deklarasi port (baris 2) DAN di `always @(posedge clk)`
+        // (baris 3, bukan deklarasi) — ambil baris deklarasi.
+        let src =
+            "module m;\n  input logic clk,\n  always @(posedge clk) begin end\nendmodule\n";
+        assert_eq!(find_signal_decl_line(src, "clk"), Some(2));
     }
 }
