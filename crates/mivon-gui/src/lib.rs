@@ -41,6 +41,18 @@ fn create_app(
 /// (GPU/driver bermasalah, tidak ada Vulkan, dll), `run()` otomatis mencoba
 /// lagi dengan renderer Glow sebelum menyerah.
 pub fn run() -> eframe::Result<()> {
+    // Rayon globalpool dengan stack BESAR — Wajib sebelum compile apa pun.
+    // Kompilasi dijalankan di worker rayon (parallel parse); stack default
+    // worker rayon ~2MB TIDAK cukup untuk recursion parser (guard 1024) pada
+    // desain dengan statement/nesting dalam → stack overflow meruntuhkan
+    // seluruh proses GUI. Cermin konfigurasi CLI (src/main.rs): 16MB/worker.
+    // build_global hanya bisa sekali; bila sudah terbangun (mis. crate lain)
+    // panggilan gagal → abaikan.
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(16 * 1024 * 1024)
+        .build_global()
+        .ok();
+
     let mk_options = |renderer| eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Mivon — RTL Engineering Control Center")

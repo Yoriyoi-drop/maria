@@ -25,32 +25,99 @@ use super::state::{
 };
 
 /// Scan direktori → pohon file (rekursif, sinkron).
+///
+/// Penanganan symlink (agar GUI TIDAK stack overflow di proyek dengan
+/// symlink-loop seperti `rtl/fabric/fabric → rtl/fabric`):
+/// - `entry.file_type()` TIDAK mengikuti symlink (jadi isi symlink tidak
+///   pernah di-rekursi secara buta).
+/// - `descend()` mencatat path canonical direktori yang sedang terbuka di
+///   rantai rekursi; bila target symlink sudah ada di rantai itu (loop), node
+///   diperlakukan sebagai LEAF (tidak di-rekursi). Symlink ke direktori asli
+///   yang aman tetap dieksplor.
 pub fn scan_tree(root: &Path) -> Vec<FileNode> {
-    fn build(dir: &Path) -> Vec<FileNode> {
-        let mut nodes = Vec::new();
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return nodes;
+    let mut trail: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    descend(root, &mut trail)
+}
+
+/// Rekursi satu level: baca entry `dir` dan bangun children. Dipanggil untuk
+/// direktori biasa maupun target symlink yang sudah di-resolve & di-guard
+/// siklus (lihat `descend`).
+fn build_level(dir: &Path, trail: &mut std::collections::HashSet<PathBuf>) -> Vec<FileNode> {
+    let mut nodes = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return nodes;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Skip hidden & build artifacts
+        if name.starts_with('.') || name == "target" || name == "node_modules" {
+            continue;
+        }
+        // file_type() TIDAK mengikuti symlink — isi symlink tidak pernah
+        // di-rekursi tanpa pemeriksaan siklus.
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            // Skip hidden & build artifacts
-            if name.starts_with('.') || name == "target" || name == "node_modules" {
-                continue;
-            }
-            let is_dir = path.is_dir();
-            let children = if is_dir { build(&path) } else { Vec::new() };
+        if ft.is_dir() {
+            let children = descend(&path, trail);
             nodes.push(FileNode {
                 name,
                 path,
-                is_dir,
+                is_dir: true,
                 children,
             });
+            continue;
         }
-        nodes.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
-        nodes
+        if ft.is_symlink() {
+            // Symlink: resolve target. Bila target = direktori asli dan tidak
+            // membentuk siklus (target canonical belum ada di rantai aktif)
+            // → dieksplor sebagai direktori; selain itu (loop / target rusak /
+            // bukan dir) → leaf. Guard ada di `descend`.
+            if let Ok(target) = path.canonicalize() {
+                if target.is_dir() {
+                    let children = descend(&target, trail);
+                    nodes.push(FileNode {
+                        name,
+                        path,
+                        is_dir: true,
+                        children,
+                    });
+                    continue;
+                }
+            }
+            nodes.push(FileNode {
+                name,
+                path,
+                is_dir: false,
+                children: Vec::new(),
+            });
+            continue;
+        }
+        nodes.push(FileNode {
+            name,
+            path,
+            is_dir: false,
+            children: Vec::new(),
+        });
     }
-    build(root)
+    nodes.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
+    nodes
+}
+
+/// Masuk ke direktori `dir` dengan guard siklus: canonical path didaftarkan di
+/// `trail`; bila sudah ada (path ini sedang dibuka di rantai) → loop, kembalikan
+/// kosong (tidak di-rekursi ulang).
+fn descend(dir: &Path, trail: &mut std::collections::HashSet<PathBuf>) -> Vec<FileNode> {
+    let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if !trail.insert(canon.clone()) {
+        // Siklus (symlink ke ancestor / dir yang sedang terbuka) → prune.
+        return Vec::new();
+    }
+    let out = build_level(dir, trail);
+    trail.remove(&canon);
+    out
 }
 
 /// Compile + elaborate project di worker thread. `project_root` dipakai untuk
@@ -1374,5 +1441,40 @@ mod tests {
     #[test]
     fn flatten_events_empty_input_empty() {
         assert!(flatten_events(&[]).is_empty());
+    }
+
+    // ── scan_tree vs symlink-loop ──
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_tree_tolerates_symlink_loops() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("mivon_gui_scan_{}", std::process::id()));
+        let real = base.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("sig.sv"), "module sig;\nendmodule\n").unwrap();
+        symlink(&base, base.join("loop")).unwrap(); // loop → dir induk (siklus)
+        symlink(&real, base.join("lib")).unwrap(); // aman → subdir
+
+        let tree = scan_tree(&base);
+
+        // Tidak stack-overflow; direktori nyata tetap eksplor.
+        assert!(tree.iter().any(|n| n.name == "real" && n.is_dir));
+        let real_node = tree.iter().find(|n| n.name == "real").unwrap();
+        assert!(
+            real_node.children.iter().any(|c| c.name == "sig.sv"),
+            "file di dalam direktori nyata terlihat"
+        );
+        // Symlink-loop dipotong — anaknya tidak direkursi tak berujung.
+        let loop_node = tree.iter().find(|n| n.name == "loop").unwrap();
+        assert!(
+            loop_node.children.is_empty(),
+            "symlink-loop tidak boleh di-rekursi"
+        );
+        // Symlink aman ke subdir tetap dieksplor.
+        let lib_node = tree.iter().find(|n| n.name == "lib").unwrap();
+        assert!(lib_node.is_dir && !lib_node.children.is_empty());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
