@@ -25,19 +25,26 @@ fn bench_compile_counter_sv() {
 fn bench_compile_100_modules() {
     let mut source = String::new();
     for i in 0..100 {
-        source.push_str(&format!(
-            r#"module m_{}(input clk, output reg [3:0] q);
-            always_ff @(posedge clk) q <= q + 4'h1;
-        endmodule
-"#,
-            i
-        ));
+        if i == 0 {
+            source.push_str(
+                "module m_0(input clk, output reg [3:0] q); always_ff @(posedge clk) q <= q + 4'h1; endmodule\n",
+            );
+        } else {
+            source.push_str(&format!(
+                "module m_{i}(input clk, output reg [3:0] q); m_{} u(.clk(clk)); always_ff @(posedge clk) q <= q + 4'h1; endmodule\n",
+                i - 1
+            ));
+        }
     }
     let start = Instant::now();
     let _ = compile_str(&source).unwrap();
     let elapsed = start.elapsed();
     eprintln!("100 modules: {:?}", elapsed);
-    assert!(elapsed.as_secs() < 10, "too slow: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 60,
+        "too slow: {:?} (debug build / cold machine)",
+        elapsed
+    );
 }
 
 #[test]

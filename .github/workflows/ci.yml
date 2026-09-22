@@ -74,17 +74,13 @@ jobs:
         # gagal (network dll), test terkait otomatis skip (non-fatal).
         run: |
           if [ ! -d opentitan/.git ]; then
-            git clone --depth 1 --filter=blob:none --sparse \
-              https://github.com/lowRISC/opentitan.git opentitan || {
+            git clone --depth 1 https://github.com/lowRISC/opentitan.git opentitan || {
               echo "::warning::gagal clone OpenTitan — test terkait di-skip"
               exit 0
             }
-            (cd opentitan && git sparse-checkout set \ben
-              hw/top_englishbreakfast/ip/ast/rtl \
-              hw/dv/sv/cip_lib/seq_lib)
           fi
-          if [ -f opentitan/hw/top_englishbreakfast/ip/ast/rtl/rglts_pdm_3p3v.sv ]; then
-            echo "OpenTitan RTL tersedia (sparse)"
+          if [ -f opentitan/hw/top_englishbreakfast/ip/ast/rtl/rglts_pdm_3p3v.sv ] && [ -f opentitan/hw/dv/sv/cip_lib/seq_lib/cip_base_vseq.sv ]; then
+            echo "OpenTitan tersedia (full checkout)"
           else
             echo "warning: OpenTitan RTL tidak lengkap — test debug di-skip"
           fi

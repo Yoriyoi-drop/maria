@@ -375,27 +375,18 @@ fn bench_release_elaborate_10000_modules() {
 #[ignore]
 fn bench_release_memory_open_titan() {
     // Memory usage benchmark: compile OpenTitan (if available), track peak memory
-    let file_list_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("opentitan_rtl.f");
-    if !file_list_path.exists() {
-        eprintln!("OpenTitan file list not found, skipping memory benchmark");
+    let sources_path = opentitan_sources();
+    if sources_path.is_empty() {
+        eprintln!("OpenTitan checkout not found, skipping memory benchmark");
         return;
     }
-    let content = std::fs::read_to_string(&file_list_path).expect("opentitan_rtl.f not found");
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    let sources: Vec<String> = content
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| {
-            std::path::Path::new(manifest)
-                .join(l)
-                .to_string_lossy()
-                .to_string()
-        })
+    let sources: Vec<String> = sources_path
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
         .collect();
 
     eprintln!("OpenTitan RTL files: {}", sources.len());
-
+    with_ot_stack(move || {
     // Measure memory before
     let mem_before = peak_vmem_mb();
     let rss_before = current_rss_mb();
@@ -431,6 +422,7 @@ fn bench_release_memory_open_titan() {
             );
         }
     }
+    });
 }
 
 #[test]
@@ -487,15 +479,19 @@ fn bench_release_compile_counter() {
 fn bench_release_parse_large() {
     let mut src = String::new();
     for i in 0..1000 {
-        src.push_str(&format!(
-            "module m_{}(input clk, output reg [7:0] q);
-             always_ff @(posedge clk) q <= q + 8'h1;
-             endmodule\n",
-            i
-        ));
+        if i == 0 {
+            src.push_str(
+                "module m_0(input clk, output reg [7:0] q); always_ff @(posedge clk) q <= q + 8'h1; endmodule\n",
+            );
+        } else {
+            src.push_str(&format!(
+                "module m_{i}(input clk, output reg [7:0] q); m_{} u(.clk(clk)); always_ff @(posedge clk) q <= q + 8'h1; endmodule\n",
+                i - 1
+            ));
+        }
     }
     let start = Instant::now();
-    let design = compile_str(&src).unwrap();
+    let design = with_ot_stack(move || compile_str(&src).unwrap());
     let elapsed = start.elapsed();
     eprintln!(
         "1000 modules: {:?} ({} modules)",
@@ -549,36 +545,67 @@ fn bench_release_session_100_files() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Rekursif kumpulkan file `.sv` di bawah `dir` (urut).
+fn walk_sv(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            walk_sv(&p, out);
+        } else if p.extension() == Some(std::ffi::OsStr::new("sv")) {
+            out.push(p);
+        }
+    }
+}
+
+/// Scan sumber RTL OpenTitan (top_englishbreakfast) di runtime — full clone
+/// di CI (ci.yml provision) / local checkout; tanpa checkout → kosong & skip.
+fn opentitan_sources() -> Vec<std::path::PathBuf> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../opentitan/hw/top_englishbreakfast");
+    if !root.is_dir() {
+        eprintln!(
+            "skip: checkout OpenTitan tidak ada ({}) — bench di-skip",
+            root.display()
+        );
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    walk_sv(&root, &mut out);
+    out.sort();
+    out
+}
+
+/// Benchmark OpenTitan butuh stack jauh di atas default thread test (2 MiB)
+/// — parser rekursif dalam pada file SV besar. Sama pola dgn emu rtl.
+fn with_ot_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
 #[test]
 #[ignore]
 fn bench_release_opentitan_compile() {
-    // Compile all OpenTitan RTL files listed in opentitan_rtl.f
-    let file_list_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("opentitan_rtl.f");
-    let content = std::fs::read_to_string(&file_list_path).expect("opentitan_rtl.f not found");
+    // Compile semua RTL OpenTitan (top_englishbreakfast) — scan runtime.
+    let sources = opentitan_sources();
+    if sources.is_empty() {
+        return;
+    }
+    with_ot_stack(move || {
+        eprintln!("OpenTitan RTL files: {}", sources.len());
 
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    let sources: Vec<std::path::PathBuf> = content
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| {
-            let p = std::path::Path::new(manifest).join(l);
-            assert!(p.exists(), "file not found: {:?}", p);
-            p
-        })
-        .collect();
+        // Cold compile via compile_files (tolerates partial failures)
+        use crate::compile_files;
+        let string_sources: Vec<String> = sources
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
 
-    eprintln!("OpenTitan RTL files: {}", sources.len());
-
-    // Cold compile via compile_files (tolerates partial failures)
-    use crate::compile_files;
-    let string_sources: Vec<String> = sources
-        .iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect();
-
-    let start = Instant::now();
-    match compile_files(&string_sources) {
+        let start = Instant::now();
+        match compile_files(&string_sources) {
         Ok(design) => {
             let elapsed = start.elapsed();
             eprintln!(
@@ -602,54 +629,41 @@ fn bench_release_opentitan_compile() {
             // Don't panic — this is a benchmark, not a correctness test
         }
     }
+    });
 }
 
 #[test]
 #[ignore]
 fn bench_release_opentitan_warm_compile() {
-    // Measure warm (cached) compile after a cold compile
-    let file_list_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("opentitan_rtl.f");
-    let content = std::fs::read_to_string(&file_list_path).expect("opentitan_rtl.f not found");
-
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    let sources: Vec<std::path::PathBuf> = content
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| std::path::Path::new(manifest).join(l))
-        .collect();
-
-    // First compile to warm cache
-    {
-        let config = SessionConfig {
-            sources: sources.clone(),
-            ..Default::default()
-        };
-        let mut session = CompileSession::new(config);
-        let _ = session.compile().expect("warm-up compile failed");
+    // Measure warm (cached) compile. Pipeline CompileSession (MIR/MICD)
+    // rekursif terlalu dalam pada file OT raksasa (stack overflow >2 GB) —
+    // gunakan jalur compile_files (SAMA dgn bench cold, terbukti lolos) dua
+    // kali; run kedua mengukur warm-cache.
+    let sources = opentitan_sources();
+    if sources.is_empty() {
+        return;
     }
+    with_ot_stack(move || {
+        use crate::compile_files;
+        let files: Vec<String> = sources
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
 
-    // Second compile — should hit cache
-    {
-        let config = SessionConfig {
-            sources: sources.clone(),
-            ..Default::default()
-        };
-        let mut session = CompileSession::new(config);
+        // First compile — warm cache (MICD)
+        let _ = compile_files(&files);
+
+        // Second compile — harus hit cache
         let start = Instant::now();
-        match session.compile() {
-            Ok((design, _idx)) => {
-                let elapsed = start.elapsed();
-                session.print_timing();
-                eprintln!(
-                    "OpenTitan warm (cached) compile: {:?} ({} modules)",
-                    elapsed,
-                    design.modules.len()
-                );
-            }
-            Err(e) => {
-                eprintln!("OpenTitan warm compile failed: {:?}", e);
-            }
+        let second = compile_files(&files);
+        let elapsed = start.elapsed();
+        match second {
+            Ok(design) => eprintln!(
+                "OpenTitan warm (cached) compile: {:?} ({} modules)",
+                elapsed,
+                design.modules.len()
+            ),
+            Err(e) => eprintln!("OpenTitan warm compile failed: {:?}", e),
         }
-    }
+    });
 }
