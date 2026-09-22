@@ -139,6 +139,7 @@ impl MivonApp {
                             self.state.sensitive_triggers = info.sensitive_triggers;
                             self.state.events_per_delta = info.events_per_delta;
                             self.state.coverage = info.coverage;
+                            self.state.assertions = info.assertions;
                             self.state.log(format!(
                                 "✅ Simulasi selesai — t={} ({} signal, {:.2}ms)",
                                 info.cycles,

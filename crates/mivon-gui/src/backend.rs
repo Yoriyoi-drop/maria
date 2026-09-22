@@ -18,9 +18,9 @@ use mivon_ir::{IrDesign, LogicVal, LogicVec};
 use mivon_simulator::simulator::SimulationEngine;
 
 use super::state::{
-    blocking_assign_pos, word_count, CompileInfo, CoverageInfo, CovergroupRow, DepRow, DiagEntry,
-    DiagLevel, FileNode, GuiEvent, InstanceRow, MacroRow, MicdInfo, ParamRow, PipelineStage,
-    QuickFix, QuickFixKind, SignalRow, SimInfo, WaveformSignal, STAGE_SIMULATOR,
+    blocking_assign_pos, word_count, AssertionRow, CompileInfo, CoverageInfo, CovergroupRow,
+    DepRow, DiagEntry, DiagLevel, FileNode, GuiEvent, InstanceRow, MacroRow, MicdInfo, ParamRow,
+    PipelineStage, QuickFix, QuickFixKind, SignalRow, SimInfo, WaveformSignal, STAGE_SIMULATOR,
 };
 
 /// Scan direktori → pohon file (rekursif, sinkron).
@@ -941,6 +941,25 @@ pub fn run_simulation(
         covergroups,
     };
 
+    // ── Assertions: pass/fail per lokasi dari engine.assertion_stats (keyed
+    // (line, col) → (pass, fail)). Urut: gagal terbanyak dulu, lalu total. ──
+    let mut assertions: Vec<AssertionRow> = engine
+        .assertion_stats
+        .iter()
+        .map(|((l, c), (p, f))| AssertionRow {
+            line: *l,
+            col: *c,
+            pass: *p,
+            fail: *f,
+        })
+        .collect();
+    assertions.sort_by(|a, b| {
+        b.fail
+            .cmp(&a.fail)
+            .then_with(|| (b.pass + b.fail).cmp(&(a.pass + a.fail)))
+            .then_with(|| a.line.cmp(&b.line).then_with(|| a.col.cmp(&b.col)))
+    });
+
     Ok(SimInfo {
         signals,
         cycles: engine.current_time,
@@ -953,7 +972,52 @@ pub fn run_simulation(
         sensitive_triggers: counters.sensitive_triggers,
         events_per_delta: engine.sim_perf.events_per_delta(),
         coverage,
+        assertions,
     })
+}
+
+/// Resolve file asal baris assertion (1-based, baris mengandung "assert") di
+/// antara file module ter-compile. HANYA mengembalikan file bila EXAK SATU
+/// file yang cocok — ambiguous atau tidak ada → None (jangan menebak lokasi).
+/// Dipanggil saat klik baris assertion di panel (file module tersedia di GUI
+/// thread via `CompileInfo.module_files`).
+pub fn resolve_assert_file(
+    module_files: &HashMap<String, PathBuf>,
+    line: usize,
+) -> Option<PathBuf> {
+    // Dedupe: module berbeda bisa menunjuk file yang sama (hindari false
+    // ambiguous), baca tiap file sekali.
+    let mut uniq: Vec<(PathBuf, String)> = Vec::new();
+    {
+        let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        for path in module_files.values() {
+            if seen.insert(path.clone()) {
+                if let Ok(text) = std::fs::read_to_string(path) {
+                    uniq.push((path.clone(), text));
+                }
+            }
+        }
+    }
+    resolve_assert_in_sources(&uniq, line)
+}
+
+/// Inti resolusi (testable, tanpa I/O): cari file yang baris `line`-nya
+/// mengandung "assert"; 0 atau >1 kecocokan → None (ambiguous).
+fn resolve_assert_in_sources(sources: &[(PathBuf, String)], line: usize) -> Option<PathBuf> {
+    let mut cand: Option<PathBuf> = None;
+    for (path, text) in sources {
+        let Some(l) = text.lines().nth(line.saturating_sub(1)) else {
+            continue;
+        };
+        if !l.contains("assert") {
+            continue;
+        }
+        if cand.is_some() {
+            return None;
+        }
+        cand = Some(path.clone());
+    }
+    cand
 }
 
 /// Parse konten VCD (format yang ditulis `VcdWriter`) menjadi trace transisi
@@ -1208,5 +1272,48 @@ mod tests {
         let back = parse_vcd(&signals_to_vcd(&sigs));
         let q = back.iter().find(|s| s.name == "q").expect("q");
         assert_eq!(q.trace, sigs[0].trace);
+    }
+
+    // ── Resolver file assertion ──
+
+    fn src(path: &str, text: &str) -> (PathBuf, String) {
+        (PathBuf::from(path), text.to_string())
+    }
+
+    #[test]
+    fn resolve_assert_finds_single_unambiguous_file() {
+        let sources = vec![
+            src("/proj/alu.sv", "module alu;\n  assert (a);\nendmodule\n"),
+            src("/proj/cache.sv", "module cache;\n  logic q;\nendmodule\n"),
+        ];
+        assert_eq!(
+            resolve_assert_in_sources(&sources, 2),
+            Some(PathBuf::from("/proj/alu.sv")),
+        );
+    }
+
+    #[test]
+    fn resolve_assert_none_when_no_match() {
+        let sources = vec![
+            src("/proj/alu.sv", "module alu;\n  logic q;\nendmodule\n"),
+            src("/proj/cache.sv", "module cache;\n  logic w;\nendmodule\n"),
+        ];
+        assert_eq!(resolve_assert_in_sources(&sources, 2), None);
+    }
+
+    #[test]
+    fn resolve_assert_ambiguous_when_two_files_match() {
+        // Dua file punya "assert" di baris yang sama → tak bisa dipastikan.
+        let sources = vec![
+            src("/proj/a.sv", "module a;\n  assert (x);\nendmodule\n"),
+            src("/proj/b.sv", "module b;\n  assert (y);\nendmodule\n"),
+        ];
+        assert_eq!(resolve_assert_in_sources(&sources, 2), None);
+    }
+
+    #[test]
+    fn resolve_assert_line_out_of_range_none() {
+        let sources = vec![src("/proj/a.sv", "module a;\n  logic q;\nendmodule\n")];
+        assert_eq!(resolve_assert_in_sources(&sources, 99), None);
     }
 }

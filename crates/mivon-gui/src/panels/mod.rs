@@ -2,6 +2,7 @@
 //! waveform viewer, architecture viewer, benchmark, dan command palette.
 
 pub mod architecture;
+pub mod assertions;
 pub mod benchmark;
 pub mod bottom;
 pub mod command_palette;

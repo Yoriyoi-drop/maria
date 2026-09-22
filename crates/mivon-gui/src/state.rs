@@ -414,6 +414,17 @@ pub struct CoverageInfo {
     pub covergroups: Vec<CovergroupRow>,
 }
 
+/// Satu assertion dievaluasi simulasi (dari engine.assertion_stats — keyed
+/// (line, col) → (pass, fail)). File asal di-resolve saat klik (scan baris
+/// ber-"assert" di file module) — HANYA bila unambiguous, jangan menebak.
+#[derive(Debug, Clone)]
+pub struct AssertionRow {
+    pub line: usize,
+    pub col: usize,
+    pub pass: u64,
+    pub fail: u64,
+}
+
 /// Hasil simulasi (dikirim dari worker).
 #[derive(Debug, Clone)]
 pub struct SimInfo {
@@ -431,6 +442,8 @@ pub struct SimInfo {
     pub events_per_delta: f64,
     // ── Coverage (dari engine.coverage_stats) ──
     pub coverage: CoverageInfo,
+    // ── Assertions (dari engine.assertion_stats) ──
+    pub assertions: Vec<AssertionRow>,
 }
 
 /// Tab sidebar.
@@ -549,6 +562,7 @@ pub enum BottomTab {
     Waveform,
     Benchmark,
     Coverage,
+    Assertions,
     Terminal,
     /// Compile Pipeline + Incremental Cache (MICD) — statistik compile
     /// incremental database & timing per tahap (nilai jual Mivon).
@@ -649,6 +663,8 @@ pub struct GuiState {
     pub events_per_delta: f64,
     // ── Coverage (hasil sim terakhir) ──
     pub coverage: CoverageInfo,
+    // ── Assertions (hasil sim terakhir) ──
+    pub assertions: Vec<AssertionRow>,
 
     // ── Command Palette ──
     pub palette_open: bool,
@@ -748,6 +764,7 @@ impl GuiState {
             sensitive_triggers: 0,
             events_per_delta: 0.0,
             coverage: CoverageInfo::default(),
+            assertions: Vec::new(),
             palette_open: false,
             palette_just_opened: false,
             palette_filter: String::new(),

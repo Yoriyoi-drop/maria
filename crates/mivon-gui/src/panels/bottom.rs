@@ -4,6 +4,7 @@ use eframe::egui;
 
 use super::super::splitter;
 use super::super::state::{BottomTab, DiagLevel, GuiState};
+use super::assertions;
 use super::benchmark;
 use super::coverage;
 use super::pipeline;
@@ -35,6 +36,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             (BottomTab::Waveform, "Waveform"),
             (BottomTab::Benchmark, "Benchmark"),
             (BottomTab::Coverage, "Coverage"),
+            (BottomTab::Assertions, "Assertions"),
             (BottomTab::Terminal, "Terminal"),
             (BottomTab::Pipeline, "Pipeline"),
         ] {
@@ -45,6 +47,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 BottomTab::Waveform => state.waveform.len(),
                 BottomTab::Benchmark => 0,
                 BottomTab::Coverage => state.coverage.branch_total as usize,
+                BottomTab::Assertions => state.assertions.len(),
                 BottomTab::Terminal => state.term_lines.len(),
                 BottomTab::Pipeline => state
                     .compile_info
@@ -88,6 +91,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             BottomTab::Waveform => unreachable!("handled above"),
             BottomTab::Benchmark => benchmark::show(ui, state),
             BottomTab::Coverage => coverage::show(ui, state),
+            BottomTab::Assertions => assertions::show(ui, state),
             BottomTab::Terminal => terminal::show(ui, state),
             BottomTab::Pipeline => pipeline::show(ui, state),
         });
