@@ -381,7 +381,7 @@ impl MirJitCompiler {
         // get_finalized_function yang mengembalikan null di bawah.
         let _ = self.module.finalize_definitions();
 
-        let code_ptr = self.module.get_finalized_function(id) as *const u8;
+        let code_ptr = self.module.get_finalized_function(id);
         self.module.clear_context(&mut ctx);
 
         *self.compiled_count.lock().unwrap() += 1;
@@ -461,7 +461,6 @@ impl MirJitCompiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mir::mir::*;
     use mivon_core::intern::Symbol;
 
     fn make_const_process() -> MirProcess {
@@ -565,7 +564,7 @@ mod tests {
         let compiled = compiler.compile_process(&process, 2).unwrap();
         assert_eq!(compiled.n_regs, 1);
 
-        let mut signals = [0u64; 4];
+        let signals = [0u64; 4];
         let mut out = [0u64; 4];
         unsafe {
             MirJitCompiler::call_process(compiled.code_ptr, &signals, &mut out);
@@ -580,7 +579,7 @@ mod tests {
         let process = make_add_process();
         let compiled = compiler.compile_process(&process, 3).unwrap();
 
-        let mut signals = [10u64, 20u64, 0u64];
+        let signals = [10u64, 20u64, 0u64];
         let mut out = [0u64; 3];
         unsafe {
             MirJitCompiler::call_process(compiled.code_ptr, &signals, &mut out);
@@ -593,7 +592,7 @@ mod tests {
         let process = make_store_process();
         let compiled = compiler.compile_process(&process, 2).unwrap();
 
-        let mut signals = [5u64, 0u64];
+        let signals = [5u64, 0u64];
         let mut out = [0u64; 2];
         unsafe {
             MirJitCompiler::call_process(compiled.code_ptr, &signals, &mut out);
@@ -691,7 +690,7 @@ mod tests {
         let mut compiler = MirJitCompiler::new().unwrap();
         let compiled = compiler.compile_process(&process, 3).unwrap();
 
-        let mut signals = [10u64, 20u64, 0u64];
+        let signals = [10u64, 20u64, 0u64];
         let mut out = [0u64; 3];
         unsafe {
             MirJitCompiler::call_process(compiled.code_ptr, &signals, &mut out);
@@ -720,7 +719,7 @@ mod tests {
         let mut compiler = MirJitCompiler::new().unwrap();
         let compiled = compiler.compile_process(&process, 2).unwrap();
 
-        let mut signals = [0xFu64, 0u64];
+        let signals = [0xFu64, 0u64];
         let mut out = [0u64; 2];
         unsafe {
             MirJitCompiler::call_process(compiled.code_ptr, &signals, &mut out);

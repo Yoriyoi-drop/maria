@@ -9,11 +9,9 @@ use crate::cpu::{CpuCore, CpuFault, CpuStep, Isa};
 #[cfg(feature = "jit")]
 use crate::mem::MemoryPort;
 #[cfg(feature = "jit")]
-use mivon_simulator::simulator::jit_cranelift::{CraneliftCompiledFn, CraneliftEngine, JitOp};
+use mivon_simulator::simulator::jit_cranelift::CraneliftEngine;
 #[cfg(feature = "jit")]
 use std::collections::HashMap;
-#[cfg(feature = "jit")]
-use std::sync::Arc;
 
 /// JIT-compiled RISC-V CPU core.
 ///
@@ -39,9 +37,12 @@ pub struct Rv64JitCpu {
     max_bb_instrs: usize,
 }
 
-/// Machine-mode CSR file (minimal for Linux/OpenSBI)
+/// Machine-mode CSR file (minimal for Linux/OpenSBI).
+/// Rv64JitCpu masih stub JIT — semua CSR field/method disimpan sebagai
+/// cetak biru state awal (belum dipakai sampai codegen diimplementasi).
 #[cfg(feature = "jit")]
 #[derive(Clone, Default)]
+#[allow(dead_code)]
 struct CsrFile {
     mstatus: u64,
     mtvec: u64,
@@ -63,9 +64,11 @@ struct CsrFile {
     sie: u64,
 }
 
-/// A JIT-compiled basic block
+/// A JIT-compiled basic block. Stub JIT: field disimpan sebagai desain —
+/// belum dibaca sampai codegen Cranelift diimplementasikan.
 #[cfg(feature = "jit")]
 #[derive(Clone)]
+#[allow(dead_code)]
 struct JitBasicBlock {
     /// Entry PC
     entry_pc: u64,
@@ -135,6 +138,7 @@ impl Rv64JitCpu {
     }
 
     /// Read a CSR
+    #[allow(dead_code)] // stub JIT — apa yang dibaca belum dipakai sampai codegen
     fn read_csr(&self, addr: u16) -> u64 {
         match addr {
             0x300 => self.csrs.mstatus,  // mstatus
@@ -160,6 +164,7 @@ impl Rv64JitCpu {
     }
 
     /// Write a CSR
+    #[allow(dead_code)] // stub JIT — lihat read_csr
     fn write_csr(&mut self, addr: u16, val: u64) {
         match addr {
             0x300 => self.csrs.mstatus = val,
@@ -249,7 +254,7 @@ impl Rv64JitCpu {
     /// Execute a single instruction in interpreter mode (fallback)
     fn execute_interpreter(
         &mut self,
-        mem: &mut dyn MemoryPort,
+        _mem: &mut dyn MemoryPort,
         instr: u32,
     ) -> Result<CpuStep, CpuFault> {
         // Delegate to the interpreter implementation
@@ -263,7 +268,7 @@ impl Rv64JitCpu {
 
     /// Try to JIT-compile a basic block starting at `pc`
     fn try_compile_block(&mut self, mem: &mut dyn MemoryPort, pc: u64) -> Option<JitBasicBlock> {
-        let jit = self.jit.as_mut()?;
+        let _jit = self.jit.as_mut()?;
         let mut instrs = Vec::new();
         let mut current_pc = pc;
 
@@ -328,7 +333,7 @@ impl CpuCore for Rv64JitCpu {
 
         // Try to get or compile a basic block
         let pc = self.pc;
-        if let Some(bb) = self.bb_cache.get(&pc).cloned() {
+        if let Some(_bb) = self.bb_cache.get(&pc).cloned() {
             self.stats.cache_hits += 1;
             // Execute compiled block
             // Safety: we trust our own compiled code
@@ -426,6 +431,7 @@ impl crate::cpu::CpuCore for Rv64JitCpu {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     #[cfg(feature = "jit")]

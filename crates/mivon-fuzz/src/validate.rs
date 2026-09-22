@@ -7,6 +7,7 @@
 //!    dibandingkan berpasangan; perbedaan = bukti engine path disagreement.
 //! 3. **X/Z audit** — signal yang TETAP X/Z di akhir sim dicatat; bisa wajar
 //!    (undriven) atau bukti state-propagation bug — dipasok ke laporan.
+#![allow(clippy::result_large_err, clippy::type_complexity)]
 
 use mivon_api::{
     simulate_signals_with_flags_quiet, simulate_signals_with_trace_quiet, EngineFlags,
@@ -204,7 +205,7 @@ pub fn collect(source: &str, max_time: u64) -> SimEvidence {
 
     // 3. Determinism — jalur default dijalankan dua kali (run kedua segar).
     {
-        let run1 = results.get(0).and_then(|(_, r)| r.as_ref()).cloned();
+        let run1 = results[0].1.as_ref().cloned();
         let run2 = std::panic::catch_unwind(|| {
             simulate_signals_with_flags_quiet(source, max_time, &engine_paths()[0].1)
         });

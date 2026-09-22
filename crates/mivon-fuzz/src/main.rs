@@ -57,7 +57,7 @@ Bug output: {bugs}
 }
 
 fn parse_target(s: &str) -> Option<Target> {
-    Target::from_str(s)
+    Target::from_token(s)
 }
 
 /// Cari nilai flag di args (mis. "--seed" → value), hapus dari slice.
@@ -349,7 +349,7 @@ fn cmd_verify(args: &[String]) -> i32 {
         let mut tbs: Vec<String> = names
             .iter()
             .filter(|n| n.contains("tb_") && n.ends_with(".sv"))
-            .map(|n| n.clone())
+            .cloned()
             .collect();
         // Harus sort deterministik
         tbs.sort();
@@ -380,7 +380,7 @@ fn cmd_verify(args: &[String]) -> i32 {
     let mut n_mismatch = 0usize;
     let mut n_n_a = 0usize;
     for (name, combined) in &seed_sources {
-        let r = mivon_fuzz::oracle_icarus::evaluate_icarus(&combined, timeout);
+        let r = mivon_fuzz::oracle_icarus::evaluate_icarus(combined, timeout);
         match r.verdict {
             mivon_fuzz::oracle_icarus::Verdict::Match => {
                 eprintln!("  [MATCH  ] {name}: {}", r.detail);

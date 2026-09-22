@@ -1,4 +1,5 @@
 //! Oracle bug detection (O1-O5 style, diadaptasi untuk mivon).
+#![allow(clippy::result_large_err)] // SimError besar (diagnostik) — fuzz sengaja.
 
 use crate::{CaseResult, Category, Oracle, Target};
 
@@ -705,18 +706,18 @@ fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
             mk_r(Category::Ok, Oracle::O1NoCrash, &detail)
         }
         Ok(Err(e)) => {
-            return mk_r(
+            mk_r(
                 Category::Differential,
                 Oracle::O5Differential,
                 &format!("trace gagal setelah sim default sukses: {e}"),
-            );
+            )
         }
         Err(_) => {
-            return mk_r(
+            mk_r(
                 Category::Differential,
                 Oracle::O5Differential,
                 "trace panic setelah sim default sukses",
-            );
+            )
         }
     }
 }
@@ -1213,8 +1214,10 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
     let stats_args = vec!["mwave".into(), "stats".into(), vcd_mut_s.clone()];
     let o1 = mcmd(stats_args.clone());
     let o2 = mcmd(stats_args);
-    if o1.kind == crate::runner::Kind::Ok && o2.kind == crate::runner::Kind::Ok {
-        if o1.stdout != o2.stdout {
+    if o1.kind == crate::runner::Kind::Ok
+        && o2.kind == crate::runner::Kind::Ok
+        && o1.stdout != o2.stdout
+    {
             let _ = std::fs::remove_file(&vcd_base);
             let _ = std::fs::remove_file(&vcd_mut);
             return mk_v(
@@ -1223,7 +1226,6 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
                 "mwave stats non-deterministik: dua run identik hasil beda",
             );
         }
-    }
 
     let _ = std::fs::remove_file(&vcd_base);
     let _ = std::fs::remove_file(&vcd_mut);
@@ -1316,7 +1318,7 @@ fn evaluate_sdf(source: &str, timeout_ms: u64) -> CaseResult {
     );
     let sv = dir.join(format!("{stem}.sv"));
     let sdf = dir.join(format!("{stem}.sdf"));
-    if std::fs::write(&sv, &sv_text).is_err() || std::fs::write(&sdf, &sdf_text).is_err() {
+    if std::fs::write(&sv, sv_text).is_err() || std::fs::write(&sdf, sdf_text).is_err() {
         return mk_s(
             Category::CleanError,
             Oracle::O1NoCrash,
@@ -1841,11 +1843,7 @@ fn extract_diff_lines(stdout: &str) -> Vec<String> {
         .lines()
         .filter_map(|l| {
             let t = l.trim_start();
-            if let Some(rest) = t.strip_prefix("- ") {
-                Some(rest.to_string())
-            } else {
-                None
-            }
+            t.strip_prefix("- ").map(|rest| rest.to_string())
         })
         .collect()
 }
@@ -1891,7 +1889,7 @@ fn normalize_diff_line(line: &str) -> String {
             let idx_is_signal_position = {
                 let before = &chars[..i];
                 let mut k = before.len();
-                let mut word_end = k;
+                let word_end = k;
                 while k > 0 && (chars[k - 1].is_ascii_alphanumeric() || chars[k - 1] == '_') {
                     k -= 1;
                 }
@@ -2090,8 +2088,8 @@ fn gen_cli_args(rng: &mut crate::Rng, path: &std::path::Path, source: &str) -> V
 /// - error tanpa lokasi file:line:col = diag_missing
 fn evaluate_preproc(source: &str) -> CaseResult {
     // Jalankan preprocess 2x — determinisme.
-    let r1 = std::panic::catch_unwind(|| mivon_preproc(&source));
-    let r2 = std::panic::catch_unwind(|| mivon_preproc(&source));
+    let r1 = std::panic::catch_unwind(|| mivon_preproc(source));
+    let r2 = std::panic::catch_unwind(|| mivon_preproc(source));
     match (r1, r2) {
         (Ok(Ok(o1)), Ok(Ok(o2))) => {
             if o1 != o2 {

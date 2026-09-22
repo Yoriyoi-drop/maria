@@ -262,7 +262,7 @@ impl<'r> Mutator<'r> {
 
     /// Ekstremisasi lebar literal: `8'hFF` → lebar tak wajar (1, 128, 64'd…).
     fn extreme_width(&mut self, source: &str) -> String {
-        let mut chars: Vec<char> = source.chars().collect();
+        let chars: Vec<char> = source.chars().collect();
         let mut idx = 0usize;
         while idx + 2 < chars.len() {
             if chars[idx].is_ascii_digit() && chars[idx + 1] == '\'' {
@@ -388,8 +388,8 @@ impl<'r> Mutator<'r> {
             out.push('\n');
             if i == end - 1 {
                 // sisipkan salinan chunk di sini
-                for j in start..end {
-                    out.push_str(lines[j]);
+                for line in &lines[start..end] {
+                    out.push_str(line);
                     out.push('\n');
                 }
             }

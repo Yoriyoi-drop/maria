@@ -53,7 +53,7 @@ pub fn index_file(path: &Path, idx: &mut DepsIndex) {
         if t.starts_with("//") {
             continue;
         }
-        let mut rest = t;
+        let rest = t;
         if let Some(r) = rest.strip_prefix("package ") {
             // `package X;` or `package X;` (tidak ada `package automatic`).
             let name = r

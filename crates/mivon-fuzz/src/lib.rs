@@ -104,7 +104,7 @@ impl Target {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_token(s: &str) -> Option<Self> {
         match s {
             "all" => Some(Target::All),
             "lexer" | "lex" => Some(Target::Lexer),
@@ -476,7 +476,7 @@ fn strip_duplicate_modules(tb_src: &str, mod_src: &str) -> String {
         }
         let stripped_for_check = t.trim_start();
         let mut should_skip = false;
-        for (kw, close) in [("module", "endmodule"), ("interface", "endinterface")] {
+        for (kw, _close) in [("module", "endmodule"), ("interface", "endinterface")] {
             if let Some(rest) = stripped_for_check.strip_prefix(kw) {
                 if rest.starts_with(char::is_whitespace) || rest.starts_with('(') {
                     // `module X ...` or `module #(P) X ...`
