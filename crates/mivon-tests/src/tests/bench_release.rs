@@ -387,41 +387,41 @@ fn bench_release_memory_open_titan() {
 
     eprintln!("OpenTitan RTL files: {}", sources.len());
     with_ot_stack(move || {
-    // Measure memory before
-    let mem_before = peak_vmem_mb();
-    let rss_before = current_rss_mb();
+        // Measure memory before
+        let mem_before = peak_vmem_mb();
+        let rss_before = current_rss_mb();
 
-    let start = Instant::now();
-    match crate::compile_files(&sources) {
-        Ok(design) => {
-            let elapsed = start.elapsed();
-            let mem_after = peak_vmem_mb();
-            let rss_after = current_rss_mb();
+        let start = Instant::now();
+        match crate::compile_files(&sources) {
+            Ok(design) => {
+                let elapsed = start.elapsed();
+                let mem_after = peak_vmem_mb();
+                let rss_after = current_rss_mb();
 
-            eprintln!("═══ Memory Usage (OpenTitan) ═══");
-            eprintln!("  Elapsed:         {:?}", elapsed);
-            eprintln!("  Modules:         {}", design.modules.len());
-            eprintln!("  Classes:         {}", design.classes.len());
-            eprintln!("  Peak VMem:       {:.1} MB", mem_before);
-            eprintln!("  Peak VMem after: {:.1} MB", mem_after);
-            eprintln!("  VMem delta:      {:.1} MB", mem_after - mem_before);
-            eprintln!("  RSS before:      {:.1} MB", rss_before);
-            eprintln!("  RSS after:       {:.1} MB", rss_after);
-            eprintln!("  RSS delta:       {:.1} MB", rss_after - rss_before);
+                eprintln!("═══ Memory Usage (OpenTitan) ═══");
+                eprintln!("  Elapsed:         {:?}", elapsed);
+                eprintln!("  Modules:         {}", design.modules.len());
+                eprintln!("  Classes:         {}", design.classes.len());
+                eprintln!("  Peak VMem:       {:.1} MB", mem_before);
+                eprintln!("  Peak VMem after: {:.1} MB", mem_after);
+                eprintln!("  VMem delta:      {:.1} MB", mem_after - mem_before);
+                eprintln!("  RSS before:      {:.1} MB", rss_before);
+                eprintln!("  RSS after:       {:.1} MB", rss_after);
+                eprintln!("  RSS delta:       {:.1} MB", rss_after - rss_before);
+            }
+            Err(e) => {
+                let elapsed = start.elapsed();
+                let mem_after = peak_vmem_mb();
+                eprintln!(
+                    "OpenTitan compile partially failed after {:?}: {:?}",
+                    elapsed, e
+                );
+                eprintln!(
+                    "Peak VMem before: {:.1} MB, after: {:.1} MB",
+                    mem_before, mem_after
+                );
+            }
         }
-        Err(e) => {
-            let elapsed = start.elapsed();
-            let mem_after = peak_vmem_mb();
-            eprintln!(
-                "OpenTitan compile partially failed after {:?}: {:?}",
-                elapsed, e
-            );
-            eprintln!(
-                "Peak VMem before: {:.1} MB, after: {:.1} MB",
-                mem_before, mem_after
-            );
-        }
-    }
     });
 }
 
@@ -606,29 +606,29 @@ fn bench_release_opentitan_compile() {
 
         let start = Instant::now();
         match compile_files(&string_sources) {
-        Ok(design) => {
-            let elapsed = start.elapsed();
-            eprintln!(
-                "OpenTitan cold compile: {:?} ({} modules, {} classes, top={})",
-                elapsed,
-                design.modules.len(),
-                design.classes.len(),
-                design.top.name
-            );
+            Ok(design) => {
+                let elapsed = start.elapsed();
+                eprintln!(
+                    "OpenTitan cold compile: {:?} ({} modules, {} classes, top={})",
+                    elapsed,
+                    design.modules.len(),
+                    design.classes.len(),
+                    design.top.name
+                );
+            }
+            Err(e) => {
+                let elapsed = start.elapsed();
+                eprintln!(
+                    "OpenTitan compile partially failed after {:?}: {:?}",
+                    elapsed, e
+                );
+                eprintln!(
+                    "Note: OpenTitan uses advanced SV features (reggen output, interfaces, etc.)"
+                );
+                eprintln!("that Mivon's parser doesn't fully support yet.");
+                // Don't panic — this is a benchmark, not a correctness test
+            }
         }
-        Err(e) => {
-            let elapsed = start.elapsed();
-            eprintln!(
-                "OpenTitan compile partially failed after {:?}: {:?}",
-                elapsed, e
-            );
-            eprintln!(
-                "Note: OpenTitan uses advanced SV features (reggen output, interfaces, etc.)"
-            );
-            eprintln!("that Mivon's parser doesn't fully support yet.");
-            // Don't panic — this is a benchmark, not a correctness test
-        }
-    }
     });
 }
 
