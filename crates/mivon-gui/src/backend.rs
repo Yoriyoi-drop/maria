@@ -120,11 +120,27 @@ fn descend(dir: &Path, trail: &mut std::collections::HashSet<PathBuf>) -> Vec<Fi
     out
 }
 
+/// Stack worker thread GUI (compile/sim/terminal) — 16MB, cermin rayon pool
+/// CLI (lib.rs::run + src/main.rs). Simulator bisa merekursi dalam (eval
+/// ekspresi / desain besar); stack default ~8MB berisiko overflow di hamparan
+/// proses. Kegagalan spawn dilaporkan via stderr (jarang).
+const WORKER_STACK: usize = 16 * 1024 * 1024;
+
+fn spawn_worker<F: FnOnce() + Send + 'static>(f: F) {
+    if let Err(e) = std::thread::Builder::new()
+        .name("mivon-worker".into())
+        .stack_size(WORKER_STACK)
+        .spawn(f)
+    {
+        eprintln!("[backend] spawn worker gagal: {}", e);
+    }
+}
+
 /// Compile + elaborate project di worker thread. `project_root` dipakai untuk
 /// mencari database MICD (`.mivon/database`) — bila ada, compile menjadi
 /// incremental (file tak berubah di-restore AST, lexer+parser di-skip).
 pub fn spawn_compile(tx: Sender<GuiEvent>, paths: Vec<PathBuf>, project_root: Option<PathBuf>) {
-    std::thread::spawn(move || {
+    spawn_worker(move || {
         let result = compile_project(&paths, project_root.as_deref());
         let _ = tx.send(GuiEvent::CompileDone(result));
     });
@@ -847,7 +863,7 @@ pub fn build_dep_graph(design: &IrDesign) -> Vec<DepRow> {
 /// `cwd` = direktori kerja (project root). Aman dipanggil berkali-kali — tiap
 /// pemanggilan membuat child process sendiri.
 pub fn spawn_term(tx: Sender<GuiEvent>, cmd: String, cwd: Option<PathBuf>) {
-    std::thread::spawn(move || {
+    spawn_worker(move || {
         let mut child = match std::process::Command::new("sh")
             .arg("-c")
             .arg(&cmd)
@@ -871,22 +887,28 @@ pub fn spawn_term(tx: Sender<GuiEvent>, cmd: String, cwd: Option<PathBuf>) {
         let err = child.stderr.take();
         let (tx_out, tx_err) = (tx.clone(), tx.clone());
         if let Some(out) = out {
-            std::thread::spawn(move || {
-                use std::io::BufRead;
-                for l in std::io::BufReader::new(out).lines() {
-                    let Ok(l) = l else { break };
-                    let _ = tx_out.send(GuiEvent::TermOutput(l, false));
-                }
-            });
+            std::thread::Builder::new()
+                .name("mivon-term-in".into())
+                .spawn(move || {
+                    use std::io::BufRead;
+                    for l in std::io::BufReader::new(out).lines() {
+                        let Ok(l) = l else { break };
+                        let _ = tx_out.send(GuiEvent::TermOutput(l, false));
+                    }
+                })
+                .ok();
         }
         if let Some(err) = err {
-            std::thread::spawn(move || {
-                use std::io::BufRead;
-                for l in std::io::BufReader::new(err).lines() {
-                    let Ok(l) = l else { break };
-                    let _ = tx_err.send(GuiEvent::TermOutput(l, true));
-                }
-            });
+            std::thread::Builder::new()
+                .name("mivon-term-err".into())
+                .spawn(move || {
+                    use std::io::BufRead;
+                    for l in std::io::BufReader::new(err).lines() {
+                        let Ok(l) = l else { break };
+                        let _ = tx_err.send(GuiEvent::TermOutput(l, true));
+                    }
+                })
+                .ok();
         }
         let code = child.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
         let _ = tx.send(GuiEvent::TermExit(code));
@@ -896,7 +918,7 @@ pub fn spawn_term(tx: Sender<GuiEvent>, cmd: String, cwd: Option<PathBuf>) {
 /// Jalankan simulasi di worker thread. `cancel` adalah flag bersama dengan GUI:
 /// jika di-set true (tombol Stop), simulasi berhenti lebih awal.
 pub fn spawn_sim(tx: Sender<GuiEvent>, design: IrDesign, max_time: u64, cancel: Arc<AtomicBool>) {
-    std::thread::spawn(move || {
+    spawn_worker(move || {
         let result = run_simulation(&design, max_time, cancel);
         let _ = tx.send(GuiEvent::SimDone(result));
     });

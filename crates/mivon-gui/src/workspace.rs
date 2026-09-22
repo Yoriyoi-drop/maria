@@ -184,6 +184,11 @@ fn apply(state: &mut GuiState, root: PathBuf, ws: WorkspaceState) {
     state.compile_info = None;
     state.signals.clear();
     state.diagnostics.clear();
+    crate::diagnostics::log(format!(
+        "restore: project '{}' — {} file di pohon",
+        state.project_name,
+        state.files.len()
+    ));
 
     // Buka file tersimpan (path relatif di-resolve terhadap root)
     for rel in &ws.open_files {

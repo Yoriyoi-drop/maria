@@ -33,6 +33,7 @@ impl MivonApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let (tx, rx) = channel::<GuiEvent>();
         setup_theme(&cc.egui_ctx);
+        crate::diagnostics::log("MivonApp dibuat (window renderer siap)");
         Self {
             state: GuiState::new(tx, rx),
             restored: false,
@@ -556,7 +557,15 @@ impl eframe::App for MivonApp {
         // ── Restore workspace terakhir (sekali, di frame pertama) ──
         if !self.restored {
             self.restored = true;
+            crate::diagnostics::log("frame pertama — restore workspace");
             restore_workspace(&mut self.state);
+            crate::diagnostics::log("restore selesai");
+            // Jejak crash terakhir (bila ada) — tampilkan di Console supaya
+            // masalah sebelumnya punya info, bukan hilang tanpa jejak.
+            if let Some(summary) = crate::diagnostics::last_crash_summary() {
+                self.state
+                    .log(format!("💥 Crash terakhir tercatat:\n{}", summary));
+            }
         }
         // ── Simpan workspace saat window akan ditutup (frame terakhir) ──
         if ctx.input(|i| i.viewport().close_requested()) {
