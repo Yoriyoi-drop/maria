@@ -2240,6 +2240,7 @@ dependencies = [
  "mivon-mv",
  "mivon-parser",
  "mivon-simulator",
+ "rayon",
  "rfd",
  "serde",
  "serde_json",
