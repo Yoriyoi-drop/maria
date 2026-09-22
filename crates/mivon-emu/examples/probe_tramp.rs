@@ -18,7 +18,7 @@ fn main() {
     let mut cpu = X86Cpu::new();
     cpu.disk = Some(Box::new(mivon_emu::cpu::x86::FileDisk::open(&iso).unwrap()));
     cpu.load_boot_image(&mut mem, &image, 0xE0).unwrap();
-    for i in 0..16_000_000u64 {
+    for i in 0..200_000_000u64 {
         if cpu.halted {
             println!("HALT {:?} at step {}", cpu.halt_reason, i);
             break;
@@ -40,6 +40,31 @@ fn main() {
     }
     println!("code @pc: {}", line);
     println!("console_bytes: {:02x?}", cpu.out.to_vec());
+    println!("VGA text:\n{}", cpu.vga_text());
+    // Dump string yang dikonsumsi loop printf 0xd1df (ebx/0x424fe55d).
+    {
+        let base = 0x424fe540u64;
+        let mut s = String::new();
+        let mut ascii = String::new();
+        for k in 0..192u64 {
+            let b = mem.read(base + k, 1).unwrap_or(0xff);
+            s.push_str(&format!("{b:02x} "));
+            ascii.push(if (32..=126).contains(&b) {
+                b as u8 as char
+            } else if b == 0 {
+                '·'
+            } else {
+                '?'
+            });
+            if k % 16 == 15 {
+                s.push_str("  |");
+                s.push_str(&ascii);
+                s.push_str("|\n");
+                ascii.clear();
+            }
+        }
+        println!("mem @0x424fe540 (bx ~ 0x424fe55d):\n{s}");
+    }
     // Dump 0x9080..0x9180 (grub_bios_interrupt + prot/real trampolin).
     let mut v = Vec::with_capacity(0x100);
     for k in 0x9080u64..0x9180 {

@@ -1157,6 +1157,22 @@ handler call/ret):
   string, mungkin VGA text 0xB8000), dan/atau cek menunggu input
   (INT 16h keyboard stub) yang tidak pernah selesai.
 
+**Sesi lanjutan (2026-09-22)**:
+- Loop 0xd1e1 TERIDENTIFIKASI = traversal **string printf GRUB biosdisk**
+  (`8a 13 mov dl,[ebx]; test dl,dl; jz; cmp dl,'%'; lea eax,[ebx+1];
+  mov ebx,eax; jmp`) — string di 0x424fe55d = `"failure reading sector
+  0x%llx from \`%s'"` dst, NUL-terminated SEMPURNA; ebx maju +1/iterasi;
+  loop normal, bukan spin. GRUB kernel hidup pasca-crash; 200M step:
+  pc bervariasi (0x830c/0x8352/0xf168/0x82d5/0x90d6/0xf224/0x90a2),
+  halted=false, console [LF,CR] (=2 byte), **VGA text (0xB8000) masih
+  kosong** → GRUB belum mencetak menu/welcome. Kemungkinan masih tahap
+  panjang (module load / init runtime) atau menunggu sesuatu.
+- probe_tramp: dump string 0x424fe540 + VGA text + run 200M.
+- Langkah berikut: cek apakah GRUB menunggu input (INT 16h / keyboard
+  buffer) — tambah dukungan INT 16h AH=00/AH=01 (jika stub), dan cek
+  kenapa VGA text belum terisi; ukur lintasan pc per 10M step utk
+  membedakan "aktif bergerak" vs "siklus periodik".
+
 **Tidak teratasi / langkah berikut**:
 - Akar 4-byte drift stack di jalur prot_to_real↔real_to_prot belum
   terisolasi instruksi-demi-instruksi — kini TIDAK memblock boot (crash
