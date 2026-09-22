@@ -1,0 +1,510 @@
+//! LSP client — GUI terhubung ke LSP SERVER Mivon sendiri (`mivon --lsp`,
+//! mivon-env::lsp berbasis tower-lsp) via JSON-RPC/stdio.
+//!
+//! - Server di-spawn sebagai subprocess; streaming stdout di-parse per frame
+//!   `Content-Length: N` (JSON-RPC).
+//! - Request (hover/definition) diberi id oleh UI; reply tidak ber-id 1
+//!   diteruskan ke UI yang memetakan id → pending (hover/goto).
+//! - Diagnostics (`textDocument/publishDiagnostics`) diteruskan ke UI sebagai
+//!   `GuiEvent::LspDiagnostics`.
+//!
+//! Satu tanggung jawab: transport LSP. Dekode semantik (Hover/Definition/
+//! Diagnostic) dilakukan di sisi UI (app.rs) memakai lsp-types.
+
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{channel, Receiver, Sender};
+
+use serde_json::Value;
+
+use crate::state::{DiagEntry, DiagLevel, GuiEvent};
+
+/// Perintah UI → client LSP (dikirim via channel; thread output menulis ke
+/// stdin server).
+#[derive(Debug)]
+pub enum LspCmd {
+    /// Spawn server + handshake (initialize/id=1, initialized). Wajib pertama.
+    Start {
+        bin: PathBuf,
+        workspace: PathBuf,
+    },
+    /// Teks dokumen sinkron penuh (didOpen/didChange/didClose).
+    DidOpen {
+        path: PathBuf,
+        text: String,
+    },
+    DidChange {
+        path: PathBuf,
+        text: String,
+    },
+    DidClose {
+        path: PathBuf,
+    },
+    /// Request hover/definition — id dipakai UI utk memetakan reply.
+    Hover {
+        id: u64,
+        path: PathBuf,
+        line: u32,
+        character: u32,
+    },
+    Goto {
+        id: u64,
+        path: PathBuf,
+        line: u32,
+        character: u32,
+    },
+    /// Matikan server (shutdown + exit + kill).
+    Stop,
+}
+
+/// Handle client: kirim via `tx`, terima event via `rx`.
+pub struct LspClient {
+    pub tx: Sender<LspCmd>,
+    pub rx: Receiver<GuiEvent>,
+}
+
+fn uri(path: &PathBuf) -> String {
+    lsp_types::Url::from_file_path(path)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn pos(line: u32, character: u32) -> Value {
+    serde_json::json!({ "line": line, "character": character })
+}
+
+fn writer_send(w: &mut ChildStdin, msg: &str) {
+    let _ = write!(w, "{}\r\n", msg);
+    let _ = w.flush();
+}
+
+fn request(w: &mut ChildStdin, id: u64, method: &str, params: Value) {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    });
+    let body = body.to_string();
+    writer_send(
+        w,
+        &format!("Content-Length: {}\r\n\r\n{}", body.len(), body),
+    );
+}
+
+fn notify(w: &mut ChildStdin, method: &str, params: Value) {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+    });
+    let body = body.to_string();
+    writer_send(
+        w,
+        &format!("Content-Length: {}\r\n\r\n{}", body.len(), body),
+    );
+}
+
+/// Path binary LSP server: env `MIVON_LSP_BIN`, fallback binary `mivon` di
+/// direktori yang sama dengan executable GUI (target/debug).
+pub fn lsp_binary_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("MIVON_LSP_BIN") {
+        if !p.is_empty() {
+            return Some(PathBuf::from(p));
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let bin = dir.join("mivon");
+    if bin.is_file() {
+        Some(bin)
+    } else {
+        None
+    }
+}
+
+impl LspClient {
+    /// Spawn client: proses server + thread input (baca stdout) + thread
+    /// output (tulis stdin). `Start` dikirim segera (handshake pertama).
+    pub fn start(bin: PathBuf, workspace: PathBuf) -> LspClient {
+        let (tx, rx) = channel::<LspCmd>();
+        let (tx_gui, rx_gui) = channel::<GuiEvent>();
+        std::thread::Builder::new()
+            .name("mivon-lsp-out".into())
+            .spawn(move || out_loop(rx, tx_gui))
+            .ok();
+        let _ = tx.send(LspCmd::Start { bin, workspace });
+        LspClient { tx, rx: rx_gui }
+    }
+}
+
+/// Thread output: terima `LspCmd`, spawn child, tulis pesan ke stdin.
+fn out_loop(rx: Receiver<LspCmd>, tx_gui: Sender<GuiEvent>) {
+    let mut writer: Option<ChildStdin> = None;
+    // Child dipegang langsung (stdout/stdin sudah di-take) — dipakai utk kill
+    // di akhir & saat Stop.
+    let mut child: Option<Child> = None;
+    while let Ok(cmd) = rx.recv() {
+        match cmd {
+            LspCmd::Start { bin, workspace } => {
+                let cwd = workspace
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default();
+                match Command::new(&bin)
+                    .arg("--lsp")
+                    .current_dir(cwd)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    Ok(mut c) => {
+                        let out = c.stdout.take();
+                        let stdin = c.stdin.take();
+                        child = Some(c);
+                        if let Some(out) = out {
+                            let tg = tx_gui.clone();
+                            std::thread::Builder::new()
+                                .name("mivon-lsp-in".into())
+                                .spawn(move || in_loop(out, tg))
+                                .ok();
+                        }
+                        // Ambil stdin SEKALI (menjadi `writer` utk cmds berikut).
+                        let mut w = stdin;
+                        if let Some(w_ref) = w.as_mut() {
+                            // Handshake.
+                            let root = lsp_types::Url::from_file_path(&workspace)
+                                .map(|u| u.to_string())
+                                .unwrap_or_else(|_| String::new());
+                            request(
+                                w_ref,
+                                1,
+                                "initialize",
+                                serde_json::json!({
+                                    "processId": std::process::id(),
+                                    "rootUri": root,
+                                    "capabilities": {},
+                                }),
+                            );
+                            notify(w_ref, "initialized", serde_json::json!({}));
+                            let _ = tx_gui.send(GuiEvent::LspStarted(bin.display().to_string()));
+                        }
+                        writer = w;
+                    }
+                    Err(e) => {
+                        let _ = tx_gui.send(GuiEvent::LspStopped(format!(
+                            "gagal spawn LSP server {}: {}",
+                            bin.display(),
+                            e
+                        )));
+                    }
+                }
+            }
+            LspCmd::DidOpen { path, text } => {
+                if let Some(w) = writer.as_mut() {
+                    notify(
+                        w,
+                        "textDocument/didOpen",
+                        serde_json::json!({
+                            "textDocument": {
+                                "uri": uri(&path),
+                                "languageId": "systemverilog",
+                                "version": 1,
+                                "text": text,
+                            }
+                        }),
+                    );
+                }
+            }
+            LspCmd::DidChange { path, text } => {
+                if let Some(w) = writer.as_mut() {
+                    notify(
+                        w,
+                        "textDocument/didChange",
+                        serde_json::json!({
+                            "textDocument": { "uri": uri(&path), "version": 2 },
+                            "contentChanges": [{ "text": text }],
+                        }),
+                    );
+                }
+            }
+            LspCmd::DidClose { path } => {
+                if let Some(w) = writer.as_mut() {
+                    notify(
+                        w,
+                        "textDocument/didClose",
+                        serde_json::json!({
+                            "textDocument": { "uri": uri(&path) }
+                        }),
+                    );
+                }
+            }
+            LspCmd::Hover {
+                id,
+                path,
+                line,
+                character,
+            } => {
+                if let Some(w) = writer.as_mut() {
+                    let p = pos(line, character);
+                    request(
+                        w,
+                        id,
+                        "textDocument/hover",
+                        serde_json::json!({ "textDocument": { "uri": uri(&path) }, "position": p }),
+                    );
+                }
+            }
+            LspCmd::Goto {
+                id,
+                path,
+                line,
+                character,
+            } => {
+                if let Some(w) = writer.as_mut() {
+                    let p = pos(line, character);
+                    request(
+                        w,
+                        id,
+                        "textDocument/definition",
+                        serde_json::json!({ "textDocument": { "uri": uri(&path) }, "position": p }),
+                    );
+                }
+            }
+            LspCmd::Stop => {
+                if let Some(w) = writer.as_mut() {
+                    request(w, 999, "shutdown", serde_json::json!({}));
+                    notify(w, "exit", serde_json::json!({}));
+                }
+                break;
+            }
+        }
+    }
+    // Matikan proses tersisa (juga menutup pipe → thread input selesai).
+    if let Some(mut c) = child {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+}
+
+/// Thread input: baca stdout server, parse frame `Content-Length`, klasifikasi
+/// pesan, kirim ke UI.
+fn in_loop(mut pipe: ChildStdout, tx_gui: Sender<GuiEvent>) {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                while let Some(body) = take_frame(&mut buf) {
+                    handle_frame(&body, &tx_gui);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+}
+
+/// Ambil satu body JSON-RPC dari buffer frame; `None` bila belum lengkap.
+/// Format: `Content-Length: N\r\n\r\n<body N bytes>`. Kembalikan juga ukuran
+/// byte yang tersisa.
+pub fn take_frame(buf: &mut Vec<u8>) -> Option<String> {
+    let raw = buf.as_slice();
+    let header_end = find_header_end(raw)?;
+    let header = std::str::from_utf8(&raw[..header_end]).ok()?;
+    let content_length = header
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("Content-Length:")
+                .or_else(|| l.strip_prefix("Content-Length :"))
+        })
+        .and_then(|v| v.trim().parse::<usize>().ok())?;
+    let body_start = header_end + 4; // \r\n\r\n
+    if raw.len() < body_start + content_length {
+        return None;
+    }
+    let body = std::str::from_utf8(&raw[body_start..body_start + content_length])
+        .ok()?
+        .to_string();
+    buf.drain(..body_start + content_length);
+    Some(body)
+}
+
+fn find_header_end(raw: &[u8]) -> Option<usize> {
+    raw.windows(4).position(|w| w == b"\r\n\r\n")
+}
+
+/// Klasifikasi satu pesan: request-response ber-id>1 → `LspReply`; notifikasi
+/// publishDiagnostics → `LspDiagnostics` (di-konversi); lainnya diabaikan.
+fn handle_frame(body: &str, tx: &Sender<GuiEvent>) {
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return;
+    };
+    if let Some(id) = v.get("id").and_then(Value::as_u64) {
+        if id == 1 || id == 999 {
+            return; // handshake/shutdown internal
+        }
+        let _ = tx.send(GuiEvent::LspReply {
+            id,
+            value: v.get("result").cloned(),
+        });
+        return;
+    }
+    if let Some(method) = v.get("method").and_then(Value::as_str) {
+        if method == "textDocument/publishDiagnostics" {
+            let params = match v.get("params") {
+                Some(p) => p,
+                None => return,
+            };
+            let uri_str = params
+                .get("textDocument")
+                .and_then(|d| d.get("uri"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let file = lsp_types::Url::parse(uri_str)
+                .ok()
+                .and_then(|u| u.to_file_path().ok())
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| uri_str.to_string());
+            let diags: Vec<DiagEntry> = params
+                .get("diagnostics")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|d| diagnostic_to_entry(&file, d))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let _ = tx.send(GuiEvent::LspDiagnostics(file, diags));
+        }
+        // window/logMessage, showMessage, dll — diabaikan (transport issue
+        // hanya dari LspStarted/LspStopped).
+    }
+}
+
+/// Konversi `Diagnostic` JSON → `DiagEntry` (line 0-based → 1-based).
+fn diagnostic_to_entry(file: &str, d: &Value) -> Option<DiagEntry> {
+    let line = d
+        .pointer("/range/start/line")
+        .and_then(Value::as_u64)
+        .map(|l| l as usize + 1)?;
+    let message = d.get("message").and_then(Value::as_str)?.to_string();
+    let level = match d.get("severity").and_then(Value::as_u64) {
+        Some(1) => DiagLevel::Error,
+        Some(2) => DiagLevel::Warning,
+        _ => DiagLevel::Info,
+    };
+    Some(DiagEntry {
+        file: file.to_string(),
+        line,
+        message,
+        level,
+        fix: None,
+    })
+}
+
+/// Extrak teks hover (Hover.contents) → string; None bila kosong.
+pub fn hover_text(hover: &lsp_types::Hover) -> Option<String> {
+    use lsp_types::HoverContents;
+    let text = match &hover.contents {
+        HoverContents::Scalar(m) => marked_to_text(m),
+        HoverContents::Array(arr) => arr
+            .iter()
+            .map(marked_to_text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        HoverContents::Markup(m) => m.value.clone(),
+    };
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// `MarkedString` → teks polos (String langsung, atau LanguageString.value).
+fn marked_to_text(m: &lsp_types::MarkedString) -> String {
+    match m {
+        lsp_types::MarkedString::String(s) => s.clone(),
+        lsp_types::MarkedString::LanguageString(ls) => ls.value.clone(),
+    }
+}
+
+/// Extrak target definisi dari reply `textDocument/definition` — lokasi
+/// pertama (0-based → line 1-based). None bila kosong.
+pub fn definition_target(value: &Value) -> Option<(PathBuf, usize)> {
+    let loc = value.get(0)?; // array hanyalah bentuk yang dihasilkan server
+    let line0 = loc
+        .pointer("/range/start/line")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let uri = loc.get("uri").and_then(Value::as_str)?;
+    let path = lsp_types::Url::parse(uri).ok()?.to_file_path().ok()?;
+    Some((path, line0 as usize + 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framing_single_message() {
+        let body = r#"{"jsonrpc":"2.0","method":"x","params":{}}"#;
+        let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
+        let mut buf: Vec<u8> = frame.as_bytes().to_vec();
+        assert_eq!(take_frame(&mut buf).as_deref(), Some(body));
+        assert!(buf.is_empty(), "frame habis dikonsumsi");
+    }
+
+    #[test]
+    fn framing_split_two_messages() {
+        let body = r#"{"id":2,"result":null}"#;
+        let mut wire: Vec<u8> = Vec::new();
+        wire.extend_from_slice(
+            format!("Content-Length: {}\r\n\r\n{}", body.len(), body).as_bytes(),
+        );
+        wire.extend_from_slice(
+            format!("Content-Length: {}\r\n\r\n{}", body.len(), body).as_bytes(),
+        );
+        let mut buf = wire;
+        let a = take_frame(&mut buf).expect("msg1");
+        let b = take_frame(&mut buf).expect("msg2");
+        assert_eq!(a, body);
+        assert_eq!(b, body);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn framing_incomplete_returns_none() {
+        let mut buf: Vec<u8> = b"Content-Length: 100\r\n\r\nshort".to_vec();
+        assert!(take_frame(&mut buf).is_none());
+    }
+
+    #[test]
+    fn diagnostics_json_to_entries() {
+        let frame = r##"{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{
+            "textDocument":{"uri":"file:///tmp/a.sv"},
+            "diagnostics":[
+                {"range":{"start":{"line":4,"character":0},"end":{"line":4,"character":3}},
+                 "severity":1,"message":"syntax error"}
+            ]}}"##;
+        let v: Value = serde_json::from_str(frame).unwrap();
+        // handle_frame via channel
+        let (tx, rx) = channel::<GuiEvent>();
+        handle_frame(&v.to_string(), &tx);
+        match rx.recv().unwrap() {
+            GuiEvent::LspDiagnostics(file, diags) => {
+                assert_eq!(file, "/tmp/a.sv");
+                assert_eq!(diags.len(), 1);
+                assert_eq!(diags[0].line, 5); // 0-based → 1-based
+                assert_eq!(diags[0].level, DiagLevel::Error);
+                assert_eq!(diags[0].message, "syntax error");
+            }
+            _ => panic!("bukan LspDiagnostics"),
+        }
+    }
+}

@@ -594,6 +594,19 @@ pub enum GuiEvent {
     TermOutput(String, bool),
     /// Proses terminal selesai → exit code.
     TermExit(i32),
+    // ── LSP client (server `mivon --lsp`, lihat lsp_client.rs) ──
+    /// Server siap (handshake initialize+initialized selesai).
+    LspStarted(String),
+    /// Server berhenti / gagal spawn — detail alasan.
+    LspStopped(String),
+    /// Diagnostics dari `textDocument/publishDiagnostics` — (file, baris).
+    LspDiagnostics(String, Vec<DiagEntry>),
+    /// Reply request ber-id (hover/definition) — id dipetakan UI via
+    /// `GuiState.lsp_pending`.
+    LspReply {
+        id: u64,
+        value: Option<serde_json::Value>,
+    },
 }
 
 /// State utama GUI.
@@ -740,6 +753,38 @@ pub struct GuiState {
     pub tx: Sender<GuiEvent>,
     /// Penerima event dari worker thread (dipoll di app).
     pub rx: Receiver<GuiEvent>,
+
+    // ── LSP client (`mivon --lsp` server, lihat lsp_client.rs) ──
+    /// Handle client LSP (None = belum/kegagalan start). Bukan bagian state
+    /// yang dipersistensikan.
+    pub lsp: Option<crate::lsp_client::LspClient>,
+    /// Server sudah handshake (siap terima didOpen/request).
+    pub lsp_ready: bool,
+    /// id request berikutnya (hover/goto) — dipetakan ke `lsp_pending`.
+    pub lsp_next_id: u64,
+    /// request belum dijawab: id → jenis (hover atau definition).
+    pub lsp_pending: std::collections::HashMap<u64, LspPendingKind>,
+    /// Popup hover LSP: (nama identifier, konten dari server).
+    pub lsp_hover: Option<(String, String)>,
+    /// Diagnostics dari LSP (terpisah dari hasil compile lokal) — digabung di
+    /// Problems/Mini Map/status bar. Diganti per file saat publish baru.
+    pub lsp_diags: Vec<DiagEntry>,
+    /// File yang sudah didOpen ke server (jangan kirim ulang).
+    pub lsp_opened: std::collections::HashSet<PathBuf>,
+    /// (file, waktu) didChange terakhir — debounce ±400ms saat mengetik.
+    pub lsp_last_change: std::collections::HashMap<PathBuf, std::time::Instant>,
+    /// Nama identifier hover frame sebelumnya (deteksi perubahan utk kirim
+    /// request hover LSP, bukan tiap frame).
+    pub lsp_last_hover: Option<String>,
+    /// Name identifier hover terakhir — one-time note bila binary LSP tak ada.
+    pub lsp_bin_noted: bool,
+}
+
+/// Jenis request LSP yang menunggu jawaban (untuk memetakan `LspReply`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspPendingKind {
+    HoverRequest,
+    GotoRequest,
 }
 
 impl GuiState {
@@ -833,7 +878,34 @@ impl GuiState {
             gen_error: String::new(),
             tx,
             rx,
+            lsp: None,
+            lsp_ready: false,
+            lsp_next_id: 1000,
+            lsp_pending: std::collections::HashMap::new(),
+            lsp_hover: None,
+            lsp_diags: Vec::new(),
+            lsp_opened: std::collections::HashSet::new(),
+            lsp_last_change: std::collections::HashMap::new(),
+            lsp_last_hover: None,
+            lsp_bin_noted: false,
         }
+    }
+
+    /// Kirim perintah ke client LSP (no-op bila belum start). True bila
+    /// terkirim.
+    pub fn lsp_send(&self, cmd: crate::lsp_client::LspCmd) -> bool {
+        self.lsp
+            .as_ref()
+            .map(|c| c.tx.send(cmd).is_ok())
+            .unwrap_or(false)
+    }
+
+    /// Alokasi id request LSP berikutnya + catat pending.
+    pub fn lsp_alloc_id(&mut self, kind: LspPendingKind) -> u64 {
+        let id = self.lsp_next_id;
+        self.lsp_next_id = id.wrapping_add(1).max(1000);
+        self.lsp_pending.insert(id, kind);
+        id
     }
 
     pub fn log(&mut self, msg: impl Into<String>) {

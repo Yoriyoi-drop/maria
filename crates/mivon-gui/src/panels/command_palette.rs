@@ -33,6 +33,7 @@ pub enum PaletteAction {
     CreateInterface,
     ExportCoverage,
     ExportVcd,
+    RestartLsp,
 }
 
 const ACTIONS: &[(&str, &str, PaletteAction)] = &[
@@ -63,6 +64,7 @@ const ACTIONS: &[(&str, &str, PaletteAction)] = &[
     ("Create Interface…", "", PaletteAction::CreateInterface),
     ("Export Coverage…", "", PaletteAction::ExportCoverage),
     ("Export Waveform (VCD)…", "", PaletteAction::ExportVcd),
+    ("Restart LSP", "", PaletteAction::RestartLsp),
 ];
 
 /// Render palette. Membaca/menulis `state.palette_*`; menutup diri saat
@@ -251,5 +253,6 @@ fn execute(state: &mut GuiState, action: PaletteAction) {
         }
         PaletteAction::ExportCoverage => app::trigger_export_coverage(state),
         PaletteAction::ExportVcd => app::trigger_export_vcd(state),
+        PaletteAction::RestartLsp => app::trigger_restart_lsp(state),
     }
 }

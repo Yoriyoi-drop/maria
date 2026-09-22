@@ -25,6 +25,17 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
 
         ui.separator();
 
+        // ── LSP status ──
+        if state.lsp.is_some() {
+            let (text, color) = if state.lsp_ready {
+                ("🔌 LSP", egui::Color32::from_rgb(34, 197, 94))
+            } else {
+                ("⏳ LSP", egui::Color32::from_rgb(234, 179, 8))
+            };
+            ui.label(egui::RichText::new(text).color(color).size(11.0));
+            ui.separator();
+        }
+
         // ── Info proyek ──
         if !state.project_name.is_empty() {
             let mods = state
@@ -131,11 +142,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             let errs = state
                 .diagnostics
                 .iter()
+                .chain(state.lsp_diags.iter())
                 .filter(|d| d.level == DiagLevel::Error)
                 .count();
             let warns = state
                 .diagnostics
                 .iter()
+                .chain(state.lsp_diags.iter())
                 .filter(|d| d.level == DiagLevel::Warning)
                 .count();
             if errs > 0 {

@@ -19,7 +19,7 @@ use super::panels::{
     bottom, command_palette, editor, genwizard, outline, sidebar, statusbar, toolbar,
 };
 use super::splitter;
-use super::state::{DiagEntry, DiagLevel, GuiEvent, GuiState, STAGE_SIMULATOR};
+use super::state::{DiagEntry, DiagLevel, GuiEvent, GuiState, LspPendingKind, STAGE_SIMULATOR};
 use super::workspace::{restore_workspace, save_workspace};
 
 pub struct MivonApp {
@@ -164,6 +164,175 @@ impl MivonApp {
                             }
                         }
                     }
+                }
+                // LSP events diterima channel terpisah — tidak pernah masuk rx
+                // worker backend; ditangani handle_lsp_event di bawah.
+                GuiEvent::LspStarted(_)
+                | GuiEvent::LspStopped(_)
+                | GuiEvent::LspDiagnostics(_, _)
+                | GuiEvent::LspReply { .. } => {
+                    unreachable!("event LSP ditangani handle_lsp_event")
+                }
+            }
+        }
+        // ── LSP client (channel terpisah dari worker backend) ──
+        if let Some(lsp) = &self.state.lsp {
+            let mut evs: Vec<GuiEvent> = Vec::new();
+            while let Ok(ev) = lsp.rx.try_recv() {
+                evs.push(ev);
+            }
+            for ev in evs {
+                self.handle_lsp_event(ev);
+            }
+        }
+    }
+
+    /// Terapkan satu event LSP ke state GUI.
+    fn handle_lsp_event(&mut self, ev: GuiEvent) {
+        match ev {
+            GuiEvent::LspStarted(detail) => {
+                self.state.lsp_ready = true;
+                self.state.log(format!(
+                    "🔌 LSP server siap ({}) — hover/definition aktif",
+                    detail
+                ));
+            }
+            GuiEvent::LspStopped(reason) => {
+                self.state.lsp_ready = false;
+                // Izinkan start ulang (mis. binary berubah).
+                self.state.lsp = None;
+                self.state.lsp_opened.clear();
+                self.state.log(format!("⛔ LSP server: {}", reason));
+            }
+            GuiEvent::LspDiagnostics(file, diags) => {
+                // Ganti diagnostics LSP lama untuk file yang sama.
+                self.state
+                    .lsp_diags
+                    .retain(|d| !crate::state::diag_matches_file(&d.file, &file));
+                if !diags.is_empty() {
+                    let n = diags.len();
+                    self.state.lsp_diags.extend(diags);
+                    self.state
+                        .log(format!("🔍 LSP diagnostics {}: {} baris", file, n));
+                }
+            }
+            GuiEvent::LspReply { id, value } => {
+                let kind = self.state.lsp_pending.remove(&id);
+                match kind {
+                    Some(LspPendingKind::HoverRequest) => {
+                        if let Some(v) = value {
+                            if let Ok(Some(hover)) =
+                                serde_json::from_value::<Option<lsp_types::Hover>>(v)
+                            {
+                                if let Some(text) = crate::lsp_client::hover_text(&hover) {
+                                    let name = self
+                                        .state
+                                        .lsp_last_hover
+                                        .clone()
+                                        .unwrap_or_else(|| "symbol".to_string());
+                                    self.state.lsp_hover = Some((name, text));
+                                }
+                            }
+                        }
+                    }
+                    Some(LspPendingKind::GotoRequest) => {
+                        if let Some(v) = value {
+                            if let Some((path, line)) = crate::lsp_client::definition_target(&v) {
+                                if !self.state.open_files.iter().any(|of| of.path == path) {
+                                    self.state.open_file(path.clone());
+                                }
+                                if let Some(idx) =
+                                    self.state.open_files.iter().position(|of| of.path == path)
+                                {
+                                    self.state.active_file = Some(idx);
+                                    self.state.open_files[idx].pending_goto = Some(line);
+                                    self.state.log(format!(
+                                        "⌗ LSP definition: {}:{}",
+                                        path.display(),
+                                        line
+                                    ));
+                                }
+                            } else {
+                                self.state.log("⚠ LSP: definition tidak ditemukan");
+                            }
+                        }
+                    }
+                    None => {}
+                }
+            }
+            _ => unreachable!("event LSP lain tidak mungkin"),
+        }
+    }
+
+    /// Mulai LSP server otomatis (sekali, bila project dibuka & binary ada).
+    /// Binary: env `MIVON_LSP_BIN` atau `mivon` di direktori executable GUI.
+    fn maybe_start_lsp(&mut self) {
+        if self.state.lsp.is_some() {
+            return;
+        }
+        if self.state.project_root.is_none() {
+            return;
+        }
+        let Some(bin) = crate::lsp_client::lsp_binary_path() else {
+            if !self.state.lsp_bin_noted {
+                self.state.lsp_bin_noted = true;
+                self.state.log(
+                    "ℹ LSP tidak aktif: binary server tidak ditemukan \
+                     (build `cargo build --bin mivon` atau set MIVON_LSP_BIN)",
+                );
+            }
+            return;
+        };
+        let Some(root) = self.state.project_root.clone() else {
+            return;
+        };
+        self.state
+            .log(format!("🔌 Hubungkan LSP server: {}", bin.display()));
+        self.state.lsp = Some(crate::lsp_client::LspClient::start(bin, root));
+    }
+
+    /// Sinkronisasi LSP tiap frame: didOpen untuk file baru + didChange
+    /// (debounce ±400ms) untuk file aktif yang berubah.
+    fn sync_lsp(&mut self) {
+        if !self.state.lsp_ready {
+            return;
+        }
+        // didOpen (file yang belum dibuka di server).
+        let mut to_open: Vec<(std::path::PathBuf, String)> = Vec::new();
+        for of in &self.state.open_files {
+            if !self.state.lsp_opened.contains(&of.path) {
+                to_open.push((of.path.clone(), of.content.clone()));
+            }
+        }
+        for (path, text) in to_open {
+            if self.state.lsp_send(crate::lsp_client::LspCmd::DidOpen {
+                path: path.clone(),
+                text,
+            }) {
+                self.state.lsp_opened.insert(path);
+            }
+        }
+        // didChange (file aktif dirty, debounce).
+        if let Some(idx) = self.state.active_file {
+            let (path, content, dirty) = match self.state.open_files.get(idx) {
+                Some(f) => (f.path.clone(), f.content.clone(), f.dirty),
+                None => return,
+            };
+            if dirty {
+                let now = std::time::Instant::now();
+                let due = self
+                    .state
+                    .lsp_last_change
+                    .get(&path)
+                    .map(|t| now.duration_since(*t) > std::time::Duration::from_millis(400))
+                    .unwrap_or(true);
+                if due
+                    && self.state.lsp_send(crate::lsp_client::LspCmd::DidChange {
+                        path: path.clone(),
+                        text: content,
+                    })
+                {
+                    self.state.lsp_last_change.insert(path, now);
                 }
             }
         }
@@ -525,6 +694,19 @@ pub fn trigger_export_vcd(state: &mut GuiState) {
     }
 }
 
+/// Restart LSP server: matikan (shutdown+exit), lepas handle, biarkan
+/// auto-start frame berikutnya. Dipakai aksi Command Palette "Restart LSP".
+pub fn trigger_restart_lsp(state: &mut GuiState) {
+    if state.lsp.is_some() {
+        let _ = state.lsp_send(crate::lsp_client::LspCmd::Stop);
+    }
+    state.lsp = None;
+    state.lsp_ready = false;
+    state.lsp_opened.clear();
+    state.lsp_bin_noted = false;
+    state.log("⟳ LSP dimulai ulang (auto-start frame berikutnya)");
+}
+
 fn setup_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     // Palet: abu-abu gelap tenang, kontras lembut
@@ -570,10 +752,16 @@ impl eframe::App for MivonApp {
         // ── Simpan workspace saat window akan ditutup (frame terakhir) ──
         if ctx.input(|i| i.viewport().close_requested()) {
             save_workspace(&self.state);
+            // Matikan LSP server dengan bersih (shutdown + exit).
+            let _ = self.state.lsp_send(crate::lsp_client::LspCmd::Stop);
         }
 
         self.handle_shortcuts(&ctx);
         self.poll_events();
+
+        // ── LSP: start otomatis (bila project & binary ada) + sinkron teks ──
+        self.maybe_start_lsp();
+        self.sync_lsp();
 
         // ── Toolbar (atas) ──
         egui::Panel::top(egui::Id::new("toolbar"))
@@ -643,6 +831,33 @@ impl eframe::App for MivonApp {
         // ── Wizard Generate Module / Create Interface (overlay) ──
         if self.state.gen_open {
             genwizard::show(ui, &mut self.state);
+        }
+
+        // ── Popup hover LSP (konten dari server, async) ──
+        // Ditutup saat klik/Esc. Posisi: pojok kiri-bawah area editor.
+        if let Some((name, text)) = self.state.lsp_hover.clone() {
+            let close = ctx.input(|i| i.pointer.any_click())
+                || ctx.input(|i| i.key_pressed(egui::Key::Escape));
+            if close {
+                self.state.lsp_hover = None;
+            } else {
+                egui::Area::new(egui::Id::new("lsp_hover"))
+                    .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(24.0, -48.0))
+                    .order(egui::Order::Foreground)
+                    .show(&ctx, |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.set_max_width(540.0);
+                            ui.label(
+                                egui::RichText::new(format!("◉ {}", name))
+                                    .strong()
+                                    .size(11.0),
+                            );
+                            ui.separator();
+                            ui.label(egui::RichText::new(text).monospace().size(11.0));
+                            ui.label(egui::RichText::new("Esc / klik: tutup").weak().size(10.0));
+                        });
+                    });
+            }
         }
 
         // Repaint terus jika worker sibuk (simulasi)

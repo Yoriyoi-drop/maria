@@ -9,6 +9,7 @@
 pub mod app;
 pub mod backend;
 pub mod diagnostics;
+pub mod lsp_client;
 pub mod panels;
 pub mod resource;
 pub mod semantic;

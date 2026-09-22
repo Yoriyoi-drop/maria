@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use super::super::splitter;
-use super::super::state::{BottomTab, DiagLevel, GuiState};
+use super::super::state::{BottomTab, DiagEntry, DiagLevel, GuiState};
 use super::assertions;
 use super::benchmark;
 use super::coverage;
@@ -43,7 +43,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             (BottomTab::Pipeline, "Pipeline"),
         ] {
             let count = match tab {
-                BottomTab::Problems => state.diagnostics.len(),
+                BottomTab::Problems => state.diagnostics.len() + state.lsp_diags.len(),
                 BottomTab::Console => state.console.len(),
                 BottomTab::Signals => state.signals.len(),
                 BottomTab::Waveform => state.waveform.len(),
@@ -106,7 +106,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
 }
 
 fn problems_tab(ui: &mut egui::Ui, state: &mut GuiState) {
-    if state.diagnostics.is_empty() {
+    // Diagnostics lokal (compile/lint) + LSP server — digabung utk tampil.
+    let all: Vec<&DiagEntry> = state
+        .diagnostics
+        .iter()
+        .chain(state.lsp_diags.iter())
+        .collect();
+    if all.is_empty() {
         ui.label(egui::RichText::new("No problems detected").weak().italics());
         return;
     }
@@ -115,7 +121,7 @@ fn problems_tab(ui: &mut egui::Ui, state: &mut GuiState) {
     // meminjam `state` mutable, tidak bisa di dalam iterasi.
     let mut goto: Option<(String, usize)> = None;
     let mut fix_idx: Option<usize> = None;
-    for (i, d) in state.diagnostics.iter().enumerate() {
+    for (i, d) in all.iter().enumerate() {
         let (icon, color) = match d.level {
             DiagLevel::Error => ("✖", egui::Color32::from_rgb(239, 68, 68)),
             DiagLevel::Warning => ("⚠", egui::Color32::from_rgb(234, 179, 8)),

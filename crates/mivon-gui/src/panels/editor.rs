@@ -9,8 +9,8 @@ use egui::TextBuffer;
 
 use super::super::semantic;
 use super::super::state::{
-    diag_matches_file, word_count, BottomTab, DiagEntry, DiagLevel, GuiState, OpenFile, PeekInfo,
-    StickyScope,
+    diag_matches_file, word_count, BottomTab, DiagEntry, DiagLevel, GuiState, LspPendingKind,
+    OpenFile, PeekInfo, StickyScope,
 };
 
 pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
@@ -234,12 +234,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
     let id = format!("sv_editor:{}", f.path.display());
 
     // Kumpulkan diagnostic untuk file ini (cocokkan nama file) — dibaca dari
-    // field `state.diagnostics` yang disjoint dari `state.open_files` (borrow
-    // field-split valid, sama seperti Code Lens di atas).
+    // field `state.diagnostics` dan `state.lsp_diags` (LSP server `mivon
+    // --lsp`), keduanya disjoint dari `state.open_files` (borrow field-split
+    // valid, sama seperti Code Lens di atas).
     let path_str = f.path.display().to_string();
     let file_diags: Vec<&DiagEntry> = state
         .diagnostics
         .iter()
+        .chain(state.lsp_diags.iter())
         .filter(|d| diag_matches_file(&d.file, &path_str))
         .collect();
 
@@ -286,6 +288,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
     // (Ctrl+Space dengan prefix kosong & items kosong harus tetap tampil),
     // meski teks tidak berubah.
     let mut completion_just_opened = false;
+
+    // ── LSP (server `mivon --lsp`) ──
+    // Di dalam closure editor `state` dipinjam mut via `f` (open_files) —
+    // method `lsp_send`/`lsp_alloc_id` (borrow seluruh state) tidak bisa
+    // dipanggil di sana. Perintah diakumulasi di lokal, di-flush SETELAH
+    // closure (borrow `state` penuh tersedia).
+    let lsp_ready = state.lsp_ready;
+    let mut lsp_cmds: Vec<crate::lsp_client::LspCmd> = Vec::new();
+    let mut lsp_pending: Vec<(u64, LspPendingKind)> = Vec::new();
+    let mut lsp_next = state.lsp_next_id;
+    // Snapshot hover sebelumnya — diperbarui di dalam closure (bukan
+    // `state.lsp_last_hover` langsung, hindari borrow).
+    let mut lsp_last_hover0 = state.lsp_last_hover.clone();
 
     // ── Sticky Header ──
     // Deklarasi scope enclosing (module/interface/package/function/task/
@@ -429,6 +444,36 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                     rename_focus_pending = true;
                 }
             }
+            // LSP hover: kirim request saat identifier hover BERUBAH (bukan
+            // tiap frame). Konten datang async → popup di app.rs.
+            if let Some((name, _)) = &hover_id {
+                if lsp_ready && lsp_last_hover0.as_deref() != Some(name.as_str()) {
+                    lsp_last_hover0 = Some(name.clone());
+                    if let Some(pos) = resp.hover_pos() {
+                        if let Some((l0, c0)) = hover_line_col(
+                            &resp,
+                            &f.content,
+                            scroll_top,
+                            scroll_left,
+                            char_w,
+                            line_h,
+                            pos,
+                        ) {
+                            let id = lsp_next;
+                            lsp_next = lsp_next.wrapping_add(1).max(1000);
+                            lsp_pending.push((id, LspPendingKind::HoverRequest));
+                            lsp_cmds.push(crate::lsp_client::LspCmd::Hover {
+                                id,
+                                path: f.path.clone(),
+                                line: l0,
+                                character: c0,
+                            });
+                        }
+                    }
+                }
+            } else {
+                lsp_last_hover0 = None;
+            }
             // Hover tooltip (identifier di bawah kursor).
             if let Some((name, kind)) = hover_id {
                 egui::Tooltip::for_widget(&resp)
@@ -439,6 +484,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                     });
             }
             // Go To Definition: Ctrl+Click → buka file deklarasi / lompat baris.
+            // Bila LSP siap, pakai hasil server (lebih akurat); kalau tidak,
+            // fallback heuristik lokal.
             if resp.clicked() && ui.input(|i| i.modifiers.command) {
                 if let Some(pos) = resp.interact_pointer_pos() {
                     if let Some((name, kind)) = identifier_at_pos(
@@ -450,7 +497,29 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                         line_h,
                         pos,
                     ) {
-                        want_goto = resolve_goto(f, &name, kind, symbol_files);
+                        if lsp_ready {
+                            if let Some((l0, c0)) = hover_line_col(
+                                &resp,
+                                &f.content,
+                                scroll_top,
+                                scroll_left,
+                                char_w,
+                                line_h,
+                                pos,
+                            ) {
+                                let id = lsp_next;
+                                lsp_next = lsp_next.wrapping_add(1).max(1000);
+                                lsp_pending.push((id, LspPendingKind::GotoRequest));
+                                lsp_cmds.push(crate::lsp_client::LspCmd::Goto {
+                                    id,
+                                    path: f.path.clone(),
+                                    line: l0,
+                                    character: c0,
+                                });
+                            }
+                        } else {
+                            want_goto = resolve_goto(f, &name, kind, symbol_files);
+                        }
                     }
                 }
             }
@@ -701,6 +770,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
             want_problems = true;
         }
     });
+
+    // ── Flush perintah LSP dari dalam closure (borrow `state` penuh OK di
+    // sini) + sinkron status hover. ──
+    state.lsp_last_hover = lsp_last_hover0;
+    if !lsp_pending.is_empty() || !lsp_cmds.is_empty() {
+        state.lsp_next_id = lsp_next.max(1000);
+        for (id, kind) in lsp_pending {
+            state.lsp_pending.insert(id, kind);
+        }
+        for cmd in lsp_cmds {
+            state.lsp_send(cmd);
+        }
+    }
     if want_problems {
         state.bottom_tab = BottomTab::Problems;
     }
@@ -1293,6 +1375,32 @@ fn hovered_identifier(
         line_h,
         resp.hover_pos()?,
     )
+}
+
+/// (baris, kolom) 0-based LSP dari posisi pointer — metrik monospace + offset
+/// scroll, lalu `byte_idx_at_line_col` + `line_col_at_char` yang sudah ada.
+fn hover_line_col(
+    resp: &egui::Response,
+    content: &str,
+    scroll_top: f32,
+    scroll_left: f32,
+    char_w: f32,
+    line_h: f32,
+    pos: egui::Pos2,
+) -> Option<(u32, u32)> {
+    let margin = egui::Margin::symmetric(4, 2);
+    let origin = resp.rect.min + egui::vec2(margin.left as f32, margin.top as f32);
+    let y = (pos.y - origin.y) + scroll_top;
+    let x = (pos.x - origin.x) + scroll_left;
+    if y < 0.0 || x < 0.0 {
+        return None;
+    }
+    let row = (y / line_h.max(1.0)) as usize;
+    let col = (x / char_w.max(1.0)) as usize;
+    let byte = byte_idx_at_line_col(content, row, col);
+    let char_idx = content[..byte.min(content.len())].chars().count();
+    let (r0, c0) = line_col_at_char(content, char_idx);
+    Some((r0 as u32, c0 as u32))
 }
 
 /// Identifier di posisi tertentu (screen). Dipakai hover tooltip & Ctrl+Click

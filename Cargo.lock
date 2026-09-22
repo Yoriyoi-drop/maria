@@ -2232,6 +2232,7 @@ version = "0.3.0"
 dependencies = [
  "eframe",
  "egui",
+ "lsp-types",
  "mivon-ast",
  "mivon-compiler",
  "mivon-core",
