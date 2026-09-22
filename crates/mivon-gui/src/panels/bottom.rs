@@ -9,6 +9,7 @@ use super::benchmark;
 use super::coverage;
 use super::pipeline;
 use super::terminal;
+use super::trace;
 use super::waveform;
 
 pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
@@ -34,6 +35,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             (BottomTab::Console, "Console"),
             (BottomTab::Signals, "Signals"),
             (BottomTab::Waveform, "Waveform"),
+            (BottomTab::Trace, "Trace"),
             (BottomTab::Benchmark, "Benchmark"),
             (BottomTab::Coverage, "Coverage"),
             (BottomTab::Assertions, "Assertions"),
@@ -45,6 +47,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 BottomTab::Console => state.console.len(),
                 BottomTab::Signals => state.signals.len(),
                 BottomTab::Waveform => state.waveform.len(),
+                BottomTab::Trace => 0,
                 BottomTab::Benchmark => 0,
                 BottomTab::Coverage => state.coverage.branch_total as usize,
                 BottomTab::Assertions => state.assertions.len(),
@@ -72,10 +75,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     // drag tidak bisa membesarkan panel secara bebas.
     ui.set_min_height(ui.available_height());
 
-    // Waveform punya ScrollArea sendiri (horizontal+vertikal) — jangan dibungkus
-    // ScrollArea vertikal di sini (scroll bersarang).
-    if state.bottom_tab == BottomTab::Waveform {
-        waveform::show(ui, state);
+    // Waveform & Trace punya ScrollArea sendiri (horizontal+vertikal / vertikal)
+    // — jangan dibungkus ScrollArea vertikal di sini (scroll bersarang).
+    if matches!(state.bottom_tab, BottomTab::Waveform | BottomTab::Trace) {
+        match state.bottom_tab {
+            BottomTab::Waveform => waveform::show(ui, state),
+            BottomTab::Trace => trace::show(ui, state),
+            _ => unreachable!("handled above"),
+        }
         return;
     }
 
@@ -89,6 +96,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             BottomTab::Console => console_tab(ui, state),
             BottomTab::Signals => signals_tab(ui, state),
             BottomTab::Waveform => unreachable!("handled above"),
+            BottomTab::Trace => unreachable!("handled above"),
             BottomTab::Benchmark => benchmark::show(ui, state),
             BottomTab::Coverage => coverage::show(ui, state),
             BottomTab::Assertions => assertions::show(ui, state),

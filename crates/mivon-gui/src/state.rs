@@ -391,6 +391,18 @@ pub struct WaveformSignal {
     pub trace: Vec<(u64, String)>,
 }
 
+/// Satu event timeline: sinyal berubah nilai pada waktu `t` (entry trace
+/// kedua dst — nilai t=0 adalah inisial, bukan perubahan). Fakta dari trace
+/// asli, bukan dugaan sebab-akibat.
+#[derive(Debug, Clone)]
+pub struct TraceEvent {
+    pub name: String,
+    pub width: usize,
+    pub t: u64,
+    /// Nilai baru (string biner mentah dari trace).
+    pub value: String,
+}
+
 /// Satu baris hasil coverage covergroup.
 #[derive(Debug, Clone)]
 pub struct CovergroupRow {
@@ -560,6 +572,7 @@ pub enum BottomTab {
     Console,
     Signals,
     Waveform,
+    Trace,
     Benchmark,
     Coverage,
     Assertions,
@@ -614,6 +627,10 @@ pub struct GuiState {
     // ── Waveform ──
     /// Trace waveform hasil simulasi terakhir.
     pub waveform: Vec<WaveformSignal>,
+    /// Filter sinyal tab Trace (substring nama; kosong = semua).
+    pub trace_filter: String,
+    /// Batas waktu tab Trace (0 = semua) — tampilkan event t ≤ nilai ini.
+    pub trace_t_max: u64,
     /// Snapshot trace waveform dari RUN SEBELUMNYA — baseline mode Compare
     /// (diff dua run simulasi). Di-isi `waveform.clone()` di `trigger_run`
     /// sebelum sim baru dimulai (F5 kedua+).
@@ -744,6 +761,8 @@ impl GuiState {
             sim_time_ms: 0.0,
             cycles: 0,
             waveform: Vec::new(),
+            trace_filter: String::new(),
+            trace_t_max: 0,
             prev_waveform: Vec::new(),
             wave_compare: false,
             wave_zoom: 4.0,

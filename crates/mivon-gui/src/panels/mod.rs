@@ -17,4 +17,5 @@ pub mod sidebar;
 pub mod statusbar;
 pub mod terminal;
 pub mod toolbar;
+pub mod trace;
 pub mod waveform;

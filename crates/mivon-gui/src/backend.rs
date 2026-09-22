@@ -20,7 +20,8 @@ use mivon_simulator::simulator::SimulationEngine;
 use super::state::{
     blocking_assign_pos, word_count, AssertionRow, CompileInfo, CoverageInfo, CovergroupRow,
     DepRow, DiagEntry, DiagLevel, FileNode, GuiEvent, InstanceRow, MacroRow, MicdInfo, ParamRow,
-    PipelineStage, QuickFix, QuickFixKind, SignalRow, SimInfo, WaveformSignal, STAGE_SIMULATOR,
+    PipelineStage, QuickFix, QuickFixKind, SignalRow, SimInfo, TraceEvent, WaveformSignal,
+    STAGE_SIMULATOR,
 };
 
 /// Scan direktori → pohon file (rekursif, sinkron).
@@ -1222,6 +1223,29 @@ pub fn signals_to_vcd(signals: &[WaveformSignal]) -> String {
     out
 }
 
+/// Flatten trace waveform → daftar event perubahan nilai, urut waktu.
+/// Entry trace pertama (t=0) = nilai INISIAL, bukan perubahan — dibuang.
+/// Entry berikutnya = nilai baru yang berlaku sejak `t`. Fakta dari trace
+/// asli (untuk tab Trace), bukan dugaan sebab-akibat.
+pub fn flatten_events(signals: &[WaveformSignal]) -> Vec<TraceEvent> {
+    let mut out: Vec<TraceEvent> = Vec::new();
+    for s in signals {
+        for (i, (t, v)) in s.trace.iter().enumerate() {
+            if i == 0 {
+                continue;
+            }
+            out.push(TraceEvent {
+                name: s.name.clone(),
+                width: s.width,
+                t: *t,
+                value: v.clone(),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.t.cmp(&b.t).then_with(|| a.name.cmp(&b.name)));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1315,5 +1339,40 @@ mod tests {
     fn resolve_assert_line_out_of_range_none() {
         let sources = vec![src("/proj/a.sv", "module a;\n  logic q;\nendmodule\n")];
         assert_eq!(resolve_assert_in_sources(&sources, 99), None);
+    }
+
+    // ── Flatten event trace ──
+
+    #[test]
+    fn flatten_events_skips_initial_value() {
+        // Trace hanya berisi nilai inisial (t=0) → tidak ada event.
+        let sigs = vec![wf("clk", 1, vec![(0, "0")])];
+        assert!(flatten_events(&sigs).is_empty());
+    }
+
+    #[test]
+    fn flatten_events_lists_changes_sorted_by_time() {
+        let sigs = vec![
+            wf("clk", 1, vec![(0, "0"), (5, "1"), (10, "0")]),
+            wf("data", 4, vec![(0, "0000"), (7, "1010")]),
+        ];
+        let ev = flatten_events(&sigs);
+        assert_eq!(ev.len(), 3);
+        // Urut: t=5 clk, t=7 data, t=10 clk.
+        assert_eq!(ev[0].t, 5);
+        assert_eq!(ev[0].name, "clk");
+        assert_eq!(ev[0].value, "1");
+        assert_eq!(ev[1].t, 7);
+        assert_eq!(ev[1].name, "data");
+        assert_eq!(ev[1].width, 4);
+        assert_eq!(ev[1].value, "1010");
+        assert_eq!(ev[2].t, 10);
+        assert_eq!(ev[2].name, "clk");
+        assert_eq!(ev[2].value, "0");
+    }
+
+    #[test]
+    fn flatten_events_empty_input_empty() {
+        assert!(flatten_events(&[]).is_empty());
     }
 }
