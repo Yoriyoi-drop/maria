@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use std::sync::atomic::Ordering;
 
-use super::backend::{scan_tree, spawn_compile, spawn_sim};
+use super::backend::{scan_tree, signals_to_vcd, spawn_compile, spawn_sim};
 use super::panels::{
     bottom, command_palette, editor, genwizard, outline, sidebar, statusbar, toolbar,
 };
@@ -492,6 +492,34 @@ pub fn trigger_export_coverage(state: &mut GuiState) {
             Err(e) => state.log(format!("❌ Gagal menulis coverage: {}", e)),
         },
         Err(e) => state.log(format!("❌ Gagal serialize coverage: {}", e)),
+    }
+}
+
+/// Trigger: export trace waveform hasil simulasi ke file VCD via dialog simpan
+/// native (rfd) — kebalikan dari capture internal (serialisasi `signals_to_vcd`,
+/// tetap dipertahankan apa adanya di file). Bila belum ada waveform, hanya log
+/// peringatan — tidak membuka dialog.
+pub fn trigger_export_vcd(state: &mut GuiState) {
+    if state.waveform.is_empty() {
+        state.log("⚠ Tidak ada waveform untuk diexport — jalankan simulasi dulu");
+        return;
+    }
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Export Waveform (VCD)")
+        .set_file_name("waveform.vcd")
+        .add_filter("VCD", &["vcd"])
+        .save_file()
+    else {
+        return;
+    };
+    let text = signals_to_vcd(&state.waveform);
+    match std::fs::write(&path, text) {
+        Ok(()) => state.log(format!(
+            "⇓ Waveform ({:?} signal) diexport → {}",
+            state.waveform.len(),
+            path.display()
+        )),
+        Err(e) => state.log(format!("❌ Gagal menulis VCD: {}", e)),
     }
 }
 

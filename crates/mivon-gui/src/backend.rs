@@ -1107,3 +1107,106 @@ pub fn logicvec_to_hex(lv: &LogicVec) -> String {
         trimmed.to_string()
     }
 }
+
+/// Serialisasi trace waveform (hasil sim) ke teks VCD — kebalikan dari
+/// `parse_vcd`. Semua signal ditulis dalam satu scope `module top`; nama
+/// signal dipertahankan apa adanya (scope bertitik ikut sebagai nama, konsisten
+/// dengan penyebutan tab Waveform). Dipakai tombol "⇓ VCD" (export).
+pub fn signals_to_vcd(signals: &[WaveformSignal]) -> String {
+    let mut out = String::new();
+
+    // Header VCD.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    out.push_str("$date\n  ");
+    out.push_str(&now.to_string());
+    out.push_str("\n$end\n");
+    out.push_str("$version Mivon GUI\n$end\n");
+    out.push_str("$timescale 1ns $end\n");
+    out.push_str("$scope module top $end\n");
+    // Kode identifier per signal: "s<i>" (unik, urut index).
+    for (i, s) in signals.iter().enumerate() {
+        let w = s.width.max(1);
+        out.push_str(&format!("$var wire {} s{} {} $end\n", w, i, s.name));
+    }
+    out.push_str("$upscope $end\n");
+    out.push_str("$enddefinitions $end\n");
+
+    // Saluran tanpa transisi: definisikan biner 0 di t=0 agar tetap terlihat
+    // di viewer. Signal ber-trace: tulis SEMUA transisi (termasuk t=0) —
+    // nilai berlaku sejak timestamp-nya; nilai t=0 yang berbeda dari 0 tidak
+    // boleh dibuang (round-trip parse_vcd).
+    for (i, s) in signals.iter().enumerate() {
+        if s.trace.is_empty() {
+            out.push_str("#0\n");
+            out.push_str(&format!("b{} s{}\n", "0".repeat(s.width.max(1)), i));
+        }
+    }
+    for (i, s) in signals.iter().enumerate() {
+        let code = format!("s{}", i);
+        for (t, v) in &s.trace {
+            out.push_str(&format!("#{}\n", t));
+            if s.width == 1 {
+                out.push_str(&format!("{}{}\n", v, code));
+            } else {
+                out.push_str(&format!("b{} {}\n", v, code));
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wf(name: &str, width: usize, trace: Vec<(u64, &str)>) -> WaveformSignal {
+        WaveformSignal {
+            name: name.into(),
+            width,
+            trace: trace.into_iter().map(|(t, v)| (t, v.to_string())).collect(),
+        }
+    }
+
+    #[test]
+    fn signals_to_vcd_roundtrip_via_parse() {
+        // write → parse harus mengembalikan trace yang sama (nama/lebar/transisi)
+        // — kebalikan dari parse_vcd, kunci format yang benar.
+        let sigs = vec![
+            wf("clk", 1, vec![(0, "0"), (5, "1"), (10, "0")]),
+            wf("data", 4, vec![(0, "0000"), (7, "1010")]),
+        ];
+        let vcd = signals_to_vcd(&sigs);
+        let back = parse_vcd(&vcd);
+        assert_eq!(back.len(), 2, "dua signal kembali:\n{}", vcd);
+        let clk = back.iter().find(|s| s.name == "clk").expect("clk");
+        assert_eq!(clk.width, 1);
+        assert_eq!(clk.trace, sigs[0].trace);
+        let data = back.iter().find(|s| s.name == "data").expect("data");
+        assert_eq!(data.width, 4);
+        assert_eq!(data.trace, sigs[1].trace);
+    }
+
+    #[test]
+    fn signals_to_vcd_has_header_and_single_scope() {
+        let sigs = vec![wf("q", 1, Vec::new())];
+        let vcd = signals_to_vcd(&sigs);
+        assert!(vcd.contains("$timescale 1ns $end"));
+        assert!(vcd.contains("$var wire 1 s0 q $end"));
+        assert!(vcd.contains("$enddefinitions $end"));
+        assert_eq!(vcd.matches("$scope").count(), 1, "satu scope top");
+        assert!(vcd.contains("#0\n"));
+    }
+
+    #[test]
+    fn signals_to_vcd_preserves_zero_time_value() {
+        // Nilai t=0 yang BUKAN 0 harus dipertahankan (tidak boleh diganti
+        // biner 0 implisit) — round-trip parse harus identik.
+        let sigs = vec![wf("q", 1, vec![(0, "1"), (3, "0")])];
+        let back = parse_vcd(&signals_to_vcd(&sigs));
+        let q = back.iter().find(|s| s.name == "q").expect("q");
+        assert_eq!(q.trace, sigs[0].trace);
+    }
+}

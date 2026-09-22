@@ -32,6 +32,7 @@ pub enum PaletteAction {
     GenerateModule,
     CreateInterface,
     ExportCoverage,
+    ExportVcd,
 }
 
 const ACTIONS: &[(&str, &str, PaletteAction)] = &[
@@ -61,6 +62,7 @@ const ACTIONS: &[(&str, &str, PaletteAction)] = &[
     ("Generate Module…", "", PaletteAction::GenerateModule),
     ("Create Interface…", "", PaletteAction::CreateInterface),
     ("Export Coverage…", "", PaletteAction::ExportCoverage),
+    ("Export Waveform (VCD)…", "", PaletteAction::ExportVcd),
 ];
 
 /// Render palette. Membaca/menulis `state.palette_*`; menutup diri saat
@@ -248,5 +250,6 @@ fn execute(state: &mut GuiState, action: PaletteAction) {
             state.gen_error.clear();
         }
         PaletteAction::ExportCoverage => app::trigger_export_coverage(state),
+        PaletteAction::ExportVcd => app::trigger_export_vcd(state),
     }
 }

@@ -93,6 +93,16 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 super::super::app::trigger_generate_all(state);
             }
 
+            // ── Export waveform (VCD) — trace hasil sim terakhir ──
+            let has_wave = !state.waveform.is_empty();
+            if ui
+                .add_enabled(has_wave, egui::Button::new("⇓ VCD"))
+                .on_hover_text("Export waveform hasil simulasi ke file VCD")
+                .clicked()
+            {
+                super::super::app::trigger_export_vcd(state);
+            }
+
             // ── Open project ──
             if ui
                 .button("Open Project")
