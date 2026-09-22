@@ -570,6 +570,9 @@ mod tests {
         }
         client.tx.send(LspCmd::Stop).unwrap();
         let _ = std::fs::remove_dir_all(&ws);
-        assert!(got, "tidak menerima publishDiagnostics dari server dalam 30s");
+        assert!(
+            got,
+            "tidak menerima publishDiagnostics dari server dalam 30s"
+        );
     }
 }
