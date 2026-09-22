@@ -10,6 +10,7 @@
 
 use eframe::egui;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use mivon_core::Symbol;
@@ -27,6 +28,9 @@ const BUS_LINE_COLOR: egui::Color32 = egui::Color32::from_gray(75);
 const NAME_W: f32 = 190.0;
 const ROW_H: f32 = 22.0;
 const HEADER_H: f32 = 26.0;
+
+/// Warna overlay run sebelumnya di mode Compare (abu redup).
+const OVERLAY_COLOR: egui::Color32 = egui::Color32::from_rgb(110, 118, 129);
 
 pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     if state.waveform.is_empty() {
@@ -55,6 +59,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         .filter(|s| !state.wave_hidden.contains(&s.name))
         .collect();
 
+    // Index run sebelumnya untuk mode Compare — borrow field `prev_waveform`
+    // (disjoint dari `signals = &state.waveform`; pemakaian terakhir di dalam
+    // ScrollArea closure, jadi tidak menghalangi borrow mut setelahnya).
+    let prev_by_name: HashMap<&str, &WaveformSignal> = state
+        .prev_waveform
+        .iter()
+        .map(|s| (s.name.as_str(), s))
+        .collect();
+
     // ── Kontrol zoom + pemilih signal ──
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Zoom").weak().size(11.0));
@@ -76,6 +89,37 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         {
             let avail = ui.available_width().max(240.0);
             state.wave_zoom = ((avail - NAME_W) / (t_end as f32).max(1.0)).clamp(0.5, 256.0);
+        }
+        // ── Mode Compare: overlay waveform run sebelumnya (baseline disimpan
+        // saat F5 berikutnya) — segmen nilai berbeda di-highlight merah.
+        ui.separator();
+        let has_prev = !state.prev_waveform.is_empty();
+        let cmp_resp = ui
+            .add_enabled(
+                has_prev,
+                egui::Button::new(if state.wave_compare {
+                    "⟲ Compare: ON"
+                } else {
+                    "⟲ Compare"
+                }),
+            )
+            .on_hover_text("Overlay waveform run sebelumnya; segmen berbeda di-highlight merah");
+        if cmp_resp.clicked() && has_prev {
+            state.wave_compare = !state.wave_compare;
+        }
+        if has_prev && state.wave_compare {
+            let mism = count_mismatches(&state.waveform, &state.prev_waveform);
+            let color = if mism > 0 {
+                egui::Color32::from_rgb(239, 68, 68)
+            } else {
+                egui::Color32::from_rgb(34, 197, 94)
+            };
+            ui.label(
+                egui::RichText::new(format!("{} mismatch", mism))
+                    .monospace()
+                    .size(11.0)
+                    .color(color),
+            );
         }
         ui.separator();
         ui.label(
@@ -166,7 +210,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                         .on_hover_text("Klik: buka deklarasi sinyal di RTL");
                     let (rect, resp) =
                         ui.allocate_exact_size(egui::vec2(wf_w, ROW_H), egui::Sense::click());
-                    paint_signal(ui, rect, sig, scale);
+                    // Mode Compare: overlay run sebelumnya + stripe segmen beda.
+                    if state.wave_compare {
+                        match prev_by_name.get(sig.name.as_str()) {
+                            Some(prev) => paint_signal_compare(ui, rect, sig, prev, scale),
+                            None => paint_signal(ui, rect, sig, scale),
+                        }
+                    } else {
+                        paint_signal(ui, rect, sig, scale);
+                    }
                     let _ = resp
                         .clone()
                         .on_hover_text("Klik: buka deklarasi sinyal di RTL");
@@ -282,6 +334,50 @@ fn nice_step(scale: f32) -> u64 {
 
 /// Gambar satu baris sinyal: step-line untuk 1-bit, label nilai untuk bus.
 fn paint_signal(ui: &mut egui::Ui, rect: egui::Rect, sig: &WaveformSignal, scale: f32) {
+    paint_signal_styled(ui, rect, sig, scale, WAVE_COLOR, Some(VALUE_COLOR));
+}
+
+/// Mode Compare: gambar run ini (normal) + segmen waktu yang nilainya
+/// berbeda dengan run sebelumnya (stripe merah di belakang) + overlay run
+/// sebelumnya (abu, tanpa label nilai).
+fn paint_signal_compare(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    cur: &WaveformSignal,
+    prev: &WaveformSignal,
+    scale: f32,
+) {
+    // Stripe merah pada segmen yang berbeda (di belakang waveform).
+    // `from_rgba_unmultiplied` bukan const fn — dibuat per panggilan.
+    let diff_fill = egui::Color32::from_rgba_unmultiplied(239, 68, 68, 60);
+    for (t0, t1) in diff_segments(cur, prev) {
+        let x0 = rect.left() + t0 as f32 * scale;
+        let x1 = rect.left() + t1 as f32 * scale;
+        if x1 > x0 {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(egui::pos2(x0, rect.top()), egui::pos2(x1, rect.bottom())),
+                0.0,
+                diff_fill,
+            );
+        }
+    }
+    // Run ini — warna normal.
+    paint_signal(ui, rect, cur, scale);
+    // Overlay run sebelumnya — abu redup, tanpa label nilai.
+    paint_signal_styled(ui, rect, prev, scale, OVERLAY_COLOR, None);
+}
+
+/// Versi berparameter warna — dipakai `paint_signal` (normal) dan overlay run
+/// sebelumnya di mode Compare (`value_color = None` → tanpa label nilai, cukup
+/// garis duplikasi / garis dasar bus).
+fn paint_signal_styled(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    sig: &WaveformSignal,
+    scale: f32,
+    wave_color: egui::Color32,
+    value_color: Option<egui::Color32>,
+) {
     let painter = ui.painter();
     let trace = &sig.trace;
     if trace.is_empty() {
@@ -290,7 +386,7 @@ fn paint_signal(ui: &mut egui::Ui, rect: egui::Rect, sig: &WaveformSignal, scale
     if sig.width == 1 {
         let (top_y, bot_y) = (rect.top() + 3.0, rect.bottom() - 4.0);
         let mid_y = rect.center().y;
-        let stroke = egui::Stroke::new(1.5, WAVE_COLOR);
+        let stroke = egui::Stroke::new(1.5, wave_color);
         let mut y_prev = level_y(&trace[0].1, top_y, bot_y, mid_y);
         let mut x_prev = rect.left();
         for (i, (t, v)) in trace.iter().enumerate() {
@@ -309,16 +405,18 @@ fn paint_signal(ui: &mut egui::Ui, rect: egui::Rect, sig: &WaveformSignal, scale
             [egui::pos2(x_prev, y_prev), egui::pos2(rect.right(), y_prev)],
             stroke,
         );
-        // Label nilai kecil di tiap transisi
-        for (t, v) in trace.iter() {
-            let x = rect.left() + (*t as f32) * scale;
-            painter.text(
-                egui::pos2(x + 4.0, rect.top() + 2.0),
-                egui::Align2::LEFT_TOP,
-                v,
-                egui::FontId::monospace(9.0),
-                VALUE_COLOR,
-            );
+        // Label nilai kecil di tiap transisi (di-skip saat overlay).
+        if let Some(vc) = value_color {
+            for (t, v) in trace.iter() {
+                let x = rect.left() + (*t as f32) * scale;
+                painter.text(
+                    egui::pos2(x + 4.0, rect.top() + 2.0),
+                    egui::Align2::LEFT_TOP,
+                    v,
+                    egui::FontId::monospace(9.0),
+                    vc,
+                );
+            }
         }
     } else {
         // Bus: label nilai (hex) per segmen + garis dasar
@@ -329,14 +427,16 @@ fn paint_signal(ui: &mut egui::Ui, rect: egui::Rect, sig: &WaveformSignal, scale
                 .get(i + 1)
                 .map(|(t2, _)| rect.left() + (*t2 as f32) * scale)
                 .unwrap_or(rect.right());
-            if x1 - x0 >= 18.0 {
-                painter.text(
-                    egui::pos2((x0 + x1) / 2.0, mid_y),
-                    egui::Align2::CENTER_CENTER,
-                    bin_to_hex(v),
-                    egui::FontId::monospace(10.0),
-                    VALUE_COLOR,
-                );
+            if let Some(vc) = value_color {
+                if x1 - x0 >= 18.0 {
+                    painter.text(
+                        egui::pos2((x0 + x1) / 2.0, mid_y),
+                        egui::Align2::CENTER_CENTER,
+                        bin_to_hex(v),
+                        egui::FontId::monospace(10.0),
+                        vc,
+                    );
+                }
             }
             painter.line_segment(
                 [
@@ -409,6 +509,67 @@ fn bin_to_hex(bin: &str) -> String {
     }
 }
 
+// ─────────────────────────── Compare antar-run ───────────────────────────
+
+/// Jumlah total segmen nilai berbeda antar dua run (per signal, dijumlahkan) —
+/// badge mismatch di kontrol Compare.
+fn count_mismatches(cur: &[WaveformSignal], prev: &[WaveformSignal]) -> usize {
+    cur.iter()
+        .filter_map(|s| {
+            prev.iter()
+                .find(|p| p.name == s.name)
+                .map(|p| diff_segments(s, p).len())
+        })
+        .sum()
+}
+
+/// Nilai mentah (string trace) pada waktu `t` — nilai terakhir ≤ t. Tanpa
+/// konversi display (hex untuk bus) supaya perbandingan compare konsisten —
+/// dua run dengan nilai biner yang sama dianggap identik.
+fn value_raw_at(sig: &WaveformSignal, t: u64) -> Option<&str> {
+    sig.trace
+        .iter()
+        .rev()
+        .find(|(tt, _)| *tt <= t)
+        .map(|(_, v)| v.as_str())
+}
+
+/// Segmen waktu `(t_start..t_end)` di mana nilai `cur` vs `prev` BERBEDA.
+/// Titik waktu = gabungan trace keduanya (step-function); nilai tiap interval
+/// dieval via `value_raw_at`. Interval terakhir yang masih beda ditutup di
+/// `last_time + 1`. Trace kosong → tanpa segmen.
+fn diff_segments(cur: &WaveformSignal, prev: &WaveformSignal) -> Vec<(u64, u64)> {
+    let mut segs: Vec<(u64, u64)> = Vec::new();
+    if cur.trace.is_empty() || prev.trace.is_empty() {
+        return segs;
+    }
+    let mut times: Vec<u64> = cur
+        .trace
+        .iter()
+        .chain(prev.trace.iter())
+        .map(|(t, _)| *t)
+        .collect();
+    times.sort_unstable();
+    times.dedup();
+
+    let mut start: Option<u64> = None;
+    for &t in &times {
+        let diff = value_raw_at(cur, t) != value_raw_at(prev, t);
+        match (start, diff) {
+            (None, true) => start = Some(t),
+            (Some(s), false) => {
+                segs.push((s, t));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        segs.push((s, times.last().copied().unwrap_or(s) + 1));
+    }
+    segs
+}
+
 // ───────────────────────── Klik sinyal → deklarasi ─────────────────────────
 
 /// Pisahkan nama sinyal waveform menjadi (owner scope, nama signal): "u1.q" →
@@ -467,14 +628,7 @@ pub fn decl_location(state: &GuiState, name: &str) -> Option<(PathBuf, Option<us
 /// yang cocok; `None` bila tidak ada. Cukup untuk navigasi — bukan parser.
 fn find_signal_decl_line(content: &str, sig: &str) -> Option<usize> {
     const DECL_KW: &[&str] = &[
-        "logic",
-        "reg",
-        "wire",
-        "bit",
-        "input",
-        "output",
-        "inout",
-        "tri",
+        "logic", "reg", "wire", "bit", "input", "output", "inout", "tri",
     ];
     if sig.is_empty() {
         return None;
@@ -504,7 +658,12 @@ fn open_signal_declaration(state: &mut GuiState, name: &str) {
                 state.active_file = Some(idx);
                 state.open_files[idx].pending_goto = Some(line);
             }
-            state.log(format!("→ Deklarasi '{}': {}:{}", name, path.display(), line));
+            state.log(format!(
+                "→ Deklarasi '{}': {}:{}",
+                name,
+                path.display(),
+                line
+            ));
         }
         Some((path, None)) => {
             state.open_file(path);
@@ -570,8 +729,73 @@ mod tests {
     fn decl_line_ignores_always_block_for_clk() {
         // `clk` ada di deklarasi port (baris 2) DAN di `always @(posedge clk)`
         // (baris 3, bukan deklarasi) — ambil baris deklarasi.
-        let src =
-            "module m;\n  input logic clk,\n  always @(posedge clk) begin end\nendmodule\n";
+        let src = "module m;\n  input logic clk,\n  always @(posedge clk) begin end\nendmodule\n";
         assert_eq!(find_signal_decl_line(src, "clk"), Some(2));
+    }
+
+    // ── Compare antar-run ──
+
+    fn wf(name: &str, trace: Vec<(u64, &str)>) -> WaveformSignal {
+        WaveformSignal {
+            name: name.into(),
+            width: 1,
+            trace: trace.into_iter().map(|(t, v)| (t, v.to_string())).collect(),
+        }
+    }
+
+    #[test]
+    fn diff_segments_identical_traces_empty() {
+        let a = wf("q", vec![(0, "0"), (10, "1")]);
+        assert!(diff_segments(&a, &a).is_empty());
+    }
+
+    #[test]
+    fn diff_segments_transition_shift() {
+        // a naik di t=10, b di t=20 → beda hanya [10,20).
+        let a = wf("q", vec![(0, "0"), (10, "1")]);
+        let b = wf("q", vec![(0, "0"), (20, "1")]);
+        assert_eq!(diff_segments(&a, &b), vec![(10, 20)]);
+    }
+
+    #[test]
+    fn diff_segments_two_windows() {
+        // b selalu 0; a naik di t=5 dan t=15 → dua jendela beda.
+        let a = wf(
+            "q",
+            vec![(0, "0"), (5, "1"), (10, "0"), (15, "1"), (20, "0")],
+        );
+        let b = wf(
+            "q",
+            vec![(0, "0"), (5, "0"), (10, "0"), (15, "0"), (20, "0")],
+        );
+        assert_eq!(diff_segments(&a, &b), vec![(5, 10), (15, 20)]);
+    }
+
+    #[test]
+    fn diff_segments_untouched_signal_empty() {
+        let a = wf("clk", vec![(0, "0"), (5, "1"), (10, "0")]);
+        let b = wf("clk", vec![(0, "0"), (5, "1"), (10, "0")]);
+        assert!(diff_segments(&a, &b).is_empty());
+    }
+
+    #[test]
+    fn diff_segments_empty_trace_no_segments() {
+        let a = wf("q", Vec::new());
+        let b = wf("q", vec![(0, "0"), (10, "1")]);
+        assert!(diff_segments(&a, &b).is_empty());
+    }
+
+    #[test]
+    fn count_mismatches_sums_per_signal() {
+        let a = vec![
+            wf("q", vec![(0, "0"), (10, "1")]),
+            wf("r", vec![(0, "0"), (10, "1")]),
+        ];
+        let b = vec![
+            wf("q", vec![(0, "0"), (20, "1")]),
+            wf("r", vec![(0, "0"), (10, "1")]),
+        ];
+        // q beda 1 segmen; r identik → total 1.
+        assert_eq!(count_mismatches(&a, &b), 1);
     }
 }

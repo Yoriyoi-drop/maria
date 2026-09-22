@@ -600,6 +600,13 @@ pub struct GuiState {
     // ── Waveform ──
     /// Trace waveform hasil simulasi terakhir.
     pub waveform: Vec<WaveformSignal>,
+    /// Snapshot trace waveform dari RUN SEBELUMNYA — baseline mode Compare
+    /// (diff dua run simulasi). Di-isi `waveform.clone()` di `trigger_run`
+    /// sebelum sim baru dimulai (F5 kedua+).
+    pub prev_waveform: Vec<WaveformSignal>,
+    /// Mode Compare aktif: waveform run ini di-overlay dengan run sebelumnya,
+    /// segmen yang nilainya berbeda di-highlight merah.
+    pub wave_compare: bool,
     /// Zoom horizontal (pixel per unit waktu).
     pub wave_zoom: f32,
     /// Nama signal yang DISEMBUNYIKAN dari tampilan waveform (toggle di pemilih
@@ -721,6 +728,8 @@ impl GuiState {
             sim_time_ms: 0.0,
             cycles: 0,
             waveform: Vec::new(),
+            prev_waveform: Vec::new(),
+            wave_compare: false,
             wave_zoom: 4.0,
             wave_hidden: std::collections::HashSet::new(),
             arch_open: std::collections::HashMap::new(),

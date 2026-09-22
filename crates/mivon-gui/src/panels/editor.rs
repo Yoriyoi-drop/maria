@@ -351,52 +351,52 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
         let mut editor_resp: Option<egui::Response> = None;
         let mut scroll_left: f32 = 0.0;
         let vout = vscroll.show(ui, |ui| {
-                ui.horizontal_top(|ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut gutter_buf)
-                            .id_source(format!("{}_gutter", id))
-                            .font(egui::FontSelection::FontId(egui::FontId::monospace(
-                                semantic::FONT_SIZE,
-                            )))
-                            .interactive(false)
-                            .frame(egui::Frame::NONE)
-                            .desired_rows(rows)
-                            .desired_width(gutter_w)
-                            .layouter(&mut gutter_layouter),
-                    );
+            ui.horizontal_top(|ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut gutter_buf)
+                        .id_source(format!("{}_gutter", id))
+                        .font(egui::FontSelection::FontId(egui::FontId::monospace(
+                            semantic::FONT_SIZE,
+                        )))
+                        .interactive(false)
+                        .frame(egui::Frame::NONE)
+                        .desired_rows(rows)
+                        .desired_width(gutter_w)
+                        .layouter(&mut gutter_layouter),
+                );
 
-                    let hout = egui::ScrollArea::horizontal()
-                        .id_salt(format!("{}_hscroll", id))
-                        .show(ui, |ui| {
-                            let before = f.content.clone();
-                            let r = ui.add(
-                                egui::TextEdit::multiline(&mut f.content)
-                                    .id_source(id.as_str())
-                                    // Font widget HARUS sama dengan FontId layouter
-                                    // (monospace FONT_SIZE) agar kursor/selection
-                                    // sejajar dengan teks yang dirender layouter.
-                                    .font(egui::FontSelection::FontId(egui::FontId::monospace(
-                                        semantic::FONT_SIZE,
-                                    )))
-                                    // Tanpa lock_focus: fokus lock editor akan
-                                    // memblokir transfer fokus ke popup Rename
-                                    // Symbol (request_focus widget lain dibuang).
-                                    .desired_rows(rows)
-                                    .desired_width(avail)
-                                    .layouter(&mut layouter),
-                            );
-                            editor_resp = Some(r.clone());
-                            if f.content != before {
-                                f.dirty = true;
-                                text_changed = true;
-                            }
-                            // Basis rollback accept (konten sebelum TextEdit
-                            // memproses Enter/karakter frame ini).
-                            frame_before = before;
-                        });
-                    scroll_left = hout.state.offset.x;
-                });
+                let hout = egui::ScrollArea::horizontal()
+                    .id_salt(format!("{}_hscroll", id))
+                    .show(ui, |ui| {
+                        let before = f.content.clone();
+                        let r = ui.add(
+                            egui::TextEdit::multiline(&mut f.content)
+                                .id_source(id.as_str())
+                                // Font widget HARUS sama dengan FontId layouter
+                                // (monospace FONT_SIZE) agar kursor/selection
+                                // sejajar dengan teks yang dirender layouter.
+                                .font(egui::FontSelection::FontId(egui::FontId::monospace(
+                                    semantic::FONT_SIZE,
+                                )))
+                                // Tanpa lock_focus: fokus lock editor akan
+                                // memblokir transfer fokus ke popup Rename
+                                // Symbol (request_focus widget lain dibuang).
+                                .desired_rows(rows)
+                                .desired_width(avail)
+                                .layouter(&mut layouter),
+                        );
+                        editor_resp = Some(r.clone());
+                        if f.content != before {
+                            f.dirty = true;
+                            text_changed = true;
+                        }
+                        // Basis rollback accept (konten sebelum TextEdit
+                        // memproses Enter/karakter frame ini).
+                        frame_before = before;
+                    });
+                scroll_left = hout.state.offset.x;
             });
+        });
         let scroll_top = vout.state.offset.y.max(0.0);
         f.scroll_top = scroll_top;
 
@@ -419,10 +419,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             // Rename Symbol: F2 saat hover di atas identifier → buka input.
-            if !f.renaming
-                && hover_id.is_some()
-                && ui.input(|i| i.key_pressed(egui::Key::F2))
-            {
+            if !f.renaming && hover_id.is_some() && ui.input(|i| i.key_pressed(egui::Key::F2)) {
                 if let Some((name, _)) = &hover_id {
                     f.renaming = true;
                     f.rename_old = name.clone();
@@ -460,9 +457,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
             // Peek Definition: Alt+Click → pratinjau deklarasi (tanpa pindah
             // tab — sesuai desain "hanya popup"). Gate `!command`: satu gesture
             // = satu aksi (Ctrl+Alt+Click cukup memicu goto saja).
-            if resp.clicked()
-                && ui.input(|i| i.modifiers.alt && !i.modifiers.command)
-            {
+            if resp.clicked() && ui.input(|i| i.modifiers.alt && !i.modifiers.command) {
                 if let Some(pos) = resp.interact_pointer_pos() {
                     if let Some((name, kind)) = identifier_at_pos(
                         &resp,
@@ -481,9 +476,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
             }
             // Rename Symbol: popup input nama baru di dekat kursor.
             if f.renaming {
-                let anchor = resp
-                    .hover_pos()
-                    .unwrap_or_else(|| resp.rect.center())
+                let anchor = resp.hover_pos().unwrap_or_else(|| resp.rect.center())
                     + egui::vec2(12.0, -36.0);
                 egui::Area::new(ui.id().with("rename_input"))
                     .fixed_pos(anchor)
@@ -495,8 +488,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                         // sama agar `request_focus` tepat sasaran.
                         let field_id = ui.id().with("rename_field");
                         ui.label(
-                            egui::RichText::new(format!("✏ Rename '{}'", f.rename_old))
-                                .strong(),
+                            egui::RichText::new(format!("✏ Rename '{}'", f.rename_old)).strong(),
                         );
                         let r = ui.add(
                             egui::TextEdit::singleline(&mut f.rename_new)
@@ -513,9 +505,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                         }
                         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                             rename_cancel = true;
-                        } else if r.lost_focus()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        {
+                        } else if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             rename_done = true;
                         } else if r.lost_focus() {
                             rename_cancel = true;
@@ -594,11 +584,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                             completion_just_opened = false;
                             f.completion_prefix = prefix.to_string();
                             let all = completion_candidates(
-                                &f.content,
-                                modules,
-                                packages,
-                                interfaces,
-                                sig_info,
+                                &f.content, modules, packages, interfaces, sig_info,
                             );
                             let filtered: Vec<String> = all
                                 .into_iter()
@@ -633,8 +619,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                         .map(|c| line_col_at_char(&f.content, c))
                         .unwrap_or((0, 0));
                     let margin = egui::Margin::symmetric(4, 2);
-                    let origin =
-                        resp.rect.min + egui::vec2(margin.left as f32, margin.top as f32);
+                    let origin = resp.rect.min + egui::vec2(margin.left as f32, margin.top as f32);
                     let anchor = origin
                         + egui::vec2(
                             col as f32 * char_w - scroll_left,

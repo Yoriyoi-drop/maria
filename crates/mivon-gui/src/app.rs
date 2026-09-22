@@ -424,6 +424,16 @@ pub fn trigger_run(state: &mut GuiState) {
         return;
     };
     state.cancel_flag.store(false, Ordering::Relaxed);
+    // Simpan waveform run ini sebagai baseline Compare — dipakai mode
+    // "⟲ Compare" di Waveform (diff dua run). Clone (bukan take): bila sim
+    // baru gagal, waveform yang sedang tampil tidak hilang.
+    state.prev_waveform = state.waveform.clone();
+    if !state.prev_waveform.is_empty() {
+        state.log(format!(
+            "⟲ Snapshot {} signal tersimpan (baseline compare)",
+            state.prev_waveform.len()
+        ));
+    }
     state.log(format!("▶ Simulasi (T={})...", state.max_time));
     state.is_running = true;
     let max_time = state.max_time;
