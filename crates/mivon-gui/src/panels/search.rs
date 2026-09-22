@@ -56,8 +56,22 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     let q = state.search_filter.to_lowercase();
     let info = state.compile_info.as_ref();
     let design = state.design.as_ref();
+    // ── Pencarian teks (kategori Text): hitung on-demand saat Enter ditekan
+    // di kolom filter, sinkron (kap 500). Kalau needle berubah sejak hitungan
+    // terakhir, hasil ditandai "basi" sampai Enter baru. ──
+    if state.search_cat == SearchCat::Text
+        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+        && !q.is_empty()
+        && state.text_last_needle != q
+    {
+        let files = state.collect_all_rtl_files();
+        let hits = crate::backend::search_text_in_files(&files, &q, 500);
+        state.text_hits = hits;
+        state.text_last_needle = q.clone();
+    }
     // Clone hits teks SEKALI di luar closure (arm tidak boleh memindah
     // `state` — binding yang sama dipakai arm lain & closure FnMut).
+    let stale = state.text_last_needle != q;
     let text_hits = state.text_hits.clone();
     let mut to_open: Option<(PathBuf, Option<usize>)> = None;
     let mut found_any = false;
@@ -71,7 +85,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             SearchCat::Package => packages_ui(ui, info, &q, &mut to_open, &mut found_any),
             SearchCat::Macro => macros_ui(ui, info, &q, &mut to_open, &mut found_any),
             SearchCat::Instance => instances_ui(ui, info, &q, &mut to_open, &mut found_any),
-            SearchCat::Text => text_hits_ui(ui, &text_hits, &q, &mut to_open, &mut found_any),
+            SearchCat::Text => {
+                text_hits_ui(ui, &text_hits, &q, stale, &mut to_open, &mut found_any)
+            }
         });
 
     if !q.is_empty() && !found_any {
@@ -333,22 +349,34 @@ fn instances_ui(
     }
 }
 
-/// Cari teks (Text): tampilkan hasil `text_hits` (dari backend
-/// `search_text_in_files` atau LSP) — klik → buka file di baris yang cocok.
+/// Cari teks (Text): tampilkan hasil `hits` yang dihitung `show()` saat Enter
+/// di kolom filter (kategori Text). `stale` = needle berubah sejak hitungan —
+/// tampilkan saran tekan Enter. Klik → buka file di baris cocok.
 fn text_hits_ui(
     ui: &mut egui::Ui,
     hits: &[crate::state::TextHit],
     q: &str,
+    stale: bool,
     to_open: &mut Option<(PathBuf, Option<usize>)>,
     found_any: &mut bool,
 ) {
-    let _ = q;
-    if hits.is_empty() {
+    if hits.is_empty() && q.is_empty() {
         ui.label(
-            egui::RichText::new("Ketik kata kunci teks untuk mencari di seluruh file project")
+            egui::RichText::new(
+                "Ketik kata kunci teks di kolom di atas, lalu Enter — cari di seluruh file project",
+            )
+            .weak()
+            .italics()
+            .size(11.0),
+        );
+        return;
+    }
+    if hits.is_empty() && !q.is_empty() {
+        *found_any = true;
+        ui.label(
+            egui::RichText::new(format!("Tidak ada hasil teks untuk '{}'", q))
                 .weak()
-                .italics()
-                .size(11.0),
+                .italics(),
         );
         return;
     }
@@ -358,6 +386,14 @@ fn text_hits_ui(
             .strong()
             .size(11.0),
     );
+    if stale {
+        ui.label(
+            egui::RichText::new("↻ filter berubah — tekan Enter untuk menghitung ulang")
+                .weak()
+                .italics()
+                .size(10.0),
+        );
+    }
     for h in hits {
         let file = h.file.display().to_string();
         let sec = format!("L{}", h.line);
