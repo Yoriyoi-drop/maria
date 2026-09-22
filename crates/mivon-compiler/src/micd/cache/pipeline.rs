@@ -396,6 +396,11 @@ pub struct CachePopulateInput<'a> {
     pub defines: &'a [(String, String)],
     /// Include deps per file.
     pub include_deps: &'a HashMap<PathBuf, Vec<PathBuf>>,
+    /// Hash include PRECOMPUTED per path (di-cache caller — save_micd sudah
+    /// menghitungnya di fase gather). Hindari baca ulang setiap include file
+    /// dari disk di populate_include (double-read besar utk OpenTitan).
+    /// Kosong → populate_include fallback ke hitung sendiri.
+    pub include_hashes: &'a HashMap<PathBuf, u64>,
     /// Payload lexer per file (summary + token stream, di-capture saat lex).
     pub lexer_payloads: Vec<(PathBuf, LexerPayload)>,
     /// Simbol yang dikumpulkan compile: (name, kind, file).
@@ -524,9 +529,13 @@ impl CachePopulator {
                 includes: deps
                     .iter()
                     .map(|inc| {
-                        let h = std::fs::read(inc)
-                            .map(|b| compute_checksum(&b))
-                            .unwrap_or(0);
+                        // Hash precomputed (save_micd gather) → tanpa baca ulang
+                        // disk; fallback hitung sendiri bila tak tersedia.
+                        let h = input.include_hashes.get(inc).copied().unwrap_or_else(|| {
+                            std::fs::read(inc)
+                                .map(|b| compute_checksum(&b))
+                                .unwrap_or(0)
+                        });
                         (inc.clone(), h)
                     })
                     .collect(),
@@ -1111,6 +1120,7 @@ mod tests {
             combined: &combined,
             defines: &[("TOP".to_string(), "counter".to_string())],
             include_deps: &include_deps,
+            include_hashes: &HashMap::new(),
             lexer_payloads,
             symbols: vec![("counter".to_string(), "module".to_string(), path.clone())],
             type_entries: vec![("counter".to_string(), 42)],
@@ -1188,6 +1198,7 @@ mod tests {
                 combined: &HashMap::new(),
                 defines: &[],
                 include_deps: &HashMap::new(),
+                include_hashes: &HashMap::new(),
                 lexer_payloads: vec![],
                 symbols: vec![("a".to_string(), "module".to_string(), path.clone())],
                 type_entries: vec![],
@@ -1352,6 +1363,7 @@ mod tests {
             combined: &HashMap::new(),
             defines: &[],
             include_deps: &HashMap::new(),
+            include_hashes: &HashMap::new(),
             lexer_payloads: vec![],
             symbols: vec![],
             type_entries: vec![],
@@ -1395,6 +1407,7 @@ mod tests {
             combined: &HashMap::new(),
             defines: &[],
             include_deps: &HashMap::new(),
+            include_hashes: &HashMap::new(),
             lexer_payloads: vec![],
             symbols: vec![],
             type_entries: vec![],
@@ -1498,6 +1511,7 @@ mod tests {
             combined: &HashMap::new(),
             defines: &[],
             include_deps: &HashMap::new(),
+            include_hashes: &HashMap::new(),
             lexer_payloads: vec![],
             symbols: vec![],
             type_entries: vec![],
@@ -1600,6 +1614,7 @@ mod tests {
             combined: &HashMap::new(),
             defines: &[],
             include_deps: &HashMap::new(),
+            include_hashes: &HashMap::new(),
             lexer_payloads: vec![],
             symbols: vec![],
             type_entries: vec![],

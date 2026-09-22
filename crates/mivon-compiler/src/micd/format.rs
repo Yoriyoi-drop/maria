@@ -286,7 +286,35 @@ pub fn tmp_path(path: &Path) -> std::path::PathBuf {
 
 /// Tulis data ke `path` + `.tmp` lalu sync. Belum di-commit (tidak menyentuh
 /// file final). Gagal di tengah → file final tidak terpengaruh.
+///
+/// DIPAKAI untuk file state/transaksi `.mdb` (index/manifest/stats/journal &
+/// store state) — durability penuh: setelah `commit_tmp` (rename) data sudah
+/// benar-benar sampai media.
 pub fn write_tmp(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    write_tmp_impl(path, data, true)
+}
+
+/// Tulis data ke `path` + `.tmp` TANPA fsync. Belum di-commit.
+///
+/// DIPAKAI HANYA untuk object content-addressed (CAS) yang immutable:
+/// `objects/`, `blobs/`, `*.ast`, `*.preproc`, module precompiled. fsync per
+/// object = ribuan syscall lambat (OpenTitan ~30-60k objek → hang puluhan
+/// detik hingga menit). Durability dipertahankan berlapis:
+/// 1. Tulis temp + rename tetap atomik — pembaca tidak pernah melihat file
+///    setengah jadi;
+/// 2. Index/MDB ditulis BELAKANGAN dengan fsync (`write_tmp`) — index baru
+///    hanya visible setelah seluruh object dipublish;
+/// 3. Object di-verifikasi saat load: checksum isi dicocokkan dengan hash di
+///    nama file (dan format/version) — file partial akibat crash terdeteksi
+///    → dianggap miss → dibangun ulang. Cache non-kritis: kehilangan entry
+///    OK, menyajikan data korup TIDAK.
+///
+/// Dilarang memakai fungsi ini untuk file state `.mdb` (transaksi durability).
+pub fn write_tmp_unflushed(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    write_tmp_impl(path, data, false)
+}
+
+fn write_tmp_impl(path: &Path, data: &[u8], sync: bool) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -294,7 +322,9 @@ pub fn write_tmp(path: &Path, data: &[u8]) -> std::io::Result<()> {
     {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(data)?;
-        f.sync_all()?;
+        if sync {
+            f.sync_all()?;
+        }
     }
     Ok(())
 }

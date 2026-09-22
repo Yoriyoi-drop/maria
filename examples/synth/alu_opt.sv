@@ -10,4 +10,6 @@ module alu_opt (
 );
     assign y = (a & 8'h00) | (b & 8'hFF) | ~~a;
     assign z = (a + 8'h00) + (b * 8'h04);
+    
 endmodule
+

@@ -248,7 +248,9 @@ impl PrecompiledDb {
         if !path.exists() {
             let payload = bincode::serialize(&module).map_err(io::Error::other);
             if let Ok(bytes) = payload {
-                let _ = super::format::write_tmp(&path, &bytes);
+                // Module CAS object — tanpa fsync (lihat write_tmp_unflushed);
+                // keutuhan diverifikasi saat load via verify_checksum().
+                let _ = super::format::write_tmp_unflushed(&path, &bytes);
                 let _ = super::format::commit_tmp(&path);
             }
         }

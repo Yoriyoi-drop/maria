@@ -417,13 +417,24 @@ impl CategoryStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        super::super::format::write_tmp(path, bytes)?;
+        // Object CAS immutable + verifikasi di load → tanpa fsync per file
+        // (ribuan fsync untuk design besar = bottleneck). Durability: temp +
+        // rename atomik; index MDB (fsync) ditulis belakangan; checksum
+        // diverifikasi saat load_object.
+        super::super::format::write_tmp_unflushed(path, bytes)?;
         super::super::format::commit_tmp(path)
     }
 
     fn load_object(&self, e: &CacheIndexEntry) -> Option<Vec<u8>> {
         let path = self.object_path(e.content_hash, e.large);
-        std::fs::read(&path).ok()
+        let bytes = std::fs::read(&path).ok()?;
+        // Object CAS ditulis tanpa fsync — verifikasi isi vs content hash di
+        // nama file agar file partial/corrupt (crash) tidak pernah disajikan
+        // sebagai data valid: langsung jadi miss, dibangun ulang.
+        if compute_checksum(&bytes) != e.content_hash {
+            return None;
+        }
+        Some(bytes)
     }
 
     fn write_manifest(&self) -> io::Result<()> {

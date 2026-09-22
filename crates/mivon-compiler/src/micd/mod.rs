@@ -1301,7 +1301,10 @@ impl MicdDatabase {
             }
             let payload =
                 bincode::serialize(&(AST_FORMAT_VERSION, bytes)).map_err(io::Error::other)?;
-            format::write_tmp(&obj, &payload)?;
+            // Object CAS — tanpa fsync (lihat write_tmp_unflushed): file partial
+            // akibat crash ditolak saat load (bincode deserialize + AST version
+            // check → miss → dibangun ulang).
+            format::write_tmp_unflushed(&obj, &payload)?;
             format::commit_tmp(&obj)?;
         }
         sweep_objects(&objs, OBJ_AST, &live)
@@ -1319,7 +1322,7 @@ impl MicdDatabase {
                 continue;
             }
             let payload = bincode::serialize(&entry).map_err(io::Error::other)?;
-            format::write_tmp(&obj, &payload)?;
+            format::write_tmp_unflushed(&obj, &payload)?;
             format::commit_tmp(&obj)?;
         }
         sweep_objects(&objs, OBJ_PREPROC, &live)
@@ -1561,7 +1564,7 @@ fn migrate_legacy_one(db_root: &Path, pid: &str) {
                         let obj = objs.join(format!("{:016x}.{}", hash, OBJ_AST));
                         if !obj.exists() {
                             if let Ok(payload) = bincode::serialize(&(AST_FORMAT_VERSION, bytes)) {
-                                let _ = format::write_tmp(&obj, &payload);
+                                let _ = format::write_tmp_unflushed(&obj, &payload);
                                 let _ = format::commit_tmp(&obj);
                             }
                         }
@@ -1581,7 +1584,7 @@ fn migrate_legacy_one(db_root: &Path, pid: &str) {
                         let obj = objs.join(format!("{:016x}.{}", hash, OBJ_PREPROC));
                         if !obj.exists() {
                             if let Ok(payload) = bincode::serialize(&p) {
-                                let _ = format::write_tmp(&obj, &payload);
+                                let _ = format::write_tmp_unflushed(&obj, &payload);
                                 let _ = format::commit_tmp(&obj);
                             }
                         }
