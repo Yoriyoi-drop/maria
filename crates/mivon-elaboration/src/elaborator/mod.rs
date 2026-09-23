@@ -5592,6 +5592,7 @@ impl Elaborator {
                                 &mut next_id,
                                 &mut processes,
                                 &format!("{}.udp", inst.instance_name),
+                                false,
                             )?;
                             sig_ids.push(sid);
                         }
@@ -5676,6 +5677,7 @@ impl Elaborator {
                                     &mut next_id,
                                     &mut processes,
                                     &format!("{}.{}", inst.instance_name, pname.as_str()),
+                                    false,
                                 )?;
                                 bind_map.insert(pname, sid);
                             }
@@ -5780,6 +5782,10 @@ impl Elaborator {
                                                 &mut next_id,
                                                 &mut processes,
                                                 &format!("{}.{}", inst.instance_name, port.name),
+                                                matches!(
+                                                    port.direction,
+                                                    PortDirection::Output | PortDirection::Inout
+                                                ),
                                             )?;
                                             port_map.insert(port.name, sig_id);
                                         }
@@ -5812,6 +5818,7 @@ impl Elaborator {
                                         &mut next_id,
                                         &mut processes,
                                         &format!("{}.{}", inst.instance_name, port),
+                                        is_output_like,
                                     )?;
                                     port_map.insert(*port, sig_id);
                                 }

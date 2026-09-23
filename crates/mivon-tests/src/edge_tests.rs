@@ -3076,3 +3076,153 @@ endmodule
         result.err()
     );
 }
+
+// === Output port → part-select/bit-select koneksi (flatten) ===
+// (regresi mivon-fuzz: `.q(s[0])` — output port child dicomect ke slice
+// vector parent. ELABORASI lama membuat backflow `assign __port_* = <expr>`
+// (membaca parent slice yang belum ter-drive) → parent slice TIDAK PERNAH
+// menerima nilai child (`s = xxxx` di semua engine; ground truth iverilog:
+// `s = zzz1`). Fix: untuk port output, synth wire didorong child (via flatten
+// remap) dan proses copy MENDORONG expr parent: `assign <slice> = __port_*`.
+
+#[test]
+fn test_edge_output_port_bitselect_drives_parent() {
+    let sigs = simulate_signals(
+        r#"
+module child (input a, output q);
+  assign q = a;
+endmodule
+module top;
+  logic [3:0] s;
+  logic a;
+  initial begin a = 1; #1; $finish; end
+  child u0 (.a(a), .q(s[0]));
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "s").unwrap();
+    assert_eq!(
+        v.bits[0],
+        mivon_ir::LogicVal::One,
+        "s[0] harus ter-drive = 1 oleh output child (mivon-fuzz bug: slice tak pernah ter-drive)"
+    );
+}
+
+#[test]
+fn test_edge_output_port_rangeselect_drives_parent() {
+    // `.out (y[7:4])` — range-select: 4-bit child output → slice posisi 4-bit.
+    let sigs = simulate_signals(
+        r#"
+module child4 (input logic [3:0] a, output logic [3:0] q);
+  assign q = a;
+endmodule
+module top;
+  logic [7:0] y;
+  logic [3:0] v;
+  initial begin v = 4'ha; #1; $finish; end
+  child4 u0 (.a(v), .q(y[7:4]));
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "y").unwrap();
+    assert_eq!(v.to_u64(), 0xA0, "y[7:4] harus = a, y[3:0] undriven");
+}
+
+#[test]
+fn test_edge_adder4_slice_output_sum() {
+    // Regresi mivon-fuzz bug_0183: ripple adder via output port → bit-slice
+    // parent. Nilai ground truth iverilog: a=0011,b=0101 → sum=1000 (8).
+    let sigs = simulate_signals(
+        r#"
+module full_adder (input logic a, b, cin, output logic sum, cout);
+  assign {cout, sum} = a + b + cin;
+endmodule
+module adder4 (input logic [3:0] a, b, input logic cin,
+               output logic [3:0] sum, output logic cout);
+  wire c1, c2, c3;
+  full_adder fa0 (.a(a[0]), .b(b[0]), .cin(cin), .sum(sum[0]), .cout(c1));
+  full_adder fa1 (.a(a[1]), .b(b[1]), .cin(c1),  .sum(sum[1]), .cout(c2));
+  full_adder fa2 (.a(a[2]), .b(b[2]), .cin(c2),  .sum(sum[2]), .cout(c3));
+  full_adder fa3 (.a(a[3]), .b(b[3]), .cin(c3),  .sum(sum[3]), .cout(cout));
+endmodule
+module top;
+  logic [3:0] a, b; logic cin; logic [3:0] sum; logic cout;
+  adder4 dut (.a(a), .b(b), .cin(cin), .sum(sum), .cout(cout));
+  initial begin a = 4'b0011; b = 4'b0101; cin = 0; #1; $finish; end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    let (_, s) = sigs.iter().find(|(n, _)| n == "sum").unwrap();
+    assert_eq!(s.to_u64(), 8, "sum = 0011+0101 = 1000");
+    let (_, c) = sigs.iter().find(|(n, _)| n == "cout").unwrap();
+    assert_eq!(c.to_u64(), 0, "cout = 0");
+}
+
+// === Array write indeks NEGATIF = JANGAN hang ===
+// (regresi mivon-fuzz: `r[-1] = 5` di blok prosedural — `-1` → to_u64() =
+// 0xFFFFFFFF → start = idx*elem_width ~34Gb → resize raksasa → hang/OOM.
+// Guar: OOB ekstrem di-ABA (warning + tulis diabaikan), sim lanjut.)
+
+#[test]
+fn test_edge_array_index_negative_no_hang() {
+    let sigs = simulate_signals(
+        r#"
+module top;
+  logic [7:0] r [0:2];
+  initial begin
+    r[-1] = 5;
+    r[1] = 7;
+    #1;
+    $finish;
+  end
+endmodule"#,
+        5,
+    )
+    .unwrap();
+    // Tidak hang + tulis valid tetap jalan.
+    let (_, v) = sigs.iter().find(|(n, _)| n == "r").unwrap();
+    // r[1] = 7 → byte 1 (bits 8..15) = 7; r[-1] diabaikan.
+    assert_eq!(v.bits[8], mivon_ir::LogicVal::One, "r[1] harus ter-tulis");
+}
+
+// === Streaming concat konsisten antar engine path ===
+// (regresi mivon-fuzz: `assign result = {<<{ {4{1'b1}} }}` — serial = 0x0F,
+// dag-parallel = X karena evaluator DAG tak punya arm StreamingConcat.)
+
+#[test]
+fn test_edge_streaming_concat_dag_consistent() {
+    let src = r#"
+module top;
+  logic [7:0] result;
+  assign result = {<<{ {4{1'b1}} }};
+  initial #1 $finish;
+endmodule"#;
+    let def = EngineFlags {
+        use_packed_eval: false,
+        use_dag_parallel: false,
+        use_timing_wheel: false,
+        use_mir_jit: false,
+    };
+    let dag = EngineFlags {
+        use_dag_parallel: true,
+        ..def
+    };
+    let r_serial = simulate_signals_with_flags_quiet(src, 5, &def).unwrap();
+    let r_dag = simulate_signals_with_flags_quiet(src, 5, &dag).unwrap();
+    fn get(sigs: &[(String, mivon_ir::LogicVec)], n: &str) -> u64 {
+        sigs.iter().find(|(nm, _)| nm == n).unwrap().1.to_u64()
+    }
+    assert_eq!(
+        get(&r_serial, "result"),
+        0xF,
+        "serial: {{<<{{4'b1111}}}} = 0x0F"
+    );
+    assert_eq!(
+        get(&r_dag, "result"),
+        0xF,
+        "dag harus identik dengan serial (ditemukan mivon-fuzz: X)"
+    );
+}

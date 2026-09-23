@@ -705,20 +705,16 @@ fn simulate_in_thread(source: &str, timeout_ms: u64) -> Option<CaseResult> {
 
             mk_r(Category::Ok, Oracle::O1NoCrash, &detail)
         }
-        Ok(Err(e)) => {
-            mk_r(
-                Category::Differential,
-                Oracle::O5Differential,
-                &format!("trace gagal setelah sim default sukses: {e}"),
-            )
-        }
-        Err(_) => {
-            mk_r(
-                Category::Differential,
-                Oracle::O5Differential,
-                "trace panic setelah sim default sukses",
-            )
-        }
+        Ok(Err(e)) => mk_r(
+            Category::Differential,
+            Oracle::O5Differential,
+            &format!("trace gagal setelah sim default sukses: {e}"),
+        ),
+        Err(_) => mk_r(
+            Category::Differential,
+            Oracle::O5Differential,
+            "trace panic setelah sim default sukses",
+        ),
     }
 }
 
@@ -1218,14 +1214,14 @@ fn evaluate_vcd(source: &str, timeout_ms: u64) -> CaseResult {
         && o2.kind == crate::runner::Kind::Ok
         && o1.stdout != o2.stdout
     {
-            let _ = std::fs::remove_file(&vcd_base);
-            let _ = std::fs::remove_file(&vcd_mut);
-            return mk_v(
-                Category::NonDeterministic,
-                Oracle::O4Determinism,
-                "mwave stats non-deterministik: dua run identik hasil beda",
-            );
-        }
+        let _ = std::fs::remove_file(&vcd_base);
+        let _ = std::fs::remove_file(&vcd_mut);
+        return mk_v(
+            Category::NonDeterministic,
+            Oracle::O4Determinism,
+            "mwave stats non-deterministik: dua run identik hasil beda",
+        );
+    }
 
     let _ = std::fs::remove_file(&vcd_base);
     let _ = std::fs::remove_file(&vcd_mut);

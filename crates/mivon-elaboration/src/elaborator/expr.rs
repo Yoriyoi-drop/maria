@@ -2406,6 +2406,15 @@ impl Elaborator {
     /// Create a signal from a port connection expression.
     /// For simple identifiers, resolves directly.
     /// For compound expressions (e.g. ~clk_i), creates an implicit wire + continuous assign.
+    ///
+    /// `is_output`: arah koneksi. Untuk port OUTPUT/INOUT yang diconnect ke
+    /// ekspresi non-trivial (bit/range-select, concat — mis. `.q(s[0])` atau
+    /// `.cout (b[72:0])`), synth wire adalah signal port child (didorong child
+    /// via flatten). Proses copy harus MENDORONG ekspresi parent dari synth
+    /// (`assign <expr> = __port_*`), BUKAN backflow `assign __port_* = <expr>`
+    /// yang membaca parent slice yang belum ter-drive (sebelumnya: parent
+    /// slice tak pernah dapat nilai child — `s = xxxx`; ditemukan mivon-fuzz).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn instance_port_expr_to_signal(
         &self,
         expr: &Expr,
@@ -2414,6 +2423,7 @@ impl Elaborator {
         next_id: &mut SignalId,
         processes: &mut Vec<Process>,
         hint_name: &str,
+        is_output: bool,
     ) -> Result<SignalId, SimError> {
         // Try simple signal resolution first
         if let Ok(sid) = self.elaborate_expr_to_signal(expr, signal_map) {
@@ -2531,7 +2541,6 @@ impl Elaborator {
             }
         }
         // For compound expressions, create an implicit wire
-        let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
         let width_val = compute_expr_width(
             expr,
             signal_map,
@@ -2602,20 +2611,47 @@ impl Elaborator {
             iface_type: None,
             iface_modport: None,
         });
-        // Add a continuous assignment process
-        let sensitivity = collect_sensitivity(expr, signal_map)
-            .into_iter()
-            .map(SignalSensitivity::whole)
-            .collect();
-        processes.push(Process::Combinational {
-            name: Symbol::intern(&format!("port_assign_{}", hint_name.replace('.', "_"))),
-            sensitivity,
-            body: vec![IrStmt::BlockingAssign {
-                lhs: IrLValue::Signal(sid, 0),
-                rhs: ir_expr,
-                delay: None,
-            }],
-        });
+        // Tambah proses. Arah tergantung port direction:
+        // - INPUT: `assign __port_* = <expr>` — ekspresi parent → synth wire
+        //   (child membaca nilai tersebut).
+        // - OUTPUT/INOUT: `assign <expr-lvalue> = __port_*` — synth wire (yang
+        //   didorong child via flatten remap) MENDORONG ekspresi parent.
+        //   Tanpa proses ini, slice parent (mis. `s[0]`, `b[72:0]`) TIDAK
+        //   pernah menerima nilai child → `sum = xxxx` (ditemukan mivon-fuzz).
+        let port_name = Symbol::intern(&format!("port_assign_{}", hint_name.replace('.', "_")));
+        if is_output {
+            // Jalur lvalue: `expr` yang sama kini menjadi target tulis
+            // (bit/range select/concat dari signal parent). Gagal elaborate
+            // (mis. index dinamis) → fallback no-op (tulis synth ke sintas
+            // sendiri); jangan blokir desain.
+            let lv = self
+                .elaborate_lvalue(expr, signal_map, signals)
+                .unwrap_or(IrLValue::Signal(sid, 0));
+            processes.push(Process::Combinational {
+                name: port_name,
+                sensitivity: vec![SignalSensitivity::whole(sid)],
+                body: vec![IrStmt::BlockingAssign {
+                    lhs: lv,
+                    rhs: IrExpr::Signal(sid, 0),
+                    delay: None,
+                }],
+            });
+        } else {
+            let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+            let sensitivity = collect_sensitivity(expr, signal_map)
+                .into_iter()
+                .map(SignalSensitivity::whole)
+                .collect();
+            processes.push(Process::Combinational {
+                name: port_name,
+                sensitivity,
+                body: vec![IrStmt::BlockingAssign {
+                    lhs: IrLValue::Signal(sid, 0),
+                    rhs: ir_expr,
+                    delay: None,
+                }],
+            });
+        }
         Ok(sid)
     }
 

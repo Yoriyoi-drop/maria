@@ -234,7 +234,10 @@ impl SimulationEngine {
                 // Apply resolution for multi-driver nets
                 if let Some(ref info) = sig_info {
                     if info.multi_driver
-                        && (info.kind == SignalKind::Wire || info.kind == SignalKind::Inout)
+                        && matches!(
+                            info.kind,
+                            SignalKind::Wire | SignalKind::Inout | SignalKind::Output
+                        )
                     {
                         let current = self.state.read_signal(*id).clone();
                         let resolved = resolve_net_values(info.net_type, &current, &resized);
@@ -341,7 +344,20 @@ impl SimulationEngine {
                             sig_name, idx, needed, existing.width),
                     );
                 }
+                // ══ Guard index negatif/absurd: resize raksasa = hang/OOM ══
+                // (mivon-fuzz `r[-1] = ...`: `-1` → to_u64() = 0xFFFFFFFF →
+                // start = idx*elem_width ~34Gb → resize men-jam -> hang).
+                // Dynamic/queue array tetap GROW (size runtime sah legal);
+                // Fixed array DIGROW untuk OOB kecil-dekat-batas (pola lama
+                // lenient, mis. `r[5]` pada [0:2] → 2x) TAPI hanya sampai
+                // batas wajar; induk di luar itu diabaikan (LRM OOB = no-op).
                 if needed > existing.width {
+                    let can_grow = is_dynamic
+                        || needed <= existing.width.saturating_mul(4).max(elem_width * 2);
+                    if !can_grow {
+                        // OOB ekstrem (negatif / absurd) — abai tulis.
+                        return Ok(());
+                    }
                     existing.bits.resize(needed, LogicVal::X);
                     existing.width = needed;
                 }
