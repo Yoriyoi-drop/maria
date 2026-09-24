@@ -6,6 +6,7 @@ use super::Parser;
 use crate::lexer::*;
 use mivon_ast::types::const_eval_simple;
 use mivon_ast::*;
+use mivon_core::diagnostics::DiagCode;
 use mivon_core::error::SimError;
 use mivon_core::intern::Symbol;
 
@@ -365,12 +366,14 @@ impl Parser {
         } else if !matches!(self.peek(), Token::Eof | Token::Endmodule) {
             // `logic c = 1` tanpa ';' (dilanjutkan `logic d;` di baris
             // berikut) ditelan diam-diam oleh skip_semi lama → kode rusak
-            // dianggap valid (E-probe e01). Peringatkan di lokasi token
-            // penyebab + fix-it sisip ';' (infra push_warning_at tanpa
-            // konsumsi token: item berikutnya tetap ter-parse normal).
-            let line = self.peek_line();
-            let col = self.peek_col();
-            self.push_warning_at(
+            // dianggap valid (E-probe e01). Laporkan di lokasi MASALAH
+            // (ujung token terakhir deklarasi — bukan token berikutnya,
+            // yang menunjuk baris/module salah ke user) + fix-it sisip ';'
+            // di titik yang sama (infra push_warning_code_at tanpa konsumsi
+            // token: item berikutnya tetap ter-parse normal).
+            let (line, col) = self.missing_semi_loc();
+            self.push_warning_code_at(
+                DiagCode::ExpectedSemi,
                 "expected ';' after declaration — missing semicolon".to_string(),
                 line,
                 col,

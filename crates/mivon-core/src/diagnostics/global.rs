@@ -140,7 +140,10 @@ impl GlobalDiagnosticEngine {
     }
 
     pub fn errors(&self) -> Vec<Diagnostic> {
-        self.by_level(DiagLevel::Error)
+        // is_error() = Fatal | Bug | Error — Fatal/Bug ikut dihitung sebagai
+        // error (dulu `== Error` → status/report menampilkan 0 error padahal
+        // build gagal fatal).
+        self.all().into_iter().filter(|d| d.is_error()).collect()
     }
 
     pub fn warnings(&self) -> Vec<Diagnostic> {
@@ -345,6 +348,17 @@ mod tests {
         assert_eq!(engine.warnings().len(), 1);
         assert_eq!(engine.by_code(DiagCode::UndefinedSignal).len(), 1);
         assert_eq!(engine.total(), 2);
+    }
+
+    /// errors() harus ikut menghitung Fatal/Bug (is_error), bukan hanya
+    /// level Error — dulu statusbar/report bisa menampilkan 0 error
+    /// padahal build gagal fatal.
+    #[test]
+    fn errors_include_fatal() {
+        let engine = GlobalDiagnosticEngine::new();
+        engine.report_fatal(DiagCode::InfiniteDelta, "fatal stop");
+        assert_eq!(engine.errors().len(), 1, "fatal harus dihitung errors()");
+        assert_eq!(engine.fatal().len(), 1);
     }
 
     #[test]

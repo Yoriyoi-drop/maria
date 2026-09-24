@@ -1955,8 +1955,10 @@ impl SimulationEngine {
                 self.emit_warning(
                     DiagCode::UnusedSignal,
                     format!(
-                        "unused signal '{}' never changed during simulation",
-                        sig_name
+                        "signal '{}' never changed during simulation (t=0..{}) — \
+                         constant value or unused",
+                        sig_name,
+                        self.state.time
                     ),
                 );
             }
@@ -1971,8 +1973,10 @@ impl SimulationEngine {
                     self.emit_warning(
                         DiagCode::ClockNeverToggles,
                         format!(
-                            "clock signal '{}' never toggled during simulation",
-                            sig_name
+                            "clock signal '{}' never toggled during simulation (t=0..{}) — \
+                             clock module unreachable, or run ended before the first edge",
+                            sig_name,
+                            self.state.time
                         ),
                     );
                 }
@@ -1989,8 +1993,10 @@ impl SimulationEngine {
                         self.emit_warning(
                             DiagCode::ResetPermanentlyAsserted,
                             format!(
-                                "reset signal '{}' was permanently asserted during simulation",
-                                sig_name
+                                "reset signal '{}' never changed during simulation (t=0..{}) — \
+                                 may be stuck asserted; verify drive and polarity (rst vs rst_n)",
+                                sig_name,
+                                self.state.time
                             ),
                         );
                     }

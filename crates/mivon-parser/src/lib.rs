@@ -16,7 +16,7 @@ pub mod util;
 use crate::lexer::*;
 use mivon_ast::*;
 use mivon_core::diagnostics::diagnostic::{
-    DiagCode, DiagLevel, Diagnostic, FixItHint, SourceSnippet,
+    DiagCode, DiagLevel, Diagnostic, DiagSpan, FixItHint, SourceSnippet,
 };
 use mivon_core::error::SimError;
 use mivon_core::intern::Symbol;
@@ -532,11 +532,34 @@ impl Parser {
     }
 
     fn push_warning_at(&mut self, msg: impl Into<String>, line: usize, col: usize) {
+        self.push_warning_code_at(DiagCode::InvalidSyntax, msg, line, col);
+    }
+
+    /// Push warning dengan kode diagnostic tertentu.
+    ///
+    /// `line`/`col` adalah posisi YANG DITUJUKAN diagnostic (titik masalah,
+    /// bukan token sesudahnya). Posisi yang sama dipakai untuk ketiganya
+    /// secara konsisten: source snippet (caret), `DiagSpan` (file_id + baris
+    /// untuk konsumen span-based seperti LSP/GUI), dan fix-it — sehingga
+    /// lokasi render dan saran perbaikan tidak pernah berbeda.
+    fn push_warning_code_at(
+        &mut self,
+        code: DiagCode,
+        msg: impl Into<String>,
+        line: usize,
+        col: usize,
+    ) {
         let msg: String = msg.into();
         let msg_for_diag = msg.clone();
         let (display_file, display_line) = self.resolve_source_file(line);
-        let mut diag = Diagnostic::new(DiagLevel::Warning, DiagCode::InvalidSyntax, msg_for_diag)
-            .with_code_context();
+        let mut diag = Diagnostic::new(DiagLevel::Warning, code, msg_for_diag).with_code_context();
+        // file_id (Symbol) + baris/kolom tujuan ikut disimpan di span agar
+        // konsumen tanpa source_snippet tetap tahu file asal lintas modul.
+        diag = diag.with_span(DiagSpan::new(
+            Symbol::intern(&display_file),
+            display_line as u32,
+            col as u32,
+        ));
         // NOTE: gunakan display_line (file-relative), bukan line (cumulative lintas file).
         // Index source_lines KONSISTEN dgn err(): source_lines[0] = `line N "file"`
         // directive, konten baris k di [k] → idx = display_line (bukan -1).
@@ -546,15 +569,14 @@ impl Parser {
                     SourceSnippet::new(&display_file, display_line, col, source_line.trim_end());
                 diag = diag.with_source_snippet(snippet);
 
-                // Generate fix-it for common warnings
-                let trimmed = source_line.trim_end();
-                if (msg.contains("missing semicolon") || msg.contains("expected ';'"))
-                    && !trimmed.ends_with(';')
-                {
+                // Fix-it untuk semicolon: titik sisip = `col` yang sama dengan
+                // caret (dulu dihitung ulang dari baris TOKEN BERIKUT → lokasi
+                // fix-it meleset dari caret dan kadang merusak baris lain).
+                if msg.contains("missing semicolon") || msg.contains("expected ';'") {
                     let fix_it = FixItHint::insert(
                         display_file.clone(),
                         display_line,
-                        trimmed.len() + 1,
+                        col,
                         ";",
                         "Add missing semicolon",
                     );
@@ -563,6 +585,44 @@ impl Parser {
             }
         }
         self.errors.push(diag);
+    }
+
+    /// Titik masalah untuk deklarasi yang hilang `;`: sisip tepat SETELAH
+    /// token terakhir deklarasi (bukan di token penyebab berikutnya —
+    /// `endmodule`/`logic` baris sesudahnya menunjuk baris SALAH ke user).
+    ///
+    /// - Token terakhir deklarasi beda baris dari token berikutnya
+    ///   (kasus umum: `;` lupa di akhir baris) → ujung baris tersebut,
+    ///   setelah whitespace/komentar trailing dibuang.
+    /// - Masih satu baris (mis. `logic a = 1 logic b;`) → tepat sebelum
+    ///   token berikutnya.
+    fn missing_semi_loc(&self) -> (usize, usize) {
+        let next_line = self.peek_line();
+        let next_col = self.peek_col();
+        let Some(prev) = self.pos.get().checked_sub(1).and_then(|i| self.tokens.get(i)) else {
+            return (next_line, next_col);
+        };
+        let (prev_line, prev_col) = (prev.1, prev.2);
+        if prev_line != next_line {
+            let (file, display_line) = self.resolve_source_file(prev_line);
+            let Some(raw) = self.snippet_source_line(&file, display_line) else {
+                return (prev_line, prev_col);
+            };
+            // Buang komentar trailing (`//` atau `/*`) + whitespace → ujung
+            // konten deklarasi. Koma/`;` sudah tertangani alur lain.
+            let mut end = raw.len();
+            if let Some(i) = raw.find("//") {
+                end = end.min(i);
+            }
+            if let Some(i) = raw.find("/*") {
+                end = end.min(i);
+            }
+            let trimmed = raw[..end].trim_end();
+            // `line` tujuan harus baris ASLI (prev_line) supaya
+            // resolve_source_file menghasilkan display_line yang sama.
+            return (prev_line, trimmed.chars().count() + 1);
+        }
+        (prev_line, next_col)
     }
 
     fn peek_ahead(&self, n: usize) -> &Token {

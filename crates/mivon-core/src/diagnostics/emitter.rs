@@ -161,15 +161,18 @@ impl TerminalEmitter {
             writeln!(self.writer)?;
         }
 
-        // Spans (fallback jika tidak ada source snippet)
-        for span in &diag.spans {
-            writeln!(
-                self.writer,
-                "   {}{}-->{} {}:{}:{}",
-                BLUE, BOX_TR, RESET, span.file, span.start, span.end
-            )?;
-            if let Some(label) = &span.label {
-                writeln!(self.writer, "   {}     {}{}", BLUE, label, RESET)?;
+        // Spans — hanya fallback bila TIDAK ada source snippet (span kini
+        // selalu ikut membawa file_id+baris; render dua-duanya = lokasi ganda)
+        if diag.source_snippet.is_none() {
+            for span in &diag.spans {
+                writeln!(
+                    self.writer,
+                    "   {}{}-->{} {}:{}:{}",
+                    BLUE, BOX_TR, RESET, span.file, span.start, span.end
+                )?;
+                if let Some(label) = &span.label {
+                    writeln!(self.writer, "   {}     {}{}", BLUE, label, RESET)?;
+                }
             }
         }
 
@@ -282,15 +285,17 @@ impl TerminalEmitter {
             writeln!(self.writer)?;
         }
 
-        // Spans
-        for span in &diag.spans {
-            writeln!(
-                self.writer,
-                "   {} {}:{}:{}",
-                BOX_TR, span.file, span.start, span.end
-            )?;
-            if let Some(label) = &span.label {
-                writeln!(self.writer, "   |    {}", label)?;
+        // Spans — fallback bila tidak ada source snippet
+        if diag.source_snippet.is_none() {
+            for span in &diag.spans {
+                writeln!(
+                    self.writer,
+                    "   {} {}:{}:{}",
+                    BOX_TR, span.file, span.start, span.end
+                )?;
+                if let Some(label) = &span.label {
+                    writeln!(self.writer, "   |    {}", label)?;
+                }
             }
         }
 
@@ -381,6 +386,9 @@ impl TerminalEmitter {
         }
 
         for span in &diag.spans {
+            if diag.source_snippet.is_some() {
+                continue; // snippet menampilkan lokasi — span tak perlu diulang
+            }
             if self.use_color {
                 write!(
                     self.writer,
@@ -596,16 +604,19 @@ pub fn format_diagnostic(diag: &Diagnostic) -> String {
         output.push('\n');
     }
 
-    // Spans
-    for span in &diag.spans {
-        output.push_str(&format!(
-            "   {} {}:{}:{}",
-            BOX_TR, span.file, span.start, span.end
-        ));
-        if let Some(label) = &span.label {
-            output.push_str(&format!(" — {}", label));
+    // Spans — fallback bila tidak ada source snippet (span membawa file_id;
+    // render keduanya = lokasi ganda)
+    if diag.source_snippet.is_none() {
+        for span in &diag.spans {
+            output.push_str(&format!(
+                "   {} {}:{}:{}",
+                BOX_TR, span.file, span.start, span.end
+            ));
+            if let Some(label) = &span.label {
+                output.push_str(&format!(" — {}", label));
+            }
+            output.push('\n');
         }
-        output.push('\n');
     }
 
     // Runtime context — format: = key : value (satu baris)

@@ -138,7 +138,7 @@ impl SimError {
                 if msg.contains("Unable to determine top-level design")
                     || msg.contains("Top resolution failed")
                 {
-                    "EL3001"
+                    "E3005"
                 } else if msg.contains("not found") || msg.contains("module") {
                     "E3001"
                 } else if msg.contains("circular") {
@@ -288,10 +288,11 @@ impl SimError {
             c if c.starts_with("E1") => 10,
             // Semantic errors (E2xxx)
             c if c.starts_with("E2") => 20,
+            // Top resolution failed (E3005 — dahulu "EL3001"; exit 40 dipertahankan,
+            // arm harus SEBELUM guard E3 supaya tidak tertangkap sebagai E3 biasa)
+            "E3005" => 40,
             // Elaboration errors (E3xxx)
             c if c.starts_with("E3") => 30,
-            // Top resolution failed (EL3001)
-            "EL3001" => 40,
             // Runtime Scheduler (RT2xxx)
             c if c.starts_with("RT2") => 50,
             // Runtime Simulation (RT7xxx assertions, RT1xxx signals, RT9xxx internal)
@@ -372,5 +373,27 @@ impl From<String> for SimError {
 impl From<&str> for SimError {
     fn from(msg: &str) -> Self {
         SimError::Runtime(msg.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Top resolution failed = kode E3005 (dahulu "EL3001", prefix di luar
+    /// skema E3xxx) dan HARUS tetap exit 40 — arm E3005 wajib berada sebelum
+    /// guard `starts_with("E3") => 30` supaya tidak tertangkap E3 biasa.
+    #[test]
+    fn top_resolution_exit_code_stays_40() {
+        let e = SimError::Elaborate("Unable to determine top-level design".into());
+        assert_eq!(e.error_code(), "E3005");
+        assert_eq!(e.exit_code(), 40);
+    }
+
+    #[test]
+    fn module_not_found_exit_code_30() {
+        let e = SimError::Elaborate("module foo not found".into());
+        assert_eq!(e.error_code(), "E3001");
+        assert_eq!(e.exit_code(), 30);
     }
 }

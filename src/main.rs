@@ -119,8 +119,15 @@ fn elab_abort_diag(
         Some(l) => format!("{} (first error at {})", message.into(), l),
         None => message.into(),
     };
-    let mut diag =
-        Diagnostic::new(DiagLevel::Error, DiagCode::ModuleNotFound, msg).with_code_context();
+    let mut diag = Diagnostic::new(
+        DiagLevel::Error,
+        // Kode error SEBENARNYA dari error pertama (bukan selalu
+        // ModuleNotFound — mis. width/type mismatch dilabeli "module not
+        // found" → user mencari masalah di tempat salah).
+        first_err.map(|d| d.code).unwrap_or(DiagCode::ModuleNotFound),
+        msg,
+    )
+    .with_code_context();
     if let Some(e) = first_err {
         if let Some(snippet) = &e.source_snippet {
             diag = diag.with_source_snippet(snippet.clone());

@@ -388,7 +388,7 @@ impl DiagCode {
             DiagCode::CircularDependency => "E3002",
             DiagCode::ParamMismatch => "E3003",
             DiagCode::InstanceNotFound => "E3004",
-            DiagCode::TopResolutionFailed => "EL3001",
+            DiagCode::TopResolutionFailed => "E3005",
             DiagCode::MultipleCandidateTops => "E3006",
             DiagCode::MissingRootModule => "E3007",
             DiagCode::UnresolvedInstantiation => "E3008",
@@ -603,7 +603,7 @@ impl DiagCode {
             DiagCode::ExcludedByFilelist =>
                 "A required module was excluded by the filelist, so the design hierarchy is incomplete.",
             DiagCode::DuplicateDeclaration =>
-                "A module, interface, or package is defined more than once across the source files — the LAST definition from the file list is used (Verilator semantics).",
+                "A module, interface, or package is defined more than once across the source files — duplicates are removed by keeping the most self-contained definition (fewest unresolved instances); a tie keeps the LAST definition in the file list.",
             DiagCode::PackedWidthTooLarge =>
                 "A packed vector or unpacked-array element width exceeds the implementation limit, which would make the design impractical to elaborate or simulate (hang/OOM/incorrect truncation).",
             DiagCode::NullHandle =>
@@ -691,15 +691,15 @@ impl DiagCode {
             DiagCode::RuntimeTypeMismatch =>
                 "A type mismatch was detected at runtime.",
             DiagCode::UninitializedRegister =>
-                "A register was read before being assigned a value.",
+                "A register was read before being assigned a value (retains the default X).",
             DiagCode::WidthMismatchWarning =>
                 "A signal or expression width does not match the expected width.",
             DiagCode::UnusedSignal =>
-                "A signal was declared but never used in the design.",
+                "A signal never changed during the simulated time window — it is either unused, held at a constant value, or the run ended before any transition.",
             DiagCode::ClockNeverToggles =>
-                "A clock signal was detected but never toggled during simulation.",
+                "A signal identified as a clock never changed after time 0 — the driving clock module may be unreachable, or the simulation ended before the first edge.",
             DiagCode::ResetPermanentlyAsserted =>
-                "A reset signal is permanently asserted and never de-asserted.",
+                "A reset signal never changed after time 0 — it may be stuck asserted (polarity rst vs rst_n must be checked manually).",
             DiagCode::CombinationalLoop =>
                 "A potential combinational loop was detected in the design.",
             DiagCode::SignalGlitch =>
@@ -843,15 +843,15 @@ impl DiagCode {
             DiagCode::RuntimeTypeMismatch =>
                 "Use type casting or convert the expression to the expected type.",
             DiagCode::UninitializedRegister =>
-                "Assign a reset value to the register or initialize it before use.",
+                "Assign a reset value to the register, or ignore this warning if X-initialization is intentional (e.g. X-propagation checks).",
             DiagCode::WidthMismatchWarning =>
                 "Adjust the bit width to match or use explicit width conversion.",
             DiagCode::UnusedSignal =>
-                "Remove the unused signal or use it in the design to silence this warning.",
+                "If the signal is genuinely unused, remove it; otherwise it simply never changed (constant value) or the simulation ended before any transition.",
             DiagCode::ClockNeverToggles =>
-                "Check clock generation and ensure the clock signal is properly driven.",
+                "Check clock generation, or increase simulation time (-T) so the first clock edge falls inside the run.",
             DiagCode::ResetPermanentlyAsserted =>
-                "Check reset logic and ensure the reset de-asserts after initialization.",
+                "Check that reset is driven and de-asserts after initialization, and verify polarity (rst vs rst_n).",
             DiagCode::CombinationalLoop =>
                 "Add flip-flops or non-zero delays to break the potential combinational loop.",
             DiagCode::SignalGlitch =>
@@ -1324,6 +1324,9 @@ impl fmt::Display for Diagnostic {
         write!(f, "{}: {}: {}", self.level, self.code, self.message)?;
 
         for span in &self.spans {
+            if self.source_snippet.is_some() {
+                break; // snippet sudah menampilkan lokasi file:line:col
+            }
             write!(f, "\n  --> {}:{}:{}", span.file, span.start, span.end)?;
             if let Some(label) = &span.label {
                 write!(f, " — {}", label)?;

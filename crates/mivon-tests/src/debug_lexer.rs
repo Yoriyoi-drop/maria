@@ -100,8 +100,9 @@ mod debug_syscall_lex {
 
     // Gap parser: deklarasi tanpa ';' (`logic c = 1` lalu `logic d;` di baris
     // berikut) dulu ditelan diam-diam oleh skip_semi → kode rusak dianggap
-    // valid. Kini harus memunculkan warning di lokasi token penyebab (bukan
-    // EOF / baris salah).
+    // valid. Kini harus memunculkan warning di lokasi MASALAH: ujung token
+    // terakhir deklarasi (baris deklarasi), BUKAN token penyebab berikutnya
+    // (`logic d;`) — lokasi lama menunjuk baris/module salah ke user.
     #[test]
     fn parse_missing_semicolon_diag_location() {
         use mivon_parser::Parser;
@@ -132,19 +133,45 @@ mod debug_syscall_lex {
             !warns.is_empty(),
             "missing ';' harus memunculkan warning (dulu diam-diam)"
         );
-        // Lokasi harus baris 5 (`logic d;` — token tempat ';' hilang), bukan
-        // EOF/lokasi lain.
-        let any_line5 = warns
+        // Lokasi harus baris 4 (`  logic c = 1` — deklarasi yang kehilangan
+        // ';' tepat setelah kolom 13 → titik sisip ';' = kolom 14), bukan
+        // baris 5 (`logic d;` — token sesudahnya) / EOF.
+        let hit = warns
             .iter()
-            .any(|d| d.source_snippet.as_ref().is_some_and(|s| s.line == 5));
+            .any(|d| d.source_snippet.as_ref().is_some_and(|s| s.line == 4 && s.col == 14));
         assert!(
-            any_line5,
-            "warning harus berlokasi di baris 5, dapat {:?}",
+            hit,
+            "warning harus berlokasi di 4:14 (ujung deklarasi), dapat {:?}",
             warns
                 .iter()
                 .map(|d| d.source_snippet.as_ref().map(|s| (s.line, s.col)))
                 .collect::<Vec<_>>()
         );
+        // Kode harus E1003 (ExpectedSemi), bukan E1005 (InvalidSyntax generik)
+        // — pesan bilang "expected ';'" dan fix-it menyisip ';'.
+        use mivon_core::diagnostics::DiagCode;
+        assert!(
+            warns
+                .iter()
+                .any(|d| d.code == DiagCode::ExpectedSemi),
+            "kode diagnostic harus ExpectedSemi (E1003)"
+        );
+        // fix-it harus DI TITIK YANG SAMA dengan caret (4:14) — dulu
+        // fix-it dihitung dari baris token berikut (5:xx) → meleset.
+        let fix_ok = warns.iter().any(|d| {
+            d.fix_its
+                .iter()
+                .any(|f| f.start_line == 4 && f.start_col == 14 && f.replacement == ";")
+        });
+        assert!(fix_ok, "fix-it ';' harus di 4:14 (sama dengan caret)");
+        // file_id (DiagSpan) wajib ikut terisi — konsumen span-based
+        // (LSP/GUI) tanpa source_snippet tetap tahu file asal lintas modul.
+        let span_ok = warns.iter().any(|d| {
+            d.spans.first().is_some_and(|sp| {
+                sp.file.as_str() == "<test>" && sp.start == 4 && sp.end == 14
+            })
+        });
+        assert!(span_ok, "DiagSpan file_id harus <test>:4:14");
     }
 
     // Gap parser: header modul tak diakhiri ';' — `module top {` dulu dianggap

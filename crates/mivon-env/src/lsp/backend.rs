@@ -556,9 +556,19 @@ impl LspBackend {
                 DiagnosticSeverity::WARNING
             };
 
-            // Get line/col from the diagnostic's spans or source snippet
+            // Posisi dari source_snippet (line:col 1-based) → fallback DiagSpan
+            // (file_id + line:col, terisi lintas modul) → (0,0) bila benar-benar
+            // tanpa lokasi. Dulu span diabaikan → squiggle salah di 0:0.
             let (line, col) = if let Some(snippet) = &diag.source_snippet {
-                ((snippet.line - 1) as u32, (snippet.col - 1) as u32)
+                (
+                    snippet.line.saturating_sub(1) as u32,
+                    snippet.col.saturating_sub(1) as u32,
+                )
+            } else if let Some(sp) = diag.spans.first() {
+                (
+                    sp.start.saturating_sub(1),
+                    sp.end.saturating_sub(1),
+                )
             } else {
                 (0, 0)
             };
