@@ -2514,6 +2514,13 @@ impl Elaborator {
             }
         }
 
+        // Cache IR per-signature (flatten instance custom-param) hanya
+        // dibutuhkan SELAMA elaborasi. Setelah IR final dibangun (di bawah),
+        // lepaskan cache agar memori cone free untuk SIMULASI — pada desain
+        // besar (top_earlgrey) duplikat IR ini ~ratusan MB-1GB, penyumbang
+        // peak memori yang membuat OOM di mesin kecil (RAM 6GB).
+        self.module_cache.clear();
+
         Ok(IrDesign {
             top,
             modules: std::mem::take(&mut self.modules),
@@ -3104,12 +3111,26 @@ impl Elaborator {
 
     /// Tolak packed width di atas `MAX_PACKED_WIDTH` dgn diag bersih (E3012).
     /// Mencegah hang/OOM/silent-clamp pada width absurd (mis. `2**31`).
+    /// Nama module yang sedang di-elaborasi disertakan dalam pesan — tanpa
+    /// ini error E3012 tercatat tanpa konteks modul dan `find_name_in_source`
+    /// (fallback lokasi) bisa menunjuk ke kemunculan nama port yang sama di
+    /// FILE/modul lain (pesan menyesatkan).
     fn check_packed_width(&self, width: usize, what: &str) -> Result<(), SimError> {
         if width > MAX_PACKED_WIDTH {
+            // DEBUG TEMPORARY (di-root-cause E3012 garbage width) — hapus nanti.
+            eprintln!(
+                "[E3012-DBG] what={what} width={width} cur_module={:?}\n{}",
+                self.current_module.map(|m| m.as_str()),
+                std::backtrace::Backtrace::force_capture()
+            );
+            let mod_ctx = self
+                .current_module
+                .map(|m| format!(" in module '{}'", m.as_str()))
+                .unwrap_or_default();
             return Err(self.elab_diag(
                 DiagCode::PackedWidthTooLarge,
                 format!(
-                    "{what}: packed width {width} bit exceeds the implementation limit \
+                    "{what}{mod_ctx}: packed width {width} bit exceeds the implementation limit \
                      ({MAX_PACKED_WIDTH} bits) — refusing to elaborate an impractical \
                      vector (hang/OOM/incorrect truncation)"
                 ),
@@ -3183,12 +3204,32 @@ impl Elaborator {
             return loc;
         }
         let result = (|| {
+            // Cocokkan nama sebagai TOKEN utuh (bukan substring): fallback
+            // lokasi untuk `in_i` tidak boleh menunjuk ke `tl_in_i`/`in_io` di
+            // file lain (snippet menyesatkan). Boundary luar = bukan
+            // alphanumeric/'_'. Nama bisa memuat `::`/`.`/`[]` — substring
+            // utuh dibandingkan, hanya tepi luar yang dicek.
+            let is_id = |c: char| c.is_alphanumeric() || c == '_';
             for (i, line) in self.source_lines.iter().enumerate() {
                 if line.trim_start().starts_with('`') {
                     continue;
                 }
-                if let Some(col) = line.find(name) {
-                    return (i + 1, col + 1);
+                let mut start = 0usize;
+                while let Some(rel) = line[start..].find(name) {
+                    let abs = start + rel;
+                    let before_ok = match line[..abs].chars().next_back() {
+                        Some(c) => !is_id(c),
+                        None => true,
+                    };
+                    let after_end = abs + name.len();
+                    let after_ok = match line[after_end..].chars().next() {
+                        Some(c) => !is_id(c),
+                        None => true,
+                    };
+                    if before_ok && after_ok {
+                        return (i + 1, abs + 1);
+                    }
+                    start = abs + 1;
                 }
             }
             (0, 0)
@@ -3370,6 +3411,15 @@ impl Elaborator {
         param_vals: &HashMap<Symbol, i64>,
         type_param_overrides: &HashMap<Symbol, usize>,
     ) -> Result<IrModule, SimError> {
+        // Konteks diagnostic module: SEMUA jalur (loop utama, flatten child
+        // via flatten_instances_inner, interface sintetis) masuk lewat sini.
+        // Sebelumnya hanya `elaborate_module` yang menyetel — flatten child
+        // dipanggil LANGSUNG (tanpa elaborate_module) sehingga current_module
+        // menyimpan module STALE dari pemanggilan sebelumnya → error port/
+        // signal terlampir module yang salah (diag menyesatkan, mis. E3012
+        // "port 'in_i'" atas nama interface JTAG_DV padahal port milik modul
+        // lain yang sedang di-flatten).
+        self.current_module = Some(module.name);
         use std::collections::HashSet;
         let dbg_step = std::env::var("DBG_ELAB_STEP").is_ok();
         let step_t0 = std::time::Instant::now();
@@ -3384,6 +3434,15 @@ impl Elaborator {
             }
         };
         let mut effective_params = param_vals.clone();
+        // DEBUG TEMPORARY (root-cause E3012 garbage width) — hapus nanti.
+        if module.name.as_str() == "prim_sec_anchor_buf" {
+            eprintln!(
+                "[EMP-DBG] module={} paramValsWidth={:?} hasTypeOverrides={}",
+                module.name,
+                param_vals.get(&Symbol::intern("Width")),
+                !type_param_overrides.is_empty()
+            );
+        }
 
         // Process $unit parameters (top-level param declarations)
         for param in &self.design.unit_params {
@@ -3928,6 +3987,23 @@ impl Elaborator {
             } else {
                 pwa(port, &effective_params, &signal_map, &signals)?
             };
+            // DEBUG TEMPORARY (root-cause E3012 garbage width) — hapus nanti.
+            if width > MAX_PACKED_WIDTH {
+                let wp: Vec<(String, i64)> = effective_params
+                    .iter()
+                    .filter(|(k, _)| k.as_str().contains("Width") || k.as_str().contains("width"))
+                    .map(|(k, v)| (k.as_str().to_string(), *v))
+                    .collect();
+                eprintln!(
+                    "[W-DBG2] port={:?} width={} widthParams={:?} expr_range={:?} range={:?} dtype={:?}",
+                    port.name,
+                    width,
+                    wp,
+                    port.expr_range,
+                    port.range,
+                    port.dtype_name
+                );
+            }
             self.check_packed_width(width, &format!("port '{}'", port.name.as_str()))?;
             let kind = match port.direction {
                 PortDirection::Input => SignalKind::Input,

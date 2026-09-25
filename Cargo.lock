@@ -2057,6 +2057,7 @@ dependencies = [
  "crossbeam",
  "dashmap 6.2.1",
  "fxhash",
+ "libc",
  "libloading",
  "lz4_flex",
  "memmap2",

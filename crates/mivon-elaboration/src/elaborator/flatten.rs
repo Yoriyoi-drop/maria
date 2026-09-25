@@ -119,6 +119,19 @@ impl Elaborator {
             let needs_custom_params =
                 inst_module.is_some_and(|m| !m.params.is_empty()) && !inst.param_map.is_empty();
             let needs_type_params = !inst.type_param_map.is_empty();
+            // DEBUG TEMPORARY (root-cause E3012 garbage width) — hapus nanti.
+            if inst.module_name.as_str() == "prim_sec_anchor_buf" {
+                let pm: Vec<(String, i64)> = inst
+                    .param_map
+                    .iter()
+                    .map(|(k, v)| (k.as_str().to_string(), *v))
+                    .collect();
+                eprintln!(
+                    "[INST-DBG] flatten '{}' line={} needs_custom={} needs_type={} param_map={pm:?} type_map={:?}",
+                    inst.instance_name, inst.line, needs_custom_params, needs_type_params,
+                    inst.type_param_map
+                );
+            }
             let mut child = if needs_custom_params || needs_type_params {
                 // Cache IR per signature (module + override). Ribuan instance
                 // dengan override identik → elaborasi hanya SEKALI per

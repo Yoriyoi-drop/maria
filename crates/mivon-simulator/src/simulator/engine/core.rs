@@ -1957,8 +1957,7 @@ impl SimulationEngine {
                     format!(
                         "signal '{}' never changed during simulation (t=0..{}) — \
                          constant value or unused",
-                        sig_name,
-                        self.state.time
+                        sig_name, self.state.time
                     ),
                 );
             }
@@ -1975,8 +1974,7 @@ impl SimulationEngine {
                         format!(
                             "clock signal '{}' never toggled during simulation (t=0..{}) — \
                              clock module unreachable, or run ended before the first edge",
-                            sig_name,
-                            self.state.time
+                            sig_name, self.state.time
                         ),
                     );
                 }
@@ -1995,8 +1993,7 @@ impl SimulationEngine {
                             format!(
                                 "reset signal '{}' never changed during simulation (t=0..{}) — \
                                  may be stuck asserted; verify drive and polarity (rst vs rst_n)",
-                                sig_name,
-                                self.state.time
+                                sig_name, self.state.time
                             ),
                         );
                     }

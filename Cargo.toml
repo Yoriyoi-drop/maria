@@ -37,6 +37,9 @@ default-run = "mivon"
 clap = { version = "4", features = ["derive"] }
 rand = "0.8"
 rayon = "1"
+# malloc_trim(0) — lepaskan heap free pages (AST parse) kembali ke OS agar
+# baseline RSS turun sebelum elaborasi/simulasi (mesin kecil, anti-OOM).
+libc = "0.2"
 # MICD: binary serialization AST per file (persistent incremental compile)
 bincode = "1.3"
 # MICD: kompresi LZ4 untuk blob AST/verify (Kritik 15 db.md)

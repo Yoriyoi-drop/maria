@@ -488,12 +488,21 @@ fn resolve_typedef_bits(
         }
     };
     // Range eksplisit `typedef logic [W-1:0] name;` menang atas width default.
+    // eval_expr memakai `cur_pkg` = package typedef AGAR batas range yang
+    // mereferensikan parameter package plain-name (`logic [SramKeyWidth-1:0]`
+    // di otp_ctrl_pkg) ter-resolve ke `pkg::SramKeyWidth` dari ctx.scalars.
+    // Tanpa ini `$bits(otp_ctrl_pkg::sram_key_t)` (alias logic [..]) jatuh ke
+    // `dtype.width()=1` → TotalAnchorWidth = $bits(..)+$bits(..) = 2 (harusnya
+    // 256) → lebar instance/port salah (E3012 di desain besar).
     if let Some(er) = &td.range {
+        let pkg_ctx = Some(typedef_pkg.as_str());
         if let (Ok(msb), Ok(lsb)) = (
-            eval_expr(&er.msb, ctx, None).and_then(scalar),
-            eval_expr(&er.lsb, ctx, None).and_then(scalar),
+            eval_expr(&er.msb, ctx, pkg_ctx).and_then(scalar),
+            eval_expr(&er.lsb, ctx, pkg_ctx).and_then(scalar),
         ) {
-            return Some(msb.abs_diff(lsb) as usize + 1);
+            if msb >= 0 && lsb >= 0 {
+                return Some(msb.abs_diff(lsb) as usize + 1);
+            }
         }
     }
     Some(typedef_dtype_bits(

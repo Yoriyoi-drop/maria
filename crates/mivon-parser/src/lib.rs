@@ -16,7 +16,7 @@ pub mod util;
 use crate::lexer::*;
 use mivon_ast::*;
 use mivon_core::diagnostics::diagnostic::{
-    DiagCode, DiagLevel, Diagnostic, DiagSpan, FixItHint, SourceSnippet,
+    DiagCode, DiagLevel, DiagSpan, Diagnostic, FixItHint, SourceSnippet,
 };
 use mivon_core::error::SimError;
 use mivon_core::intern::Symbol;
@@ -599,7 +599,12 @@ impl Parser {
     fn missing_semi_loc(&self) -> (usize, usize) {
         let next_line = self.peek_line();
         let next_col = self.peek_col();
-        let Some(prev) = self.pos.get().checked_sub(1).and_then(|i| self.tokens.get(i)) else {
+        let Some(prev) = self
+            .pos
+            .get()
+            .checked_sub(1)
+            .and_then(|i| self.tokens.get(i))
+        else {
             return (next_line, next_col);
         };
         let (prev_line, prev_col) = (prev.1, prev.2);

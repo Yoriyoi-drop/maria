@@ -565,10 +565,7 @@ impl LspBackend {
                     snippet.col.saturating_sub(1) as u32,
                 )
             } else if let Some(sp) = diag.spans.first() {
-                (
-                    sp.start.saturating_sub(1),
-                    sp.end.saturating_sub(1),
-                )
+                (sp.start.saturating_sub(1), sp.end.saturating_sub(1))
             } else {
                 (0, 0)
             };

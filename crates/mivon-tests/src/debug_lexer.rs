@@ -136,9 +136,11 @@ mod debug_syscall_lex {
         // Lokasi harus baris 4 (`  logic c = 1` — deklarasi yang kehilangan
         // ';' tepat setelah kolom 13 → titik sisip ';' = kolom 14), bukan
         // baris 5 (`logic d;` — token sesudahnya) / EOF.
-        let hit = warns
-            .iter()
-            .any(|d| d.source_snippet.as_ref().is_some_and(|s| s.line == 4 && s.col == 14));
+        let hit = warns.iter().any(|d| {
+            d.source_snippet
+                .as_ref()
+                .is_some_and(|s| s.line == 4 && s.col == 14)
+        });
         assert!(
             hit,
             "warning harus berlokasi di 4:14 (ujung deklarasi), dapat {:?}",
@@ -151,9 +153,7 @@ mod debug_syscall_lex {
         // — pesan bilang "expected ';'" dan fix-it menyisip ';'.
         use mivon_core::diagnostics::DiagCode;
         assert!(
-            warns
-                .iter()
-                .any(|d| d.code == DiagCode::ExpectedSemi),
+            warns.iter().any(|d| d.code == DiagCode::ExpectedSemi),
             "kode diagnostic harus ExpectedSemi (E1003)"
         );
         // fix-it harus DI TITIK YANG SAMA dengan caret (4:14) — dulu
@@ -167,9 +167,9 @@ mod debug_syscall_lex {
         // file_id (DiagSpan) wajib ikut terisi — konsumen span-based
         // (LSP/GUI) tanpa source_snippet tetap tahu file asal lintas modul.
         let span_ok = warns.iter().any(|d| {
-            d.spans.first().is_some_and(|sp| {
-                sp.file.as_str() == "<test>" && sp.start == 4 && sp.end == 14
-            })
+            d.spans
+                .first()
+                .is_some_and(|sp| sp.file.as_str() == "<test>" && sp.start == 4 && sp.end == 14)
         });
         assert!(span_ok, "DiagSpan file_id harus <test>:4:14");
     }

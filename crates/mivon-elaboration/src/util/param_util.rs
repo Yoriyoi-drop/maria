@@ -88,8 +88,16 @@ fn eval_param_default(
     e: &Expr,
     existing_vals: &HashMap<Symbol, i64>,
     pkg: Option<&PkgFullCtx>,
+    module: &Module,
 ) -> Option<i64> {
-    match e {
+    // `$bits(ParamIdent)` (dan `$size`) harus LEBAR tipe parameter, bukan
+    // NILAI konstanta/override-nya. const_eval standard mengevaluasi argumen
+    // sebagai nilai → `parameter bit [63:0] ScrNonce = '0` di-override
+    // konstanta besar (desain) membuat `$bits(ScrNonce)` = nilai besar
+    // (bukan 64) → TotalAnchorWidth raksasa → E3012. Fold dulu di level ini
+    // (konteks module tersedia) agar SEMUA jalur eval berikutnya benar.
+    let e_folded = fold_param_bits(e, module, existing_vals);
+    match &e_folded {
         Expr::Concat(parts) if parts.len() > 1 => None,
         // JANGAN masukkan struct literal ke param_vals sebagai skalar 0.
         // `const_eval_with_params` mengembalikan Ok(0) untuk `Expr::StructLit`
@@ -102,12 +110,12 @@ fn eval_param_default(
         Expr::StructLit { .. } => None,
         Expr::String(s) => Some(string_to_i64(s)),
         _ => {
-            if let Ok(v) = const_eval_with_params(e, existing_vals) {
+            if let Ok(v) = const_eval_with_params(&e_folded, existing_vals) {
                 return Some(v);
             }
             if let Some(p) = pkg {
                 return eval_param_default_full(
-                    e,
+                    &e_folded,
                     existing_vals,
                     p.arrays,
                     p.package_symbols,
@@ -116,6 +124,90 @@ fn eval_param_default(
             }
             None
         }
+    }
+}
+
+/// Lebar tipe parameter module (untuk `$bits(ParamIdent)`/`$size(ParamIdent)`).
+/// Prioritas: range eksplisit (`bit [63:0]` → 64) → lebar dtype (`int` → 32,
+/// `logic`/`bit` → 1). `None` bila parameter tidak ditemukan.
+fn param_decl_width(module: &Module, name: &Symbol, _vals: &HashMap<Symbol, i64>) -> Option<usize> {
+    let width_of = |p: &ParamDecl| -> Option<usize> {
+        // ParamDecl.range = (lo, hi) ekspresi — lebar = |hi - lo| + 1.
+        if let Some((lo, hi)) = &p.range {
+            if let (Ok(msb), Ok(lsb)) = (
+                const_eval_with_params(hi, _vals),
+                const_eval_with_params(lo, _vals),
+            ) {
+                let w = msb.abs_diff(lsb) as usize + 1;
+                if w > 0 {
+                    return Some(w);
+                }
+            }
+        }
+        if let Some(dt) = &p.dtype {
+            let w = mivon_ast::types::DataType::width(dt);
+            if w > 0 {
+                return Some(w);
+            }
+        }
+        None
+    };
+    module
+        .params
+        .iter()
+        .find(|p| p.name == *name)
+        .and_then(width_of)
+        .or_else(|| {
+            collect_body_params(module)
+                .iter()
+                .find(|p| p.name == *name)
+                .and_then(width_of)
+        })
+}
+
+/// Ganti `$bits(Ident)`/`$size(Ident)` pada ekspresi dengan konstanta = lebar
+/// tipe parameter module tsb. Recurse untuk $bits yang muncul di sub-ekspresi
+/// (mis. `$bits(A) + $bits(B)`). Ekspresi lain direkursi polos/utuh.
+fn fold_param_bits(e: &Expr, module: &Module, vals: &HashMap<Symbol, i64>) -> Expr {
+    match e {
+        Expr::FuncCall {
+            name,
+            args,
+            line,
+            col,
+        } if (name.as_str() == "$bits" || name.as_str() == "$size") && args.len() == 1 => {
+            if let Expr::Ident { name: ident, .. } = &args[0] {
+                if let Some(w) = param_decl_width(module, ident, vals) {
+                    return Expr::Value(mivon_ast::expr::Value::Decimal(w.max(1) as i64));
+                }
+            }
+            Expr::FuncCall {
+                name: *name,
+                args: args
+                    .iter()
+                    .map(|a| fold_param_bits(a, module, vals))
+                    .collect(),
+                line: *line,
+                col: *col,
+            }
+        }
+        Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
+            op: op.clone(),
+            lhs: Box::new(fold_param_bits(lhs, module, vals)),
+            rhs: Box::new(fold_param_bits(rhs, module, vals)),
+        },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
+            op: op.clone(),
+            expr: Box::new(fold_param_bits(expr, module, vals)),
+        },
+        Expr::Paren(inner) => Expr::Paren(Box::new(fold_param_bits(inner, module, vals))),
+        Expr::Concat(parts) => Expr::Concat(
+            parts
+                .iter()
+                .map(|p| fold_param_bits(p, module, vals))
+                .collect(),
+        ),
+        _ => e.clone(),
     }
 }
 
@@ -146,6 +238,18 @@ pub fn resolve_param_values_with_ctx(
     let _t0 = std::time::Instant::now();
     let mut vals = base_ctx.clone();
     let _t_clone_vals = _t0.elapsed();
+    // DEBUG TEMPORARY (root-cause E3012 garbage width) — hapus nanti.
+    if module.name.as_str() == "prim_sec_anchor_buf" {
+        eprintln!(
+            "[RP-DBG] module={} overrides={:?} baseWidth={:?}",
+            module.name,
+            instance_overrides
+                .iter()
+                .map(|(k, v)| (k.as_str().to_string(), *v))
+                .collect::<Vec<_>>(),
+            base_ctx.get(&Symbol::intern("Width"))
+        );
+    }
     // Konteks skalar penuh = `vals` itu sendiri: pemanggil menjamin
     // base_ctx ⊇ pkg_param_ctx ⊇ pkg_const_scalars (collect_package_param_ctx
     // meng-clone pkg_param_ctx yang meng-flatten konstanta package), jadi
@@ -176,7 +280,7 @@ pub fn resolve_param_values_with_ctx(
         if !vals.contains_key(&param.name) {
             match &param.default {
                 Some(e) => {
-                    if let Some(v) = eval_param_default(e, &vals, pkg) {
+                    if let Some(v) = eval_param_default(e, &vals, pkg, module) {
                         insert_val!(param.name, v);
                     } else if !param_default_is_collection(e) {
                         // Fallback global: param gagal dievaluasi (default
@@ -200,7 +304,7 @@ pub fn resolve_param_values_with_ctx(
     for (i, param) in module.params.iter().enumerate() {
         if param.is_localparam {
             if let Some(e) = &param.default {
-                if let Some(v) = eval_param_default(e, &vals, pkg) {
+                if let Some(v) = eval_param_default(e, &vals, pkg, module) {
                     insert_val!(param.name, v);
                 } else if !param_default_is_collection(e) {
                     // Fallback global sama seperti body params di atas.
@@ -217,7 +321,7 @@ pub fn resolve_param_values_with_ctx(
             *override_val
         } else {
             match &param.default {
-                Some(e) => eval_param_default(e, &vals, pkg).unwrap_or(0),
+                Some(e) => eval_param_default(e, &vals, pkg, module).unwrap_or(0),
                 None => 0,
             }
         };

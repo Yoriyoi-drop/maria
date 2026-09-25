@@ -124,7 +124,9 @@ fn elab_abort_diag(
         // Kode error SEBENARNYA dari error pertama (bukan selalu
         // ModuleNotFound — mis. width/type mismatch dilabeli "module not
         // found" → user mencari masalah di tempat salah).
-        first_err.map(|d| d.code).unwrap_or(DiagCode::ModuleNotFound),
+        first_err
+            .map(|d| d.code)
+            .unwrap_or(DiagCode::ModuleNotFound),
         msg,
     )
     .with_code_context();
@@ -559,6 +561,18 @@ fn main() {
             eprintln!("fatal: cannot spawn mivon-main worker thread: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+/// Lepas free heap pages (glibc) kembali ke OS setelah beban besar dibebaskan
+/// (AST parse 2GB+/IR cache elaborasi). Tanpa ini RSS tetap tinggi karena
+/// allocator menahan page free — mesin kecil (RAM 6GB) OOM saat elaborasi/
+/// simulasi desain besar. GNU-libc specific; no-op aman bila trim tidak
+/// mengembalikan apa pun.
+fn trim_heap() {
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    unsafe {
+        libc::malloc_trim(0);
     }
 }
 
@@ -2173,6 +2187,9 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
         ));
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
+    // Lepas heap free (IR cache elaborasi / sisa AST) sebelum simulasi —
+    // sim design besar butuh ruang (mesin kecil anti-OOM).
+    trim_heap();
 
     // ── Set SDF timing mode ──
     if let Some(mode) = mivon_api::simulator::sdf::TimingMode::from_name(&cli.timing_mode) {
@@ -2990,6 +3007,10 @@ fn run_fast(
     // butuh RAM; menahan clone AST penuh kedua selama elaborate = OOM pada
     // mesin kecil (sebelumnya peak ~2.9GB parse, lalu elaborate +AST → swap). ──
     session.release_parse_cache();
+    // malloc_trim: glibc menahan free heap (AST parse ~2GB) sebagai RSS —
+    // mesin kecil (RAM 6GB) tidak punya ruang utk elaborasi+simulasi.
+    // Trim mengembalikan page free ke OS → baseline RSS turun drastis.
+    trim_heap();
     mark("after-save-release");
 
     if design.modules.is_empty() {
@@ -3592,6 +3613,9 @@ fn run_fast(
         ));
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
+    // Lepas heap free (IR cache elaborasi / sisa AST) sebelum simulasi —
+    // sim design besar butuh ruang (mesin kecil anti-OOM).
+    trim_heap();
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
