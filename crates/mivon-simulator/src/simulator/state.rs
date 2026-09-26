@@ -194,7 +194,9 @@ impl SimulationState {
         let id = self.alias_redirect.get(id).copied().unwrap_or(id);
         // Sinyal besar yang menerima tulis nyata → tandai dirty (snapshot
         // berikutnya harus clone kenyataan, bukan lazy X).
-        if self.large_dirty.len() > id && self.signals[id].width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD {
+        if self.large_dirty.len() > id
+            && self.signals[id].width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD
+        {
             self.large_dirty[id] = true;
         }
         // Compare against pending (next_signals) if already changed this delta,
@@ -210,13 +212,13 @@ impl SimulationState {
     }
 
     /// Snapshot nilai sinyal utk evaluasi/preponed/history. Sinyal ultra-lebar
-/// (array memori flat) SELALU di-snapshot LAZY (tanpa materialisasi):
-/// - par-eval utk array raksasa SUDAH di-disable (`has_wide_signals` →
-///   sequential) sehingga snapshot tidak pernah dipakai utk nilai evaluasi;
-/// - evaluasi sequential membaca state langsung;
-/// - preponed/signal_history hanya butuh skalar/edge (array tak relevan).
-///
-/// Klon penuh 1e9 bit per delta = OOM mesin kecil.
+    /// (array memori flat) SELALU di-snapshot LAZY (tanpa materialisasi):
+    /// - par-eval utk array raksasa SUDAH di-disable (`has_wide_signals` →
+    ///   sequential) sehingga snapshot tidak pernah dipakai utk nilai evaluasi;
+    /// - evaluasi sequential membaca state langsung;
+    /// - preponed/signal_history hanya butuh skalar/edge (array tak relevan).
+    ///
+    /// Klon penuh 1e9 bit per delta = OOM mesin kecil.
     #[inline]
     pub fn snapshot_signal(&self, id: SignalId) -> LogicVec {
         let lv = if self.changed[id] {

@@ -376,7 +376,8 @@ impl SimulationEngine {
                 if wide && !is_dynamic {
                     // Array memori flat fixed: tulis segmen langsung; bounds
                     // di-clamp aman di write_signal_slice (LRM OOB = no-op).
-                    self.state.write_signal_slice(*sig_id, start, start + elem_width, &val);
+                    self.state
+                        .write_signal_slice(*sig_id, start, start + elem_width, &val);
                     self.signal_last_change.insert(*sig_id, self.state.time);
                     return Ok(());
                 }
