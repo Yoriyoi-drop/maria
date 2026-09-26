@@ -803,6 +803,18 @@ pub struct EmuArgs {
     /// Format: WIDTHxHEIGHT (default: 80x25) atau `--window` (80x25 default).
     #[arg(long = "window", value_name = "WxH")]
     pub window: Option<String>,
+
+    /// Simpan snapshot mesin (CPU + seluruh memori guest sparse) ke file
+    /// SETELAH run — EMULATOR.md §14 (fase R5). Didukung: interpreter RV32,
+    /// x86 (boot ISO). Direct RTL CPU → error sebelum run (belum didukung).
+    #[arg(long = "snapshot-save", value_name = "PATH")]
+    pub snapshot_save: Option<String>,
+
+    /// Muat snapshot mesin SEBELUM run — lanjut dari state tersimpan
+    /// (memory map harus identik: nama/base/size region; blob CPU harus
+    /// cocok dengan CPU yang dipakai).
+    #[arg(long = "snapshot-load", value_name = "PATH")]
+    pub snapshot_load: Option<String>,
 }
 
 #[derive(ClapParser, Clone)]

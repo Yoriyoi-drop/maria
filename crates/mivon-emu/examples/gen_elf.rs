@@ -2,25 +2,38 @@
 use mivon_core::intern::Symbol;
 use mivon_emu::mem::{MemoryMap, MemoryPort, RamRegion, RegionKind};
 
+/// ELF32 little-endian, e_machine = EM_RISCV (243), satu PT_LOAD —
+/// format yang dimuat loader & dijalankan interpreter RV32 (`--run`).
 fn make_elf(payload: &[u8]) -> Vec<u8> {
-    let entry = 0x8000_0000u64;
-    let vaddr = 0x8000_0000u64;
-    let mut d = vec![0u8; 64 + 56];
+    let entry = 0x8000_0000u32;
+    let vaddr = 0x8000_0000u32;
+    let ehsize = 52usize;
+    let phentsize = 32usize;
+    let phoff = ehsize;
+    let offset = (ehsize + phentsize) as u32;
+    let mut d = vec![0u8; ehsize + phentsize];
+    // ELF32 header
     d[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
-    d[4] = 2;
-    d[5] = 1;
-    d[6] = 1;
-    d[18..20].copy_from_slice(&243u16.to_le_bytes());
-    d[24..32].copy_from_slice(&entry.to_le_bytes());
-    d[32..40].copy_from_slice(&64u64.to_le_bytes());
-    d[54..56].copy_from_slice(&56u16.to_le_bytes());
-    d[56..58].copy_from_slice(&1u16.to_le_bytes());
-    let po = 64usize;
-    d[po..po + 4].copy_from_slice(&1u32.to_le_bytes());
-    d[po + 8..po + 16].copy_from_slice(&(64u64 + 56).to_le_bytes());
-    d[po + 16..po + 24].copy_from_slice(&vaddr.to_le_bytes());
-    d[po + 32..po + 40].copy_from_slice(&(payload.len() as u64).to_le_bytes());
-    d[po + 40..po + 48].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+    d[4] = 1; // ELFCLASS32
+    d[5] = 1; // ELFDATA2LSB
+    d[6] = 1; // EV_CURRENT
+    d[16..18].copy_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+    d[18..20].copy_from_slice(&243u16.to_le_bytes()); // EM_RISCV
+    d[20..24].copy_from_slice(&1u32.to_le_bytes()); // e_version
+    d[24..28].copy_from_slice(&entry.to_le_bytes()); // e_entry
+    d[28..32].copy_from_slice(&(phoff as u32).to_le_bytes()); // e_phoff
+    d[40..42].copy_from_slice(&(ehsize as u16).to_le_bytes()); // e_ehsize
+    d[42..44].copy_from_slice(&(phentsize as u16).to_le_bytes()); // e_phentsize
+    d[44..46].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+                                                    // Program header PT_LOAD
+    d[phoff..phoff + 4].copy_from_slice(&1u32.to_le_bytes()); // p_type
+    d[phoff + 4..phoff + 8].copy_from_slice(&offset.to_le_bytes()); // p_offset
+    d[phoff + 8..phoff + 12].copy_from_slice(&vaddr.to_le_bytes()); // p_vaddr
+    d[phoff + 12..phoff + 16].copy_from_slice(&vaddr.to_le_bytes()); // p_paddr
+    d[phoff + 16..phoff + 20].copy_from_slice(&(payload.len() as u32).to_le_bytes()); // p_filesz
+    d[phoff + 20..phoff + 24].copy_from_slice(&(payload.len() as u32).to_le_bytes()); // p_memsz
+    d[phoff + 24..phoff + 28].copy_from_slice(&7u32.to_le_bytes()); // p_flags RWX
+    d[phoff + 28..phoff + 32].copy_from_slice(&4u32.to_le_bytes()); // p_align
     d.extend_from_slice(payload);
     d
 }

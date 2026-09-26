@@ -60,6 +60,10 @@ pub const VGA_TEXT_ADDR: u64 = 0xB8000;
 /// Ukuran buffer VGA text mode yang di-mirror (16 KB, text mode 4 KB + slack).
 pub const VGA_TEXT_SIZE: usize = 0x4000;
 
+/// Versi blob snapshot CPU x86 (`CpuCore::snapshot`) — bump bila layout
+/// field berubah.
+const X86_SNAPSHOT_VER: u8 = 1;
+
 /// Interpreter x86 real-mode. Register internal 64-bit (16/32-bit view sesuai
 /// prefix 66). Memori dipinjam dari pemanggil via `MemoryPort`.
 pub struct X86Cpu {
@@ -3675,6 +3679,119 @@ impl CpuCore for X86Cpu {
     fn console_output(&self) -> &[u8] {
         &self.out
     }
+
+    // ── Snapshot (EMULATOR.md §14, R5) ──
+    // State CPU penuh (register/segmen/CR/GDT/VGA/halt/console). Host-side
+    // TIDAK ikut: `disk` (backend ISO/IMG dipasang ulang oleh CLI) dan
+    // prefetch cache instruksi (di-invalidate saat restore — murni cache).
+
+    fn snapshot(&self) -> Result<Vec<u8>, String> {
+        let mut w = crate::snapshot::Writer::new();
+        w.u8(X86_SNAPSHOT_VER);
+        for g in &self.gpr {
+            w.u32(*g);
+        }
+        for s in [self.cs, self.ds, self.es, self.ss, self.fs, self.gs] {
+            w.u16(s);
+        }
+        w.u32(self.ip);
+        w.u16(self.flags);
+        w.u64(self.steps);
+        w.u16(self.drive_spt);
+        w.u16(self.drive_heads);
+        w.u32(self.gdt_base);
+        w.u16(self.gdt_limit);
+        w.blob(&self.gdt_cache);
+        for c in &self.cr {
+            w.u32(*c);
+        }
+        w.u8(self.pmode as u8);
+        w.u8(self.halted as u8);
+        w.string(&self.halt_reason);
+        w.blob(&self.out);
+        match self.cd_drive {
+            Some(d) => {
+                w.u8(1);
+                w.u8(d);
+            }
+            None => w.u8(0),
+        }
+        w.bytes(&self.vga);
+        Ok(w.buf)
+    }
+
+    fn restore(&mut self, blob: &[u8]) -> Result<(), String> {
+        use crate::snapshot::Reader;
+        let mut r = Reader::new(blob);
+        let ver = r.u8()?;
+        if ver != X86_SNAPSHOT_VER {
+            return Err(format!(
+                "x86 snapshot: versi {} (didukung {})",
+                ver, X86_SNAPSHOT_VER
+            ));
+        }
+        // Baca SEMUA dulu → state hanya berubah bila blob lengkap.
+        let mut gpr = [0u32; 8];
+        for slot in gpr.iter_mut() {
+            *slot = r.u32()?;
+        }
+        let cs = r.u16()?;
+        let ds = r.u16()?;
+        let es = r.u16()?;
+        let ss = r.u16()?;
+        let fs = r.u16()?;
+        let gs = r.u16()?;
+        let ip = r.u32()?;
+        let flags = r.u16()?;
+        let steps = r.u64()?;
+        let drive_spt = r.u16()?;
+        let drive_heads = r.u16()?;
+        let gdt_base = r.u32()?;
+        let gdt_limit = r.u16()?;
+        let gdt_cache = r.blob()?.to_vec();
+        let mut cr = [0u32; 8];
+        for slot in cr.iter_mut() {
+            *slot = r.u32()?;
+        }
+        let pmode = r.u8()? != 0;
+        let halted = r.u8()? != 0;
+        let halt_reason = r.string()?;
+        let out = r.blob()?.to_vec();
+        let cd_drive = match r.u8()? {
+            0 => None,
+            _ => Some(r.u8()?),
+        };
+        let vga_bytes = r.bytes(VGA_TEXT_SIZE)?;
+        let mut vga = [0u8; VGA_TEXT_SIZE];
+        vga.copy_from_slice(vga_bytes);
+        self.gpr = gpr;
+        self.cs = cs;
+        self.ds = ds;
+        self.es = es;
+        self.ss = ss;
+        self.fs = fs;
+        self.gs = gs;
+        self.ip = ip;
+        self.flags = flags;
+        self.steps = steps;
+        self.drive_spt = drive_spt;
+        self.drive_heads = drive_heads;
+        self.gdt_base = gdt_base;
+        self.gdt_limit = gdt_limit;
+        self.gdt_cache = gdt_cache;
+        self.cr = cr;
+        self.pmode = pmode;
+        self.halted = halted;
+        self.halt_reason = halt_reason;
+        self.out = out;
+        self.cd_drive = cd_drive;
+        self.vga = vga;
+        // Prefetch cache instruksi = cache murni → invalidate (cs/base/len
+        // di blob tidak ikut; isi fetch berikutnya dibaca ulang dari memori).
+        self.pf_valid = false;
+        self.pf_len = 0;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -4602,5 +4719,75 @@ mod tests {
             "DAP LBA 64-bit harus ikut dword tinggi"
         );
         let _ = cpu.disk.as_ref().unwrap().total_sectors();
+    }
+
+    #[test]
+    fn test_x86_snapshot_roundtrip() {
+        let mut cpu = X86Cpu::new();
+        cpu.gpr[0] = 0x1122_3344;
+        cpu.gpr[7] = 0xabcd_ef01;
+        cpu.cs = 0x1000;
+        cpu.ds = 0x2000;
+        cpu.ip = 0x7c00;
+        cpu.flags = 0x0246;
+        cpu.pmode = true;
+        cpu.cr[0] = 1;
+        cpu.gdt_base = 0x1_0000;
+        cpu.gdt_limit = 0x1f;
+        cpu.gdt_cache = vec![1, 2, 3, 4];
+        cpu.out = b"GRUB ".to_vec();
+        cpu.halted = true;
+        cpu.halt_reason = "hlt".into();
+        cpu.steps = 123_456;
+        cpu.vga[10] = 0x41;
+        cpu.vga[VGA_TEXT_SIZE - 1] = 0x7f;
+        cpu.cd_drive = Some(0xe0);
+        cpu.drive_spt = 63;
+        cpu.drive_heads = 255;
+
+        let blob = cpu.snapshot().unwrap();
+        let mut b = X86Cpu::new();
+        b.restore(&blob).unwrap();
+        assert_eq!(b.gpr[0], 0x1122_3344);
+        assert_eq!(b.gpr[7], 0xabcd_ef01);
+        assert_eq!(b.cs, 0x1000);
+        assert_eq!(b.ds, 0x2000);
+        assert_eq!(b.ip, 0x7c00);
+        assert_eq!(b.flags, 0x0246);
+        assert!(b.pmode);
+        assert_eq!(b.cr[0], 1);
+        assert_eq!(b.gdt_base, 0x1_0000);
+        assert_eq!(b.gdt_limit, 0x1f);
+        assert_eq!(b.gdt_cache, vec![1, 2, 3, 4]);
+        assert_eq!(b.console_output(), b"GRUB ", "console ikut ter-restore");
+        assert!(b.halted);
+        assert_eq!(b.halt_reason, "hlt");
+        assert_eq!(b.steps, 123_456);
+        assert_eq!(b.vga[10], 0x41, "mirror VGA text ikut");
+        assert_eq!(b.vga[VGA_TEXT_SIZE - 1], 0x7f);
+        assert_eq!(b.cd_drive, Some(0xe0));
+        assert_eq!(b.drive_spt, 63);
+        assert_eq!(b.drive_heads, 255);
+    }
+
+    #[test]
+    fn test_x86_snapshot_bad_input_keeps_state() {
+        let mut cpu = X86Cpu::new();
+        cpu.gpr[3] = 7;
+        let good = cpu.snapshot().unwrap();
+
+        // Versi salah → error DAN state tidak berubah.
+        let mut bad = good.clone();
+        bad[0] = 42;
+        assert!(cpu.restore(&bad).is_err());
+        assert_eq!(cpu.gpr[3], 7, "gagal restore = state utuh");
+
+        // Blob terpotong → error (bukan panic), state utuh.
+        assert!(cpu.restore(&good[..good.len() - 8]).is_err());
+        assert_eq!(cpu.gpr[3], 7);
+
+        // Blob kecil/tak dikenal → error.
+        assert!(cpu.restore(&[9, 9, 9]).is_err());
+        assert_eq!(cpu.gpr[3], 7);
     }
 }

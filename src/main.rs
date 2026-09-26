@@ -4479,6 +4479,10 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                 .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e.reason))?;
             let max_steps = a.max_steps.unwrap_or(50_000);
             let mut machine = Machine::new(Box::new(cpu), memmap, max_steps);
+            emu_snapshot_preflight(a, &machine)?;
+            if let Some(line) = emu_snapshot_load(a, &mut machine)? {
+                out.push_str(&line);
+            }
             let result = match machine.run() {
                 Ok(result) => {
                     out.push_str(&format!("\n{}", result.summary()));
@@ -4495,6 +4499,9 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                     ))
                 }
             };
+            if let Some(line) = emu_snapshot_save(a, &machine)? {
+                out.push_str(&line);
+            }
             // ── Window display (opsional) ──
             if let Some(ref win_arg) = a.window {
                 let cfg = mivon_api::emu::display::DisplayConfig::from_wh(win_arg)
@@ -4550,69 +4557,97 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             .as_deref()
             .or(cfg.top.as_deref())
             .or(a.rtl_cpu_top.as_deref());
-        let (_session, _design, ir) = mivon_api::tools::open_elaborated(
-            &a.targets,
-            &a.incdirs,
-            &a.defines,
-            top,
-            ElaborateMode::StrictSimulation,
-        )?;
-        let mut mhir = mivon_api::emu::mhir::extract(&ir);
+        // MHIR butuh RTL target (.sv/.v). Jalur interpreter (`--run` +
+        // `--load-elf`) jalan TANPA file source → elaborasi dilewati bila
+        // tak ada target (dump/`--addr` tetap butuh target → error jelas).
+        let mhir = if a.targets.is_empty() {
+            if a.dump_mhir || a.dump_memory_map || !a.addr.is_empty() {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--dump-mhir/--dump-memory-map/--addr butuh target RTL (.sv) — berikan \
+                     file source (jalur interpreter cukup --config + --load-elf + --run)",
+                ));
+            }
+            if !a.run && a.load_elf.is_none() && a.dump_memory.is_none() {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "tidak ada yang dijalankan — berikan target RTL (.sv), atau \
+                     --run --load-elf <elf> (interpreter RV32), atau --boot-iso <iso>",
+                ));
+            }
+            None
+        } else {
+            let (_session, _design, ir) = mivon_api::tools::open_elaborated(
+                &a.targets,
+                &a.incdirs,
+                &a.defines,
+                top,
+                ElaborateMode::StrictSimulation,
+            )?;
+            let mut m = mivon_api::emu::mhir::extract(&ir);
 
-        // ── Address map: --addr + [emu] devices (Direct RTL Device) ──
-        let mut entries: Vec<(Symbol, AddressRegion)> = Vec::new();
-        for s in &a.addr {
-            let Some((name, rest)) = s.split_once('=') else {
-                eprintln!("warning: --addr '{}': format NAME=BASE:SIZE", s);
-                continue;
-            };
-            let Some((base_s, size_s)) = rest.split_once(':') else {
-                eprintln!("warning: --addr '{}': format NAME=BASE:SIZE", s);
-                continue;
-            };
-            let parse_hex = |v: &str| u64::from_str_radix(v.trim_start_matches("0x"), 16);
-            match (parse_hex(base_s), parse_hex(size_s)) {
-                (Ok(base), Ok(size)) => {
-                    entries.push((Symbol::intern(name.trim()), AddressRegion { base, size }));
+            // ── Address map: --addr + [emu] devices (Direct RTL Device) ──
+            let mut entries: Vec<(Symbol, AddressRegion)> = Vec::new();
+            for s in &a.addr {
+                let Some((name, rest)) = s.split_once('=') else {
+                    eprintln!("warning: --addr '{}': format NAME=BASE:SIZE", s);
+                    continue;
+                };
+                let Some((base_s, size_s)) = rest.split_once(':') else {
+                    eprintln!("warning: --addr '{}': format NAME=BASE:SIZE", s);
+                    continue;
+                };
+                let parse_hex = |v: &str| u64::from_str_radix(v.trim_start_matches("0x"), 16);
+                match (parse_hex(base_s), parse_hex(size_s)) {
+                    (Ok(base), Ok(size)) => {
+                        entries.push((Symbol::intern(name.trim()), AddressRegion { base, size }));
+                    }
+                    _ => eprintln!("warning: --addr '{}': base/size harus hex (0x...)", s),
                 }
-                _ => eprintln!("warning: --addr '{}': base/size harus hex (0x...)", s),
             }
-        }
-        for d in &cfg.devices {
-            if let (Some(base), Some(size)) = (d.mmio, d.size) {
-                let name = d.name.as_deref().unwrap_or("device");
-                entries.push((Symbol::intern(name), AddressRegion { base, size }));
+            for d in &cfg.devices {
+                if let (Some(base), Some(size)) = (d.mmio, d.size) {
+                    let name = d.name.as_deref().unwrap_or("device");
+                    entries.push((Symbol::intern(name), AddressRegion { base, size }));
+                }
             }
-        }
-        mivon_api::emu::mhir::extract::apply_address_map(&mut mhir, &entries);
+            mivon_api::emu::mhir::extract::apply_address_map(&mut m, &entries);
+            Some(m)
+        };
 
         let mut out = String::new();
-        if a.dump_memory_map {
-            out.push_str(&mivon_api::emu::dump::dump_memory_map(&mhir));
-            if !memmap.regions.is_empty() {
-                out.push_str("\nMemory regions (host):\n");
-                for r in &memmap.regions {
-                    out.push_str(&format!(
-                        "  0x{:08x}-0x{:08x}  {:<12} {} ({})\n",
-                        r.base,
-                        r.base + r.size - 1,
-                        r.name.as_str(),
-                        match r.kind {
-                            RegionKind::Ram => "ram",
-                            RegionKind::Rom => "rom",
-                            RegionKind::Mmio => "mmio",
-                        },
-                        r.size
-                    ));
+        if let Some(mhir) = &mhir {
+            if a.dump_memory_map {
+                out.push_str(&mivon_api::emu::dump::dump_memory_map(mhir));
+                if !memmap.regions.is_empty() {
+                    out.push_str("\nMemory regions (host):\n");
+                    for r in &memmap.regions {
+                        out.push_str(&format!(
+                            "  0x{:08x}-0x{:08x}  {:<12} {} ({})\n",
+                            r.base,
+                            r.base + r.size - 1,
+                            r.name.as_str(),
+                            match r.kind {
+                                RegionKind::Ram => "ram",
+                                RegionKind::Rom => "rom",
+                                RegionKind::Mmio => "mmio",
+                            },
+                            r.size
+                        ));
+                    }
                 }
             }
-        }
-        // Tanpa flag → default MHIR; `--dump-memory-map` saja → map saja.
-        if a.dump_mhir || !a.dump_memory_map {
-            out.push_str(&mivon_api::emu::dump::dump_mhir(&mhir));
+            // Tanpa flag → default MHIR; `--dump-memory-map` saja → map saja.
+            if a.dump_mhir || !a.dump_memory_map {
+                out.push_str(&mivon_api::emu::dump::dump_mhir(mhir));
+            }
         }
 
         // ── ELF loader (R1): muat kernel/bare-metal ke memory map ──
+        // `elf_entry`/`elf_class` dipakai jalur `--run` interpreter (tanpa
+        // `--rtl-cpu`): PC mulai dari entry, ISA mengikuti kelas ELF.
+        let mut elf_entry: Option<u64> = None;
+        let mut elf_class: Option<u8> = None;
         if let Some(path) = &a.load_elf {
             if memmap.regions.is_empty() {
                 return Err(SimError::with_diag(
@@ -4622,9 +4657,14 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             }
             let bytes = std::fs::read(path)
                 .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", path, e)))?;
+            let (hdr, _) = mivon_api::emu::elf::parse_elf(&bytes).map_err(|e| {
+                SimError::with_diag(DiagCode::InvalidSyntax, format!("ELF '{}': {}", path, e))
+            })?;
             let entry = mivon_api::emu::elf::load_elf(&bytes, &mut memmap).map_err(|e| {
                 SimError::with_diag(DiagCode::InvalidSyntax, format!("ELF '{}': {}", path, e))
             })?;
+            elf_entry = Some(entry);
+            elf_class = Some(hdr.class);
             out.push_str(&format!(
                 "\nELF loaded: '{}' entry=0x{:x} ({} region(s))\n",
                 path,
@@ -4638,13 +4678,7 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
         // memori + orkestrasi bus; register file/ALU/control dieksekusi engine
         // RTL mivon (picorv32-style kontrak bus). ──
 
-        let mem_final: MemoryMap = if a.run || !a.rtl_cpu.is_empty() {
-            if a.rtl_cpu.is_empty() {
-                return Err(SimError::with_diag(
-                    DiagCode::InvalidSyntax,
-                    "--run butuh --rtl-cpu <file.sv> — CPU dijalankan dari RTL (bukan interpreter)",
-                ));
-            }
+        let mem_final: MemoryMap = if !a.rtl_cpu.is_empty() {
             if memmap.regions.is_empty() {
                 return Err(SimError::with_diag(
                     DiagCode::InvalidSyntax,
@@ -4657,6 +4691,10 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             cpu.reset();
             let max_steps = a.max_steps.unwrap_or(10_000);
             let mut machine = Machine::new(Box::new(cpu), memmap, max_steps);
+            emu_snapshot_preflight(a, &machine)?;
+            if let Some(line) = emu_snapshot_load(a, &mut machine)? {
+                out.push_str(&line);
+            }
             match machine.run() {
                 Ok(result) => {
                     // ── Window display (opsional) ──
@@ -4715,6 +4753,54 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
                         format!("RTL CPU fault: {:?}", e),
                     ))
                 }
+            }
+            if let Some(line) = emu_snapshot_save(a, &machine)? {
+                out.push_str(&line);
+            }
+            machine.mem
+        } else if a.run {
+            // ── Interpreter RISC-V32 (R1/R2): ELF jalan tanpa RTL ──
+            // `--run` tanpa `--rtl-cpu` = CPU software (benar dulu untuk
+            // bring-up/verifikasi — EMULATOR.md §7.2 mode Interpreter).
+            let Some(entry) = elf_entry else {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--run tanpa --rtl-cpu butuh --load-elf <PATH> (interpreter RISC-V32) \
+                     — atau jalankan CPU dari RTL dengan --rtl-cpu <file.sv>",
+                ));
+            };
+            if elf_class == Some(2) {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "ELF64 (RV64): interpreter RV64 belum tersedia (fase R2) — pakai \
+                     --rtl-cpu (Direct RTL CPU) atau tunggu JIT (R3)",
+                ));
+            }
+            if memmap.regions.is_empty() {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--run butuh region RAM — definisikan ram = { base, size } di config .meu",
+                ));
+            }
+            let mut cpu = mivon_api::emu::cpu::Rv32Cpu::new();
+            cpu.set_pc(entry);
+            let max_steps = a.max_steps.unwrap_or(1_000_000);
+            let mut machine = Machine::new(Box::new(cpu), memmap, max_steps);
+            emu_snapshot_preflight(a, &machine)?;
+            if let Some(line) = emu_snapshot_load(a, &mut machine)? {
+                out.push_str(&line);
+            }
+            match machine.run() {
+                Ok(result) => out.push_str(&format!("\n{}", result.summary())),
+                Err(e) => {
+                    return Err(SimError::with_diag(
+                        DiagCode::InvalidSyntax,
+                        format!("interpreter fault: {}", e),
+                    ))
+                }
+            }
+            if let Some(line) = emu_snapshot_save(a, &machine)? {
+                out.push_str(&line);
             }
             machine.mem
         } else {
@@ -4776,6 +4862,62 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
         Ok(())
     })();
     exit_tool(result);
+}
+
+// ── Snapshot mesin (EMULATOR.md §14, fase R5) — helper CLI `mivon emu` ──
+
+/// `--snapshot-save`: pastikan CPU mendukung snapshot SEBELUM run — gagal
+/// cepat, jangan buang waktu run panjang lalu error di akhir.
+fn emu_snapshot_preflight(
+    a: &crate::cli::EmuArgs,
+    machine: &mivon_api::emu::machine::Machine,
+) -> Result<(), SimError> {
+    if a.snapshot_save.is_some() {
+        machine.cpu.snapshot().map_err(|e| {
+            SimError::with_diag(DiagCode::InvalidSyntax, format!("--snapshot-save: {}", e))
+        })?;
+    }
+    Ok(())
+}
+
+/// `--snapshot-load`: muat file + restore SEBELUM run. Kembalikan baris
+/// output bila flag dipakai.
+fn emu_snapshot_load(
+    a: &crate::cli::EmuArgs,
+    machine: &mut mivon_api::emu::machine::Machine,
+) -> Result<Option<String>, SimError> {
+    let Some(path) = a.snapshot_load.as_deref() else {
+        return Ok(None);
+    };
+    let snap = mivon_api::emu::snapshot::MachineSnapshot::load_file(std::path::Path::new(path))
+        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
+    machine.restore(&snap).map_err(|e| {
+        SimError::with_diag(DiagCode::InvalidSyntax, format!("--snapshot-load: {}", e))
+    })?;
+    Ok(Some(format!(
+        "\nsnapshot loaded: '{}' ({} instr / {} cycle kumulatif)\n",
+        path, snap.steps, snap.cycles
+    )))
+}
+
+/// `--snapshot-save`: simpan SETELAH run (CPU + memori sparse + counter).
+fn emu_snapshot_save(
+    a: &crate::cli::EmuArgs,
+    machine: &mivon_api::emu::machine::Machine,
+) -> Result<Option<String>, SimError> {
+    let Some(path) = a.snapshot_save.as_deref() else {
+        return Ok(None);
+    };
+    let snap = machine.snapshot().map_err(|e| {
+        SimError::with_diag(DiagCode::InvalidSyntax, format!("--snapshot-save: {}", e))
+    })?;
+    let nbytes = snap.to_bytes().len();
+    snap.save_file(std::path::Path::new(path))
+        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
+    Ok(Some(format!(
+        "\nsnapshot saved: '{}' ({} byte sparse, {} instr / {} cycle kumulatif)\n",
+        path, nbytes, snap.steps, snap.cycles
+    )))
 }
 
 /// Jalankan tool, cetak error via TerminalEmitter, exit dengan kode.

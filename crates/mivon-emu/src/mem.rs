@@ -283,6 +283,12 @@ impl RamRegion {
     pub fn bytes(&self) -> &[u8] {
         self.backing.as_ref()
     }
+
+    /// Kosongkan seluruh region (isi nol) — dipakai restore snapshot
+    /// sebelum halaman tersimpan ditulis ulang.
+    pub fn fill_zero(&mut self) {
+        self.backing.as_mut().fill(0);
+    }
 }
 
 /// Peta alamat: daftar region + decode + dispatch.

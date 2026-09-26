@@ -76,6 +76,34 @@ pub trait CpuCore {
     fn console_output(&self) -> &[u8] {
         &[]
     }
+
+    /// Snapshot state CPU ke blob biner (EMULATOR.md §14, fase R5).
+    /// Default: belum didukung → `Err` jelas (CPU RTL-linked / JIT stub).
+    /// Setiap ISA memakai versi sendiri di byte pertama blob.
+    fn snapshot(&self) -> Result<Vec<u8>, String> {
+        Err(format!(
+            "cpu {}: snapshot belum didukung",
+            self.isa().label()
+        ))
+    }
+
+    /// Restore blob hasil [`CpuCore::snapshot`]. Blob ISA lain / versi beda /
+    /// terpotong → `Err` jelas; state CPU tidak berubah bila gagal.
+    fn restore(&mut self, _blob: &[u8]) -> Result<(), String> {
+        Err(format!(
+            "cpu {}: restore snapshot belum didukung",
+            self.isa().label()
+        ))
+    }
+
+    /// Berhenti TANPA lewat [`CpuStep::Trap`]: `Some((cause, tval))` bila
+    /// instruksi terakhir mencapai kondisi halt guest. Interpreter RV32
+    /// menangani trap internal (lompat `mtvec`) sehingga `ebreak` tak pernah
+    /// menjadi `Trap` — `Machine` membaca metode ini untuk menghentikan run
+    /// (setara sinyal `trap` pada Direct RTL CPU). Default: tidak ada.
+    fn halt_status(&self) -> Option<(u64, u64)> {
+        None
+    }
 }
 
 pub mod jit;

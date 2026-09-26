@@ -43,6 +43,10 @@ const IRQ_MSI: u32 = 3;
 const IRQ_MTI: u32 = 7;
 const IRQ_MEI: u32 = 11;
 
+/// Versi blob snapshot CPU RV32 (`CpuCore::snapshot`) — bump bila layout
+/// field berubah.
+const RV32_SNAPSHOT_VER: u8 = 1;
+
 /// CPU RISC-V 32-bit (RV32IM + Zicsr).
 #[derive(Debug, Clone)]
 pub struct Rv32Cpu {
@@ -61,6 +65,12 @@ pub struct Rv32Cpu {
     irq_level: [bool; 16],
     /// Jumlah instruksi/step dieksekusi.
     cycles: u64,
+    /// Kondisi berhenti guest: `ebreak` → trap internal diambil (PC=pmtvec)
+    /// → `Some((cause, pc_ebreak))`. Interpreter tidak pernah menghasilkan
+    /// `CpuStep::Trap` (trap = lompat mtvec, desain sengaja utk semantik
+    /// machine-mode) — `Machine` membaca `halt_status()` untuk berhenti,
+    /// setara sinyal `trap` pada CPU RTL.
+    halt: Option<(u64, u64)>,
 }
 
 impl Rv32Cpu {
@@ -78,6 +88,7 @@ impl Rv32Cpu {
             mip: 0,
             irq_level: [false; 16],
             cycles: 0,
+            halt: None,
         };
         cpu.reset();
         cpu
@@ -217,6 +228,7 @@ impl CpuCore for Rv32Cpu {
         self.mip = 0;
         self.irq_level = [false; 16];
         self.cycles = 0;
+        self.halt = None;
     }
 
     fn step(&mut self, mem: &mut dyn MemoryPort) -> Result<CpuStep, CpuFault> {
@@ -243,7 +255,13 @@ impl CpuCore for Rv32Cpu {
         match decode(raw) {
             Decoded::Illegal => self.trap(CAUSE_ILLEGAL_INSTRUCTION, raw as u64, pc),
             Decoded::Ecall => self.trap(CAUSE_ECALL_M, 0, pc),
-            Decoded::Ebreak => self.trap(CAUSE_BREAKPOINT, 0, pc),
+            Decoded::Ebreak => {
+                // ebreak = berhenti (setara `trap` CPU RTL: ebreak/ecall/
+                // ilegal menghentikan mesin). Trap internal tetap diambil
+                // (mcause/mepc/mtvec) — hanya ditandai utk `halt_status`.
+                self.trap(CAUSE_BREAKPOINT, 0, pc);
+                self.halt = Some((CAUSE_BREAKPOINT, pc));
+            }
             Decoded::Mret => self.mret(),
             Decoded::Instr(instr) => match self.execute(pc, instr, mem) {
                 Ok(()) => {}
@@ -286,6 +304,93 @@ impl CpuCore for Rv32Cpu {
 
     fn isa(&self) -> Isa {
         Isa::RiscV32
+    }
+
+    // ── Snapshot (EMULATOR.md §14, R5) ──
+    // Seluruh state register/CSR/irq di-encode fixed-size (LE). Counter
+    // langkah (`cycles`) ikut; tidak ada state host di dalam blob.
+
+    fn snapshot(&self) -> Result<Vec<u8>, String> {
+        let mut w = crate::snapshot::Writer::new();
+        w.u8(RV32_SNAPSHOT_VER);
+        for r in &self.regs {
+            w.u64(*r);
+        }
+        w.u64(self.pc);
+        w.u32(self.mstatus);
+        w.u64(self.mtvec);
+        w.u64(self.mepc);
+        w.u64(self.mcause);
+        w.u64(self.mtval);
+        w.u64(self.mscratch);
+        w.u32(self.mie);
+        w.u32(self.mip);
+        for l in &self.irq_level {
+            w.u8(*l as u8);
+        }
+        w.u64(self.cycles);
+        match self.halt {
+            Some((c, t)) => {
+                w.u8(1);
+                w.u64(c);
+                w.u64(t);
+            }
+            None => w.u8(0),
+        }
+        Ok(w.buf)
+    }
+
+    fn restore(&mut self, blob: &[u8]) -> Result<(), String> {
+        let mut r = crate::snapshot::Reader::new(blob);
+        let ver = r.u8()?;
+        if ver != RV32_SNAPSHOT_VER {
+            return Err(format!(
+                "rv32 snapshot: versi {} (didukung {})",
+                ver, RV32_SNAPSHOT_VER
+            ));
+        }
+        // Baca SEMUA dulu → state hanya berubah bila blob lengkap (gagal =
+        // CPU utuh seperti sebelum restore).
+        let mut regs = [0u64; 32];
+        for slot in regs.iter_mut() {
+            *slot = r.u64()?;
+        }
+        let pc = r.u64()?;
+        let mstatus = r.u32()?;
+        let mtvec = r.u64()?;
+        let mepc = r.u64()?;
+        let mcause = r.u64()?;
+        let mtval = r.u64()?;
+        let mscratch = r.u64()?;
+        let mie = r.u32()?;
+        let mip = r.u32()?;
+        let mut irq_level = [false; 16];
+        for slot in irq_level.iter_mut() {
+            *slot = r.u8()? != 0;
+        }
+        let cycles = r.u64()?;
+        let halt = match r.u8()? {
+            0 => None,
+            _ => Some((r.u64()?, r.u64()?)),
+        };
+        self.regs = regs;
+        self.pc = pc;
+        self.mstatus = mstatus;
+        self.mtvec = mtvec;
+        self.mepc = mepc;
+        self.mcause = mcause;
+        self.mtval = mtval;
+        self.mscratch = mscratch;
+        self.mie = mie;
+        self.mip = mip;
+        self.irq_level = irq_level;
+        self.cycles = cycles;
+        self.halt = halt;
+        Ok(())
+    }
+
+    fn halt_status(&self) -> Option<(u64, u64)> {
+        self.halt
     }
 }
 
@@ -1178,5 +1283,34 @@ mod tests {
         assert_eq!(cpu.csr(CSR_MCAUSE), Some(CAUSE_BREAKPOINT), "ebreak");
         assert_eq!(cpu.csr(CSR_MEPC), Some(0x8000_0014), "mepc = pc ebreak");
         assert_eq!(cpu.cycles(), 6);
+    }
+
+    #[test]
+    fn test_snapshot_roundtrip_and_version() {
+        let mut cpu = Rv32Cpu::new();
+        cpu.set_pc(0x8000_0000);
+        cpu.regs[5] = 0xdead_beef;
+        cpu.mtvec = 0x100;
+        cpu.mie = 0x888;
+        cpu.cycles = 77;
+        let blob = cpu.snapshot().unwrap();
+
+        let mut b = Rv32Cpu::new();
+        b.restore(&blob).unwrap();
+        assert_eq!(b.regs[5], 0xdead_beef);
+        assert_eq!(b.pc(), 0x8000_0000);
+        assert_eq!(b.mtvec, 0x100);
+        assert_eq!(b.mie, 0x888);
+        assert_eq!(b.cycles(), 77);
+
+        // Versi salah → error DAN state tidak berubah (baca penuh dulu).
+        b.regs[5] = 1;
+        let mut bad = blob.clone();
+        bad[0] = 99;
+        assert!(b.restore(&bad).is_err());
+        assert_eq!(b.regs[5], 1, "gagal restore = state utuh");
+
+        // Blob terpotong → error (bukan panic).
+        assert!(b.restore(&blob[..blob.len() - 4]).is_err());
     }
 }

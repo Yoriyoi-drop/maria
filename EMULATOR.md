@@ -671,6 +671,33 @@ mivon snapshot create
 mivon snapshot restore
 ```
 
+**Status (fase R5, slice pertama) — terimplementasi** di crate `mivon-emu`:
+
+- `Machine::snapshot()` / `Machine::restore()` — state CPU (blob per-ISA via
+  `CpuCore::snapshot/restore`) + seluruh region memori + counter langkah
+  kumulatif. Restore MENOLAK memory map yang tidak persis cocok
+  (nama/base/size) — state tak dipindahkan diam-diam ke RAM yang salah.
+- Format file `MIVSNAP1` (`mivon-emu/src/snapshot.rs`): little-endian,
+  **sparse per halaman 4 KB** (halaman nol tidak ditulis → RAM 2 GB berisi
+  sedikit data = file kecil), atomik (temp+rename), magic+versi → error
+  jelas untuk file rusak/versi beda.
+- CPU yang didukung: **interpreter RV32** (`Rv32Cpu`) dan **x86** (`X86Cpu`,
+  boot ISO). Direct RTL CPU → ditolak *sebelum* run (preflight).
+- CLI: `mivon emu ... --snapshot-save <file>` (setelah run) /
+  `--snapshot-load <file>` (sebelum run → lanjut dari state tersimpan).
+- Deterministik: resume = eksekusi identik dengan run penuh (test
+  `test_machine_snapshot_resume_deterministic`).
+
+```shell
+mivon emu --config ram.meu --load-elf prog.elf --run --max-steps 2 \
+  --snapshot-save mid.snap
+mivon emu --config ram.meu --load-elf prog.elf --snapshot-load mid.snap \
+  --run --max-steps 1000
+```
+
+Belum (lanjutan R5): snapshot Direct RTL CPU (state engine RTL),
+machine-level `mivon snapshot --tag`, snapshot/devise state.
+
 Snapshot juga alat debugging RTL:
 
 ```
@@ -850,6 +877,14 @@ mivon emu --dump-dtb chip.mivon
 mivon snapshot create --tag booted
 mivon snapshot restore --tag booted
 mivon replay trace.bin
+
+# Interpreter RISC-V32 (tanpa --rtl-cpu): ELF dijalankan sampai ebreak
+mivon emu --config ram.meu --load-elf prog.elf --run --max-steps 1000000
+# + snapshot (EMULATOR.md §14): simpan tengah jalan → lanjut nanti
+mivon emu --config ram.meu --load-elf prog.elf --run --max-steps 2 \
+  --snapshot-save mid.snap
+mivon emu --config ram.meu --load-elf prog.elf --snapshot-load mid.snap \
+  --run --max-steps 1000000
 ```
 
 Konfigurasi emulator = **file TOML terpisah** (default ekstensi `.meu`),
@@ -929,7 +964,13 @@ mivon emu wrapper.sv picorv32.v --config emu_ram.meu \
   `maskirq`+`waitirq`+`retirq` → console "AB" (UART) dan "T" (timer),
   retirq pulang ke instruksi setelah waitirq (test `test_rtl_cpu_irq_uart_tx`,
   `test_rtl_cpu_irq_timer`) | ✅ interrupt device (UART + timer) |
+| **Snapshot mesin (R5 slice, §14)** — `Machine::snapshot/restore`; format `MIVSNAP1` sparse halaman 4 KB (RAM 2 GB → file kecil), atomik, magic+versi; blob CPU per-ISA via `CpuCore::snapshot/restore` (RV32 + x86; Direct RTL ditolak *sebelum* run); restore tolak memory map tak cocok; counter kumulatif lintas run; CLI `--snapshot-save`/`--snapshot-load` | ✅ |
+| **Interpreter `--run` ELF (R1/R2)** — `mivon emu --run --load-elf prog.elf` tanpa `--rtl-cpu` menjalankan ELF32 di `Rv32Cpu` sampai `ebreak`; `ebreak` tak pernah jadi `CpuStep::Trap` (trap internal = lompat `mtvec`, desain sengaja) → `Machine` berhenti via `CpuCore::halt_status()` (setara sinyal `trap` Direct RTL CPU); ELF64 ditolak (RV64 menyusul); `mivon emu` tanpa target `.sv` kini valid untuk jalur ini | ✅ |
 | Co-sim bus cycle-accurate + mode `hybrid` | ⏳ |
+
+Verifikasi (2026-09-26): `cargo test --workspace` **2678 pass, 0 fail**;
+`cargo clippy --workspace --all-targets --all-features` **0 warning**
+(full rebuild, `--all-features`).
 
 **Bug fix mivon utama (global)**:
 1. `flatten_instances` mengonsumsi `top.sub_instances` tanpa mengembalikan →

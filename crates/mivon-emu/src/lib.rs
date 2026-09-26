@@ -18,3 +18,4 @@ pub mod iso;
 pub mod machine;
 pub mod mem;
 pub mod mhir;
+pub mod snapshot;
