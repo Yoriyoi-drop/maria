@@ -429,11 +429,11 @@ impl crate::cpu::CpuCore for Rv64JitCpu {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "jit"))]
 mod tests {
+    use super::*;
+
     #[test]
-    #[cfg(feature = "jit")]
-    use crate::cpu::Rv64JitCpu;
     fn test_jit_cpu_create() {
         let cpu = Rv64JitCpu::new();
         assert_eq!(cpu.isa(), Isa::RiscV64);
@@ -441,7 +441,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "jit")]
     fn test_jit_cpu_reset() {
         let mut cpu = Rv64JitCpu::new();
         cpu.set_pc(0x8000_0000);
