@@ -576,6 +576,58 @@ fn trim_heap() {
     }
 }
 
+/// Statistik memori IR hasil elaborasi — dipakai diagnosis OOM (MIVON_MEM_STATS=1):
+/// jumlah module/signal/bit flatten + hier_signal_map + RSS saat ini. Ringan
+/// (iterasi signal refs), aman dipanggil sebelum simulasi.
+fn print_ir_mem_stats(ir: &mivon_ir::IrDesign) {
+    if std::env::var("MIVON_MEM_STATS").is_err() {
+        return;
+    }
+    let mut n_sig = 0usize;
+    let mut n_bits: u64 = 0;
+    let mut top: Vec<(String, String, usize, usize, Vec<usize>)> = Vec::new();
+    for (modname, m) in ir.modules.iter() {
+        for s in &m.signals {
+            n_sig += 1;
+            n_bits += s.width as u64;
+            if top.len() < 5 || top.iter().any(|(_, _, w, _, _)| s.width > *w) {
+                top.push((
+                    modname.as_str().to_string(),
+                    s.name.as_str().to_string(),
+                    s.width,
+                    s.array_depth,
+                    s.array_dims.clone(),
+                ));
+                top.sort_by_key(|t| std::cmp::Reverse(t.2));
+                top.truncate(5);
+            }
+        }
+    }
+    let rss = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|k| k.parse::<u64>().ok())
+        })
+        .unwrap_or(0);
+    eprintln!(
+        "[MEM] modules={} signals={} total_bits={} hier_map={} rss_mb={}",
+        ir.modules.len(),
+        n_sig,
+        n_bits,
+        ir.hier_signal_map.len(),
+        rss / 1024
+    );
+    for (mname, sname, w, ad, dims) in &top {
+        eprintln!(
+            "[MEM]   top {}.{} width={} array_depth={} array_dims={:?}",
+            mname, sname, w, ad, dims
+        );
+    }
+}
+
 /// Body utama program (dijalankan di thread dengan stack besar oleh `main`).
 fn real_main() {
     let mut cli = Cli::parse();
@@ -2176,6 +2228,9 @@ fn run(cli: Cli, env: &mut mivon_api::env::GlobalEnv) -> Result<(), SimError> {
         return Ok(());
     }
 
+    // IR stats (debug memori OOM) — hanya saat MIVON_MEM_STATS=1.
+    print_ir_mem_stats(&ir_design);
+
     // Default: sim dibatasi `DEFAULT_MAX_TIME_NS` (anti-OOM untuk design
     // besar yang tidak pernah `$finish`). User bisa override dengan `-T`
     // / `--max-time <n>` (jadi Finite) — tanpa itu memakai default finite.
@@ -3389,6 +3444,9 @@ fn run_fast(
             println!("Simulasi: SIAP");
         }
     }
+
+    // Giá stats IR sebelum sim (debug OOM, MIVON_MEM_STATS=1).
+    print_ir_mem_stats(&ir_design);
 
     // ── Gate: jangan simulasikan bila masih ada error ──
     use mivon_core::diagnostics::diagnostic::Diagnostic;

@@ -1034,11 +1034,14 @@ impl SimulationEngine {
             self.sim_arena.reset_cycle();
 
             // ── Preponed region: initial snapshot for edge detection ──
-            // Updated every delta cycle for correct edge detection (Sched-04 fix)
+            // Updated every delta cycle for correct edge detection (Sched-04 fix).
+            // Sinyal ultra-lebar di-snapshot LAZY (tanpa materialisasi) —
+            // clone penuh 1.5e9 bit tiap delta = OOM (preponed + signal +
+            // seq_history × N salinan hidup).
             let num_sigs = self.state.signals.len();
             let mut snapshot = Vec::with_capacity(num_sigs);
             for i in 0..num_sigs {
-                snapshot.push(self.state.read_signal(i).clone());
+                snapshot.push(self.state.snapshot_signal(i));
             }
             self.preponed_snapshot = Some(snapshot.clone());
             self.signal_snapshot = Some(snapshot.clone());
@@ -2002,6 +2005,18 @@ impl SimulationEngine {
         }
     }
 
+    /// TRUE bila design memuat sinyal ultra-lebar (array memori flatten —
+    /// cache 65536x32x512 ≈ 1.07e9 bit). Evaluasi PARALEL menyalin snapshot
+    /// sinyal per layer → clone raksasa → OOM; dipakai penggerbang jalur
+    /// sequential. Iterasi top.signals ringan (ratusan) — tanpa cache.
+    pub fn has_wide_signals(&self) -> bool {
+        self.design
+            .top
+            .signals
+            .iter()
+            .any(|s| s.width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD)
+    }
+
     /// Evaluate EvalProcess events in parallel using DAG layers.
     ///
     /// Processes in the same DAG layer are independent (no signal conflicts)
@@ -2013,6 +2028,16 @@ impl SimulationEngine {
     /// Setiap process bekerja pada snapshot sinyal sendiri (clone).
     /// Tidak ada shared mutable state antar process dalam satu layer.
     fn evaluate_eval_processes_parallel(&mut self, pids: &[usize]) -> Result<(), SimError> {
+        // Design dengan sinyal ultra-lebar (array memori flatten, cache
+        // 65536x32x512 = 1.07e9 bit): paralel-eval menyalin snapshot SEMUA
+        // sinyal per layer → clone 1e9 bit → OOM mesin kecil. Evaluasi
+        // sequential membaca slot langsung (tanpa clone penuh).
+        if self.has_wide_signals() {
+            for &pid in pids {
+                self.process_event(EventKind::EvalProcess(pid), self.current_time as usize)?;
+            }
+            return Ok(());
+        }
         // Gunakan cached process bodies + DAG layers + signal snapshot
         // untuk menghindari clone bodies setiap cycle.
         // process_body_cache dibangun sekali di run() — tidak ada clone per cycle.
@@ -2041,17 +2066,10 @@ impl SimulationEngine {
             // `b[i] = ~a[i]` DAG=128 utk 8 bit, ditemukan fuzzer).
             // Baca nilai PENDING (next_signals bila changed) — write_signal
             // antar layer menulis ke delta-pending, state.signals belum commit.
-            let signal_snapshot: Vec<Arc<LogicVec>> = self
-                .state
-                .signals
-                .iter()
-                .enumerate()
-                .map(|(i, committed)| {
-                    if self.state.changed[i] {
-                        Arc::new(self.state.next_signals[i].clone())
-                    } else {
-                        Arc::new(committed.clone())
-                    }
+            let signal_snapshot: Vec<Arc<LogicVec>> = (0..self.state.signals.len())
+                .map(|i| {
+                    // Sinyal besar belum ditulis → lazy (tanpa materialisasi).
+                    Arc::new(self.state.snapshot_signal(i))
                 })
                 .collect();
 

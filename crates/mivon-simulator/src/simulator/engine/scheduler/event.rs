@@ -728,6 +728,7 @@ impl SimulationEngine {
         );
         if comb_indices.len() >= self.parallel_config.min_processes_parallel
             && self.parallel_config.parallel_processes
+            && !self.has_wide_signals()
         {
             use rayon::prelude::*;
             let signal_count = self.state.signals.len();
@@ -774,12 +775,10 @@ impl SimulationEngine {
                 let snapshot: Vec<Arc<LogicVec>> = (0..signal_count)
                     .map(|i| {
                         // Baca PENDING (next) bila changed — konsisten dgn
-                        // evaluate_eval_processes_parallel.
-                        if self.state.changed[i] {
-                            Arc::new(self.state.next_signals[i].clone())
-                        } else {
-                            Arc::new(self.state.signals[i].clone())
-                        }
+                        // evaluate_eval_processes_parallel. Sinyal besar yang
+                        // belum ditulis di-snapshot LAZY (tanpa materialisasi).
+                        let v = self.state.snapshot_signal(i);
+                        Arc::new(v)
                     })
                     .collect();
 

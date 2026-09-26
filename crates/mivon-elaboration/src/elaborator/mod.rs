@@ -3117,12 +3117,6 @@ impl Elaborator {
     /// FILE/modul lain (pesan menyesatkan).
     fn check_packed_width(&self, width: usize, what: &str) -> Result<(), SimError> {
         if width > MAX_PACKED_WIDTH {
-            // DEBUG TEMPORARY (di-root-cause E3012 garbage width) — hapus nanti.
-            eprintln!(
-                "[E3012-DBG] what={what} width={width} cur_module={:?}\n{}",
-                self.current_module.map(|m| m.as_str()),
-                std::backtrace::Backtrace::force_capture()
-            );
             let mod_ctx = self
                 .current_module
                 .map(|m| format!(" in module '{}'", m.as_str()))
@@ -3434,15 +3428,6 @@ impl Elaborator {
             }
         };
         let mut effective_params = param_vals.clone();
-        // DEBUG TEMPORARY (root-cause E3012 garbage width) — hapus nanti.
-        if module.name.as_str() == "prim_sec_anchor_buf" {
-            eprintln!(
-                "[EMP-DBG] module={} paramValsWidth={:?} hasTypeOverrides={}",
-                module.name,
-                param_vals.get(&Symbol::intern("Width")),
-                !type_param_overrides.is_empty()
-            );
-        }
 
         // Process $unit parameters (top-level param declarations)
         for param in &self.design.unit_params {
@@ -3987,23 +3972,6 @@ impl Elaborator {
             } else {
                 pwa(port, &effective_params, &signal_map, &signals)?
             };
-            // DEBUG TEMPORARY (root-cause E3012 garbage width) — hapus nanti.
-            if width > MAX_PACKED_WIDTH {
-                let wp: Vec<(String, i64)> = effective_params
-                    .iter()
-                    .filter(|(k, _)| k.as_str().contains("Width") || k.as_str().contains("width"))
-                    .map(|(k, v)| (k.as_str().to_string(), *v))
-                    .collect();
-                eprintln!(
-                    "[W-DBG2] port={:?} width={} widthParams={:?} expr_range={:?} range={:?} dtype={:?}",
-                    port.name,
-                    width,
-                    wp,
-                    port.expr_range,
-                    port.range,
-                    port.dtype_name
-                );
-            }
             self.check_packed_width(width, &format!("port '{}'", port.name.as_str()))?;
             let kind = match port.direction {
                 PortDirection::Input => SignalKind::Input,

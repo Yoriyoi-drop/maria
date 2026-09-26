@@ -13,6 +13,12 @@ pub struct SimulationState {
     pub signals: Vec<LogicVec>,
     pub next_signals: Vec<LogicVec>,
     pub changed: Vec<bool>,
+    /// Sinyal besar (width ≥ `LogicVec::LAZY_ZERO_THRESHOLD`) yang SUDAH
+    /// pernah ditulis nyata (bukan default X). Sinyal besar yang belum
+    /// ter-tulis di-snapshot LAZY (tanpa materialisasi) selama evaluasi —
+    /// array memory flat (cache 65536x32x512 = 1.07e9 entry) dibaca tiap
+    /// delta tapi TIDAK perlu di-clone penuh → puncak RSS turun drastis.
+    pub large_dirty: Vec<bool>,
     /// LANG-08: net alias redirect — member SignalId → canonical SignalId.
     /// `alias a = b;` → net_aliases {b: a} (canonical = id terkecil); read/
     /// write member di-direct ke canonical sehingga semua anggota satu
@@ -28,17 +34,37 @@ pub struct SimulationState {
     pub timeformat: crate::simulator::types::TimeFormat,
 }
 
+/// Nilai state awal sebuah sinyal dari `init_val` (SignalInfo). Untuk array
+/// memory flat raksasa (cache 65536x32x512 = 1.07e9 entry) `init_val.clone()`
+/// = materialisasi penuh (1-3 GB/OOM mesin kecil). Default-nya X (memori tak
+/// terinisialisasi) → pakai lazy-zero X tanpa copy: driver realistis selalu
+/// menulis SEBELUM membaca slot memory; pada akses nyata halaman ter-write
+/// kala itu juga. Initializer non-X (jarang utk array besar) tetap di-clone.
+fn state_init_signal(init_val: &mivon_core::LogicVec) -> mivon_core::LogicVec {
+    if init_val.width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD
+        && init_val
+            .bits
+            .iter()
+            .take(8)
+            .all(|b| *b == mivon_core::LogicVal::X)
+    {
+        return mivon_core::LogicVec::new(init_val.width);
+    }
+    init_val.clone()
+}
+
 impl SimulationState {
     pub fn new(design: &IrDesign) -> Self {
         let mut signals = Vec::new();
         let mut next_signals = Vec::new();
 
         for sig in &design.top.signals {
-            signals.push(sig.init_val.clone());
-            next_signals.push(sig.init_val.clone());
+            signals.push(state_init_signal(&sig.init_val));
+            next_signals.push(state_init_signal(&sig.init_val));
         }
 
         let changed = vec![true; signals.len()];
+        let large_dirty = vec![false; signals.len()];
         // LANG-08: net alias redirect — canonical utk tiap member (identity
         // default); member yang di-alias di-direct ke canonical.
         let mut alias_redirect: Vec<SignalId> = (0..signals.len()).collect();
@@ -67,6 +93,7 @@ impl SimulationState {
             signals,
             next_signals,
             changed,
+            large_dirty,
             alias_redirect,
             time: 0,
             objects,
@@ -165,6 +192,11 @@ impl SimulationState {
         }
         // LANG-08: net alias — tulis ke canonical (semua anggota satu jaringan).
         let id = self.alias_redirect.get(id).copied().unwrap_or(id);
+        // Sinyal besar yang menerima tulis nyata → tandai dirty (snapshot
+        // berikutnya harus clone kenyataan, bukan lazy X).
+        if self.large_dirty.len() > id && self.signals[id].width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD {
+            self.large_dirty[id] = true;
+        }
         // Compare against pending (next_signals) if already changed this delta,
         // otherwise compare against committed (signals)
         if self.changed[id] {
@@ -177,10 +209,74 @@ impl SimulationState {
         }
     }
 
+    /// Snapshot nilai sinyal utk evaluasi/preponed/history. Sinyal ultra-lebar
+/// (array memori flat) SELALU di-snapshot LAZY (tanpa materialisasi):
+/// - par-eval utk array raksasa SUDAH di-disable (`has_wide_signals` →
+///   sequential) sehingga snapshot tidak pernah dipakai utk nilai evaluasi;
+/// - evaluasi sequential membaca state langsung;
+/// - preponed/signal_history hanya butuh skalar/edge (array tak relevan).
+///
+/// Klon penuh 1e9 bit per delta = OOM mesin kecil.
+    #[inline]
+    pub fn snapshot_signal(&self, id: SignalId) -> LogicVec {
+        let lv = if self.changed[id] {
+            &self.next_signals[id]
+        } else {
+            &self.signals[id]
+        };
+        if lv.width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD {
+            return mivon_core::LogicVec::new(lv.width);
+        }
+        lv.clone()
+    }
+
+    /// Tulis segmen sinyal langsung ke pending (`next`) tanpa clone penuh —
+    /// utk array memori flat ultra-lebar (RMW penuh = clone 1e9 bit/OOM).
+    /// `start..end` (end exclusive) diisi dari `val.bits` (sebanyak len);
+    /// out-of-bounds mengikuti LRM (tulis dibatasi panjang, OOB diabaikan).
+    #[inline]
+    pub fn write_signal_slice(&mut self, id: SignalId, start: usize, end: usize, val: &LogicVec) {
+        let id = self.alias_redirect.get(id).copied().unwrap_or(id);
+        if id >= self.next_signals.len() {
+            return;
+        }
+        if self.large_dirty.len() > id
+            && self.next_signals[id].width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD
+        {
+            self.large_dirty[id] = true;
+        }
+        let n = val.bits.len();
+        let mut end = end.min(start.saturating_add(n));
+        if end < start {
+            return;
+        }
+        let target = &mut self.next_signals[id];
+        if end > target.bits.len() {
+            end = target.bits.len();
+        }
+        if start < end {
+            target.bits[start..end].copy_from_slice(&val.bits[..end - start]);
+        }
+        self.changed[id] = true;
+    }
+
     pub fn commit_changes(&mut self) -> Vec<(SignalId, LogicVec, LogicVec)> {
         let mut changed = Vec::new();
         for i in 0..self.signals.len() {
             if self.changed[i] {
+                if self.signals[i].width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD {
+                    // Array memory flat besar: pindahkan OWNERSHIP (swap, O(1))
+                    // tanpa clone 1e9 bit (spike 3 GB/OOM saat miss tulis).
+                    // next_signals di-reset lazy-X untuk delta berikutnya.
+                    let w = self.next_signals[i].width;
+                    let old = mivon_core::LogicVec::new(w);
+                    std::mem::swap(&mut self.signals[i], &mut self.next_signals[i]);
+                    self.next_signals[i] = mivon_core::LogicVec::new(w);
+                    self.changed[i] = false;
+                    changed.push((i, old, mivon_core::LogicVec::new(w)));
+                    self.large_dirty[i] = true;
+                    continue;
+                }
                 let old = self.signals[i].clone();
                 let new = self.next_signals[i].clone();
                 self.signals[i] = new.clone();

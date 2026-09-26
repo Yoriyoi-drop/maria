@@ -31,6 +31,20 @@ pub struct LogicVec {
     pub width: usize,
 }
 
+/// Alokasi `w` slot bernilai `X` TANPA men-touch halaman (zero page COW).
+/// `new_zeroed_slice` memakai allocator zeroed → halaman nol virtual; RSS
+/// hanya tumbuh saat slot benar-benar ditulis (sim array memory besar).
+/// Safety: `LogicVal` unit enum tanpa padding — bytes nol = discriminant 0
+/// (`X`, setelah reorder) — setiap elemen valid; `from_raw_parts` mengambil
+/// ownership dari `Box` (drop tunggal, capacity = len).
+fn lazy_zeroed(w: usize) -> Vec<LogicVal> {
+    let boxed = Box::<[std::mem::MaybeUninit<LogicVal>]>::new_zeroed_slice(w);
+    let ptr = Box::into_raw(boxed) as *mut LogicVal;
+    // SAFETY: memori zeroed → LogicVal::X (variasi pertama, diskriminant 0)
+    // valid utk enum unit tanpa padding/niche — bukan uninit.
+    unsafe { Vec::from_raw_parts(ptr, w, w) }
+}
+
 impl Default for LogicVec {
     fn default() -> Self {
         LogicVec::new(1)
@@ -49,6 +63,13 @@ impl LogicVec {
         }
     }
 
+    /// Width dari sini dialokasikan LAZY-ZERO (`new` / `fill(X)`): halaman
+    /// nol COW → RSS hanya halaman yang benar-benar ditulis (array memory
+    /// flatten raksasa — cache 65536x32x512 = 1.07e9 entry — tidak OOM).
+    /// Threshold 4M bit (~4MB, hitung utk LogicVal 1-byte) jauh di atas
+    /// sinyal normal & SRAM realistis; hanya unpacked array besar yang kena.
+    pub const LAZY_ZERO_THRESHOLD: usize = 1 << 22;
+
     pub fn new(width: usize) -> Self {
         // Guard OOM untuk lebar signal BOGUS (hasil width-computation yang
         // salah / overflow param bisa berorder miliaran bit). Ambang 1<<27 bit
@@ -57,6 +78,17 @@ impl LogicVec {
         // tetap membatasi alokasi absurd. Ambang lama 1M bit memotong SRAM
         // legal → full_init 1 bit → index-out-of-bounds saat init array.
         let w = Self::sane_width(width);
+        // Array unpacked besar (flatten memory cache, mis. 65536 x 32 x 512 bit
+        // ≈ 1.07e9 entry) TIDAK boleh di-materialisasi penuh → OOM di mesin
+        // kecil (AetherX). Lazy-zero: halaman nol COW dari alloc_zeroed; RSS
+        // hanya halaman yang benar-benar ditulis/diakses selama simulasi.
+        // Nilai nol = X (diskriminant 0) — semantik default tak berubah.
+        if w >= Self::LAZY_ZERO_THRESHOLD {
+            return LogicVec {
+                bits: lazy_zeroed(w),
+                width: w,
+            };
+        }
         // Try arena-backed allocation first (zero-deallocation path)
         if let Some(ctor) = get_logicvec_ctor() {
             if let Some(lv) = ctor(w, LogicVal::X) {
@@ -72,6 +104,13 @@ impl LogicVec {
 
     pub fn fill(val: LogicVal, width: usize) -> Self {
         let width = Self::sane_width(width);
+        // Lazy-zero bila isi seragam X dan lebar besar (default sinyal/memori).
+        if val == LogicVal::X && width >= Self::LAZY_ZERO_THRESHOLD {
+            return LogicVec {
+                bits: lazy_zeroed(width),
+                width,
+            };
+        }
         // Try arena-backed allocation first (zero-deallocation path)
         if let Some(ctor) = get_logicvec_ctor() {
             if let Some(lv) = ctor(width, val) {
@@ -313,11 +352,15 @@ impl LogicVec {
     }
 }
 
+// Urutan varian = urutan discriminant: X=0, Zero=1, One=2, Z=3.
+// PENTING: X HARUS 0 — alokasi lazy-zero (See `LogicVec::new`) memetakan
+// halaman nol → X (value tak berinitialized di memori) — konsisten semantik.
+// Serde memakai nama varian (bukan index) sehingga reorder aman.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum LogicVal {
+    X,
     Zero,
     One,
-    X,
     Z,
 }
 
@@ -338,5 +381,46 @@ impl std::fmt::Display for LogicVec {
             write!(f, "{}", bit)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_logicval_x_is_zero_discriminant() {
+        // Reorder enum: X=0 → lazy-zero page == X semantic (default init).
+        assert_eq!(LogicVal::X as u8, 0);
+        assert_eq!(LogicVal::Zero as u8, 1);
+        assert_eq!(LogicVal::One as u8, 2);
+        assert_eq!(LogicVal::Z as u8, 3);
+    }
+
+    #[test]
+    fn test_lazy_zeroed_is_x() {
+        let w = LogicVec::LAZY_ZERO_THRESHOLD + 4096;
+        let v = LogicVec::new(w);
+        assert_eq!(v.width, w);
+        assert_eq!(v.bits.len(), w);
+        // Sampel — semua entri harus X (zeroed semantics).
+        for &i in &[0usize, 1, 12345, w / 2, w - 1024, w - 1] {
+            assert_eq!(v.bits[i], LogicVal::X, "bits[{}] harus X (lazy-zero)", i);
+        }
+        // Tulis + baca ulang (mut path works pada lazy alloc).
+        let mut v2 = v;
+        v2.bits[42] = LogicVal::One;
+        assert_eq!(v2.bits[42], LogicVal::One);
+        assert_eq!(v2.bits[41], LogicVal::X);
+        // Keseluruhan masih X untuk slot lain (spot check acak).
+        assert_eq!(v2.bits[12345], LogicVal::X);
+    }
+
+    #[test]
+    fn test_small_width_unchanged() {
+        let v = LogicVec::new(8);
+        assert!(v.bits.iter().all(|b| *b == LogicVal::X));
+        let z = LogicVec::fill(LogicVal::Zero, 16);
+        assert!(z.bits.iter().all(|b| *b == LogicVal::Zero));
     }
 }

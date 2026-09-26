@@ -238,18 +238,6 @@ pub fn resolve_param_values_with_ctx(
     let _t0 = std::time::Instant::now();
     let mut vals = base_ctx.clone();
     let _t_clone_vals = _t0.elapsed();
-    // DEBUG TEMPORARY (root-cause E3012 garbage width) — hapus nanti.
-    if module.name.as_str() == "prim_sec_anchor_buf" {
-        eprintln!(
-            "[RP-DBG] module={} overrides={:?} baseWidth={:?}",
-            module.name,
-            instance_overrides
-                .iter()
-                .map(|(k, v)| (k.as_str().to_string(), *v))
-                .collect::<Vec<_>>(),
-            base_ctx.get(&Symbol::intern("Width"))
-        );
-    }
     // Konteks skalar penuh = `vals` itu sendiri: pemanggil menjamin
     // base_ctx ⊇ pkg_param_ctx ⊇ pkg_const_scalars (collect_package_param_ctx
     // meng-clone pkg_param_ctx yang meng-flatten konstanta package), jadi

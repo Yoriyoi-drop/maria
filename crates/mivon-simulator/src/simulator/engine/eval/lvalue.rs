@@ -7,6 +7,32 @@ use mivon_ir::*;
 use std::collections::HashMap;
 
 impl SimulationEngine {
+    /// Tulis segmen ke sinyal ULTRA-LEBAR (array memori flatten ≥ 4M bit)
+    /// langsung — tanpa read-modify-write penuh (clone 1e9 bit → OOM).
+    /// Return true bila sinyal wide & partial dijalankan (jalur lama di-skip);
+    /// false → gunakan RMW normal utk sinyal reguler.
+    #[inline]
+    pub fn write_partial_if_wide(
+        &mut self,
+        sig_id: SignalId,
+        start: usize,
+        end: usize,
+        val: &mivon_ir::LogicVec,
+    ) -> bool {
+        let wide = self
+            .design
+            .top
+            .signals
+            .get(sig_id)
+            .map(|s| s.width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD)
+            .unwrap_or(false);
+        if !wide {
+            return false;
+        }
+        self.state.write_signal_slice(sig_id, start, end, val);
+        true
+    }
+
     /// Catat perubahan sinyal: geser `signal_last_change` ke `signal_prev_change`,
     /// set last_change = waktu kini, dan catat arah edge (PosEdge/NegEdge) dari
     /// transisi LSB old→new (SIM-24: dipakai setup/hold edge-aware + dedupe
@@ -251,12 +277,17 @@ impl SimulationEngine {
             }
             IrLValue::RangeSelect(sig_id, msb, lsb) => {
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
-                let mut existing = self.state.read_signal(*sig_id).clone();
                 let (start, end) = if *msb > *lsb {
                     (*lsb, *msb)
                 } else {
                     (*msb, *lsb)
                 };
+                // Array memori flat ultra-lebar: tulis segmen langsung (tanpa
+                // RMW penuh = clone 1e9 bit → OOM).
+                if self.write_partial_if_wide(*sig_id, start, end + 1, &val) {
+                    return Ok(());
+                }
+                let mut existing = self.state.read_signal(*sig_id).clone();
                 // ══ Bounds check: pastikan range tidak melebihi signal width ══
                 if end >= existing.bits.len() {
                     let sig_name = self
@@ -297,6 +328,10 @@ impl SimulationEngine {
             }
             IrLValue::BitSelect(sig_id, idx) => {
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
+                // Array memori flat ultra-lebar: tulis 1 bit langsung.
+                if self.write_partial_if_wide(*sig_id, *idx, *idx + 1, &val) {
+                    return Ok(());
+                }
                 let mut existing = self.state.read_signal(*sig_id).clone();
                 if let Some(b) = val.bits.first() {
                     if *idx < existing.bits.len() {
@@ -322,7 +357,6 @@ impl SimulationEngine {
                     return Ok(());
                 }
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
-                let mut existing = self.state.read_signal(*sig_id).clone();
                 let idx = key_val.to_u64() as usize;
                 let start = idx * elem_width;
                 let needed = start + elem_width;
@@ -330,6 +364,23 @@ impl SimulationEngine {
                 let is_dynamic = sig_info
                     .map(|s| s.is_dynamic || s.is_queue)
                     .unwrap_or(false);
+                // Array memori flat ultra-lebar & index inside → tulis segmen
+                // langsung (tanpa RMW penuh = clone 1e9 bit → OOM).
+                let wide = self
+                    .design
+                    .top
+                    .signals
+                    .get(*sig_id)
+                    .map(|s| s.width >= mivon_core::LogicVec::LAZY_ZERO_THRESHOLD)
+                    .unwrap_or(false);
+                if wide && !is_dynamic {
+                    // Array memori flat fixed: tulis segmen langsung; bounds
+                    // di-clamp aman di write_signal_slice (LRM OOB = no-op).
+                    self.state.write_signal_slice(*sig_id, start, start + elem_width, &val);
+                    self.signal_last_change.insert(*sig_id, self.state.time);
+                    return Ok(());
+                }
+                let mut existing = self.state.read_signal(*sig_id).clone();
                 if needed > existing.width && !is_dynamic {
                     let sig_name = self
                         .design
@@ -376,7 +427,6 @@ impl SimulationEngine {
                 msb,
                 lsb,
             } => {
-                let mut existing = self.state.read_signal(*sig_id).clone();
                 let idx_val = self.evaluate_expr(index)?;
                 let idx = idx_val.to_u64() as usize;
                 let base = idx * elem_width;
@@ -385,6 +435,11 @@ impl SimulationEngine {
                 } else {
                     (*msb, *lsb)
                 };
+                // Array memori flat ultra-lebar: tulis segmen langsung.
+                if self.write_partial_if_wide(*sig_id, base + start, base + end + 1, &val) {
+                    return Ok(());
+                }
+                let mut existing = self.state.read_signal(*sig_id).clone();
                 // ══ Bounds check: pastikan base+end tidak melebihi signal width ══
                 if base + end >= existing.bits.len() {
                     let sig_name = self
@@ -430,7 +485,6 @@ impl SimulationEngine {
                 elem_width,
                 bit,
             } => {
-                let mut existing = self.state.read_signal(*sig_id).clone();
                 let idx_val = self.evaluate_expr(index)?;
                 let idx = idx_val.to_u64() as usize;
                 // bit bisa dinamis (`arr[i][j]` dengan j runtime) maupun
@@ -438,6 +492,11 @@ impl SimulationEngine {
                 let bit_val = self.evaluate_expr(bit)?;
                 let bit = bit_val.to_u64() as usize;
                 let abs_idx = idx * elem_width + bit;
+                // Array memori flat ultra-lebar: tulis 1 bit langsung.
+                if self.write_partial_if_wide(*sig_id, abs_idx, abs_idx + 1, &val) {
+                    return Ok(());
+                }
+                let mut existing = self.state.read_signal(*sig_id).clone();
                 if let Some(b) = val.bits.first() {
                     if abs_idx < existing.bits.len() {
                         existing.bits[abs_idx] = *b;
@@ -459,6 +518,10 @@ impl SimulationEngine {
                 let base_val = self.evaluate_expr(base)?;
                 let start = base_val.to_u64() as usize;
                 let w = *width;
+                // Array memori flat ultra-lebar: tulis segmen langsung.
+                if self.write_partial_if_wide(*sig_id, start, start + w, &val) {
+                    return Ok(());
+                }
                 let mut existing = self.state.read_signal(*sig_id).clone();
                 // Bounds check: peringatan + clamp agar tidak panic.
                 if start + w > existing.bits.len() {

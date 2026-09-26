@@ -81,6 +81,17 @@ impl std::fmt::Debug for VcdWriter {
     }
 }
 
+/// Sinyal ultra-lebar (array memory flatten: cache 65536x32x512 ≈ 1.07e9 bit)
+/// TIDAK di-dump ke VCD: `vec_to_vcd` membangun String selabar bit (1e9 × 4
+/// byte = 4 GB di RAM) → OOM. Array memori flat bentuknya tak berguna utk
+/// waveform; DumpTarget tetap DIDAFTARKAN (indeks konsisten) tapi nilainya
+/// di-skip. Ambang 4M bit ≈ 16 MB teks — jauh di atas sinyal normal.
+const VCD_WIDE_SKIP: usize = 1 << 22;
+
+fn is_wide_dump(width: usize) -> bool {
+    width >= VCD_WIDE_SKIP
+}
+
 impl VcdWriter {
     pub fn new(path: &str, design: &IrDesign) -> Result<Self, String> {
         let file = fs::File::create(path)
@@ -401,7 +412,10 @@ impl VcdWriter {
                 }
             } else {
                 if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, None) {
-                    self.write_vals_force(&sig.init_val, &code, sig.width == 1)?;
+                    // Array memori flat ultra-lebar: skip dump (String 4GB/OOM).
+                    if !is_wide_dump(sig.width) {
+                        self.write_vals_force(&sig.init_val, &code, sig.width == 1)?;
+                    }
                     self.dump_targets.push(DumpTarget {
                         code,
                         is_one_bit: sig.width == 1,
@@ -419,8 +433,9 @@ impl VcdWriter {
             .iter()
             .map(|t| {
                 let sig = &design.top.signals[t.signal_idx];
-
-                if let Some(elem) = t.elem_idx {
+                if is_wide_dump(sig.width) {
+                    String::new() // ultra-lebar: skip (Vector 4GB/OOM)
+                } else if let Some(elem) = t.elem_idx {
                     let e_val = self.elem_val(&sig.init_val, elem, t.elem_width);
                     vec_to_vcd(&e_val)
                 } else {
@@ -452,6 +467,10 @@ impl VcdWriter {
         let n = self.dump_targets.len();
         for i in 0..n {
             let sig_val = &state[self.dump_targets[i].signal_idx];
+            // Array memori flat ultra-lebar: skip dump (String 4GB/OOM).
+            if is_wide_dump(sig_val.width) {
+                continue;
+            }
             let val_str = if let Some(elem) = self.dump_targets[i].elem_idx {
                 let e_val = self.elem_val(sig_val, elem, self.dump_targets[i].elem_width);
                 vec_to_vcd(&e_val)
@@ -482,6 +501,10 @@ impl VcdWriter {
         let n = self.dump_targets.len();
         for i in 0..n {
             let sig_val = &state[self.dump_targets[i].signal_idx];
+            // Array memori flat ultra-lebar: skip dump (String 4GB/OOM).
+            if is_wide_dump(sig_val.width) {
+                continue;
+            }
             let val_str = if let Some(elem) = self.dump_targets[i].elem_idx {
                 let e_val = self.elem_val(sig_val, elem, self.dump_targets[i].elem_width);
                 vec_to_vcd(&e_val)
