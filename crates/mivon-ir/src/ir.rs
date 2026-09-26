@@ -287,6 +287,10 @@ pub struct IrInstance {
     /// Posisi instance di source (untuk diagnostic).
     pub line: usize,
     pub col: usize,
+    /// Atribut `(* ... *)` sebelum instance (EMULATOR.md §10 — anotasi Mivon
+    /// `mivon_region`/`mivon_irq` diteruskan ke MHIR). Field TERAKHIR —
+    /// cache bincode MICD lama gagal decode (EOF) → rebuild, bukan salah baca.
+    pub attrs: Vec<mivon_ast::types::AttrEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

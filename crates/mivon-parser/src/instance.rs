@@ -1184,6 +1184,13 @@ impl Parser {
     }
 
     pub(crate) fn parse_instance(&mut self) -> Result<ModuleInstance, SimError> {
+        // Atribut `(* ... *)` langsung sebelum instance (bila pemanggil belum
+        // mengkonsumsinya — jalur module-item mem-parse sendiri lalu
+        // menyuntikkan; jalur lain jatuh ke sini).
+        let mut attrs: Vec<AttrEntry> = Vec::new();
+        if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
+            attrs = self.parse_attribute_entries();
+        }
         let name_tok = self.peek().clone();
         // Catat posisi token module name untuk diagnostic (baris/kolom source).
         let inst_line = self.peek_line();
@@ -1395,6 +1402,7 @@ impl Parser {
             port_conns,
             line: inst_line,
             col: inst_col,
+            attrs,
         })
     }
 

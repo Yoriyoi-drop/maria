@@ -1482,11 +1482,17 @@ impl Parser {
             self.pop_depth();
             return Ok(None);
         }
-        // Skip (* ... *) attribute annotations before module items
+        // Atribut (* ... *) sebelum module item — di-parse (bukan sekadar
+        // dilewat) supaya anotasi Mivon (`mivon_region`/`mivon_irq`,
+        // EMULATOR.md §10) menempel ke instance berikutnya. Item non-instance
+        // tetap mengabaikan atribut persis seperti perilaku lama.
         if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
-            self.skip_attribute();
-            let result = self.parse_module_item();
+            let attrs = self.parse_attribute_entries();
+            let mut result = self.parse_module_item();
             self.pop_depth();
+            if let Ok(Some(ModuleItem::Instance(inst))) = result.as_mut() {
+                inst.attrs.extend(attrs);
+            }
             return result;
         }
         let result = self.parse_module_item_body();
@@ -3193,6 +3199,115 @@ impl Parser {
                 _ => {
                     self.advance();
                 }
+            }
+        }
+    }
+
+    /// Parse atribut `(* key = value, ... *)` menjadi daftar `AttrEntry`
+    /// (EMULATOR.md §10 — anotasi `(* mivon_region = "mmio", base = "...",
+    /// size = "..." *)` / `(* mivon_irq = "5" *)`).
+    ///
+    /// Dipanggil saat peek = `(*`. Bentuk nilai yang dikenali: string literal,
+    /// angka (hex/desimal disimpan apa adanya), ident, atau tanpa nilai
+    /// (`(* syn_preserve *)`). Sintaks lain di dalam atribut (ekspresi,
+    /// nested `(* ... *)`) di-skip seperti `skip_attribute` — atribut tetap
+    /// "diambil" dan tak merusak parsing item sesudahnya (perilaku lama =
+    /// seluruh atribut dilewat tanpa hasil).
+    pub(crate) fn parse_attribute_entries(&mut self) -> Vec<AttrEntry> {
+        let mut out: Vec<AttrEntry> = Vec::new();
+        if !(self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star) {
+            return out;
+        }
+        self.advance(); // `(`
+        if self.peek() == &Token::Star {
+            self.advance(); // `*` pembuka
+        }
+        let mut depth = 1u32;
+        let mut cur_key: Option<Symbol> = None;
+        // Guard anti-stuck (sama dengan skip_attribute).
+        let mut last_pos = self.pos.get();
+        let mut stuck = 0u32;
+        loop {
+            if self.pos.get() == last_pos {
+                stuck += 1;
+                if stuck > 5_000 {
+                    if let Some(k) = cur_key.take() {
+                        out.push(AttrEntry {
+                            key: k,
+                            value: None,
+                        });
+                    }
+                    return out;
+                }
+            } else {
+                stuck = 0;
+                last_pos = self.pos.get();
+            }
+            match self.peek().clone() {
+                Token::Eof => {
+                    if let Some(k) = cur_key.take() {
+                        out.push(AttrEntry {
+                            key: k,
+                            value: None,
+                        });
+                    }
+                    return out;
+                }
+                Token::Star if self.peek_ahead(1) == &Token::RParen => {
+                    self.advance(); // `*`
+                    self.advance(); // `)`
+                    if let Some(k) = cur_key.take() {
+                        out.push(AttrEntry {
+                            key: k,
+                            value: None,
+                        });
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        return out;
+                    }
+                }
+                Token::LParen if self.peek_ahead(1) == &Token::Star => {
+                    depth += 1;
+                    self.advance(); // `(` — `*` berikutnya jatuh ke default
+                }
+                Token::Ident(k) => {
+                    // Nama atribut. Key sebelumnya tanpa nilai → push dulu.
+                    if let Some(prev) = cur_key.take() {
+                        out.push(AttrEntry {
+                            key: prev,
+                            value: None,
+                        });
+                    }
+                    cur_key = Some(k);
+                    self.advance();
+                }
+                // `=` = BlockingAssign (Eq di lexer adalah `==`).
+                Token::Eq | Token::BlockingAssign => {
+                    self.advance();
+                    // Nilai opsional setelah `=`.
+                    let val = match self.peek().clone() {
+                        Token::StringLit(s) => Some(s.as_str().to_string()),
+                        Token::Number { value, .. } | Token::RealNum(value) => {
+                            Some(value.as_str().to_string())
+                        }
+                        Token::Ident(v) => Some(v.as_str().to_string()),
+                        _ => None,
+                    };
+                    if let Some(k) = cur_key.take() {
+                        out.push(AttrEntry { key: k, value: val });
+                    }
+                }
+                Token::Comma => {
+                    if let Some(k) = cur_key.take() {
+                        out.push(AttrEntry {
+                            key: k,
+                            value: None,
+                        });
+                    }
+                    self.advance();
+                }
+                _ => self.advance(),
             }
         }
     }

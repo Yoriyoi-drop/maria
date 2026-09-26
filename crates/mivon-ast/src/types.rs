@@ -917,6 +917,27 @@ pub struct ContinuousAssign {
     pub delay: Option<Delay>,
 }
 
+/// Satu pasangan atribut Verilog `(* key = value *)` (IEEE 1800 §22.17),
+/// disederhanakan jadi `key` + nilai teks opsional (string/angka/ident,
+/// atau tanpa nilai). Dipakai anotasi emulator (EMULATOR.md §10):
+/// `(* mivon_region = "mmio", base = "0x10000000", size = "0x1000" *)`,
+/// `(* mivon_irq = "5" *)` — lihat `mivon-emu::mhir`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct AttrEntry {
+    pub key: Symbol,
+    pub value: Option<String>,
+}
+
+impl AttrEntry {
+    /// Cari nilai atribut `key` (case-sensitive), None bila tak ada/tanpa nilai.
+    pub fn value_of<'a>(attrs: &'a [AttrEntry], key: &str) -> Option<&'a str> {
+        attrs
+            .iter()
+            .find(|a| a.key.as_str() == key)
+            .and_then(|a| a.value.as_deref())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleInstance {
     pub module_name: Symbol,
@@ -928,6 +949,10 @@ pub struct ModuleInstance {
     /// Posisi token module name di source (untuk diagnostic).
     pub line: usize,
     pub col: usize,
+    /// Atribut `(* ... *)` sebelum instance (urut sumber); kosong bila tak
+    /// ada. HARUS field terakhir — cache bincode (MICD) yang lama gagal
+    /// decode (EOF) → rebuild, bukan data salah baca.
+    pub attrs: Vec<AttrEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

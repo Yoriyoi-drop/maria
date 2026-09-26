@@ -521,9 +521,21 @@ Bukan sekadar "UART emulator" — tetapi:
 OS → virtual bus → actual RTL-derived device
 ```
 
-Implementasi: anotasi RTL `(* mivon_region = "mmio", base = "0x10000000",
-size = "0x1000" *)` + `(* mivon_irq = "5" *)`, atau bagian `[emu]` di project
-file (lihat §18).
+Implementasi: anotasi RTL **di atas instance** (R0.5, sudah jalan):
+
+```systemverilog
+(* mivon_region = "mmio", base = "0x10000000", size = "0x1000" *)
+(* mivon_irq = "5" *)
+uart u_uart (.clk(clk), /* ... */);
+```
+
+Parser menempatkan atribut ke `ModuleInstance.attrs` → elaborator →
+`IrInstance.attrs` → MHIR (`MhirDevice.mmio`/`irq` + `address_map`).
+`base`/`size` menerima hex `0x...` atau desimal; `mivon_region` tanpa
+`base`/`size` lengkap diabaikan (bukan region 0 yang menyesatkan). Nilai
+konfigurasi lain (`--addr`, `[[devices]]` `.meu`) **menimpa** anotasi untuk
+nama yang sama. Alternatif tanpa menyentuh RTL: `[[devices]]` di config
+`.meu` (lihat §20).
 
 ---
 
@@ -895,7 +907,7 @@ mivon emu wrapper.sv picorv32.v --config emu_ram.meu \
 | Memory subsystem: `MemoryPort` + `RamRegion` (mmap) + `MemoryMap` decode | ✅ 8 unit test |
 | ELF loader (ELF32/64 LE, PT_LOAD + bss) ke MemoryPort | ✅ 6 unit test |
 | CLI `--load-elf` + `--dump-memory` (hex dump) + `--config` | ✅ |
-| Anotasi `(* mivon_region *)` / `(* mivon_irq *)` dari AST | ⏳ R0.5 |
+| Anotasi `(* mivon_region *)` / `(* mivon_irq *)` dari AST | ✅ R0.5 — parser (`ModuleInstance.attrs`) → elaborator (`IrInstance.attrs`) → MHIR (`MhirDevice.mmio`/`irq` + `address_map`); `--dump-memory-map` langsung menampilkan region tanpa `--addr`; config/CLI menimpa anotasi; 4 test parser (value/bare/line-col akurat/non-instance) + 3 test MHIR + e2e `examples/rtl/rv32_soc.sv` (u_uart 0x10000000 irq3, u_timer 0x10001000 irq4) |
 | CPU interpreter RISC-V32 (R2) — `cpu/riscv32.rs`: RV32IM + Zicsr, trap/
   interrupt berprioritas/mret, 13+ test end-to-end | ✅ |
 | **Direct RTL CPU (mode 3, §7.2)** — `cpu/rtl.rs` `RtlLinkedCpu` + `machine.rs`

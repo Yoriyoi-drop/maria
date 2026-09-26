@@ -228,9 +228,12 @@ pub struct MhirDevice {
     pub module: Symbol,
     pub kind: DeviceKind,
     pub ports: Vec<PortDesc>,
-    /// Region MMIO — diisi via `apply_address_map` (`--addr` / `[emu]`).
+    /// Region MMIO — dari anotasi `(* mivon_region = "mmio", base = ...,
+    /// size = ... *)` pada instance, atau `apply_address_map` (`--addr` /
+    /// `[[devices]]` config `.meu` — menimpa anotasi).
     pub mmio: Option<AddressRegion>,
-    /// Line IRQ (anotasi / `[emu]`) — R0: None sampai mapping disediakan.
+    /// Line IRQ — dari anotasi `(* mivon_irq = "5" *)` (device RTL
+    /// mendapatkannya sendiri dari user; lihat EMULATOR.md §10).
     pub irq: Option<u32>,
     pub back: BackPointer,
 }

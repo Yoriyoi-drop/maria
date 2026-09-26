@@ -118,6 +118,10 @@ module rv32_soc (
 
     wire [31:0] uart_eoi; // eoi CPU → ack IRQ device (bit 3 = UART, bit 4 = timer)
 
+    // Anotasi Mivon (EMULATOR.md §10): region MMIO + IRQ didefinisikan DI
+    // source → `mivon emu --dump-memory-map` menampilkannya tanpa --addr/.meu.
+    (* mivon_region = "mmio", base = "0x10000000", size = "0x1000" *)
+    (* mivon_irq = "3" *)
     uart_console u_uart (
         .clk       (clk),
         .resetn    (resetn),
@@ -136,6 +140,8 @@ module rv32_soc (
         .irq_rx    (uart_irq_rx)
     );
 
+    (* mivon_region = "mmio", base = "0x10001000", size = "0x1000" *)
+    (* mivon_irq = "4" *)
     timer_console u_timer (
         .clk       (clk),
         .resetn    (resetn),

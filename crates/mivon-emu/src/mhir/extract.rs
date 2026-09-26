@@ -40,7 +40,60 @@ pub fn extract(design: &IrDesign) -> MhirDesign {
                 .push(extract_module(m, design, &locator, lines));
         }
     }
+
+    // Anotasi `(* mivon_region = "...", base = ..., size = ... *)` pada
+    // instance (EMULATOR.md §10) → address_map, supaya `--dump-memory-map`
+    // langsung menampilkannya. `apply_address_map` (CLI `--addr` / config
+    // `.meu`) menimpa entri nama yang sama — config > anotasi.
+    let annotated: Vec<(Symbol, AddressRegion)> = mhir
+        .modules
+        .iter()
+        .flat_map(|m| m.devices.iter().filter_map(|d| d.mmio.map(|r| (d.name, r))))
+        .collect();
+    mhir.address_map.extend(annotated);
+    mhir.address_map
+        .sort_by_key(|(n, r)| (r.base, n.as_str().to_string()));
     mhir
+}
+
+/// Parse integer anotasi: `0x...`/`0X...` (hex) atau desimal. Selain itu None.
+fn parse_int(s: &str) -> Option<u64> {
+    let t = s.trim();
+    match t
+        .strip_prefix("0x")
+        .or_else(|| t.strip_prefix("0X"))
+        .map(|h| u64::from_str_radix(h, 16))
+    {
+        Some(r) => r.ok(),
+        None => t.parse::<u64>().ok(),
+    }
+}
+
+/// Baca anotasi Mivon pada satu instance (EMULATOR.md §10):
+/// - `(* mivon_region = "mmio", base = "0x10000000", size = "0x1000" *)`
+///   → `Some(AddressRegion)` — `base`/`size` hex atau desimal;
+/// - `(* mivon_irq = "5" *)` → `Some(irq)`.
+///
+/// Atribut lain (milik tool sintesis/lint) diabaikan; `mivon_region` tanpa
+/// `base`/`size` lengkap → dianggap tidak ada region (lebih baik None daripada
+/// region 0 yang menyesatkan).
+fn attr_region_irq(inst: &mivon_ir::IrInstance) -> (Option<AddressRegion>, Option<u32>) {
+    let val = |k: &str| -> Option<u64> {
+        inst.attrs
+            .iter()
+            .find(|a| a.key.as_str() == k)
+            .and_then(|a| a.value.as_deref())
+            .and_then(parse_int)
+    };
+    let region = if inst.attrs.iter().any(|a| a.key.as_str() == "mivon_region") {
+        match (val("base"), val("size")) {
+            (Some(base), Some(size)) if size > 0 => Some(AddressRegion { base, size }),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    (region, val("mivon_irq").map(|v| v as u32))
 }
 
 /// Ekstrak satu module (definisi atau top flattened).
@@ -160,13 +213,15 @@ fn extract_module(
     for inst in instances {
         let kind = DeviceKind::from_module_name(inst.module_name.as_str());
         let ports = module_ports(design, inst.module_name);
+        // Anotasi Mivon pada instance (EMULATOR.md §10): region MMIO + IRQ.
+        let (mmio, irq) = attr_region_irq(inst);
         out.devices.push(MhirDevice {
             name: inst.instance_name,
             module: inst.module_name,
             kind,
             ports,
-            mmio: None,
-            irq: None,
+            mmio,
+            irq,
             back: BackPointer::known(None, inst.line, inst.col),
         });
     }
@@ -326,6 +381,9 @@ pub fn apply_address_map(mhir: &mut MhirDesign, entries: &[(Symbol, AddressRegio
             }
         }
         if matched {
+            // Ganti entri lama (mis. dari anotasi `(* mivon_region *)`) —
+            // config/CLI menang, tidak ada baris ganda di address_map.
+            mhir.address_map.retain(|(n, _)| n != name);
             mhir.address_map.push((*name, *region));
         }
     }
@@ -552,6 +610,132 @@ endmodule
             .ports
             .iter()
             .any(|p| p.name.as_str() == "tx" && p.direction == PortDir::Output));
+    }
+
+    /// Sumber dengan anotasi Mivon (EMULATOR.md §10) pada instance.
+    const ANN: &str = r#"
+module uart (
+    input  logic clk,
+    input  logic rst_n,
+    output logic tx
+);
+  assign tx = 1'b0;
+endmodule
+
+module soc (
+    input  logic clk,
+    input  logic rst_n,
+    output logic tx
+);
+  (* mivon_region = "mmio", base = "0x10000000", size = "0x1000" *)
+  (* mivon_irq = "5" *)
+  uart u_uart (.clk(clk), .rst_n(rst_n), .tx(tx));
+endmodule
+"#;
+
+    #[test]
+    fn test_annotation_region_irq_and_address_map() {
+        let design = compile(ANN);
+        let mhir = extract(&design);
+        assert_eq!(mhir.top.as_str(), "soc");
+        let top = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "soc")
+            .unwrap();
+        let uart = top
+            .devices
+            .iter()
+            .find(|d| d.name.as_str() == "u_uart")
+            .expect("u_uart");
+        assert_eq!(
+            uart.mmio,
+            Some(AddressRegion {
+                base: 0x1000_0000,
+                size: 0x1000
+            }),
+            "region dari anotasi (* mivon_region *)"
+        );
+        assert_eq!(uart.irq, Some(5), "irq dari anotasi (* mivon_irq *)");
+        // address_map terisi otomatis dari anotasi (sorted by base).
+        assert!(
+            mhir.address_map
+                .iter()
+                .any(|(n, r)| n.as_str() == "u_uart" && r.base == 0x1000_0000),
+            "address_map berisi u_uart dari anotasi: {:?}",
+            mhir.address_map
+        );
+    }
+
+    #[test]
+    fn test_annotation_overridden_by_config() {
+        // Config/CLI (`--addr` / `.meu`) menimpa anotasi — satu entri, nilai
+        // config menang, tidak ada baris ganda.
+        let design = compile(ANN);
+        let mut mhir = extract(&design);
+        apply_address_map(
+            &mut mhir,
+            &[(
+                Symbol::intern("u_uart"),
+                AddressRegion {
+                    base: 0x2000_0000,
+                    size: 0x200,
+                },
+            )],
+        );
+        let rows: Vec<&AddressRegion> = mhir
+            .address_map
+            .iter()
+            .filter(|(n, _)| n.as_str() == "u_uart")
+            .map(|(_, r)| r)
+            .collect();
+        assert_eq!(rows.len(), 1, "tidak ada entri ganda");
+        assert_eq!(rows[0].base, 0x2000_0000);
+        let top = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "soc")
+            .unwrap();
+        let uart = top
+            .devices
+            .iter()
+            .find(|d| d.name.as_str() == "u_uart")
+            .unwrap();
+        assert_eq!(uart.mmio.map(|r| r.base), Some(0x2000_0000));
+        // IRQ anotasi tidak terpengaruh override region.
+        assert_eq!(uart.irq, Some(5));
+    }
+
+    #[test]
+    fn test_annotation_invalid_region_ignored() {
+        // `mivon_region` tanpa base/size lengkap → region None (bukan 0 yang
+        // menyesatkan); `mivon_irq` non-numerik → None; atribut lain bebas.
+        let src = r#"
+module uart (input logic clk, input logic rst_n, output logic tx);
+  assign tx = 1'b0;
+endmodule
+module soc (input logic clk, input logic rst_n, output logic tx);
+  (* mivon_region = "mmio", junk = "abc" *)
+  (* mivon_irq = "zz" *)
+  (* syn_preserve *)
+  uart u_uart (.clk(clk), .rst_n(rst_n), .tx(tx));
+endmodule
+"#;
+        let design = compile(src);
+        let mhir = extract(&design);
+        let top = mhir
+            .modules
+            .iter()
+            .find(|m| m.name.as_str() == "soc")
+            .unwrap();
+        let uart = top
+            .devices
+            .iter()
+            .find(|d| d.name.as_str() == "u_uart")
+            .expect("u_uart tetap jadi device meski anotasi rusak");
+        assert_eq!(uart.mmio, None);
+        assert_eq!(uart.irq, None);
+        assert!(mhir.address_map.is_empty());
     }
 
     #[test]

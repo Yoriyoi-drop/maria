@@ -1040,6 +1040,7 @@ mod tests {
                 port_conns: vec![],
                 line: 1,
                 col: 1,
+                attrs: Vec::new(),
             })],
         };
         m.params.push(mivon_ast::types::ParamDecl {
@@ -1245,6 +1246,7 @@ mod tests {
                         port_conns: vec![],
                         line: 1,
                         col: 1,
+                        attrs: Vec::new(),
                     })],
                     label: None,
                 }],
@@ -1282,6 +1284,7 @@ mod tests {
                 type_param_map: std::sync::Arc::new(HashMap::new()),
                 line: 10 + i,
                 col: 1,
+                attrs: Vec::new(),
             });
         }
         m.processes.push(Process::Sequential {
@@ -1322,6 +1325,7 @@ mod tests {
                     port_conns: vec![],
                     line: 1,
                     col: 1,
+                    attrs: Vec::new(),
                 }),
                 ModuleItem::Instance(mivon_ast::types::ModuleInstance {
                     module_name: Symbol::intern("alu"),
@@ -1332,6 +1336,7 @@ mod tests {
                     port_conns: vec![],
                     line: 1,
                     col: 1,
+                    attrs: Vec::new(),
                 }),
             ],
         };

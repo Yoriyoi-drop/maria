@@ -141,7 +141,7 @@ pub fn dump_memory_map(mhir: &MhirDesign) -> String {
     let mut out = String::new();
     out.push_str(&format!("Memory map — top: {}\n", mhir.top.as_str()));
     if mhir.address_map.is_empty() {
-        out.push_str("  (kosong — assign alamat via --addr NAME=BASE:SIZE atau [[devices]] di config .meu)\n");
+        out.push_str("  (kosong — assign alamat via anotasi `(* mivon_region = \"mmio\", base = ..., size = ... *)`, --addr NAME=BASE:SIZE, atau [[devices]] di config .meu)\n");
     } else {
         for (name, r) in &mhir.address_map {
             out.push_str(&format!(

@@ -449,6 +449,7 @@ mod tests {
                         type_param_map: std::sync::Arc::new(HashMap::new()),
                         line: 0,
                         col: 0,
+                        attrs: Vec::new(),
                     },
                     IrInstance {
                         module_name: Symbol::intern("sub_b"),
@@ -464,6 +465,7 @@ mod tests {
                         type_param_map: std::sync::Arc::new(HashMap::new()),
                         line: 0,
                         col: 0,
+                        attrs: Vec::new(),
                     },
                 ],
                 inouts: vec![],
@@ -521,6 +523,7 @@ mod tests {
                 type_param_map: std::sync::Arc::new(HashMap::new()),
                 line: 0,
                 col: 0,
+                attrs: Vec::new(),
             });
         }
 

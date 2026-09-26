@@ -5951,6 +5951,7 @@ impl Elaborator {
                                     type_param_map: tpam.clone(),
                                     line: inst.line,
                                     col: inst.col,
+                                    attrs: inst.attrs.clone(),
                                 });
                             }
                         } else {
@@ -5962,6 +5963,7 @@ impl Elaborator {
                                 type_param_map: std::sync::Arc::new(type_param_map),
                                 line: inst.line,
                                 col: inst.col,
+                                attrs: inst.attrs.clone(),
                             });
                         }
                     }
